@@ -1,0 +1,33 @@
+# Development Environment Policy
+- id: 1
+  name: Dev
+  environment: dev
+  description: Development policy - lenient for testing and prototyping
+  rules:
+    max_critical_vulnerabilities: 10  
+    max_high_vulnerabilities: 30
+    sbom_required: false
+    min_trust_score: 40
+
+# Staging Environment Policy
+- id: 2
+  name: Standard
+  environment: staging
+  description: Standard policy for staging and most deployments
+  rules:
+    max_critical_vulnerabilities: 2
+    max_high_vulnerabilities: 10
+    sbom_required: true
+    min_trust_score: 70
+
+# Production Environment Policy
+- id: 3
+  name: Production
+  environment: production
+  description: Strict policy for production deployments
+  rules:
+    max_critical_vulnerabilities: 0
+    max_high_vulnerabilities: 0
+    sbom_required: true
+    min_trust_score: 90
+    no_root_execution: true

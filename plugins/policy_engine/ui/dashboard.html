@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Policy Engine - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 260px;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .sidebar-header {
+            padding: 30px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar-title {
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-title-icon {
+            font-size: 24px;
+        }
+
+        .sidebar-nav {
+            padding: 20px 0;
+        }
+
+        .nav-item {
+            padding: 15px 20px;
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .nav-item.active {
+            background-color: rgba(0, 123, 255, 0.2);
+            color: white;
+            border-left-color: #007bff;
+        }
+
+        .nav-icon {
+            font-size: 18px;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 30px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #333;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 10px 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #007bff;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        /* Compliance Cards */
+        .compliance-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .compliance-card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #007bff;
+        }
+
+        .compliance-card.success {
+            border-left-color: #28a745;
+        }
+
+        .compliance-card.warning {
+            border-left-color: #ffc107;
+        }
+
+        .compliance-card.danger {
+            border-left-color: #dc3545;
+        }
+
+        .compliance-card.info {
+            border-left-color: #17a2b8;
+        }
+
+        .card-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #666;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .card-subtitle {
+            font-size: 13px;
+            color: #999;
+        }
+
+        .card-value.percentage {
+            font-size: 36px;
+        }
+
+        /* Server Status Section */
+        .section-title {
+            font-size: 22px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title-icon {
+            font-size: 24px;
+        }
+
+        .table-wrapper {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            color: #555;
+        }
+
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .badge-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .env-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .env-dev {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .env-standard {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+
+        .env-prod {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        .compliance-score {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .score-bar {
+            height: 6px;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+            width: 80px;
+        }
+
+        .score-fill {
+            height: 100%;
+            background-color: #28a745;
+            border-radius: 3px;
+        }
+
+        .score-fill.warning {
+            background-color: #ffc107;
+        }
+
+        .score-fill.danger {
+            background-color: #dc3545;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .empty-state h3 {
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 200px;
+            }
+
+            .main-content {
+                margin-left: 200px;
+            }
+
+            .compliance-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .layout {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                padding-bottom: 20px;
+            }
+
+            .main-content {
+                margin-left: 0;
+                padding: 20px;
+            }
+
+            .sidebar-nav {
+                display: flex;
+                overflow-x: auto;
+                gap: 0;
+            }
+
+            .nav-item {
+                flex: 1;
+                min-width: 150px;
+                padding: 12px 15px;
+                border-left: none;
+                border-bottom: 3px solid transparent;
+            }
+
+            .nav-item.active {
+                border-left: none;
+                border-bottom-color: #007bff;
+            }
+
+            .compliance-cards {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+
+            table {
+                font-size: 13px;
+            }
+
+            th, td {
+                padding: 10px;
+            }
+        }
+
+        .last-scanned {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .btn-refresh {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-refresh:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <!-- Sidebar Navigation -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">
+                    <span class="sidebar-title-icon">🔒</span>
+                    <span>Policy Engine</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="/admin/policy-engine/dashboard" class="nav-item active">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="/admin/policy-engine/policies" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span>Policies</span>
+                </a>
+                <a href="/admin/policy-engine/waivers" class="nav-item">
+                    <span class="nav-icon">⚠️</span>
+                    <span>Waivers</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="header">
+                <h1>📊 Compliance Dashboard</h1>
+                <div class="user-info">
+                    <div class="user-avatar">AD</div>
+                    <div>
+                        <div style="font-weight: 600; color: #333;">Admin</div>
+                        <div style="font-size: 12px; color: #999;">admin@company.com</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compliance Summary Cards -->
+            <div class="compliance-cards">
+                <div class="compliance-card info">
+                    <div class="card-label">Total Scanned</div>
+                    <div class="card-value" id="stat-total">—</div>
+                    <div class="card-subtitle">Policy evaluations run</div>
+                </div>
+
+                <div class="compliance-card success">
+                    <div class="card-label">Passed</div>
+                    <div class="card-value" id="stat-passed">—</div>
+                    <div class="card-subtitle">Compliant evaluations</div>
+                </div>
+
+                <div class="compliance-card warning">
+                    <div class="card-label">Waived</div>
+                    <div class="card-value" id="stat-waived">—</div>
+                    <div class="card-subtitle">Active waivers</div>
+                </div>
+
+                <div class="compliance-card danger">
+                    <div class="card-label">Failed</div>
+                    <div class="card-value" id="stat-failed">—</div>
+                    <div class="card-subtitle">Non-compliant evaluations</div>
+                </div>
+
+                <div class="compliance-card">
+                    <div class="card-label">Average Compliance Score</div>
+                    <div class="card-value percentage" id="stat-score">—</div>
+                    <div class="card-subtitle">Overall health</div>
+                </div>
+            </div>
+
+            <!-- Server Status Section -->
+            <div>
+                <div class="section-title">
+                    <span class="section-title-icon">🖥️</span>
+                    <span>Server Status</span>
+                    <button class="btn-refresh" style="margin-left: auto;" onclick="refreshData()">↻ Refresh</button>
+                </div>
+
+                <div class="table-wrapper">
+                    <table id="serverTable">
+                        <thead>
+                            <tr>
+                                <th>Server Name</th>
+                                <th>Environment</th>
+                                <th>Policy</th>
+                                <th>Status</th>
+                                <th>Compliance Score</th>
+                                <th>Last Scanned</th>
+                            </tr>
+                        </thead>
+                        <tbody id="serverBody">
+                            <tr id="loadingRow">
+                                <td colspan="6" style="text-align: center; padding: 40px;">Loading server status...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyServerState" style="display: none; text-align: center; padding: 60px 20px; color: #999;">
+                    <div style="font-size: 48px; margin-bottom: 15px;">🖥️</div>
+                    <h3 style="color: #555; margin-bottom: 10px;">No Server Evaluations Yet</h3>
+                    <p>Run policy evaluations from the CLI to see server status here.</p>
+                    <p style="font-size: 12px; margin-top: 10px; color: #aaa;">Use: <code style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">python -m plugins.policy_engine.cli apply-policy --server SERVER_NAME --repo REPO_URL --policy POLICY_NAME</code></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load dashboard data from backend
+        async function loadDashboardSummary() {
+            try {
+                const response = await fetch('/api/dashboard/summary');
+                const data = await response.json();
+
+                document.getElementById('stat-total').textContent = data.total_evaluations ?? 0;
+                document.getElementById('stat-passed').textContent = data.passed_evaluations ?? 0;
+                document.getElementById('stat-waived').textContent = data.approved_waivers ?? 0;
+                document.getElementById('stat-failed').textContent = data.blocked_evaluations ?? 0;
+                const score = data.compliance_rate ?? 0;
+                document.getElementById('stat-score').textContent = score.toFixed(1) + '%';
+
+                console.log('Dashboard summary loaded:', data);
+            } catch (error) {
+                console.error('Error loading dashboard summary:', error);
+            }
+        }
+
+        // Load server evaluations
+        async function loadServersList() {
+            try {
+                const response = await fetch('/api/policy-engine/evaluation-history');
+                const evaluations = await response.json();
+                
+                const tbody = document.getElementById('serverBody');
+                const emptyState = document.getElementById('emptyServerState');
+                const tableWrapper = document.querySelector('.table-wrapper');
+                
+                if (!tbody) return;
+                
+                tbody.innerHTML = ''; // Clear existing rows
+                
+                if (evaluations.length === 0) {
+                    tableWrapper.style.display = 'none';
+                    emptyState.style.display = 'block';
+                    return;
+                }
+                
+                tableWrapper.style.display = 'block';
+                emptyState.style.display = 'none';
+                
+                // Fetch all policies to map policy_id to environment
+                const policiesRes = await fetch('/api/policy-engine/policies');
+                const policies = await policiesRes.json();
+                const policyMap = {};
+                policies.forEach(p => {
+                    policyMap[p.id] = p.environment;
+                });
+                
+                // Group evaluations by server (get latest for each)
+                const serverMap = {};
+                evaluations.forEach(eval => {
+                    const serverId = eval.server_id || 'Unknown';
+                    if (!serverMap[serverId] || new Date(eval.timestamp) > new Date(serverMap[serverId].timestamp)) {
+                        serverMap[serverId] = eval;
+                    }
+                });
+                
+                // Render rows
+                Object.values(serverMap).forEach(eval => {
+                    const row = document.createElement('tr');
+                    const score = eval.score || 0;
+                    const status = eval.passed ? '✓ Compliant' : '✗ Non-Compliant';
+                    const statusBadgeClass = eval.passed ? 'badge-success' : 'badge-danger';
+                    const timestamp = new Date(eval.timestamp).toLocaleString();
+                    const environment = policyMap[eval.policy_id] || 'Unknown';
+                    const envClass = `env-${environment}`;
+                    
+                    row.innerHTML = `
+                        <td><strong>${eval.server_id || 'N/A'}</strong></td>
+                        <td><span class="env-badge ${envClass}">${environment}</span></td>
+                        <td>${eval.policy_name || 'N/A'}</td>
+                        <td><span class="badge ${statusBadgeClass}">${status}</span></td>
+                        <td>
+                            <div class="compliance-score">
+                                ${score.toFixed(1)}%
+                                <div class="score-bar">
+                                    <div class="score-fill ${score >= 70 ? '' : score >= 40 ? 'warning' : 'danger'}" style="width: ${score}%;"></div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="last-scanned">${timestamp}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                console.log('Evaluations loaded:', evaluations);
+            } catch (error) {
+                console.error('Error loading evaluations:', error);
+                const tbody = document.getElementById('serverBody');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 30px; color: red;">Error loading evaluations</td></tr>';
+                }
+            }
+        }
+        
+        function refreshData() {
+            console.log('Refreshing dashboard data...');
+            loadDashboardSummary();
+            loadServersList();
+        }
+
+        // Initialize dashboard on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load data immediately
+            refreshData();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(refreshData, 30000);
+            
+            // Set active navigation item based on current page
+            const currentPage = window.location.pathname.split('/').pop() || 'dashboard';
+            document.querySelectorAll('.nav-item').forEach(item => {
+                const href = item.getAttribute('href');
+                if (href && (href.includes('dashboard') || href.endsWith('/'))) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

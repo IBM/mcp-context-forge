@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Waiver Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        h2 {
+            color: #333;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            font-size: 22px;
+            border-bottom: 2px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+        }
+
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background-color: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(220, 53, 69, 0.3);
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* Approval Queue Section */
+        .approval-queue {
+            margin-bottom: 40px;
+        }
+
+        .waiver-card {
+            background: white;
+            border-left: 4px solid #ffc107;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .waiver-card.pending {
+            border-left-color: #ffc107;
+            background-color: #fffbf0;
+        }
+
+        .waiver-card.approved {
+            border-left-color: #28a745;
+            background-color: #f0f9f6;
+        }
+
+        .waiver-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .waiver-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-pending {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-approved {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .badge-rejected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .waiver-body {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .waiver-detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .waiver-detail-label {
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .waiver-detail-value {
+            color: #333;
+            font-size: 15px;
+            word-break: break-word;
+        }
+
+        .waiver-detail-code {
+            background-color: #f5f5f5;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .waiver-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        /* Date Picker */
+        .date-picker-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .date-picker-section label {
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+        }
+
+        input[type="date"] {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        input[type="date"]:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+        }
+
+        /* Active Waivers Table */
+        .active-waivers {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            color: #333;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            color: #555;
+        }
+
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status-expired {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-expiring-soon {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .empty-state h3 {
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .waiver-body {
+                grid-template-columns: 1fr;
+            }
+
+            .waiver-actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            table {
+                font-size: 13px;
+            }
+
+            th, td {
+                padding: 10px;
+            }
+
+            .date-picker-section {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .navbar {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .navbar-links {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* Top Navigation Bar */
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #2c3e50;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .navbar-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .navbar-links {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .navbar-links a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+
+        .navbar-links a:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .navbar-links a.active {
+            background-color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Navigation Bar -->
+    <div class="navbar">
+        <div class="navbar-title">
+            <span>🔒</span>
+            <span>Policy Engine</span>
+        </div>
+        <div class="navbar-links">
+            <a href="/admin/policy-engine/dashboard">📊 Dashboard</a>
+            <a href="/admin/policy-engine/policies">📋 Policies</a>
+            <a href="/admin/policy-engine/waivers" class="active">⚠️ Waivers</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>⚠️ Waiver Management</h1>
+
+        <!-- Approval Queue Section -->
+        <div class="approval-queue">
+            <h2>Approval Queue</h2>
+
+            <!-- Pending Waiver 1 -->
+            <div class="waiver-card pending">
+                <div class="waiver-header">
+                    <div class="waiver-title">Waiver Request #001</div>
+                    <span class="badge badge-pending">Pending</span>
+                </div>
+
+                <div class="waiver-body">
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Rule</div>
+                        <div class="waiver-detail-value">max_critical_vulnerabilities</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Server</div>
+                        <div class="waiver-detail-value">api-prod-01</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Environment</div>
+                        <div class="waiver-detail-value">Production</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Requested By</div>
+                        <div class="waiver-detail-value">john.doe@company.com</div>
+                    </div>
+                </div>
+
+                <div class="waiver-detail">
+                    <div class="waiver-detail-label">Reason</div>
+                    <div class="waiver-detail-value">Critical vulnerability patched in hotfix, waiting for full deployment window. Requires waiver for Production policy (0 critical vulnerabilities allowed)</div>
+                </div>
+
+                <div class="date-picker-section">
+                    <label for="expiry1">Expiration Date:</label>
+                    <input type="date" id="expiry1" value="2026-03-15">
+                </div>
+
+                <div class="waiver-actions">
+                    <button class="btn btn-success" onclick="approveWaiver(1)">✓ Approve</button>
+                    <button class="btn btn-danger" onclick="rejectWaiver(1)">✗ Reject</button>
+                </div>
+            </div>
+
+            <!-- Pending Waiver 2 -->
+            <div class="waiver-card pending">
+                <div class="waiver-header">
+                    <div class="waiver-title">Waiver Request #002</div>
+                    <span class="badge badge-pending">Pending</span>
+                </div>
+
+                <div class="waiver-body">
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Rule</div>
+                        <div class="waiver-detail-value">sbom_required</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Server</div>
+                        <div class="waiver-detail-value">batch-processor-standard</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Environment</div>
+                        <div class="waiver-detail-value">Standard</div>
+                    </div>
+
+                    <div class="waiver-detail">
+                        <div class="waiver-detail-label">Requested By</div>
+                        <div class="waiver-detail-value">jane.smith@company.com</div>
+                    </div>
+                </div>
+
+                <div class="waiver-detail">
+                    <div class="waiver-detail-label">Reason</div>
+                    <div class="waiver-detail-value">Legacy service without SBOM generation capability. SBOM generation is required in Standard environment but in progress for next release</div>
+                </div>
+
+                <div class="date-picker-section">
+                    <label for="expiry2">Expiration Date:</label>
+                    <input type="date" id="expiry2" value="2026-03-31">
+                </div>
+
+                <div class="waiver-actions">
+                    <button class="btn btn-success" onclick="approveWaiver(2)">✓ Approve</button>
+                    <button class="btn btn-danger" onclick="rejectWaiver(2)">✗ Reject</button>
+                </div>
+            </div>
+
+            <!-- Empty Approval Queue (hidden by default) -->
+            <div class="empty-state" id="emptyApprovalQueue" style="display: none;">
+                <div class="empty-state-icon">✅</div>
+                <h3>No Pending Waivers</h3>
+                <p>All waiver requests have been processed</p>
+            </div>
+        </div>
+
+        <!-- Active Waivers Section -->
+        <h2>Active Waivers</h2>
+        <div class="active-waivers">
+            <div class="table-wrapper">
+                <table id="waiversTable">
+                    <thead>
+                        <tr>
+                            <th>Rule</th>
+                            <th>Server</th>
+                            <th>Environment</th>
+                            <th>Approved By</th>
+                            <th>Expiration Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="waiversBody">
+                        <tr>
+                            <td><strong>max_high_vulnerabilities</strong></td>
+                            <td>web-api-prod-02</td>
+                            <td>Production</td>
+                            <td>admin@company.com</td>
+                            <td>2026-03-20</td>
+                            <td><span class="status-badge status-active">Active</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="revokeWaiver(101)">Revoke</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>no_root_execution</strong></td>
+                            <td>container-runner-prod</td>
+                            <td>Production</td>
+                            <td>security@company.com</td>
+                            <td>2026-03-10</td>
+                            <td><span class="status-badge status-expiring-soon">Expiring Soon</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="revokeWaiver(102)">Revoke</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>min_trust_score</strong></td>
+                            <td>data-processor-dev</td>
+                            <td>Development</td>
+                            <td>dev-lead@company.com</td>
+                            <td>2026-02-28</td>
+                            <td><span class="status-badge status-expired">Expired</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="revokeWaiver(103)">Revoke</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty Active Waivers (hidden by default) -->
+            <div class="empty-state" id="emptyActiveWaivers" style="display: none;">
+                <div class="empty-state-icon">🎉</div>
+                <h3>No Active Waivers</h3>
+                <p>All policies are being enforced</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Approve a waiver
+        async function approveWaiver(id) {
+            const expiryDate = document.getElementById(`expiry${id}`).value;
+            if (!expiryDate) {
+                alert('Please select an expiration date');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/policy-engine/waivers/${id}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved_by: 'admin@company.com', expires_at: expiryDate })
+                });
+                
+                if (response.ok) {
+                    alert(`Waiver ${id} approved until ${expiryDate}`);
+                    location.reload(); // Reload to show updated waivers
+                } else {
+                    alert('Error approving waiver: ' + response.statusText);
+                }
+            } catch (error) {
+                console.error('Error approving waiver:', error);
+                alert('Error approving waiver: ' + error.message);
+            }
+        }
+
+        // Reject a waiver
+        async function rejectWaiver(id) {
+            const reason = prompt('Enter reason for rejection:');
+            if (!reason) return;
+            
+            try {
+                const response = await fetch(`/api/policy-engine/waivers/${id}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason })
+                });
+                
+                if (response.ok) {
+                    alert(`Waiver ${id} rejected`);
+                    location.reload(); // Reload to show updated waivers
+                } else {
+                    alert('Error rejecting waiver: ' + response.statusText);
+                }
+            } catch (error) {
+                console.error('Error rejecting waiver:', error);
+                alert('Error rejecting waiver: ' + error.message);
+            }
+        }
+
+        // Revoke an active waiver
+        async function revokeWaiver(id) {
+            if (!confirm('Are you sure you want to revoke this waiver?')) return;
+            
+            try {
+                const response = await fetch(`/api/policy-engine/waivers/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    alert(`Waiver ${id} revoked`);
+                    location.reload(); // Reload to show updated waivers
+                } else {
+                    alert('Error revoking waiver: ' + response.statusText);
+                }
+            } catch (error) {
+                console.error('Error revoking waiver:', error);
+                alert('Error revoking waiver: ' + error.message);
+            }
+        }
+        
+        // Load pending and active waivers
+        async function loadWaivers() {
+            try {
+                const response = await fetch('/api/policy-engine/waivers');
+                const waivers = await response.json();
+                
+                // Filter pending and active waivers
+                const pending = waivers.filter(w => w.status === 'pending');
+                const active = waivers.filter(w => w.status === 'approved');
+                
+                console.log('Waivers loaded - Pending:', pending, 'Active:', active);
+                
+                // Update pending waivers section
+                updatePendingWaivers(pending);
+                updateActiveWaivers(active);
+            } catch (error) {
+                console.error('Error loading waivers:', error);
+            }
+        }
+        
+        // Update pending waivers display
+        function updatePendingWaivers(pending) {
+            const container = document.querySelector('.approval-queue');
+            if (!container) return;
+            
+            // Keep only the title
+            const title = container.querySelector('h2');
+            container.innerHTML = '';
+            if (title) container.appendChild(title);
+            
+            if (pending.length === 0) {
+                container.innerHTML += '<p style="padding: 20px; text-align: center; color: #999;">No pending waivers</p>';
+                return;
+            }
+            
+            pending.forEach((waiver, idx) => {
+                const waiverHtml = `
+                    <div class="waiver-card pending">
+                        <div class="waiver-header">
+                            <div class="waiver-title">Waiver Request #${waiver.id.substring(0, 8)}</div>
+                            <span class="badge badge-pending">Pending</span>
+                        </div>
+                        <div class="waiver-body">
+                            <div class="waiver-detail">
+                                <div class="waiver-detail-label">Rule</div>
+                                <div class="waiver-detail-value">${waiver.rule_name}</div>
+                            </div>
+                            <div class="waiver-detail">
+                                <div class="waiver-detail-label">Server</div>
+                                <div class="waiver-detail-value">${waiver.server_id}</div>
+                            </div>
+                            <div class="waiver-detail">
+                                <div class="waiver-detail-label">Requested By</div>
+                                <div class="waiver-detail-value">${waiver.requested_by}</div>
+                            </div>
+                            <div class="waiver-detail">
+                                <div class="waiver-detail-label">When</div>
+                                <div class="waiver-detail-value">${new Date(waiver.requested_at).toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                        <div class="waiver-detail">
+                            <div class="waiver-detail-label">Reason</div>
+                            <div class="waiver-detail-value">${waiver.reason}</div>
+                        </div>
+                        <div class="date-picker-section">
+                            <label for="expiry${waiver.id}">Expiration Date:</label>
+                            <input type="date" id="expiry${waiver.id}" value="${new Date(waiver.expires_at).toISOString().split('T')[0]}">
+                        </div>
+                        <div class="waiver-actions">
+                            <button class="btn btn-success" onclick="approveWaiver('${waiver.id}')">✓ Approve</button>
+                            <button class="btn btn-danger" onclick="rejectWaiver('${waiver.id}')">✗ Reject</button>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += waiverHtml;
+            });
+        }
+        
+        // Update active waivers display
+        function updateActiveWaivers(active) {
+            const container = document.querySelector('.active-waivers');
+            if (!container) return;
+            
+            const tbody = container.querySelector('tbody');
+            if (!tbody) return;
+            
+            tbody.innerHTML = '';
+            
+            if (active.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 30px;">No active waivers</td></tr>';
+                return;
+            }
+            
+            active.forEach(waiver => {
+                const expires = new Date(waiver.expires_at);
+                const now = new Date();
+                const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+                const isExpiringSoon = daysLeft <= 7;
+                const isExpired = daysLeft < 0;
+                
+                let statusClass = 'status-active';
+                let statusText = 'Active';
+                if (isExpired) {
+                    statusClass = 'status-expired';
+                    statusText = 'Expired';
+                } else if (isExpiringSoon) {
+                    statusClass = 'status-expiring-soon';
+                    statusText = `Expires in ${daysLeft} days`;
+                }
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${waiver.server_id}</td>
+                    <td>${waiver.rule_name}</td>
+                    <td>${waiver.reason}</td>
+                    <td>${waiver.approved_by}</td>
+                    <td>${expires.toLocaleDateString()}</td>
+                    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                    <td><button class="btn btn-sm btn-danger" onclick="revokeWaiver('${waiver.id}')">Revoke</button></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Initialize waivers page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadWaivers();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(loadWaivers, 30000);
+        });
+    </script>
+</body>
+</html>
