@@ -354,54 +354,65 @@ To validate the deployment with an MCP protocol benchmark using Locust.
 
 </details>
 
-**Patch Locust service for distributed mode:**
+**Standardized benchmark configuration:**
+
+The Helm chart deploys Locust with the following settings from `values-ocp-pgo.yaml`:
+
+- 3 Locust workers (`testing.locust.worker.replicaCount: 3`)
+- 125 users, 30/s spawn rate, 60s runtime
+- ZeroMQ ports 5557/5558 included in the Locust Service (workers connect automatically)
+- MCP_SERVER_ID passed via `--set` at install time
+
+**1. Pass the virtual server ID at install time:**
 
 ```bash
-oc -n contextforge patch svc contextforge-mcp-stack-locust --type='json' \
-  -p '[{"op":"add","path":"/spec/ports/-","value":{"name":"master","port":5557,"targetPort":5557,"protocol":"TCP"}},
-      {"op":"add","path":"/spec/ports/-","value":{"name":"master-bind","port":5558,"targetPort":5558,"protocol":"TCP"}}]'
-```
-
-**Deploy the MCP protocol locustfile:**
-
-The locustfile at `tests/loadtest/locustfile_mcp_protocol.py` needs a patch for OCP's restricted SCC — wrap the `_load_env_file()` function in `try/except (PermissionError, OSError)` to handle `Path.home()/.env` access errors.
-
-```bash
-# After patching the locustfile:
-oc -n contextforge create configmap contextforge-mcp-stack-locust-script \
-  --from-file=locustfile.py=tests/loadtest/locustfile_mcp_protocol.py \
-  --dry-run=client -o yaml | oc replace -f -
-```
-
-**Set Locust environment variables:**
-
-```bash
-# Get the virtual server UUID
+# Get the virtual server UUID (after registration)
 SERVER_ID=$(curl -s http://localhost:4444/servers \
   -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
 
-oc -n contextforge set env deploy/contextforge-mcp-stack-locust \
-  MCP_SERVER_ID=$SERVER_ID LOCUST_EXPECT_WORKERS=3
-oc -n contextforge set env deploy/contextforge-mcp-stack-locust-worker \
-  MCP_SERVER_ID=$SERVER_ID
+# Include in helm install/upgrade
+helm upgrade <release> charts/mcp-stack \
+  -n <namespace> \
+  -f charts/mcp-stack/values-ocp-pgo.yaml \
+  -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
+  --set testing.locust.mcpServerID=$SERVER_ID \
+  --no-hooks
 ```
 
-**Scale Locust workers and restart:**
+**2. Deploy the MCP protocol locustfile:**
+
+The locustfile at `tests/loadtest/locustfile_mcp_protocol.py` needs two patches for OCP:
+- Wrap `_load_env_file()` in `try/except (PermissionError, OSError)` (OCP restricted SCC blocks `Path.home()/.env`)
+- Replace `import jwt` / `jwt.encode()` with stdlib `hmac/hashlib` JWT generation (pyjwt not available in Locust container)
 
 ```bash
-oc -n contextforge scale deploy/contextforge-mcp-stack-locust-worker --replicas=3
-oc -n contextforge delete pods -l app=contextforge-mcp-stack-locust
-oc -n contextforge delete pods -l app=contextforge-mcp-stack-locust-worker
+# After patching the locustfile:
+oc -n <namespace> create configmap <release>-mcp-stack-locust-script \
+  --from-file=locustfile.py=tests/loadtest/locustfile_mcp_protocol.py \
+  --dry-run=client -o yaml | oc replace -f -
+
+# Restart Locust pods to pick up new locustfile
+oc -n <namespace> delete pods -l app=<release>-mcp-stack-locust
+oc -n <namespace> delete pods -l app=<release>-mcp-stack-locust-worker
 ```
 
-**Run the benchmark:**
+**3. Run the benchmark:**
+
+The benchmark starts automatically via the Locust web UI, or trigger via API:
 
 ```bash
 curl -X POST http://locust:8089/swarm \
   -d 'user_count=125&spawn_rate=30&run_time=60s'
 ```
 
-**Expected results:** ~350-500 RPS, 0% failures with 3 gateway pods.
+**Benchmark results (OCP 4.20, 3 gateway pods, 3 NGINX, PGO Postgres):**
+
+| Config | Plugins Loaded | RPS | Avg Latency | Med Latency | Failures |
+|--------|---------------|-----|-------------|-------------|----------|
+| No plugins (all disabled) | 0 | 292 | 59ms | 44ms | 0% |
+| 3 enforce only (others disabled) | 3 | 288 | 57ms | 44ms | 0% |
+
+Plugins in enforce: RateLimiterPlugin (10,000/m), OutputLengthGuardPlugin (15K chars), SecretsDetectionPlugin (block on detection). Plugins add no meaningful overhead — 0% failures in both configurations.
 
 ---
 
@@ -436,7 +447,7 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 | Gateway pods stuck at 0/1 Running | Migration hang through PgBouncer. Ensure only 1 replica during first install. Scale to 3 after pod is Ready. |
 | `ErrImagePull` on fast-test-server | Image pull auth failed. Grant pull access: `oc policy add-role-to-group system:image-puller system:serviceaccounts:<namespace> -n contextforge-images` |
 | Redis PVC stuck in Pending | No dynamic PV provisioner. Set `redis.persistence.enabled: false` in values, or provision a PV manually. |
-| Locust workers not connecting | Locust service missing ZeroMQ ports 5557/5558. Patch the service (see benchmark section above). |
+| Locust workers not connecting | Ensure `testing.enabled: true` in values. ZeroMQ ports 5557/5558 are included in the Locust Service template. If workers still fail, check DNS resolution to `<release>-mcp-stack-locust`. |
 | Locust crashes with PermissionError | OCP restricted SCC blocks `Path.home()/.env`. Patch `_load_env_file()` with try/except. |
 | `helm upgrade` fails with field conflicts | Manual `oc` patches create field manager conflicts. Use `helm uninstall` + `helm install` instead. |
 | Route returns 503 | Gateway pods not Ready yet, or NGINX not scaled. Check `oc get pods` and scale NGINX to 3. |
