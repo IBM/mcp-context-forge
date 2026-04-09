@@ -2867,6 +2867,24 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 			--processes=-1'
 
 # =============================================================================
+# 🔴 OCP MCP BENCHMARK
+# =============================================================================
+
+OCP_NS ?=
+benchmark-ocp:                               ## Run MCP benchmark on OCP (requires OCP_NS=<namespace>)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make benchmark-ocp OCP_NS=<namespace>"; exit 1; fi
+	@echo "Starting MCP benchmark on OCP..."
+	@echo "   Namespace: $(OCP_NS)"
+	@echo "   Release:   $(OCP_NS)"
+	@echo "   Config:    125 users, 30/s spawn, 60s"
+	@oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-locust -- \
+		python3 -c "import urllib.request,urllib.parse; \
+		urllib.request.urlopen(urllib.request.Request('http://localhost:8089/swarm', \
+		urllib.parse.urlencode({'user_count':125,'spawn_rate':30,'run_time':'60s', \
+		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
+	@echo "Benchmark running. Results in ~60s."
+
+# =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
 # help: 📊 JMETER PERFORMANCE TESTING
