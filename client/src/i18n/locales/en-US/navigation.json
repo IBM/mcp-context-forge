@@ -1,0 +1,21 @@
+{
+  "navigation.dashboard": "Dashboard",
+  "navigation.gateways": "Gateways",
+  "navigation.servers": "Servers",
+  "navigation.tools": "Tools",
+  "navigation.resources": "Resources",
+  "navigation.prompts": "Prompts",
+  "navigation.agents": "Agents",
+  "navigation.users": "Users",
+  "navigation.teams": "Teams",
+  "navigation.tokens": "Tokens",
+  "navigation.llmProviders": "LLM Providers",
+  "navigation.llmModels": "LLM Models",
+  "navigation.metrics": "Metrics",
+  "navigation.observability": "Observability",
+  "navigation.plugins": "Plugins",
+  "navigation.performance": "Performance",
+  "navigation.maintenance": "Maintenance",
+  "navigation.settings": "Settings",
+  "navigation.label": "Navigation"
+}
