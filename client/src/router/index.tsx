@@ -18,7 +18,7 @@
  *   <RouterProvider>               — wraps the app
  *   <Route path="" component={} /> — renders on match
  *   <Redirect to="" />             — navigates on mount (validated)
- *   <AuthGuard publicPaths={[]}/>  — blocks unauthenticated access
+ *   <AuthGuard publicPaths={[]} publicPrefixes={[]}/>  — blocks unauthenticated access
  *   useRouter()                    — { path, params, navigate }
  */
 
@@ -212,27 +212,34 @@ export function Redirect({ to }: { to: string }) {
 // opt-out, so adding a new public route requires a deliberate declaration.
 // ---------------------------------------------------------------------------
 
+// Exact paths that are always public.
 const DEFAULT_PUBLIC_PATHS: readonly string[] = [
   "/app/login",
   "/app/forgot-password",
 ];
 
+// Path prefixes whose subtrees are always public.
+const DEFAULT_PUBLIC_PREFIXES: readonly string[] = ["/app/reset-password/"];
+
 interface AuthGuardProps {
   children: ReactNode;
-  /** Paths that do not require authentication. Defaults to login + forgot-password. */
+  /** Exact paths that do not require authentication. Defaults to login + forgot-password. */
   publicPaths?: readonly string[];
+  /** Path prefixes whose subtrees do not require authentication. */
+  publicPrefixes?: readonly string[];
 }
 
 export function AuthGuard({
   children,
   publicPaths = DEFAULT_PUBLIC_PATHS,
+  publicPrefixes = DEFAULT_PUBLIC_PREFIXES,
 }: AuthGuardProps) {
   const { navigate, path } = useRouter();
   const authenticated = getToken() !== null;
 
-  // A path is public if it's in the allowlist OR starts with /app/reset-password/
   const isPublic =
-    publicPaths.includes(path) || path.startsWith("/app/reset-password/");
+    publicPaths.includes(path) ||
+    publicPrefixes.some((prefix) => path.startsWith(prefix));
 
   useEffect(() => {
     if (!authenticated && !isPublic) {
@@ -240,6 +247,6 @@ export function AuthGuard({
     }
   }, [authenticated, isPublic, navigate]);
 
-  if (!authenticated && !isPublic) return null;
+  if (!authenticated) return null;
   return <>{children}</>;
 }

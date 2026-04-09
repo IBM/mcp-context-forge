@@ -1,0 +1,21 @@
+{
+  "navigation.dashboard": "Panel",
+  "navigation.gateways": "Gateways",
+  "navigation.servers": "Servidores",
+  "navigation.tools": "Herramientas",
+  "navigation.resources": "Recursos",
+  "navigation.prompts": "Prompts",
+  "navigation.agents": "Agents",
+  "navigation.users": "Usuarios",
+  "navigation.teams": "Equipos",
+  "navigation.tokens": "Tokens",
+  "navigation.llmProviders": "Proveedores LLM",
+  "navigation.llmModels": "Modelos LLM",
+  "navigation.metrics": "Métricas",
+  "navigation.observability": "Observabilidad",
+  "navigation.plugins": "Plugins",
+  "navigation.performance": "Rendimiento",
+  "navigation.maintenance": "Mantenimiento",
+  "navigation.settings": "Configuración",
+  "navigation.label": "Navegación"
+}

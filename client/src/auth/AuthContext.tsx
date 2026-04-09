@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { api, setToken, clearToken, ApiError } from "../api/client";
 
@@ -46,6 +46,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null,
     isAuthenticated: sessionStorage.getItem("mcpgateway_token") !== null,
   });
+
+  // Rehydrate user on mount if token exists
+  useEffect(() => {
+    const token = sessionStorage.getItem("mcpgateway_token");
+    if (token && !state.user) {
+      api.get<User>("/auth/me")
+        .then((user) => {
+          setState({ user, isAuthenticated: true });
+        })
+        .catch((err) => {
+          // Token invalid or expired - clear auth state
+          if (err instanceof ApiError && err.status === 401) {
+            clearToken();
+            setState({ user: null, isAuthenticated: false });
+          }
+        });
+    }
+  }, [state.user]);
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {
     const data = await api.post<LoginResponse>(
