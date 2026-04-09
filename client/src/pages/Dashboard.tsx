@@ -1,3 +1,11 @@
+import { useIntl } from "react-intl";
+
 export function Dashboard() {
-  return <h1 className="text-xl font-semibold text-neutral-900">Dashboard</h1>;
+  const intl = useIntl();
+
+  return (
+    <h1 className="text-xl font-semibold text-neutral-900">
+      {intl.formatMessage({ id: "dashboard.title" })}
+    </h1>
+  );
 }
