@@ -398,12 +398,11 @@ oc -n <namespace> delete pods -l app=<release>-mcp-stack-locust-worker
 
 **3. Run the benchmark:**
 
-The benchmark starts automatically via the Locust web UI, or trigger via API:
-
 ```bash
-curl -X POST http://locust:8089/swarm \
-  -d 'user_count=125&spawn_rate=30&run_time=60s'
+make benchmark-ocp OCP_NS=<namespace>
 ```
+
+This triggers the MCP protocol benchmark (125 users, 30/s spawn, 60s) on the Locust pod via its API. Results appear in the Locust web UI or pod logs after ~60s.
 
 **Benchmark results (OCP 4.20, 3 gateway pods, 3 NGINX, PGO Postgres):**
 
