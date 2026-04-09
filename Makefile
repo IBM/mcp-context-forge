@@ -2867,15 +2867,51 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 			--processes=-1'
 
 # =============================================================================
-# 🔴 OCP MCP BENCHMARK
+# 🔴 OCP DEPLOYMENT & BENCHMARK
 # =============================================================================
 
 OCP_NS ?=
-benchmark-ocp:                               ## Run MCP benchmark on OCP (requires OCP_NS=<namespace>)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make benchmark-ocp OCP_NS=<namespace>"; exit 1; fi
+OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
+OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
+
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
+	@echo "Deploying ContextForge to OCP..."
+	@echo "   Namespace: $(OCP_NS)"
+	@echo "   Values:    $(OCP_VALUES)"
+	@echo "   Secrets:   $(OCP_SECRETS)"
+	helm install $(OCP_NS) charts/mcp-stack \
+		-n $(OCP_NS) \
+		-f $(OCP_VALUES) \
+		-f $(OCP_SECRETS) \
+		--timeout 10m
+	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
+
+ocp-benchmark-setup:                         ## Fetch server ID and configure Locust for benchmark (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+	@echo "Fetching server ID and configuring Locust..."
+	@/bin/bash -c '\
+		JWT_SECRET=$$(oc -n $(OCP_NS) get secret $(OCP_NS)-mcp-stack-gateway-secret -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d) && \
+		TOKEN=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
+			python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 5 --secret "$$JWT_SECRET" 2>/dev/null | tail -1) && \
+		SERVER_ID=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
+			curl -s -H "Authorization: Bearer $$TOKEN" http://localhost:4444/servers 2>/dev/null | \
+			python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])") && \
+		echo "   Server ID: $$SERVER_ID" && \
+		echo "Updating Locust with server ID..." && \
+		helm upgrade $(OCP_NS) charts/mcp-stack \
+			-n $(OCP_NS) \
+			-f $(OCP_VALUES) \
+			-f $(OCP_SECRETS) \
+			--set testing.locust.mcpServerID=$$SERVER_ID && \
+		echo "Waiting for Locust pods to restart..." && \
+		sleep 30 && \
+		echo "Setup complete. Run: make ocp-benchmark OCP_NS=$(OCP_NS)"'
+
+ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace>"; exit 1; fi
 	@echo "Starting MCP benchmark on OCP..."
 	@echo "   Namespace: $(OCP_NS)"
-	@echo "   Release:   $(OCP_NS)"
 	@echo "   Config:    125 users, 30/s spawn, 60s"
 	@oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-locust -- \
 		python3 -c "import urllib.request,urllib.parse; \
