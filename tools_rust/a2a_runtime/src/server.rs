@@ -1112,7 +1112,7 @@ async fn proxy_to_backend(
         .client
         .request(reqwest_method, &url)
         .headers(forwarded)
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await
         .map_err(|e| {
@@ -1483,5 +1483,52 @@ mod tests {
         assert_eq!(response.headers().get("x-backend").unwrap(), "ok");
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"backend-body");
+    }
+
+    #[tokio::test]
+    async fn handle_streaming_method_replays_from_store_when_last_event_id_is_present() {
+        let mut state = test_state("http://127.0.0.1:1".to_string());
+        state.event_store = Some(Arc::new(crate::event_store::EventStore::seeded_for_test(
+            vec![
+                crate::event_store::StoredEvent {
+                    event_id: "evt-1".to_string(),
+                    sequence: 1,
+                    event_type: "unknown".to_string(),
+                    payload: r#"{"status":"queued"}"#.to_string(),
+                },
+                crate::event_store::StoredEvent {
+                    event_id: "evt-2".to_string(),
+                    sequence: 2,
+                    event_type: "status".to_string(),
+                    payload: r#"{"status":"working"}"#.to_string(),
+                },
+            ],
+            false,
+        )));
+
+        let response = handle_streaming_method(
+            &state,
+            "test-agent",
+            &json!({"params": {"id": "task-123"}}),
+            &HashMap::from([("last-event-id".to_string(), "task-123:0".to_string())]),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("id: evt-1:1"), "expected first replayed id, body: {text}");
+        assert!(text.contains("data: {\"status\":\"queued\"}"), "expected first payload, body: {text}");
+        assert!(text.contains("id: evt-2:2"), "expected second replayed id, body: {text}");
     }
 }

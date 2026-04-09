@@ -211,6 +211,14 @@ pub mod test_support {
 
     /// Build the Axum app without starting a listener.
     pub fn build_app(config: RuntimeConfig) -> axum::Router {
+        build_app_with_event_store(config, None)
+    }
+
+    /// Build the Axum app with a test-supplied event store.
+    pub fn build_app_with_event_store(
+        config: RuntimeConfig,
+        event_store: Option<Arc<crate::event_store::EventStore>>,
+    ) -> axum::Router {
         let client = build_http_client(&config).expect("failed to build reqwest client");
         let config_arc = Arc::new(config);
 
@@ -247,7 +255,7 @@ pub mod test_support {
             redis_pool: None,
             agent_cache,
             session_manager: None,
-            event_store: None,
+            event_store,
         };
 
         server::router(state)

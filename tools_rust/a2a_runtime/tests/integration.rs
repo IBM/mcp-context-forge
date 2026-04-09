@@ -15,8 +15,9 @@ use axum::http::{Request, StatusCode};
 use contextforge_a2a_runtime::config::RuntimeConfig;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use test_helpers::*;
 
@@ -1652,6 +1653,12 @@ async fn test_a2a_invoke_create_push_config_routes_to_python() {
 
     Mock::given(method("POST"))
         .and(path_regex(".*push/create$"))
+        .and(body_json(json!({
+            "a2a_agent_id": "agent-001",
+            "task_id": "task-1",
+            "webhook_url": "https://example.com/hook",
+            "enabled": true
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
             "enabled": true
@@ -1672,7 +1679,12 @@ async fn test_a2a_invoke_create_push_config_routes_to_python() {
             "jsonrpc": "2.0",
             "method": "CreateTaskPushNotificationConfig",
             "id": 8,
-            "params": {"task_id": "task-1", "webhook_url": "https://example.com/hook", "enabled": true}
+            "params": {
+                "a2a_agent_id": "agent-001",
+                "task_id": "task-1",
+                "webhook_url": "https://example.com/hook",
+                "enabled": true
+            }
         }),
     )
     .await;
@@ -1706,6 +1718,9 @@ async fn test_a2a_invoke_get_push_config_routes_to_python() {
 
     Mock::given(method("POST"))
         .and(path_regex(".*push/get$"))
+        .and(body_json(json!({
+            "task_id": "task-1"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
             "enabled": true
@@ -1726,7 +1741,7 @@ async fn test_a2a_invoke_get_push_config_routes_to_python() {
             "jsonrpc": "2.0",
             "method": "GetTaskPushNotificationConfig",
             "id": 9,
-            "params": {"config_id": "cfg-1"}
+            "params": {"task_id": "task-1"}
         }),
     )
     .await;
@@ -1760,6 +1775,9 @@ async fn test_a2a_invoke_list_push_configs_routes_to_python() {
 
     Mock::given(method("POST"))
         .and(path_regex(".*push/list$"))
+        .and(body_json(json!({
+            "task_id": "task-1"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "configs": [{"config_id": "cfg-1"}, {"config_id": "cfg-2"}]
         })))
@@ -1813,6 +1831,9 @@ async fn test_a2a_invoke_delete_push_config_routes_to_python() {
 
     Mock::given(method("POST"))
         .and(path_regex(".*push/delete$"))
+        .and(body_json(json!({
+            "config_id": "cfg-1"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "deleted": true
         })))
@@ -2309,6 +2330,13 @@ async fn test_streaming_method_forwards_sse_stream() {
 
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
 
     let body = String::from_utf8_lossy(
         &response.into_body().collect().await.unwrap().to_bytes(),
@@ -2972,6 +3000,75 @@ async fn test_streaming_method_with_last_event_id_without_redis() {
     );
     // The agent call succeeded, so status_code should be 200.
     assert_eq!(body["status_code"], 200, "agent call should have succeeded");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_streaming_method_replays_from_store_when_last_event_id_present() {
+    let mock_server = MockServer::start().await;
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let event_store = Arc::new(contextforge_a2a_runtime::event_store::EventStore::seeded_for_test(
+        vec![
+            contextforge_a2a_runtime::event_store::StoredEvent {
+                event_id: "evt-1".to_string(),
+                sequence: 1,
+                event_type: "unknown".to_string(),
+                payload: r#"{"status":"queued"}"#.to_string(),
+            },
+            contextforge_a2a_runtime::event_store::StoredEvent {
+                event_id: "evt-2".to_string(),
+                sequence: 2,
+                event_type: "unknown".to_string(),
+                payload: r#"{"status":"working"}"#.to_string(),
+            },
+        ],
+        false,
+    ));
+    let app = contextforge_a2a_runtime::test_support::build_app_with_event_store(
+        config,
+        Some(event_store),
+    );
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/a2a/test-agent/invoke")
+        .header("content-type", "application/json")
+        .header("last-event-id", "task-123:0")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "method": "SendStreamingMessage",
+                "id": 1,
+                "params": {"id": "task-123", "message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let body = String::from_utf8_lossy(
+        &response.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .to_string();
+    assert!(body.contains("id: evt-1:1"), "expected first replayed event, body: {body}");
+    assert!(body.contains("id: evt-2:2"), "expected second replayed event, body: {body}");
+    assert!(body.contains("data: {\"status\":\"queued\"}"), "expected queued payload, body: {body}");
+    assert!(body.contains("data: {\"status\":\"working\"}"), "expected working payload, body: {body}");
 
     mock_server.verify().await;
 }

@@ -335,6 +335,79 @@ impl EventStore {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
         let _ = self.storage.hset(&meta_key, "stream_active", "0").await;
     }
+
+    #[doc(hidden)]
+    pub fn seeded_for_test(events: Vec<StoredEvent>, stream_active: bool) -> Self {
+        #[derive(Clone)]
+        struct SeededEventStoreStorage {
+            events: Arc<Vec<StoredEvent>>,
+            active: bool,
+        }
+
+        #[async_trait]
+        impl EventStoreStorage for SeededEventStoreStorage {
+            async fn store_event(
+                &self,
+                _meta_key: &str,
+                _events_key: &str,
+                _messages_key: &str,
+                _event_id: &str,
+                _payload_json: &str,
+                _ttl_secs: u64,
+                _max_events: usize,
+            ) -> Result<i64, String> {
+                Err("store not supported in seeded test store".to_string())
+            }
+
+            async fn replay_entries(
+                &self,
+                _events_key: &str,
+                after_sequence: i64,
+            ) -> Result<Vec<(String, f64)>, String> {
+                Ok(self
+                    .events
+                    .iter()
+                    .filter(|event| event.sequence > after_sequence)
+                    .map(|event| (event.event_id.clone(), event.sequence as f64))
+                    .collect())
+            }
+
+            async fn payloads(
+                &self,
+                _messages_key: &str,
+                event_ids: &[String],
+            ) -> Result<Vec<Option<String>>, String> {
+                Ok(event_ids
+                    .iter()
+                    .map(|event_id| {
+                        self.events
+                            .iter()
+                            .find(|event| &event.event_id == event_id)
+                            .map(|event| event.payload.clone())
+                    })
+                    .collect())
+            }
+
+            async fn hget(&self, _key: &str, _field: &str) -> Result<Option<String>, String> {
+                Ok(Some(if self.active { "1" } else { "0" }.to_string()))
+            }
+
+            async fn hset(&self, _key: &str, _field: &str, _value: &str) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let (flush_tx, _flush_rx) = mpsc::channel(1);
+        Self::new_with_storage(
+            Arc::new(SeededEventStoreStorage {
+                events: Arc::new(events),
+                active: stream_active,
+            }),
+            256,
+            60,
+            flush_tx,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
