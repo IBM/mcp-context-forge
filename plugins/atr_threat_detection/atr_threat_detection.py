@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./plugins/atr_threat_detection/atr_threat_detection.py
 Copyright 2026
+Authors: "ATR Community"
 SPDX-License-Identifier: Apache-2.0
 
 ATR Threat Detection Plugin.
@@ -49,6 +50,9 @@ SEVERITY_LEVELS: Dict[str, int] = {
     "high": 3,
     "critical": 4,
 }
+
+# Reverse lookup: severity level int -> severity name string
+_SEVERITY_NAMES: Dict[int, str] = {v: k for k, v in SEVERITY_LEVELS.items()}
 
 # Maximum text length to scan (guard against extremely large payloads)
 MAX_SCAN_LENGTH = 500_000
@@ -227,7 +231,7 @@ class ATRThreatDetectionPlugin(Plugin):
         """
         matched_rules = [f"{f['rule_id']} ({f['title']})" for f in findings]
         max_severity = max(SEVERITY_LEVELS.get(f["severity"], 2) for f in findings)
-        severity_name = {v: k for k, v in SEVERITY_LEVELS.items()}.get(max_severity, "medium")
+        severity_name = _SEVERITY_NAMES.get(max_severity, "medium")
         return PluginViolation(
             reason="Agent threat detected",
             description=f"ATR rules matched in {scan_target}: {', '.join(matched_rules[:5])}",
@@ -269,7 +273,7 @@ class ATRThreatDetectionPlugin(Plugin):
             Result indicating threats found or clean.
         """
         parts = [payload.name or ""]
-        args = getattr(payload, "args", None) or getattr(payload, "arguments", None) or {}
+        args = payload.args or {}
         parts.append(_flatten_to_text(args))
         text = " ".join(parts)
         findings = self._scan_text(text)
