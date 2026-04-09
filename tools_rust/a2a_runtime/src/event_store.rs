@@ -15,11 +15,13 @@
 //! persistence.
 
 use crate::cache::RedisPool;
+use async_trait::async_trait;
 use crate::trust;
 use redis::AsyncCommands;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -89,8 +91,107 @@ pub struct StoredEvent {
 // ---------------------------------------------------------------------------
 
 /// Redis-backed ring-buffer store for SSE streaming events.
-pub struct EventStore {
+#[async_trait]
+trait EventStoreStorage: Send + Sync {
+    async fn store_event(
+        &self,
+        meta_key: &str,
+        events_key: &str,
+        messages_key: &str,
+        event_id: &str,
+        payload_json: &str,
+        ttl_secs: u64,
+        max_events: usize,
+    ) -> Result<i64, String>;
+    async fn replay_entries(
+        &self,
+        events_key: &str,
+        after_sequence: i64,
+    ) -> Result<Vec<(String, f64)>, String>;
+    async fn payloads(
+        &self,
+        messages_key: &str,
+        event_ids: &[String],
+    ) -> Result<Vec<Option<String>>, String>;
+    async fn hget(&self, key: &str, field: &str) -> Result<Option<String>, String>;
+    async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), String>;
+}
+
+struct RedisEventStoreStorage {
     redis: RedisPool,
+}
+
+#[async_trait]
+impl EventStoreStorage for RedisEventStoreStorage {
+    async fn store_event(
+        &self,
+        meta_key: &str,
+        events_key: &str,
+        messages_key: &str,
+        event_id: &str,
+        payload_json: &str,
+        ttl_secs: u64,
+        max_events: usize,
+    ) -> Result<i64, String> {
+        redis::cmd("EVAL")
+            .arg(STORE_EVENT_LUA)
+            .arg(3_u8)
+            .arg(meta_key)
+            .arg(events_key)
+            .arg(messages_key)
+            .arg(event_id)
+            .arg(payload_json)
+            .arg(ttl_secs)
+            .arg(max_events)
+            .query_async(&mut self.redis.conn())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn replay_entries(
+        &self,
+        events_key: &str,
+        after_sequence: i64,
+    ) -> Result<Vec<(String, f64)>, String> {
+        self.redis
+            .conn()
+            .zrangebyscore_withscores(events_key, after_sequence + 1, "+inf")
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn payloads(
+        &self,
+        messages_key: &str,
+        event_ids: &[String],
+    ) -> Result<Vec<Option<String>>, String> {
+        redis::cmd("HMGET")
+            .arg(messages_key)
+            .arg(event_ids)
+            .query_async(&mut self.redis.conn())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn hget(&self, key: &str, field: &str) -> Result<Option<String>, String> {
+        self.redis
+            .conn()
+            .hget(key, field)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), String> {
+        self.redis
+            .conn()
+            .hset(key, field, value)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+pub struct EventStore {
+    storage: Arc<dyn EventStoreStorage>,
     max_events: usize,
     ttl_secs: u64,
     flush_tx: mpsc::Sender<FlushEntry>,
@@ -109,8 +210,22 @@ impl EventStore {
         ttl_secs: u64,
         flush_tx: mpsc::Sender<FlushEntry>,
     ) -> Self {
+        Self::new_with_storage(
+            Arc::new(RedisEventStoreStorage { redis }),
+            max_events,
+            ttl_secs,
+            flush_tx,
+        )
+    }
+
+    fn new_with_storage(
+        storage: Arc<dyn EventStoreStorage>,
+        max_events: usize,
+        ttl_secs: u64,
+        flush_tx: mpsc::Sender<FlushEntry>,
+    ) -> Self {
         Self {
-            redis,
+            storage,
             max_events,
             ttl_secs,
             flush_tx,
@@ -134,17 +249,17 @@ impl EventStore {
         let events_key = format!("{KEY_PREFIX}:{task_id}:events");
         let messages_key = format!("{KEY_PREFIX}:{task_id}:messages");
 
-        let sequence: i64 = match redis::cmd("EVAL")
-            .arg(STORE_EVENT_LUA)
-            .arg(3_u8) // number of keys
-            .arg(&meta_key)
-            .arg(&events_key)
-            .arg(&messages_key)
-            .arg(&event_id)
-            .arg(&payload_json)
-            .arg(self.ttl_secs)
-            .arg(self.max_events)
-            .query_async(&mut self.redis.conn())
+        let sequence: i64 = match self
+            .storage
+            .store_event(
+                &meta_key,
+                &events_key,
+                &messages_key,
+                &event_id,
+                &payload_json,
+                self.ttl_secs,
+                self.max_events,
+            )
             .await
         {
             Ok(seq) => seq,
@@ -173,13 +288,7 @@ impl EventStore {
         let messages_key = format!("{KEY_PREFIX}:{task_id}:messages");
 
         // Scores are integer sequences; range is exclusive lower bound.
-        let min_score = after_sequence + 1;
-        let entries: Vec<(String, f64)> = match self
-            .redis
-            .conn()
-            .zrangebyscore_withscores(&events_key, min_score, "+inf")
-            .await
-        {
+        let entries: Vec<(String, f64)> = match self.storage.replay_entries(&events_key, after_sequence).await {
             Ok(e) => e,
             Err(e) => {
                 warn!(task_id, "failed to replay events from Redis: {e}");
@@ -192,12 +301,7 @@ impl EventStore {
         }
 
         let event_ids: Vec<String> = entries.iter().map(|(event_id, _)| event_id.clone()).collect();
-        let payloads: Vec<Option<String>> = match redis::cmd("HMGET")
-            .arg(&messages_key)
-            .arg(&event_ids)
-            .query_async(&mut self.redis.conn())
-            .await
-        {
+        let payloads: Vec<Option<String>> = match self.storage.payloads(&messages_key, &event_ids).await {
             Ok(payloads) => payloads,
             Err(e) => {
                 warn!(task_id, "failed to fetch replay payloads from Redis: {e}");
@@ -222,23 +326,14 @@ impl EventStore {
     /// Return `true` if the stream is still active (agent has not finished).
     pub async fn is_stream_active(&self, task_id: &str) -> bool {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
-        let active: Option<String> = self
-            .redis
-            .conn()
-            .hget(&meta_key, "stream_active")
-            .await
-            .unwrap_or(None);
+        let active: Option<String> = self.storage.hget(&meta_key, "stream_active").await.unwrap_or(None);
         active.as_deref() == Some("1")
     }
 
     /// Mark the stream as complete (agent has finished sending events).
     pub async fn mark_stream_complete(&self, task_id: &str) {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
-        let _: Result<(), _> = self
-            .redis
-            .conn()
-            .hset(&meta_key, "stream_active", "0")
-            .await;
+        let _ = self.storage.hset(&meta_key, "stream_active", "0").await;
     }
 }
 
@@ -345,6 +440,113 @@ async fn flush_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Default)]
+    struct FakeEventStoreStorage {
+        next_sequence: Mutex<i64>,
+        entries: Mutex<Vec<(String, i64)>>,
+        payloads: Mutex<HashMap<String, String>>,
+        stream_active: Mutex<Option<String>>,
+        fail_store: Mutex<bool>,
+        fail_replay: Mutex<bool>,
+        fail_payloads: Mutex<bool>,
+        fail_hget: Mutex<bool>,
+        fail_hset: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl EventStoreStorage for FakeEventStoreStorage {
+        async fn store_event(
+            &self,
+            _meta_key: &str,
+            _events_key: &str,
+            _messages_key: &str,
+            event_id: &str,
+            payload_json: &str,
+            _ttl_secs: u64,
+            max_events: usize,
+        ) -> Result<i64, String> {
+            if *self.fail_store.lock().unwrap() {
+                return Err("store failed".to_string());
+            }
+            let mut next_sequence = self.next_sequence.lock().unwrap();
+            *next_sequence += 1;
+            let sequence = *next_sequence;
+
+            let mut entries = self.entries.lock().unwrap();
+            entries.push((event_id.to_string(), sequence));
+            if entries.len() > max_events {
+                let excess = entries.len() - max_events;
+                let removed: Vec<String> = entries
+                    .drain(0..excess)
+                    .map(|(event_id, _)| event_id)
+                    .collect();
+                let mut payloads = self.payloads.lock().unwrap();
+                for event_id in removed {
+                    payloads.remove(&event_id);
+                }
+            }
+
+            self.payloads
+                .lock()
+                .unwrap()
+                .insert(event_id.to_string(), payload_json.to_string());
+            *self.stream_active.lock().unwrap() = Some("1".to_string());
+            Ok(sequence)
+        }
+
+        async fn replay_entries(
+            &self,
+            _events_key: &str,
+            after_sequence: i64,
+        ) -> Result<Vec<(String, f64)>, String> {
+            if *self.fail_replay.lock().unwrap() {
+                return Err("replay failed".to_string());
+            }
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, sequence)| *sequence > after_sequence)
+                .map(|(event_id, sequence)| (event_id.clone(), *sequence as f64))
+                .collect())
+        }
+
+        async fn payloads(
+            &self,
+            _messages_key: &str,
+            event_ids: &[String],
+        ) -> Result<Vec<Option<String>>, String> {
+            if *self.fail_payloads.lock().unwrap() {
+                return Err("payload lookup failed".to_string());
+            }
+            let payloads = self.payloads.lock().unwrap();
+            Ok(event_ids
+                .iter()
+                .map(|event_id| payloads.get(event_id).cloned())
+                .collect())
+        }
+
+        async fn hget(&self, _key: &str, _field: &str) -> Result<Option<String>, String> {
+            if *self.fail_hget.lock().unwrap() {
+                return Err("hget failed".to_string());
+            }
+            Ok(self.stream_active.lock().unwrap().clone())
+        }
+
+        async fn hset(&self, _key: &str, _field: &str, value: &str) -> Result<(), String> {
+            if *self.fail_hset.lock().unwrap() {
+                return Err("hset failed".to_string());
+            }
+            *self.stream_active.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+    }
 
     #[test]
     fn store_event_lua_script_is_valid_string() {
@@ -386,5 +588,218 @@ mod tests {
         assert_eq!(decoded.sequence, event.sequence);
         assert_eq!(decoded.event_type, event.event_type);
         assert_eq!(decoded.payload, event.payload);
+    }
+
+    #[tokio::test]
+    async fn flush_batch_posts_events_and_clears_buffer() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/events/flush"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::new();
+        let mut buffer = vec![FlushEntry {
+            task_id: "task-1".to_string(),
+            event_id: "evt-1".to_string(),
+            sequence: 1,
+            event_type: "status".to_string(),
+            payload: serde_json::json!({"status": "working"}),
+        }];
+
+        flush_batch(
+            &client,
+            &mock_server.uri(),
+            "secret",
+            &mut buffer,
+        )
+        .await;
+
+        assert!(buffer.is_empty(), "flush should drain the buffered entries");
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn flush_batch_handles_non_success_and_network_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/events/flush"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::new();
+        let mut buffer = vec![FlushEntry {
+            task_id: "task-2".to_string(),
+            event_id: "evt-2".to_string(),
+            sequence: 2,
+            event_type: "status".to_string(),
+            payload: serde_json::json!({"status": "failed"}),
+        }];
+        flush_batch(&client, &mock_server.uri(), "secret", &mut buffer).await;
+        assert!(buffer.is_empty());
+
+        let mut network_error_buffer = vec![FlushEntry {
+            task_id: "task-3".to_string(),
+            event_id: "evt-3".to_string(),
+            sequence: 3,
+            event_type: "status".to_string(),
+            payload: serde_json::json!({"status": "errored"}),
+        }];
+        flush_batch(
+            &client,
+            "http://127.0.0.1:1",
+            "secret",
+            &mut network_error_buffer,
+        )
+        .await;
+        assert!(network_error_buffer.is_empty());
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn spawn_flush_task_flushes_on_receiver_close() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/events/flush"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let (tx, rx) = mpsc::channel(4);
+        let handle = spawn_flush_task(
+            rx,
+            Client::new(),
+            mock_server.uri(),
+            "secret".to_string(),
+            Duration::from_secs(60),
+            10,
+        );
+
+        tx.send(FlushEntry {
+            task_id: "task-4".to_string(),
+            event_id: "evt-4".to_string(),
+            sequence: 4,
+            event_type: "status".to_string(),
+            payload: serde_json::json!({"status": "done"}),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        handle.await.unwrap();
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn spawn_flush_task_flushes_when_batch_size_is_reached() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/events/flush"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let (tx, rx) = mpsc::channel(4);
+        let handle = spawn_flush_task(
+            rx,
+            Client::new(),
+            mock_server.uri(),
+            "secret".to_string(),
+            Duration::from_secs(60),
+            1,
+        );
+
+        tx.send(FlushEntry {
+            task_id: "task-5".to_string(),
+            event_id: "evt-5".to_string(),
+            sequence: 5,
+            event_type: "status".to_string(),
+            payload: serde_json::json!({"status": "done"}),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        handle.await.unwrap();
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn store_event_and_replay_after_use_storage_and_trim_ring_buffer() {
+        let storage = Arc::new(FakeEventStoreStorage::default());
+        let (flush_tx, mut flush_rx) = mpsc::channel(1);
+        let store = EventStore::new_with_storage(storage, 2, 60, flush_tx);
+
+        let (_, seq1) = store
+            .store_event("task-1", "status", &serde_json::json!({"n": 1}))
+            .await
+            .expect("first event");
+        let (_, seq2) = store
+            .store_event("task-1", "status", &serde_json::json!({"n": 2}))
+            .await
+            .expect("second event");
+        let (_, seq3) = store
+            .store_event("task-1", "status", &serde_json::json!({"n": 3}))
+            .await
+            .expect("third event");
+
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2);
+        assert_eq!(seq3, 3);
+
+        let flushed = flush_rx.recv().await.expect("flush entry should exist");
+        assert_eq!(flushed.task_id, "task-1");
+
+        let replayed = store.replay_after("task-1", 0).await;
+        assert_eq!(replayed.len(), 2, "ring buffer should retain only max_events");
+        assert_eq!(replayed[0].sequence, 2);
+        assert_eq!(replayed[1].sequence, 3);
+        assert_eq!(replayed[0].event_type, "unknown");
+    }
+
+    #[tokio::test]
+    async fn event_store_handles_storage_failures_and_stream_state() {
+        let storage = Arc::new(FakeEventStoreStorage::default());
+        let (flush_tx, _flush_rx) = mpsc::channel(1);
+        let store = EventStore::new_with_storage(storage.clone() as Arc<dyn EventStoreStorage>, 10, 60, flush_tx);
+
+        *storage.fail_store.lock().unwrap() = true;
+        assert!(store
+            .store_event("task-2", "status", &serde_json::json!({"n": 1}))
+            .await
+            .is_none());
+        *storage.fail_store.lock().unwrap() = false;
+
+        *storage.fail_replay.lock().unwrap() = true;
+        assert!(store.replay_after("task-2", 0).await.is_empty());
+        *storage.fail_replay.lock().unwrap() = false;
+
+        *storage.fail_payloads.lock().unwrap() = true;
+        assert!(store.replay_after("task-2", 0).await.is_empty());
+        *storage.fail_payloads.lock().unwrap() = false;
+
+        *storage.stream_active.lock().unwrap() = Some("1".to_string());
+        assert!(store.is_stream_active("task-2").await);
+        *storage.stream_active.lock().unwrap() = Some("0".to_string());
+        assert!(!store.is_stream_active("task-2").await);
+
+        *storage.fail_hget.lock().unwrap() = true;
+        assert!(!store.is_stream_active("task-2").await);
+        *storage.fail_hget.lock().unwrap() = false;
+
+        store.mark_stream_complete("task-2").await;
+        assert_eq!(
+            storage.stream_active.lock().unwrap().as_deref(),
+            Some("0")
+        );
+
+        *storage.fail_hset.lock().unwrap() = true;
+        store.mark_stream_complete("task-2").await;
     }
 }

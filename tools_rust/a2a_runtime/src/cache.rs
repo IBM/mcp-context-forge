@@ -16,6 +16,7 @@
 //! invalidation messages.
 
 use crate::eviction::evict_one_if_over_capacity;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use redis::AsyncCommands;
@@ -95,6 +96,37 @@ struct L1Entry<T> {
 // TieredCache
 // ---------------------------------------------------------------------------
 
+#[async_trait]
+trait CacheStorage: Send + Sync {
+    async fn get(&self, key: &str) -> Result<Option<String>, String>;
+    async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String>;
+    async fn del(&self, key: &str) -> Result<(), String>;
+}
+
+struct RedisCacheStorage {
+    redis: RedisPool,
+}
+
+#[async_trait]
+impl CacheStorage for RedisCacheStorage {
+    async fn get(&self, key: &str) -> Result<Option<String>, String> {
+        let mut conn = self.redis.conn();
+        conn.get(key).await.map_err(|e| e.to_string())
+    }
+
+    async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String> {
+        let mut conn = self.redis.conn();
+        conn.set_ex(key, value, ttl_secs)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn del(&self, key: &str) -> Result<(), String> {
+        let mut conn = self.redis.conn();
+        conn.del(key).await.map_err(|e| e.to_string())
+    }
+}
+
 /// Generic two-layer cache: L1 [`DashMap`] + optional L2 Redis.
 ///
 /// ## Type bounds
@@ -109,7 +141,7 @@ pub struct TieredCache<T> {
     l1: DashMap<String, L1Entry<T>>,
     l1_ttl: Duration,
     l1_max_entries: Option<usize>,
-    redis: Option<RedisPool>,
+    storage: Option<Arc<dyn CacheStorage>>,
     l2_ttl_secs: u64,
     l2_key_prefix: String,
 }
@@ -133,11 +165,22 @@ where
         l2_ttl_secs: u64,
         l2_key_prefix: impl Into<String>,
     ) -> Self {
+        let storage = redis.map(|redis| Arc::new(RedisCacheStorage { redis }) as Arc<dyn CacheStorage>);
+        Self::new_with_storage(l1_ttl, l1_max_entries, storage, l2_ttl_secs, l2_key_prefix)
+    }
+
+    fn new_with_storage(
+        l1_ttl: Duration,
+        l1_max_entries: Option<usize>,
+        storage: Option<Arc<dyn CacheStorage>>,
+        l2_ttl_secs: u64,
+        l2_key_prefix: impl Into<String>,
+    ) -> Self {
         Self {
             l1: DashMap::new(),
             l1_ttl,
             l1_max_entries,
-            redis,
+            storage,
             l2_ttl_secs,
             l2_key_prefix: l2_key_prefix.into(),
         }
@@ -165,11 +208,9 @@ where
         }
 
         // --- L2 ---
-        if let Some(pool) = &self.redis {
-            let mut conn = pool.conn();
+        if let Some(storage) = &self.storage {
             let l2_key = self.l2_key(key);
-            let result: Result<Option<String>, _> = conn.get(&l2_key).await;
-            match result {
+            match storage.get(&l2_key).await {
                 Ok(Some(json)) => match serde_json::from_str::<T>(&json) {
                     Ok(value) => {
                         debug!(key = key, "cache: L2 hit, promoting to L1");
@@ -214,13 +255,11 @@ where
         );
 
         // --- L2 ---
-        if let Some(pool) = &self.redis {
+        if let Some(storage) = &self.storage {
             match serde_json::to_string(&value) {
                 Ok(json) => {
-                    let mut conn = pool.conn();
                     let l2_key = self.l2_key(key);
-                    let result: Result<(), _> = conn.set_ex(&l2_key, &json, self.l2_ttl_secs).await;
-                    if let Err(e) = result {
+                    if let Err(e) = storage.set_ex(&l2_key, &json, self.l2_ttl_secs).await {
                         warn!(key = key, error = %e, "cache: L2 set_ex failed");
                     }
                 }
@@ -237,11 +276,9 @@ where
     pub async fn invalidate(&self, key: &str) {
         self.l1.remove(key);
 
-        if let Some(pool) = &self.redis {
-            let mut conn = pool.conn();
+        if let Some(storage) = &self.storage {
             let l2_key = self.l2_key(key);
-            let result: Result<(), _> = conn.del(&l2_key).await;
-            if let Err(e) = result {
+            if let Err(e) = storage.del(&l2_key).await {
                 warn!(key = key, error = %e, "cache: L2 del failed");
             }
         }
@@ -343,18 +380,7 @@ impl CacheSubscriber {
                                 continue;
                             }
                         };
-                        match serde_json::from_str::<InvalidationMessage>(&payload) {
-                            Ok(InvalidationMessage::Agent { name }) => {
-                                debug!(agent = %name, "cache subscriber: evicting agent");
-                                agent_cache_evict(&name);
-                            }
-                            Ok(InvalidationMessage::Task { task_id }) => {
-                                debug!(task_id = %task_id, "cache subscriber: task invalidation (no-op L1)");
-                            }
-                            Err(e) => {
-                                warn!(payload = %payload, error = %e, "cache subscriber: unknown message");
-                            }
-                        }
+                        handle_invalidation_payload(&payload, &agent_cache_evict);
                     }
                     _ = rx.changed() => {
                         debug!(channel = %channel, "cache subscriber: shutdown signal received");
@@ -368,6 +394,24 @@ impl CacheSubscriber {
     }
 }
 
+fn handle_invalidation_payload(
+    payload: &str,
+    agent_cache_evict: &Arc<dyn Fn(&str) + Send + Sync>,
+) {
+    match serde_json::from_str::<InvalidationMessage>(payload) {
+        Ok(InvalidationMessage::Agent { name }) => {
+            debug!(agent = %name, "cache subscriber: evicting agent");
+            agent_cache_evict(&name);
+        }
+        Ok(InvalidationMessage::Task { task_id }) => {
+            debug!(task_id = %task_id, "cache subscriber: task invalidation (no-op L1)");
+        }
+        Err(e) => {
+            warn!(payload = %payload, error = %e, "cache subscriber: unknown message");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -375,6 +419,45 @@ impl CacheSubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeCacheStorage {
+        values: Mutex<HashMap<String, String>>,
+        fail_get: Mutex<bool>,
+        fail_set: Mutex<bool>,
+        fail_del: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl CacheStorage for FakeCacheStorage {
+        async fn get(&self, key: &str) -> Result<Option<String>, String> {
+            if *self.fail_get.lock().unwrap() {
+                return Err("get failed".to_string());
+            }
+            Ok(self.values.lock().unwrap().get(key).cloned())
+        }
+
+        async fn set_ex(&self, key: &str, value: &str, _ttl_secs: u64) -> Result<(), String> {
+            if *self.fail_set.lock().unwrap() {
+                return Err("set failed".to_string());
+            }
+            self.values
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        async fn del(&self, key: &str) -> Result<(), String> {
+            if *self.fail_del.lock().unwrap() {
+                return Err("del failed".to_string());
+            }
+            self.values.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
 
     // -- InvalidationMessage deserialisation ---------------------------------
 
@@ -382,20 +465,20 @@ mod tests {
     fn invalidation_message_deserializes_agent() {
         let json = r#"{"type":"agent","name":"my-agent"}"#;
         let msg: InvalidationMessage = serde_json::from_str(json).unwrap();
-        match msg {
-            InvalidationMessage::Agent { name } => assert_eq!(name, "my-agent"),
-            other => panic!("unexpected variant: {other:?}"),
-        }
+        assert!(matches!(
+            msg,
+            InvalidationMessage::Agent { ref name } if name == "my-agent"
+        ));
     }
 
     #[test]
     fn invalidation_message_deserializes_task() {
         let json = r#"{"type":"task","task_id":"abc-123"}"#;
         let msg: InvalidationMessage = serde_json::from_str(json).unwrap();
-        match msg {
-            InvalidationMessage::Task { task_id } => assert_eq!(task_id, "abc-123"),
-            other => panic!("unexpected variant: {other:?}"),
-        }
+        assert!(matches!(
+            msg,
+            InvalidationMessage::Task { ref task_id } if task_id == "abc-123"
+        ));
     }
 
     // -- TieredCache (L1 only, no Redis) ------------------------------------
@@ -437,5 +520,94 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         let got = cache.get("expiring").await;
         assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn tiered_cache_reads_writes_and_invalidates_l2_storage() {
+        let storage = Arc::new(FakeCacheStorage::default());
+        storage
+            .values
+            .lock()
+            .unwrap()
+            .insert("test:l2-key".to_string(), "\"from-l2\"".to_string());
+        let cache = TieredCache::new_with_storage(
+            Duration::from_secs(60),
+            Some(100),
+            Some(storage.clone()),
+            300,
+            "test",
+        );
+
+        assert_eq!(cache.get("l2-key").await.as_deref(), Some("from-l2"));
+        cache.set("new-key", "new-value".to_string()).await;
+        assert_eq!(
+            storage.values.lock().unwrap().get("test:new-key"),
+            Some(&"\"new-value\"".to_string())
+        );
+        cache.invalidate("new-key").await;
+        assert!(!storage.values.lock().unwrap().contains_key("test:new-key"));
+    }
+
+    #[tokio::test]
+    async fn tiered_cache_handles_l2_bad_json_and_storage_errors() {
+        let storage = Arc::new(FakeCacheStorage::default());
+        storage
+            .values
+            .lock()
+            .unwrap()
+            .insert("test:bad-json".to_string(), "{not-json".to_string());
+        let cache = TieredCache::new_with_storage(
+            Duration::from_secs(60),
+            Some(100),
+            Some(storage.clone()),
+            300,
+            "test",
+        );
+        assert!(cache.get("bad-json").await.is_none());
+
+        *storage.fail_get.lock().unwrap() = true;
+        assert!(cache.get("error").await.is_none());
+        *storage.fail_get.lock().unwrap() = false;
+
+        *storage.fail_set.lock().unwrap() = true;
+        cache.set("set-error", "value".to_string()).await;
+        *storage.fail_set.lock().unwrap() = false;
+
+        *storage.fail_del.lock().unwrap() = true;
+        cache.invalidate("del-error").await;
+    }
+
+    #[test]
+    fn evict_l1_removes_only_local_entry() {
+        let cache = make_cache();
+        cache.l1.insert(
+            "evict-me".to_string(),
+            L1Entry {
+                value: "value".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(60),
+            },
+        );
+        cache.evict_l1("evict-me");
+        assert!(!cache.l1.contains_key("evict-me"));
+    }
+
+    #[tokio::test]
+    async fn redis_pool_connect_returns_none_for_invalid_urls() {
+        assert!(RedisPool::connect("not-a-redis-url").await.is_none());
+    }
+
+    #[test]
+    fn handle_invalidation_payload_processes_agent_task_and_unknown_messages() {
+        let evicted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let evicted_ref = Arc::clone(&evicted);
+        let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |key: &str| {
+            evicted_ref.lock().unwrap().push(key.to_string());
+        });
+
+        handle_invalidation_payload(r#"{"type":"agent","name":"agent-1"}"#, &callback);
+        handle_invalidation_payload(r#"{"type":"task","task_id":"task-1"}"#, &callback);
+        handle_invalidation_payload("not-json", &callback);
+
+        assert_eq!(evicted.lock().unwrap().as_slice(), ["agent-1"]);
     }
 }

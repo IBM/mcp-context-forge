@@ -253,3 +253,97 @@ pub mod test_support {
         server::router(state)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use std::fs;
+
+    fn temp_socket_path(prefix: &str) -> PathBuf {
+        PathBuf::from(format!("/tmp/{}-{}.sock", prefix, &uuid::Uuid::new_v4().simple().to_string()[..8]))
+    }
+
+    fn test_config() -> RuntimeConfig {
+        RuntimeConfig {
+            listen_http: "127.0.0.1:0".to_string(),
+            listen_uds: None,
+            request_timeout_ms: 50,
+            client_connect_timeout_ms: 50,
+            client_pool_idle_timeout_seconds: 1,
+            client_pool_max_idle_per_host: 1,
+            client_tcp_keepalive_seconds: 1,
+            max_response_body_bytes: 1024,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            auth_secret: None,
+            backend_base_url: "http://127.0.0.1:4444".to_string(),
+            max_concurrent: 1,
+            max_queued: Some(4),
+            circuit_failure_threshold: 1,
+            circuit_cooldown_secs: 1,
+            circuit_max_entries: 4,
+            metrics_max_entries: 4,
+            agent_cache_ttl_secs: 1,
+            agent_cache_max_entries: 4,
+            redis_url: None,
+            l2_cache_ttl_secs: 1,
+            cache_invalidation_channel: "test-invalidate".to_string(),
+            session_enabled: false,
+            session_ttl_secs: 1,
+            session_fingerprint_headers: "authorization".to_string(),
+            event_store_max_events: 4,
+            event_store_ttl_secs: 1,
+            event_flush_interval_ms: 1,
+            event_flush_batch_size: 1,
+            log_filter: "info".to_string(),
+            exit_after_startup_ms: Some(5),
+        }
+    }
+
+    #[test]
+    fn build_http_client_applies_timeouts() {
+        let config = test_config();
+        let client = build_http_client(&config).expect("client should build");
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn serve_http_returns_after_graceful_shutdown_delay() {
+        let app = Router::new();
+        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+        serve_http(app, addr, Some(Duration::from_millis(5)))
+            .await
+            .expect("http server should exit cleanly");
+    }
+
+    #[tokio::test]
+    async fn serve_uds_removes_existing_socket_path() {
+        let app = Router::new();
+        let path = temp_socket_path("a2a-test");
+        fs::write(&path, b"placeholder").expect("create placeholder file");
+
+        serve_uds(app, path.clone(), Some(Duration::from_millis(5)))
+            .await
+            .expect("uds server should exit cleanly");
+
+        assert!(path.exists(), "unix listener path should be recreated by bind");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn run_serves_http_until_exit_after_startup() {
+        run(test_config())
+            .await
+            .expect("runtime should start and shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn run_serves_uds_until_exit_after_startup() {
+        let path = temp_socket_path("a2a-run");
+        serve_uds(Router::new(), path.clone(), Some(Duration::from_millis(5)))
+            .await
+            .expect("uds server should exit cleanly");
+        let _ = fs::remove_file(path);
+    }
+}

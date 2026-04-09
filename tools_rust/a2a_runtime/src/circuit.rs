@@ -193,4 +193,18 @@ mod tests {
         assert!(!cb.allow_request("http://a", "t1"));
         assert!(cb.allow_request("http://a", "t2"));
     }
+
+    #[test]
+    fn failure_while_open_extends_open_deadline() {
+        let cb = CircuitBreaker::new(1, Duration::from_secs(1), Some(100));
+        cb.record_failure("http://a", "t1");
+        cb.record_failure("http://a", "t1");
+        assert!(!cb.allow_request("http://a", "t1"));
+    }
+
+    #[test]
+    fn default_constructor_is_usable() {
+        let cb = CircuitBreaker::default();
+        assert!(cb.allow_request("http://a", "scope"));
+    }
 }

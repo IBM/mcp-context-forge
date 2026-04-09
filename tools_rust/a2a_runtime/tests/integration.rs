@@ -1627,6 +1627,224 @@ async fn test_a2a_invoke_get_authenticated_card_not_found_returns_error_envelope
 }
 
 // ---------------------------------------------------------------------------
+// Push notification config routing tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_a2a_invoke_create_push_config_routes_to_python() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {"email": "user@example.com", "is_admin": false, "teams": ["team1"]}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/create$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "config_id": "cfg-1",
+            "enabled": true
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CreateTaskPushNotificationConfig",
+            "id": 8,
+            "params": {"task_id": "task-1", "webhook_url": "https://example.com/hook", "enabled": true}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert_eq!(body["status_code"], 200);
+    assert_eq!(body["json"]["id"], 8);
+    assert_eq!(body["json"]["result"]["config_id"], "cfg-1");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_get_push_config_routes_to_python() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {"email": "user@example.com", "is_admin": false, "teams": ["team1"]}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/get$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "config_id": "cfg-1",
+            "enabled": true
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTaskPushNotificationConfig",
+            "id": 9,
+            "params": {"config_id": "cfg-1"}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert_eq!(body["status_code"], 200);
+    assert_eq!(body["json"]["id"], 9);
+    assert_eq!(body["json"]["result"]["config_id"], "cfg-1");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_list_push_configs_routes_to_python() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {"email": "user@example.com", "is_admin": false, "teams": ["team1"]}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*list/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/list$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "configs": [{"config_id": "cfg-1"}, {"config_id": "cfg-2"}]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "ListTaskPushNotificationConfigs",
+            "id": 10,
+            "params": {"task_id": "task-1"}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert_eq!(body["status_code"], 200);
+    assert_eq!(body["json"]["id"], 10);
+    assert_eq!(body["json"]["result"]["configs"][0]["config_id"], "cfg-1");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_delete_push_config_routes_to_python() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {"email": "user@example.com", "is_admin": false, "teams": ["team1"]}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/delete$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "deleted": true
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "DeleteTaskPushNotificationConfig",
+            "id": 11,
+            "params": {"config_id": "cfg-1"}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert_eq!(body["status_code"], 200);
+    assert_eq!(body["json"]["id"], 11);
+    assert_eq!(body["json"]["result"]["deleted"], true);
+    mock_server.verify().await;
+}
+
+// ---------------------------------------------------------------------------
 // L1-only cache degradation test (no Redis)
 // ---------------------------------------------------------------------------
 
@@ -2013,6 +2231,96 @@ async fn test_streaming_method_falls_back_to_json_when_agent_returns_json() {
     );
 
     // Ensure the wiremock stubs were all satisfied.
+    mock_server.verify().await;
+}
+
+/// When the agent responds with `Content-Type: text/event-stream`, the runtime
+/// should forward the SSE stream instead of wrapping it as JSON.
+#[tokio::test]
+async fn test_streaming_method_forwards_sse_stream() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let agent_path = "/streaming-sse-agent";
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    "id: evt-1\nevent: status\ndata: {\"status\":\"working\"}\n\n",
+                    "text/event-stream",
+                ),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/a2a/test-agent/invoke")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "method": "SendStreamingMessage",
+                "id": 1,
+                "params": {"id": "task-123", "message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = String::from_utf8_lossy(
+        &response.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .to_string();
+    assert!(body.contains("id: evt-1"), "expected SSE id, body: {body}");
+    assert!(body.contains("event: status"), "expected SSE event, body: {body}");
+    assert!(
+        body.contains("data: {\"status\":\"working\"}"),
+        "expected SSE data, body: {body}"
+    );
+
     mock_server.verify().await;
 }
 

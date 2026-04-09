@@ -251,12 +251,10 @@ mod tests {
     fn listen_target_parses_valid_http_address() {
         let config = test_config();
         let target = config.listen_target().expect("should parse valid address");
-        match target {
-            ListenTarget::Http(addr) => {
-                assert_eq!(addr, "127.0.0.1:8788".parse::<SocketAddr>().unwrap());
-            }
-            ListenTarget::Uds(_) => panic!("expected Http, got Uds"),
-        }
+        assert!(matches!(
+            target,
+            ListenTarget::Http(addr) if addr == "127.0.0.1:8788".parse::<SocketAddr>().unwrap()
+        ));
     }
 
     #[test]
@@ -264,12 +262,10 @@ mod tests {
         let mut config = test_config();
         config.listen_uds = Some(PathBuf::from("/tmp/test.sock"));
         let target = config.listen_target().expect("should return Uds");
-        match target {
-            ListenTarget::Uds(path) => {
-                assert_eq!(path, PathBuf::from("/tmp/test.sock"));
-            }
-            ListenTarget::Http(_) => panic!("expected Uds, got Http"),
-        }
+        assert!(matches!(
+            target,
+            ListenTarget::Uds(path) if path == PathBuf::from("/tmp/test.sock")
+        ));
     }
 
     #[test]

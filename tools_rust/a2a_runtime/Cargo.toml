@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 aes-gcm = "0.10"
+async-trait = "0.1"
 axum = "0.8.8"
 base64 = "0.22"
 clap = { version = "4.5.60", features = ["derive", "env"] }

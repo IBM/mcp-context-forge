@@ -9,11 +9,13 @@
 //! TTL that can be refreshed on activity.
 
 use crate::cache::RedisPool;
+use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -52,8 +54,47 @@ impl SessionRecord {
 ///
 /// Each [`SessionManager`] instance is associated with a specific worker UUID
 /// so that distributed deployments can trace which node created a session.
-pub struct SessionManager {
+#[async_trait]
+trait SessionStorage: Send + Sync {
+    async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String>;
+    async fn get(&self, key: &str) -> Result<Option<String>, String>;
+    async fn expire(&self, key: &str, ttl_secs: u64) -> Result<bool, String>;
+    async fn del(&self, key: &str) -> Result<u32, String>;
+}
+
+struct RedisSessionStorage {
     redis: RedisPool,
+}
+
+#[async_trait]
+impl SessionStorage for RedisSessionStorage {
+    async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String> {
+        let mut conn = self.redis.conn();
+        conn.set_ex(key, value, ttl_secs)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<String>, String> {
+        let mut conn = self.redis.conn();
+        conn.get(key).await.map_err(|e| e.to_string())
+    }
+
+    async fn expire(&self, key: &str, ttl_secs: u64) -> Result<bool, String> {
+        let mut conn = self.redis.conn();
+        conn.expire(key, ttl_secs as i64)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn del(&self, key: &str) -> Result<u32, String> {
+        let mut conn = self.redis.conn();
+        conn.del(key).await.map_err(|e| e.to_string())
+    }
+}
+
+pub struct SessionManager {
+    storage: Arc<dyn SessionStorage>,
     ttl: Duration,
     /// Header names whose values are included in the client fingerprint.
     fingerprint_headers: Vec<String>,
@@ -70,6 +111,18 @@ impl SessionManager {
     ///   values contribute to the client fingerprint (e.g.
     ///   `"authorization,x-forwarded-for"`).
     pub fn new(redis: RedisPool, ttl_secs: u64, fingerprint_headers: &str) -> Self {
+        Self::new_with_storage(
+            Arc::new(RedisSessionStorage { redis }),
+            ttl_secs,
+            fingerprint_headers,
+        )
+    }
+
+    fn new_with_storage(
+        storage: Arc<dyn SessionStorage>,
+        ttl_secs: u64,
+        fingerprint_headers: &str,
+    ) -> Self {
         let headers = fingerprint_headers
             .split(',')
             .map(|h| h.trim().to_ascii_lowercase())
@@ -77,7 +130,7 @@ impl SessionManager {
             .collect();
 
         Self {
-            redis,
+            storage,
             ttl: Duration::from_secs(ttl_secs),
             fingerprint_headers: headers,
             worker_id: Uuid::new_v4().to_string(),
@@ -118,9 +171,7 @@ impl SessionManager {
         };
 
         let key = redis_key(&session_id);
-        let mut conn = self.redis.conn();
-        let result: Result<(), _> = conn.set_ex(&key, &json, self.ttl.as_secs()).await;
-        match result {
+        match self.storage.set_ex(&key, &json, self.ttl.as_secs()).await {
             Ok(()) => {
                 debug!(session_id = %session_id, "session: created");
                 Some(session_id)
@@ -137,9 +188,7 @@ impl SessionManager {
     /// Returns `None` on a cache miss or if Redis is unavailable.
     pub async fn lookup(&self, session_id: &str) -> Option<SessionRecord> {
         let key = redis_key(session_id);
-        let mut conn = self.redis.conn();
-        let result: Result<Option<String>, _> = conn.get(&key).await;
-        match result {
+        match self.storage.get(&key).await {
             Ok(Some(json)) => match serde_json::from_str::<SessionRecord>(&json) {
                 Ok(record) => {
                     debug!(session_id = %session_id, "session: found");
@@ -164,9 +213,7 @@ impl SessionManager {
     /// Refresh the TTL of an existing session without modifying its contents.
     pub async fn extend(&self, session_id: &str) {
         let key = redis_key(session_id);
-        let mut conn = self.redis.conn();
-        let result: Result<bool, _> = conn.expire(&key, self.ttl.as_secs() as i64).await;
-        match result {
+        match self.storage.expire(&key, self.ttl.as_secs()).await {
             Ok(true) => debug!(session_id = %session_id, "session: TTL extended"),
             Ok(false) => debug!(session_id = %session_id, "session: key not found during extend"),
             Err(e) => warn!(session_id = %session_id, error = %e, "session: expire failed"),
@@ -176,9 +223,7 @@ impl SessionManager {
     /// Delete a session from Redis.
     pub async fn invalidate(&self, session_id: &str) {
         let key = redis_key(session_id);
-        let mut conn = self.redis.conn();
-        let result: Result<u32, _> = conn.del(&key).await;
-        match result {
+        match self.storage.del(&key).await {
             Ok(_) => debug!(session_id = %session_id, "session: invalidated"),
             Err(e) => warn!(session_id = %session_id, error = %e, "session: del failed"),
         }
@@ -233,6 +278,56 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeSessionStorage {
+        values: Mutex<HashMap<String, String>>,
+        fail_set: Mutex<bool>,
+        fail_get: Mutex<bool>,
+        fail_expire: Mutex<bool>,
+        fail_del: Mutex<bool>,
+        expire_result: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl SessionStorage for FakeSessionStorage {
+        async fn set_ex(&self, key: &str, value: &str, _ttl_secs: u64) -> Result<(), String> {
+            if *self.fail_set.lock().unwrap() {
+                return Err("set failed".to_string());
+            }
+            self.values
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        async fn get(&self, key: &str) -> Result<Option<String>, String> {
+            if *self.fail_get.lock().unwrap() {
+                return Err("get failed".to_string());
+            }
+            Ok(self.values.lock().unwrap().get(key).cloned())
+        }
+
+        async fn expire(&self, _key: &str, _ttl_secs: u64) -> Result<bool, String> {
+            if *self.fail_expire.lock().unwrap() {
+                return Err("expire failed".to_string());
+            }
+            Ok(*self.expire_result.lock().unwrap())
+        }
+
+        async fn del(&self, key: &str) -> Result<u32, String> {
+            if *self.fail_del.lock().unwrap() {
+                return Err("del failed".to_string());
+            }
+            Ok(self.values.lock().unwrap().remove(key).map(|_| 1).unwrap_or(0))
+        }
+    }
+
+    fn fake_manager(storage: Arc<FakeSessionStorage>, fingerprint_headers: &str) -> SessionManager {
+        SessionManager::new_with_storage(storage, 300, fingerprint_headers)
+    }
 
     // -- SessionRecord serialization -----------------------------------------
 
@@ -289,6 +384,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compute_fingerprint_ignores_unlisted_headers_and_order() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = fake_manager(storage, "x-forwarded-for,authorization");
+
+        let mut headers_a = HashMap::new();
+        headers_a.insert("authorization".to_string(), "Bearer token".to_string());
+        headers_a.insert("x-forwarded-for".to_string(), "10.0.0.1".to_string());
+        headers_a.insert("ignored".to_string(), "value-a".to_string());
+
+        let mut headers_b = HashMap::new();
+        headers_b.insert("x-forwarded-for".to_string(), "10.0.0.1".to_string());
+        headers_b.insert("authorization".to_string(), "Bearer token".to_string());
+        headers_b.insert("ignored".to_string(), "value-b".to_string());
+
+        assert_eq!(
+            manager.compute_fingerprint(&headers_a),
+            manager.compute_fingerprint(&headers_b)
+        );
+    }
+
+    #[tokio::test]
+    async fn create_and_lookup_round_trip_uses_storage() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = fake_manager(Arc::clone(&storage), "authorization,cookie");
+        let auth_context = serde_json::json!({"sub": "user@example.com"});
+
+        let session_id = manager
+            .create(&auth_context, "fingerprint-1")
+            .await
+            .expect("session should be created");
+
+        let record = manager.lookup(&session_id).await.expect("session should exist");
+        assert_eq!(record.auth_context, auth_context);
+        assert_eq!(record.auth_fingerprint, "fingerprint-1");
+        assert!(!record.worker_id.is_empty());
+        assert!(record.created_at_ms > 0);
+        assert!(record.last_active_at_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn create_returns_none_when_storage_set_fails() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        *storage.fail_set.lock().unwrap() = true;
+        let manager = fake_manager(storage, "authorization");
+        assert!(manager.create(&serde_json::json!({}), "fp").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn lookup_returns_none_for_miss_bad_json_and_storage_error() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = fake_manager(Arc::clone(&storage), "authorization");
+        assert!(manager.lookup("missing").await.is_none());
+
+        storage
+            .values
+            .lock()
+            .unwrap()
+            .insert(redis_key("broken"), "{not-json".to_string());
+        assert!(manager.lookup("broken").await.is_none());
+
+        *storage.fail_get.lock().unwrap() = true;
+        assert!(manager.lookup("error").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn extend_and_invalidate_cover_success_false_and_error_paths() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = fake_manager(Arc::clone(&storage), "authorization");
+
+        storage
+            .values
+            .lock()
+            .unwrap()
+            .insert(redis_key("session-1"), "value".to_string());
+
+        *storage.expire_result.lock().unwrap() = true;
+        manager.extend("session-1").await;
+
+        *storage.expire_result.lock().unwrap() = false;
+        manager.extend("session-1").await;
+
+        *storage.fail_expire.lock().unwrap() = true;
+        manager.extend("session-1").await;
+        *storage.fail_expire.lock().unwrap() = false;
+
+        manager.invalidate("session-1").await;
+        assert!(!storage
+            .values
+            .lock()
+            .unwrap()
+            .contains_key(&redis_key("session-1")));
+
+        *storage.fail_del.lock().unwrap() = true;
+        manager.invalidate("session-2").await;
+    }
+
     // -- validate_fingerprint ------------------------------------------------
 
     #[test]
@@ -313,5 +505,21 @@ mod tests {
             last_active_at_ms: 0,
         };
         assert!(!record.matches_fingerprint("cafebabe"));
+    }
+
+    #[test]
+    fn validate_fingerprint_delegates_to_record_match() {
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = fake_manager(storage, "authorization");
+        let record = SessionRecord {
+            auth_context: serde_json::json!({}),
+            auth_fingerprint: "match-me".to_string(),
+            worker_id: "worker".to_string(),
+            created_at_ms: 0,
+            last_active_at_ms: 0,
+        };
+
+        assert!(manager.validate_fingerprint(&record, "match-me"));
+        assert!(!manager.validate_fingerprint(&record, "different"));
     }
 }

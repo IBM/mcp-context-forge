@@ -116,4 +116,53 @@ mod tests {
         assert!(!err.is_retryable());
         assert_eq!(err.error_code(), "invalid_scheme");
     }
+
+    #[test]
+    fn error_codes_cover_remaining_variants() {
+        assert_eq!(
+            InvokeError::Connection("offline".to_string()).error_code(),
+            "connection"
+        );
+        assert_eq!(InvokeError::AgentHttp(500).error_code(), "agent_http");
+        assert_eq!(InvokeError::CircuitOpen.error_code(), "circuit_open");
+        assert_eq!(InvokeError::Auth("bad".to_string()).error_code(), "auth");
+        assert_eq!(InvokeError::QueueFull.error_code(), "queue_full");
+        assert_eq!(
+            InvokeError::InvalidHeader("bad".to_string()).error_code(),
+            "invalid_header"
+        );
+        assert_eq!(InvokeError::Other("bad".to_string()).error_code(), "other");
+    }
+
+    #[test]
+    fn http_statuses_cover_remaining_variants() {
+        assert_eq!(
+            InvokeError::Connection("offline".to_string()).http_status(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            InvokeError::AgentHttp(503).http_status(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            InvokeError::CircuitOpen.http_status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            InvokeError::QueueFull.http_status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            InvokeError::Auth("bad".to_string()).http_status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            InvokeError::InvalidHeader("bad".to_string()).http_status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            InvokeError::Other("bad".to_string()).http_status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
 }

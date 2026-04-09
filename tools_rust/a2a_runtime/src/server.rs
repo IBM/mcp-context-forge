@@ -1151,7 +1151,7 @@ async fn proxy_to_backend(
     for (name, value) in &response_headers {
         builder = builder.header(name, value);
     }
-    builder
+builder
         .body(axum::body::Body::from(response_body))
         .map_err(|e| {
             (
@@ -1161,4 +1161,327 @@ async fn proxy_to_backend(
                 }),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::TieredCache;
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+    use std::time::Duration;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use serde_json::json;
+
+    fn test_state(backend_base_url: String) -> AppState {
+        let config = Arc::new(RuntimeConfig {
+            listen_http: "127.0.0.1:0".to_string(),
+            listen_uds: None,
+            request_timeout_ms: 1_000,
+            client_connect_timeout_ms: 200,
+            client_pool_idle_timeout_seconds: 1,
+            client_pool_max_idle_per_host: 1,
+            client_tcp_keepalive_seconds: 1,
+            max_response_body_bytes: 1024 * 1024,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            auth_secret: None,
+            backend_base_url,
+            max_concurrent: 2,
+            max_queued: Some(4),
+            circuit_failure_threshold: 2,
+            circuit_cooldown_secs: 1,
+            circuit_max_entries: 8,
+            metrics_max_entries: 8,
+            agent_cache_ttl_secs: 60,
+            agent_cache_max_entries: 8,
+            redis_url: None,
+            l2_cache_ttl_secs: 60,
+            cache_invalidation_channel: "invalidate".to_string(),
+            session_enabled: false,
+            session_ttl_secs: 60,
+            session_fingerprint_headers: "authorization".to_string(),
+            event_store_max_events: 8,
+            event_store_ttl_secs: 60,
+            event_flush_interval_ms: 100,
+            event_flush_batch_size: 8,
+            log_filter: "warn".to_string(),
+            exit_after_startup_ms: None,
+        });
+        let client = Client::new();
+        let circuit = Arc::new(CircuitBreaker::new(2, Duration::from_secs(1), Some(8)));
+        let metrics = Arc::new(MetricsCollector::new(Some(8)));
+        let worker_state = Arc::new(queue::WorkerState {
+            client: client.clone(),
+            config: Arc::clone(&config),
+            circuit: Arc::clone(&circuit),
+            metrics: Arc::clone(&metrics),
+        });
+
+        AppState {
+            config,
+            client,
+            circuit,
+            metrics,
+            worker_state,
+            redis_pool: None,
+            agent_cache: Arc::new(TieredCache::new(Duration::from_secs(60), Some(8), None, 60, "agent")),
+            session_manager: None,
+            event_store: None,
+        }
+    }
+
+    #[test]
+    fn authz_action_for_method_maps_read_list_and_invoke_methods() {
+        assert_eq!(authz_action_for_method(Some("GetTask")), "get");
+        assert_eq!(authz_action_for_method(Some("tasks/get")), "get");
+        assert_eq!(authz_action_for_method(Some("GetExtendedAgentCard")), "get");
+        assert_eq!(
+            authz_action_for_method(Some("tasks/pushNotificationConfig/get")),
+            "get"
+        );
+        assert_eq!(authz_action_for_method(Some("ListTasks")), "list");
+        assert_eq!(
+            authz_action_for_method(Some("tasks/pushNotificationConfig/list")),
+            "list"
+        );
+        assert_eq!(authz_action_for_method(Some("SendMessage")), "invoke");
+        assert_eq!(
+            authz_action_for_method(Some("tasks/pushNotificationConfig/delete")),
+            "invoke"
+        );
+        assert_eq!(authz_action_for_method(None), "invoke");
+    }
+
+    #[test]
+    fn normalize_task_proxy_params_copies_id_and_status_fields() {
+        let get_body = json!({"params": {"id": "task-1"}});
+        assert_eq!(
+            normalize_task_proxy_params("get", &get_body),
+            json!({"id": "task-1", "task_id": "task-1"})
+        );
+
+        let cancel_body = json!({"params": {"id": "task-2"}});
+        assert_eq!(
+            normalize_task_proxy_params("cancel", &cancel_body),
+            json!({"id": "task-2", "task_id": "task-2"})
+        );
+
+        let list_body = json!({"params": {"status": "working"}});
+        assert_eq!(
+            normalize_task_proxy_params("list", &list_body),
+            json!({"status": "working", "state": "working"})
+        );
+    }
+
+    #[test]
+    fn normalize_task_proxy_params_preserves_existing_internal_fields() {
+        let body = json!({"params": {"id": "public-id", "task_id": "internal-id", "state": "done"}});
+        assert_eq!(
+            normalize_task_proxy_params("get", &body),
+            json!({"id": "public-id", "task_id": "internal-id", "state": "done"})
+        );
+        assert_eq!(
+            normalize_task_proxy_params("list", &body),
+            json!({"id": "public-id", "task_id": "internal-id", "state": "done"})
+        );
+    }
+
+    #[test]
+    fn extract_task_id_uses_params_id_or_generates_uuid() {
+        assert_eq!(
+            extract_task_id(&json!({"params": {"id": "task-123"}})),
+            "task-123".to_string()
+        );
+
+        let generated = extract_task_id(&json!({"params": {}}));
+        assert!(uuid::Uuid::parse_str(&generated).is_ok());
+    }
+
+    #[test]
+    fn parse_last_event_id_handles_supported_formats() {
+        let body = json!({"params": {"id": "task-from-body"}});
+
+        assert_eq!(
+            parse_last_event_id("task-1:9", &body),
+            Some(("task-1".to_string(), 9))
+        );
+        assert_eq!(
+            parse_last_event_id("event-123:4", &body),
+            Some(("event-123".to_string(), 4))
+        );
+        assert_eq!(
+            parse_last_event_id("8", &body),
+            Some(("task-from-body".to_string(), 8))
+        );
+    }
+
+    #[test]
+    fn parse_last_event_id_rejects_invalid_values() {
+        let body = json!({"params": {"id": "task-from-body"}});
+        assert_eq!(parse_last_event_id(":9", &body), None);
+        assert_eq!(parse_last_event_id("task-1:not-a-seq", &body), None);
+        assert_eq!(parse_last_event_id("not-a-number", &body), None);
+        assert_eq!(parse_last_event_id("7", &json!({"params": {}})), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_returns_bad_gateway_for_non_200_and_invalid_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/agents/demo/resolve"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/agents/demo/resolve"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+
+        let state = test_state(server.uri());
+        let err = resolve_agent(&state, "demo", &json!({"sub": "user"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+        assert!(err.1.contains("resolve failed"));
+
+        let err = resolve_agent(&state, "demo", &json!({"sub": "user"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+        assert!(err.1.contains("invalid resolve response"));
+    }
+
+    #[tokio::test]
+    async fn proxy_task_and_push_methods_wrap_error_responses() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/tasks/get"))
+            .and(body_json(json!({"task_id": "task-1", "id": "task-1"})))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "missing"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/get"))
+            .and(body_json(json!({"id": "cfg-1"})))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({"error": "bad push"})))
+            .mount(&server)
+            .await;
+
+        let state = test_state(server.uri());
+        let task = proxy_task_method(
+            &state,
+            "get",
+            &json!({"id": 9, "params": {"id": "task-1"}}),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap();
+        let task_json = task.0.json.unwrap();
+        assert_eq!(task.0.status_code, 404);
+        assert_eq!(task_json["error"]["message"], "missing");
+
+        let push = proxy_push_method(
+            &state,
+            "get",
+            &json!({"id": 8, "params": {"id": "cfg-1"}}),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap();
+        let push_json = push.0.json.unwrap();
+        assert_eq!(push.0.status_code, 400);
+        assert_eq!(push_json["error"]["message"], "bad push");
+    }
+
+    #[tokio::test]
+    async fn proxy_methods_surface_transport_errors() {
+        let state = test_state("http://127.0.0.1:1".to_string());
+
+        let err = proxy_task_method(
+            &state,
+            "get",
+            &json!({"id": 1, "params": {"id": "task-1"}}),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+
+        let err = proxy_push_method(
+            &state,
+            "get",
+            &json!({"id": 1, "params": {"id": "cfg-1"}}),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+
+        let err = proxy_agent_card(
+            &state,
+            "agent",
+            &json!({"id": 1}),
+            &json!({"sub": "user"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn proxy_agent_card_wraps_error_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/agents/agent/card"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "no card"})))
+            .mount(&server)
+            .await;
+
+        let state = test_state(server.uri());
+        let card = proxy_agent_card(&state, "agent", &json!({"id": 7}), &json!({"sub": "user"}))
+            .await
+            .unwrap();
+        let card_json = card.0.json.unwrap();
+        assert_eq!(card.0.status_code, 404);
+        assert_eq!(card_json["error"]["message"], "no card");
+    }
+
+    #[tokio::test]
+    async fn proxy_to_backend_filters_headers_and_returns_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/a2a/agent/tasks"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("x-backend", "ok")
+                    .set_body_string("backend-body"),
+            )
+            .mount(&server)
+            .await;
+
+        let state = test_state(server.uri());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-test", "yes".parse().unwrap());
+        headers.insert("connection", "close".parse().unwrap());
+
+        let response = proxy_to_backend(
+            &state,
+            Method::POST,
+            "agent/tasks",
+            &headers,
+            Bytes::from_static(br#"{"ok":true}"#),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("x-backend").unwrap(), "ok");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"backend-body");
+    }
 }

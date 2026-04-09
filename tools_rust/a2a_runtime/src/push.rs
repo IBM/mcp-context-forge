@@ -198,6 +198,8 @@ pub async fn dispatch_webhooks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn push_config_deserializes_from_json() {
@@ -268,5 +270,162 @@ mod tests {
         assert!(should_dispatch(&config, "working"));
         assert!(should_dispatch(&config, "failed"));
         assert!(should_dispatch(&config, "any-arbitrary-state"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_returns_when_push_list_fails() {
+        dispatch_webhooks(
+            &Client::new(),
+            "http://127.0.0.1:1",
+            "secret",
+            "task-1",
+            "agent-1",
+            "completed",
+            &json!({"task_id": "task-1"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_ignores_non_200_and_bad_json_list_responses() {
+        let client = Client::new();
+        let non_200_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&non_200_server)
+            .await;
+
+        dispatch_webhooks(
+            &client,
+            &non_200_server.uri(),
+            "secret",
+            "task-2",
+            "agent-2",
+            "completed",
+            &json!({"task_id": "task-2"}),
+        )
+        .await;
+
+        non_200_server.verify().await;
+
+        let bad_json_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("not-json", "application/json"))
+            .expect(1)
+            .mount(&bad_json_server)
+            .await;
+
+        dispatch_webhooks(
+            &client,
+            &bad_json_server.uri(),
+            "secret",
+            "task-3",
+            "agent-3",
+            "completed",
+            &json!({"task_id": "task-3"}),
+        )
+        .await;
+
+        bad_json_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_sends_matching_webhook_with_bearer_token() {
+        let mock_server = MockServer::start().await;
+        let client = Client::new();
+
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "webhook_url": format!("{}/hook", mock_server.uri()),
+                    "auth_token": "secret-token",
+                    "events": ["completed"],
+                    "enabled": true
+                }
+            ])))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .and(header("authorization", "Bearer secret-token"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        dispatch_webhooks(
+            &client,
+            &mock_server.uri(),
+            "secret",
+            "task-4",
+            "agent-4",
+            "completed",
+            &json!({"task_id": "task-4", "state": "completed"}),
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_skips_non_matching_configs_and_does_not_retry_4xx() {
+        let mock_server = MockServer::start().await;
+        let client = Client::new();
+
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "webhook_url": format!("{}/skip", mock_server.uri()),
+                    "auth_token": null,
+                    "events": ["failed"],
+                    "enabled": true
+                },
+                {
+                    "webhook_url": format!("{}/fail-once", mock_server.uri()),
+                    "auth_token": null,
+                    "events": ["completed"],
+                    "enabled": true
+                }
+            ])))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/skip"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/fail-once"))
+            .respond_with(ResponseTemplate::new(400))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        dispatch_webhooks(
+            &client,
+            &mock_server.uri(),
+            "secret",
+            "task-5",
+            "agent-5",
+            "completed",
+            &json!({"task_id": "task-5", "state": "completed"}),
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        mock_server.verify().await;
     }
 }

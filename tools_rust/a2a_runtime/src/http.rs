@@ -271,7 +271,12 @@ pub struct ResolvedAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aes_gcm::AeadCore;
+    use aes_gcm::aead::{Aead, OsRng};
+    use aes_gcm::{Aes256Gcm, KeyInit};
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
     use crate::invoke::InvokeResult;
+    use sha2::{Digest, Sha256};
     use std::time::Duration;
 
     fn minimal_dto(endpoint_url: &str) -> InvokeRequestDto {
@@ -291,6 +296,19 @@ mod tests {
             scope_id: None,
             request_id: None,
         }
+    }
+
+    fn encrypt_map(payload: &HashMap<String, String>, secret: &str) -> String {  // pragma: allowlist secret
+        let plaintext = serde_json::to_vec(payload).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(secret.as_bytes());
+        let key: [u8; 32] = hasher.finalize().into();
+        let cipher = Aes256Gcm::new(&key.into());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, plaintext.as_ref()).unwrap();
+        let mut combined = nonce.to_vec();
+        combined.extend_from_slice(&ciphertext);
+        URL_SAFE_NO_PAD.encode(combined)
     }
 
     #[test]
@@ -382,5 +400,66 @@ mod tests {
         );
         // Should not have a duplicate lowercase key.
         assert!(!resolved[0].headers.contains_key("content-type"));
+    }
+
+    #[test]
+    fn resolve_requests_decrypts_auth_and_applies_to_url_and_headers() {
+        let secret = "secret-123";  // pragma: allowlist secret
+        let mut dto = minimal_dto("https://agent.example.com/invoke?existing=1");
+        dto.auth_headers_encrypted = Some(encrypt_map(
+            &HashMap::from([(
+                "authorization".to_string(),
+                "Bearer token".to_string(),
+            )]),
+            secret,
+        ));
+        dto.auth_query_params_encrypted = Some(HashMap::from([(
+            "api_key".to_string(),
+            encrypt_map(
+                &HashMap::from([("api_key".to_string(), "secret".to_string())]),
+                secret,
+            ),
+        )]));
+
+        let resolved = resolve_requests(&[dto], Some(secret)).unwrap();
+        assert_eq!(
+            resolved[0].headers.get("authorization").map(String::as_str),
+            Some("Bearer token")
+        );
+        assert!(resolved[0].endpoint_url.contains("existing=1"));
+        assert!(
+            resolved[0].endpoint_url.contains("api_key=secret"),
+            "expected decrypted auth query param to be applied"  // pragma: allowlist secret
+        );
+    }
+
+    #[test]
+    fn resolve_requests_surfaces_header_and_query_decrypt_failures() {
+        let mut bad_header = minimal_dto("https://agent.example.com/invoke");
+        bad_header.auth_headers_encrypted = Some("not-valid".to_string());
+        let err = resolve_requests(&[bad_header], Some("secret")).unwrap_err();
+        assert!(err.to_string().contains("auth header decryption failed"));
+
+        let mut bad_query = minimal_dto("https://agent.example.com/invoke");
+        bad_query.auth_query_params_encrypted =
+            Some(HashMap::from([("token".to_string(), "not-valid".to_string())]));
+        let err = resolve_requests(&[bad_query], Some("secret")).unwrap_err();
+        assert!(err.to_string().contains("auth query param decryption failed"));
+    }
+
+    #[test]
+    fn resolve_requests_surfaces_apply_auth_failures() {
+        let secret = "secret-123";  // pragma: allowlist secret
+        let mut dto = minimal_dto("file:///tmp/socket");
+        dto.auth_query_params_encrypted = Some(HashMap::from([(
+            "api_key".to_string(),
+            encrypt_map(
+                &HashMap::from([("api_key".to_string(), "secret".to_string())]),
+                secret,
+            ),
+        )]));
+
+        let err = resolve_requests(&[dto], Some(secret)).unwrap_err();
+        assert!(err.to_string().contains("apply_invoke_auth failed"));
     }
 }

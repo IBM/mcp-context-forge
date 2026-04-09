@@ -485,6 +485,57 @@ pub async fn shutdown_queue(drain_timeout: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RuntimeConfig;
+    use crate::http::ResolvedRequest;
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn test_runtime_config() -> Arc<RuntimeConfig> {
+        Arc::new(RuntimeConfig {
+            listen_http: "127.0.0.1:0".to_string(),
+            listen_uds: None,
+            request_timeout_ms: 1_000,
+            client_connect_timeout_ms: 200,
+            client_pool_idle_timeout_seconds: 1,
+            client_pool_max_idle_per_host: 1,
+            client_tcp_keepalive_seconds: 1,
+            max_response_body_bytes: 1024 * 1024,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            auth_secret: None,
+            backend_base_url: "http://127.0.0.1:4444".to_string(),
+            max_concurrent: 2,
+            max_queued: Some(4),
+            circuit_failure_threshold: 2,
+            circuit_cooldown_secs: 1,
+            circuit_max_entries: 8,
+            metrics_max_entries: 8,
+            agent_cache_ttl_secs: 1,
+            agent_cache_max_entries: 8,
+            redis_url: None,
+            l2_cache_ttl_secs: 1,
+            cache_invalidation_channel: "invalidate".to_string(),
+            session_enabled: false,
+            session_ttl_secs: 1,
+            session_fingerprint_headers: "authorization".to_string(),
+            event_store_max_events: 8,
+            event_store_ttl_secs: 1,
+            event_flush_interval_ms: 1,
+            event_flush_batch_size: 1,
+            log_filter: "info".to_string(),
+            exit_after_startup_ms: None,
+        })
+    }
+
+    fn test_worker_state() -> Arc<WorkerState> {
+        Arc::new(WorkerState {
+            client: Client::new(),
+            config: test_runtime_config(),
+            circuit: Arc::new(CircuitBreaker::new(2, Duration::from_secs(1), Some(8))),
+            metrics: Arc::new(MetricsCollector::new(Some(8))),
+        })
+    }
 
     #[test]
     fn queue_error_is_send_and_sync() {
@@ -524,5 +575,279 @@ mod tests {
             "queue not initialized"
         );
         assert_eq!(QueueError::Shutdown.to_string(), "queue is shutting down");
+    }
+
+    #[tokio::test]
+    async fn coalesce_jobs_collects_follow_on_jobs_and_preserves_shutdown() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let (result_tx_first, _result_rx_first) = oneshot::channel();
+        let (result_tx_second, _result_rx_second) = oneshot::channel();
+        let (ack_tx, _ack_rx) = oneshot::channel();
+
+        let first = Job {
+            requests: vec![],
+            timeout: Duration::from_secs(1),
+            result_tx: result_tx_first,
+        };
+
+        tx.send(QueueMessage::Job(Job {
+            requests: vec![],
+            timeout: Duration::from_secs(1),
+            result_tx: result_tx_second,
+        }))
+        .await
+        .unwrap();
+        tx.send(QueueMessage::Shutdown {
+            drain_timeout: Duration::from_secs(1),
+            ack: ack_tx,
+        })
+        .await
+        .unwrap();
+
+        let (jobs, non_job_messages) = coalesce_jobs(first, &mut rx);
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(non_job_messages.len(), 1);
+        assert!(matches!(
+            non_job_messages.into_iter().next(),
+            Some(QueueMessage::Shutdown { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_job_batch_deduplicates_requests_by_request_id() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        let (tx_a, rx_a) = oneshot::channel();
+        let (tx_b, rx_b) = oneshot::channel();
+        let job_a = Job {
+            requests: vec![
+                ResolvedRequest {
+                    id: 0,
+                    endpoint_url: format!("{}/invoke", mock_server.uri()),
+                    headers: HashMap::new(),
+                    json_body: json!({"id": 1}),
+                    timeout_seconds: None,
+                    agent_name: Some("agent-a".to_string()),
+                    agent_id: None,
+                    interaction_type: None,
+                    scope_id: Some("scope-1".to_string()),
+                    request_id: Some("dedupe-me".to_string()),
+                    correlation_id: None,
+                },
+                ResolvedRequest {
+                    id: 1,
+                    endpoint_url: format!("{}/invoke", mock_server.uri()),
+                    headers: HashMap::new(),
+                    json_body: json!({"id": 2}),
+                    timeout_seconds: None,
+                    agent_name: Some("agent-b".to_string()),
+                    agent_id: None,
+                    interaction_type: None,
+                    scope_id: Some("scope-1".to_string()),
+                    request_id: None,
+                    correlation_id: None,
+                },
+            ],
+            timeout: Duration::from_secs(1),
+            result_tx: tx_a,
+        };
+        let job_b = Job {
+            requests: vec![ResolvedRequest {
+                id: 0,
+                endpoint_url: format!("{}/invoke", mock_server.uri()),
+                headers: HashMap::new(),
+                json_body: json!({"id": 3}),
+                timeout_seconds: None,
+                agent_name: Some("agent-a".to_string()),
+                agent_id: None,
+                interaction_type: None,
+                scope_id: Some("scope-1".to_string()),
+                request_id: Some("dedupe-me".to_string()),
+                correlation_id: None,
+            }],
+            timeout: Duration::from_secs(1),
+            result_tx: tx_b,
+        };
+
+        execute_job_batch(
+            vec![job_a, job_b],
+            &Arc::new(Semaphore::new(4)),
+            &test_worker_state(),
+        )
+        .await;
+
+        let results_a = rx_a.await.unwrap();
+        let results_b = rx_b.await.unwrap();
+        assert_eq!(results_a.len(), 2);
+        assert_eq!(results_b.len(), 1);
+        assert!(results_a[0].result.as_ref().is_ok());
+        assert!(results_a[1].result.as_ref().is_ok());
+        assert!(results_b[0].result.as_ref().is_ok());
+        mock_server.verify().await;
+    }
+
+    #[test]
+    fn queue_sender_try_send_maps_full_and_closed() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let sender = QueueSender::Bounded(tx);
+        let (result_tx_one, _result_rx_one) = oneshot::channel();
+        let (result_tx_two, _result_rx_two) = oneshot::channel();
+
+        sender
+            .try_send(QueueMessage::Job(Job {
+                requests: vec![],
+                timeout: Duration::from_secs(1),
+                result_tx: result_tx_one,
+            }))
+            .unwrap();
+
+        let err = sender
+            .try_send(QueueMessage::Job(Job {
+                requests: vec![],
+                timeout: Duration::from_secs(1),
+                result_tx: result_tx_two,
+            }))
+            .unwrap_err();
+        assert!(matches!(err, QueueError::Full));
+
+        drop(rx.try_recv());
+        drop(rx);
+        let (ack_tx, _ack_rx) = oneshot::channel();
+        let err = sender
+            .try_send(QueueMessage::Shutdown {
+                drain_timeout: Duration::from_secs(1),
+                ack: ack_tx,
+            })
+            .unwrap_err();
+        assert!(matches!(err, QueueError::Shutdown));
+    }
+
+    #[tokio::test]
+    async fn worker_loop_returns_when_channel_is_closed() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(tx);
+        worker_loop(
+            rx,
+            &Arc::new(Semaphore::new(1)),
+            &test_worker_state(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn worker_loop_acknowledges_shutdown() {
+        let (tx, rx) = mpsc::channel(2);
+        let (ack_tx, ack_rx) = oneshot::channel();
+
+        tx.send(QueueMessage::Shutdown {
+            drain_timeout: Duration::from_millis(1),
+            ack: ack_tx,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        worker_loop(
+            rx,
+            &Arc::new(Semaphore::new(1)),
+            &test_worker_state(),
+        )
+        .await;
+
+        ack_rx.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drain_pending_processes_jobs_and_acknowledges_shutdown() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let (tx, mut rx) = mpsc::channel(4);
+        let (result_tx, result_rx) = oneshot::channel();
+        tx.send(QueueMessage::Job(Job {
+            requests: vec![ResolvedRequest {
+                id: 0,
+                endpoint_url: format!("{}/invoke", mock_server.uri()),
+                headers: HashMap::new(),
+                json_body: json!({"id": 1}),
+                timeout_seconds: None,
+                agent_name: Some("agent-a".to_string()),
+                agent_id: None,
+                interaction_type: None,
+                scope_id: Some("scope-1".to_string()),
+                request_id: None,
+                correlation_id: None,
+            }],
+            timeout: Duration::from_secs(1),
+            result_tx,
+        }))
+        .await
+        .unwrap();
+
+        let (ack_tx, ack_rx) = oneshot::channel();
+        tx.send(QueueMessage::Shutdown {
+            drain_timeout: Duration::from_secs(1),
+            ack: ack_tx,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        drain_pending(
+            &mut rx,
+            &Arc::new(Semaphore::new(1)),
+            &test_worker_state(),
+            Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(result_rx.await.unwrap()[0].result.as_ref().is_ok());
+        ack_rx.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn execute_job_batch_tolerates_dropped_result_receiver() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+
+        execute_job_batch(
+            vec![Job {
+                requests: vec![ResolvedRequest {
+                    id: 0,
+                    endpoint_url: format!("{}/invoke", mock_server.uri()),
+                    headers: HashMap::new(),
+                    json_body: json!({"id": 1}),
+                    timeout_seconds: None,
+                    agent_name: Some("agent-a".to_string()),
+                    agent_id: None,
+                    interaction_type: None,
+                    scope_id: Some("scope-1".to_string()),
+                    request_id: None,
+                    correlation_id: None,
+                }],
+                timeout: Duration::from_secs(1),
+                result_tx: tx,
+            }],
+            &Arc::new(Semaphore::new(1)),
+            &test_worker_state(),
+        )
+        .await;
     }
 }

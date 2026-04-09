@@ -249,6 +249,11 @@ pub async fn execute_invoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+    use reqwest::Client;
+    use serde_json::json;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn validate_url_scheme_accepts_http() {
@@ -314,5 +319,172 @@ mod tests {
         h.insert("bad header".to_string(), "value".to_string());
         let err = build_header_map(&h).unwrap_err();
         assert!(matches!(err, InvokeError::InvalidHeader(_)));
+    }
+
+    #[test]
+    fn build_header_map_rejects_bad_value() {
+        let mut h = HashMap::new();
+        h.insert("x-test".to_string(), "bad\r\nvalue".to_string());
+        let err = build_header_map(&h).unwrap_err();
+        assert!(matches!(err, InvokeError::InvalidHeader(_)));
+    }
+
+    #[tokio::test]
+    async fn execute_invoke_rejects_when_circuit_is_open() {
+        let config = RuntimeConfig {
+            max_response_body_bytes: 1024,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            ..RuntimeConfig::parse_from(["test-bin"])
+        };
+        let circuit = CircuitBreaker::new(1, Duration::from_secs(1), Some(8));
+        circuit.record_failure("http://example.com", "scope");
+        let metrics = MetricsCollector::new(Some(8));
+        let ctx = InvokeContext {
+            circuit: &circuit,
+            metrics: &metrics,
+            scope_id: "scope",
+            agent_key: "agent",
+        };
+
+        let err = execute_invoke(
+            &Client::new(),
+            &config,
+            "http://example.com",
+            &HashMap::new(),
+            &json!({}),
+            Duration::from_millis(50),
+            Some(&ctx),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, InvokeError::CircuitOpen));
+    }
+
+    #[tokio::test]
+    async fn execute_invoke_retries_5xx_and_returns_final_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&server)
+            .await;
+
+        let config = RuntimeConfig {
+            max_response_body_bytes: 1024,
+            max_retries: 1,
+            retry_backoff_ms: 1,
+            ..RuntimeConfig::parse_from(["test-bin"])
+        };
+
+        let result = execute_invoke(
+            &Client::new(),
+            &config,
+            &server.uri(),
+            &HashMap::new(),
+            &json!({}),
+            Duration::from_secs(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.status_code, 200);
+        assert_eq!(result.json, Some(json!({"ok": true})));
+    }
+
+    #[tokio::test]
+    async fn execute_invoke_enforces_body_size_via_header_and_bytes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-length", "10")
+                    .set_body_string("0123456789"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("0123456789"))
+            .mount(&server)
+            .await;
+
+        let config = RuntimeConfig {
+            max_response_body_bytes: 5,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            ..RuntimeConfig::parse_from(["test-bin"])
+        };
+
+        let err = execute_invoke(
+            &Client::new(),
+            &config,
+            &server.uri(),
+            &HashMap::new(),
+            &json!({}),
+            Duration::from_secs(1),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, InvokeError::OversizedResponse { .. }));
+
+        let err = execute_invoke(
+            &Client::new(),
+            &config,
+            &server.uri(),
+            &HashMap::new(),
+            &json!({}),
+            Duration::from_secs(1),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, InvokeError::OversizedResponse { .. }));
+    }
+
+    #[tokio::test]
+    async fn execute_invoke_records_failure_for_non_success_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({"error": true})))
+            .mount(&server)
+            .await;
+
+        let config = RuntimeConfig {
+            max_response_body_bytes: 1024,
+            max_retries: 0,
+            retry_backoff_ms: 1,
+            ..RuntimeConfig::parse_from(["test-bin"])
+        };
+        let circuit = CircuitBreaker::new(5, Duration::from_secs(1), Some(8));
+        let metrics = MetricsCollector::new(Some(8));
+        let ctx = InvokeContext {
+            circuit: &circuit,
+            metrics: &metrics,
+            scope_id: "scope",
+            agent_key: "agent",
+        };
+
+        let result = execute_invoke(
+            &Client::new(),
+            &config,
+            &server.uri(),
+            &HashMap::new(),
+            &json!({}),
+            Duration::from_secs(1),
+            Some(&ctx),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.status_code, 500);
+        assert_eq!(metrics.snapshot().failed_calls, 1);
     }
 }
