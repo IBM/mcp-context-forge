@@ -107,9 +107,10 @@ Admin.downloadConfig = downloadConfig;
 Admin.goBackToSelection = goBackToSelection;
 
 // Dashboard
-import { navigateOverviewDrilldown, applyOverviewDrilldownToObservability } from "./dashboard.js"
+import { navigateOverviewDrilldown, applyOverviewDrilldownToObservability, overviewDashboard } from "./dashboard.js"
 Admin.navigateOverviewDrilldown = navigateOverviewDrilldown;
 Admin.applyOverviewDrilldownToObservability = applyOverviewDrilldownToObservability;
+Admin.overviewDashboard = overviewDashboard;
 
 // File Transfer
 import {

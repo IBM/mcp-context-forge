@@ -34,8 +34,9 @@ import {
   toggleLLMModel,
   filterModelsByProvider,
   llmApiInfoApp,
-  overviewDashboard,
 } from "../../../mcpgateway/admin_ui/llmModels.js";
+
+import { overviewDashboard } from "../../../mcpgateway/admin_ui/dashboard.js";
 
 import { showCopyableModal } from "../../../mcpgateway/admin_ui/modals.js";
 import { showToast } from "../../../mcpgateway/admin_ui/utils.js";
@@ -1791,26 +1792,32 @@ describe("llmApiInfoApp", () => {
 // overviewDashboard
 // ---------------------------------------------------------------------------
 describe("overviewDashboard", () => {
-  test("initializes and updates SVG colors", () => {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.id = "overview-architecture";
-
-    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-    marker.id = "arrowhead";
-    const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-    marker.appendChild(polygon);
-    svg.appendChild(marker);
-
-    document.body.appendChild(svg);
-
+  test("initializes dashboard with default payload", () => {
     const dashboard = overviewDashboard();
-    dashboard.init();
 
-    expect(polygon.getAttribute("class")).toBeTruthy();
+    expect(dashboard).toBeDefined();
+    expect(dashboard.flowNodes).toEqual([]);
+    expect(dashboard.flowEdges).toEqual([]);
+    expect(dashboard.selectedTimeRange).toBe("24h");
+    expect(typeof dashboard.init).toBe("function");
   });
 
-  test("handles missing SVG element", () => {
-    const dashboard = overviewDashboard();
-    expect(() => dashboard.updateSvgColors()).not.toThrow();
+  test("initializes with custom payload", () => {
+    const payload = {
+      nodes: [{ id: "test-node" }],
+      edges: [{ id: "test-edge" }],
+      defaultTimeRange: "7d",
+      infrastructure: {
+        database: { label: "DB", status: "healthy" },
+        cache: { label: "Cache", status: "healthy" }
+      }
+    };
+
+    const dashboard = overviewDashboard(payload);
+
+    expect(dashboard.flowNodes).toEqual([{ id: "test-node" }]);
+    expect(dashboard.flowEdges).toEqual([{ id: "test-edge" }]);
+    expect(dashboard.selectedTimeRange).toBe("7d");
+    expect(dashboard.topologyInfrastructure.database.label).toBe("DB");
   });
 });
