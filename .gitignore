@@ -77,6 +77,10 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.playwright-mcp/
+.playwright-mcp
+output
+output/
 htmlcov
 htmlcov/
 .tox/
@@ -102,6 +106,7 @@ tests/migration/reports/
 tests/migration/logs/
 test-results-*.xml
 playwright-report-*.html
+.playwright-cli/
 
 # Vitest
 coverage/
@@ -130,6 +135,7 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
+.codex
 .vscode
 .vscode/
 .idea/
@@ -191,6 +197,7 @@ packages.json
 .aider*
 aider*
 .ai*
+.bob
 .claude/*
 !.claude/skills/
 CLAUDE.local.md
@@ -261,7 +268,6 @@ uv.lock
 plugins_rust/target/
 plugins_rust/*/target/
 *.rs.bk
-plugins_rust/Cargo.lock
 
 # ========================================
 # Project-Specific (ContextForge)
@@ -365,3 +371,4 @@ tools_rust/mcp_runtime/perf.data*
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+.bob

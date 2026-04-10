@@ -30,7 +30,7 @@ import requests
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 TEST_PASSWORD = "SecureTestPass123!"
 MCP_PROTOCOL_VERSION = "2025-11-25"
 ISOLATION_PREFIX = "mcp-iso-load"

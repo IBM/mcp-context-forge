@@ -3,6 +3,7 @@
 
 import builtins
 import typing
+
 __all__ = [
     "PIIDetectorRust",
 ]
@@ -27,6 +28,7 @@ class PIIDetectorRust:
     print(masked)  # "My SSN is [REDACTED] and email is [REDACTED]"
     ```
     """
+
     def __new__(cls, config: typing.Any) -> PIIDetectorRust:
         r"""
         Create a new PII detector
@@ -45,13 +47,12 @@ class PIIDetectorRust:
         * `detect_driver_license` (bool): Detect driver's license numbers
         * `detect_bank_account` (bool): Detect bank account numbers
         * `detect_medical_record` (bool): Detect medical record numbers
-        * `detect_aws_keys` (bool): Detect AWS access keys
-        * `detect_api_keys` (bool): Detect API keys
         * `default_mask_strategy` (str): "redact", "partial", "hash", "tokenize", "remove"
         * `redaction_text` (str): Text to use for redaction (default: "\[REDACTED\]")
         * `block_on_detection` (bool): Whether to block on detection
         * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
         """
+
     def detect(self, text: builtins.str) -> typing.Any:
         r"""
         Detect PII in text
@@ -64,14 +65,15 @@ class PIIDetectorRust:
         ```python
         {
             "ssn": [
-                {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "partial"}
+                {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "redact"}
             ],
             "email": [
-                {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "partial"}
+                {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "redact"}
             ]
         }
         ```
         """
+
     def mask(self, text: builtins.str, detections: typing.Any) -> builtins.str:
         r"""
         Mask detected PII in text
@@ -83,6 +85,7 @@ class PIIDetectorRust:
         # Returns
         Masked text with PII replaced
         """
+
     def process_nested(self, data: typing.Any, path: builtins.str) -> tuple[builtins.bool, typing.Any, typing.Any]:
         r"""
         Process nested data structures (dicts, lists, strings)

@@ -38,6 +38,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
+    _create_jwt_identity_extractor,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
@@ -111,7 +112,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from cpex.framework import PluginError
+from cpex.framework import PluginError, PromptHookType, ResourceHookType
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -189,7 +190,7 @@ def _import_fresh_main_module(
         def set_plugin_manager(self, _pm):  # noqa: ANN001
             return None
 
-    monkeypatch.setattr("mcpgateway.services.plugin_service.get_plugin_service", lambda: _PluginService(), raising=False)
+    monkeypatch.setattr("mcpgateway.services.plugin_service.get_plugin_service", _PluginService, raising=False)
 
     class _DummyPluginManager:
         def __init__(self, *_a, **_k):  # noqa: ANN001
@@ -201,7 +202,10 @@ def _import_fresh_main_module(
         async def shutdown(self):  # noqa: D401 - trivial
             return None
 
-    monkeypatch.setattr("cpex.framework.PluginManager", _DummyPluginManager)
+        def has_hooks_for(self, server_id):
+            return False
+
+    monkeypatch.setattr("cpex.framework.TenantPluginManager", _DummyPluginManager)
 
     # Force selected module imports to fail to cover defensive ImportError paths.
     if force_import_error:
@@ -280,6 +284,163 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+class TestJwtIdentityExtractor:
+    """Test _create_jwt_identity_extractor() factory and returned closure."""
+
+    def test_extractor_returns_sub_claim(self):
+        """Valid JWT with sub claim should return sub value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-123", "email": "user@example.com"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-123"
+
+    def test_extractor_returns_email_claim_when_no_sub(self):
+        """Valid JWT with email but no sub should return email value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"email": "user@example.com", "user_id": "uid-456"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user@example.com"
+
+    def test_extractor_returns_user_id_claim_when_no_sub_or_email(self):
+        """Valid JWT with user_id but no sub/email should return user_id value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"user_id": "uid-789", "iat": 1234567890}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "uid-789"
+
+    def test_extractor_returns_none_for_malformed_token(self):
+        """Malformed JWT should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Bearer not-a-valid-jwt"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_non_bearer_header(self):
+        """Non-Bearer auth header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Basic dXNlcjpwYXNz"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_empty_authorization_header(self):
+        """Empty Authorization header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": ""}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_bearer_only_header(self):
+        """Header containing only 'Bearer ' with no token should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Bearer "}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_missing_authorization_header(self):
+        """Missing Authorization header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_token_with_no_identity_claims(self):
+        """JWT with none of the three identity claims should return None."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"iat": 1234567890, "exp": 1234567890, "jti": "random-id"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_handles_lowercase_bearer(self):
+        """Lowercase 'bearer' prefix should be handled correctly."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-lowercase"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-lowercase"
+
+    def test_extractor_handles_case_insensitive_header_lookup(self):
+        """Extractor should handle both 'authorization' and 'Authorization' keys."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-case"}, "secret", algorithm="HS256")
+
+        # Test lowercase key
+        headers_lower = {"authorization": f"Bearer {token}"}
+        assert extractor(headers_lower) == "user-case"
+
+        # Test uppercase key
+        headers_upper = {"Authorization": f"Bearer {token}"}
+        assert extractor(headers_upper) == "user-case"
+
+    def test_extractor_returns_none_on_jwt_decode_exception(self):
+        """JWT decode raising an exception should return None and log debug message."""
+        # Standard
+        from unittest.mock import patch
+
+        extractor = _create_jwt_identity_extractor()
+
+        # Create a valid-looking token that will fail decode
+        with patch("jwt.decode", side_effect=Exception("Decode failed")):
+            headers = {"Authorization": "Bearer some-token"}
+            result = extractor(headers)
+            assert result is None
+
+    def test_extractor_prefers_sub_over_email_and_user_id(self):
+        """When all three claims present, sub should be preferred."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-sub"
+
+    def test_extractor_prefers_email_over_user_id(self):
+        """When email and user_id present but no sub, email should be preferred."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user@example.com"
 
 
 class TestInternalTrustedMcpTransportBridge:
@@ -379,6 +540,7 @@ class TestInternalTrustedMcpTransportBridge:
                     {
                         "email": "user@example.com",
                         "teams": ["team-a"],
+                        "auth_method": "jwt",
                         "is_authenticated": True,
                         "is_admin": False,
                         "permission_is_admin": False,
@@ -418,6 +580,7 @@ class TestInternalTrustedMcpTransportBridge:
         assert observed["modified_path"] == "/servers/server-1/mcp"
         assert observed["user_context"]["email"] == "user@example.com"
         assert observed["user_context"]["teams"] == ["team-a"]
+        assert observed["user_context"]["auth_method"] == "jwt"
         assert events[0]["status"] == 204
 
     @pytest.mark.asyncio
@@ -604,6 +767,7 @@ class TestInternalTrustedMcpTransportBridge:
 
         monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
         monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
+        monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
 
         error_response, auth_context = await _run_internal_mcp_authentication(
             method="POST",
@@ -634,7 +798,7 @@ class TestInternalTrustedMcpTransportBridge:
 
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda ht: ht == HttpHookType.HTTP_PRE_REQUEST)
-        monkeypatch.setattr(main_mod, "plugin_manager", mock_pm)
+        monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=mock_pm))
 
         transformed_headers = {"authorization": "Bearer exchanged-token", "x-injected": "value"}
         original_headers = {"authorization": "Bearer original-token"}
@@ -739,6 +903,7 @@ class TestInternalTrustedMcpTransportBridge:
         monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", True)
         monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
         monkeypatch.setattr("mcpgateway.main.token_scoping_middleware", _passthrough_middleware)
+        monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
 
         error_response, auth_context = await _run_internal_mcp_authentication(
             method="POST",
@@ -768,6 +933,7 @@ class TestInternalTrustedMcpTransportBridge:
         monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", True)
         monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _ignored_streamable_http_auth)
         monkeypatch.setattr("mcpgateway.main.token_scoping_middleware", _none_middleware)
+        monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
 
         error_response, auth_context = await _run_internal_mcp_authentication(
             method="GET",
@@ -904,6 +1070,22 @@ class TestMcpSerialization:
         """Unknown objects should serialize to an empty MCP payload."""
         assert _serialize_mcp_tool_definition(object()) == {}
 
+    def test_serialize_mcp_tool_definition_normalizes_null_description(self):
+        """MCP tool payloads should always expose a string description."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "test-json-tool",
+                "description": None,
+                "inputSchema": {"type": "object"},
+            }
+        )
+
+        assert payload == {
+            "name": "test-json-tool",
+            "description": "",
+            "inputSchema": {"type": "object"},
+        }
+
     def test_serialize_legacy_tool_payloads_preserves_dicts_and_unknowns(self):
         """Legacy payload serialization should preserve dicts and tolerate unknown objects."""
         payloads = _serialize_legacy_tool_payloads([{"id": "tool-1"}, object()])
@@ -975,6 +1157,33 @@ class TestInternalMcpHelperCoverage:
         assert forwarded["is_admin"] is True
         assert request.state.token_teams == ["team-a"]
         assert getattr(request.state, "_mcp_internal_auth_context")["_rust_session_validated"] is True
+
+    def test_build_internal_mcp_forwarded_user_sets_trace_context(self):
+        """Trusted forwarded auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "trace@example.com",
+                "teams": ["team-x"],
+                "is_authenticated": True,
+                "is_admin": False,
+                "permission_is_admin": False,
+                "auth_method": "jwt",
+            }
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+
+        _build_internal_mcp_forwarded_user(request)
+
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "jwt"
+        assert get_trace_team_scope() == "team-x"
+        clear_trace_context()
 
     @pytest.mark.asyncio
     async def test_handle_internal_mcp_tools_call_metric_records_buffered_metrics(self):
@@ -1167,9 +1376,6 @@ class TestApplicationStartupPaths:
         # Standard
         from contextlib import ExitStack
 
-        # First-Party
-        import mcpgateway.main as main_mod
-
         mock_logging_service = MagicMock()
         mock_logging_service.initialize = AsyncMock()
         mock_logging_service.shutdown = AsyncMock()
@@ -1187,7 +1393,6 @@ class TestApplicationStartupPaths:
 
         monkeypatch.setattr(settings, "require_strong_secrets", False, raising=False)
         monkeypatch.setattr(settings, "dev_mode", True, raising=False)
-        monkeypatch.setattr(main_mod, "plugin_manager", None, raising=False)
 
         with ExitStack() as stack:
             stack.enter_context(patch("mcpgateway.main.logging_service", mock_logging_service))
@@ -1282,7 +1487,7 @@ class TestJsonPathHelpers:
 
         # Call jsonpath_modifier with list data to trigger the debug logging
         data = [{"id": 1, "name": "test1"}, {"id": 2, "name": "test2"}]
-        result = jsonpath_modifier(data, "$.*.id", None)
+        jsonpath_modifier(data, "$.*.id", None)
 
         # Verify debug logging was called
         mock_logger.isEnabledFor.assert_called_with(logging.DEBUG)
@@ -1425,7 +1630,6 @@ class TestParseApijsonpath:
     def test_parse_apijsonpath_unexpected_exception_logging(self, monkeypatch):
         """Test unexpected exception handling with logging (lines 741-744)."""
         # Standard
-        import logging
 
         # Mock json.loads to raise an unexpected exception (not ValueError/ValidationError/HTTPException)
         def mock_json_loads(s):
@@ -1902,14 +2106,18 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)) as mock_resolve_teams,
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)) as mock_resolve_teams,
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
         assert response == "ok"
-        mock_resolve_teams.assert_awaited_once_with("admin@example.com", {"is_admin": True})
+        mock_resolve_teams.assert_awaited_once_with(
+            {"sub": "admin@example.com", "token_use": "session", "is_admin": True},
+            "admin@example.com",
+            {"is_admin": True},
+        )
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2219,7 +2427,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2227,7 +2435,9 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with(
+            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]
+        )
 
     @pytest.mark.asyncio
     async def test_admin_auth_team_scoped_request_ignores_nonmember_team_id(self, monkeypatch):
@@ -2260,7 +2470,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2268,7 +2478,7 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 403
         # team_id was not in token_teams, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
@@ -2299,7 +2509,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2307,7 +2517,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # No team_id in request, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
@@ -2339,7 +2549,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2347,7 +2557,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Empty string is falsy, so team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_admin_bypass_ignores_query_team_id(self, monkeypatch):
@@ -2380,7 +2590,7 @@ class TestAdminAuthMiddleware:
                 new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
             ),
             # token_teams=None signals admin bypass
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2388,7 +2598,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # token_teams is None (admin bypass), so validated_team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None, token_teams=None)
 
     @pytest.mark.asyncio
     async def test_admin_auth_hyphenated_uuid_normalized_to_hex(self, monkeypatch):
@@ -2422,7 +2632,7 @@ class TestAdminAuthMiddleware:
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
             # DB stores hex format
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2430,7 +2640,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Hyphenated UUID should be normalized to hex and match token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_garbage_team_id_treated_as_absent(self, monkeypatch):
@@ -2462,7 +2672,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2470,7 +2680,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Invalid UUID is discarded, falls back to global check
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
@@ -2506,7 +2716,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2514,7 +2724,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # .get() returns last value (hex UUID), which IS in token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_non_uuid_team_id_matches_legacy_token_teams(self, monkeypatch):
@@ -2556,7 +2766,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Non-UUID kept as-is, matches token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-slug-123")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-slug-123", token_teams=["team-slug-123"])
 
 
 class TestMCPPathRewriteMiddleware:
@@ -2603,6 +2813,25 @@ class TestMCPPathRewriteMiddleware:
 
         dispatch.assert_called_once()
         app_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_rejects_empty_server_id_segment(self):
+        """Middleware returns 404 for /servers//mcp (empty server ID)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers//mcp", "headers": []}
+        receive = AsyncMock()
+        sent = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        app_mock.assert_not_called()
+        # ORJSONResponse sends http.response.start + http.response.body
+        assert any(m.get("status") == 404 for m in sent if m.get("type") == "http.response.start")
 
 
 class TestServerEndpointCoverage:
@@ -2889,6 +3118,48 @@ class TestServerEndpointCoverage:
             user={"email": "user@example.com"},
         )
         assert result.resources == []
+
+    @pytest.mark.asyncio
+    async def test_list_resources_forwards_gateway_id(self, monkeypatch, allow_permission):
+        """gateway_id query param should be forwarded to the service layer."""
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        list_resources_mock = AsyncMock(return_value=([], None))
+        monkeypatch.setattr(
+            "mcpgateway.main.resource_service.list_resources",
+            list_resources_mock,
+        )
+
+        await list_resources(
+            request,
+            gateway_id="gw-xyz",
+            db=MagicMock(),
+            user={"email": "user@example.com"},
+        )
+        assert list_resources_mock.await_args.kwargs["gateway_id"] == "gw-xyz"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_forwards_gateway_id_null(self, monkeypatch, allow_permission):
+        """gateway_id='null' sentinel should be forwarded verbatim to the service layer."""
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        list_resources_mock = AsyncMock(return_value=([], None))
+        monkeypatch.setattr(
+            "mcpgateway.main.resource_service.list_resources",
+            list_resources_mock,
+        )
+
+        await list_resources(
+            request,
+            gateway_id="null",
+            db=MagicMock(),
+            user={"email": "user@example.com"},
+        )
+        assert list_resources_mock.await_args.kwargs["gateway_id"] == "null"
 
 
 class TestCrudEndpoints:
@@ -3848,6 +4119,64 @@ class TestPromptListEndpointCoverage:
         )
         assert response.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_list_prompts_forwards_gateway_id(self, monkeypatch):
+        """gateway_id query param should be forwarded to the service layer."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+        db = MagicMock()
+
+        list_prompts_mock = AsyncMock(return_value=([], None))
+        monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+
+        await main_mod.list_prompts(
+            request,
+            cursor=None,
+            include_pagination=False,
+            limit=None,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id="gw-abc",
+            db=db,
+            user={"email": "user@example.com"},
+        )
+        assert list_prompts_mock.await_args.kwargs["gateway_id"] == "gw-abc"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_forwards_gateway_id_null(self, monkeypatch):
+        """gateway_id='null' sentinel should be forwarded verbatim to the service layer."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+        db = MagicMock()
+
+        list_prompts_mock = AsyncMock(return_value=([], None))
+        monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+
+        await main_mod.list_prompts(
+            request,
+            cursor=None,
+            include_pagination=False,
+            limit=None,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id="null",
+            db=db,
+            user={"email": "user@example.com"},
+        )
+        assert list_prompts_mock.await_args.kwargs["gateway_id"] == "null"
+
 
 class TestReadResourceEndpointCoverage:
     """Cover read_resource() serialization branches."""
@@ -4101,6 +4430,7 @@ class TestLifespanAdvanced:
         # Feature flags
         monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)
@@ -4114,11 +4444,12 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_backfill_hours", 1)
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_window_minutes", 0)
 
-        plugin = MagicMock()
-        plugin.initialize = AsyncMock()
-        plugin.shutdown = AsyncMock(side_effect=Exception("boom"))
-        plugin.plugin_count = 2
-        monkeypatch.setattr(main_mod, "plugin_manager", plugin)
+        _default_manager = MagicMock()
+        _default_manager.plugin_count = 2
+        mock_get_pm = AsyncMock(return_value=_default_manager)
+        mock_shutdown_factory = AsyncMock(side_effect=Exception("boom"))
+        monkeypatch.setattr(main_mod, "get_plugin_manager", mock_get_pm)
+        monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", mock_shutdown_factory)
 
         logging_service = make_service()
         logging_service.configure_uvicorn_after_startup = MagicMock()
@@ -4187,7 +4518,7 @@ class TestLifespanAdvanced:
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.init_mcp_session_pool", MagicMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.start_pool_notification_service", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", AsyncMock())
-        pool = SimpleNamespace(start_rpc_listener=AsyncMock())
+        pool = SimpleNamespace(start_rpc_listener=AsyncMock(), start_heartbeat=MagicMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(return_value=pool))
 
         # Cache invalidation subscriber
@@ -4224,8 +4555,8 @@ class TestLifespanAdvanced:
         async with main_mod.lifespan(main_mod.app):
             await asyncio.sleep(0)
 
-        plugin.initialize.assert_called_once()
-        plugin.shutdown.assert_called_once()
+        mock_get_pm.assert_awaited_once()
+        mock_shutdown_factory.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_lifespan_exits_on_plugin_initialization_failed(self, monkeypatch):
@@ -4292,18 +4623,14 @@ class TestLifespanAdvanced:
 
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
 
-        plugin = MagicMock()
-        plugin.initialize = AsyncMock(side_effect=Exception("Plugin initialization failed"))
-        plugin.shutdown = AsyncMock()
-        plugin.plugin_count = 1
-        monkeypatch.setattr(main_mod, "plugin_manager", plugin)
+        monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(side_effect=Exception("Plugin initialization failed")))
+        monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
 
         with pytest.raises(SystemExit) as excinfo:
             async with main_mod.lifespan(main_mod.app):
                 pass
 
         assert excinfo.value.code == 1
-        plugin.shutdown.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
@@ -6925,10 +7252,66 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.get_plugin_manager", new=AsyncMock(return_value=None)),
         ):
             response = await handler(request)
 
         assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("handler", "hook_types", "expected_reason"),
+        [
+            (
+                handle_internal_mcp_resources_read_authz,
+                {
+                    ResourceHookType.RESOURCE_PRE_FETCH,
+                    ResourceHookType.RESOURCE_POST_FETCH,
+                },
+                "resource-hooks-configured",
+            ),
+            (
+                handle_internal_mcp_prompts_get_authz,
+                {
+                    PromptHookType.PROMPT_PRE_FETCH,
+                    PromptHookType.PROMPT_POST_FETCH,
+                },
+                "prompt-hooks-configured",
+            ),
+        ],
+    )
+    async def test_server_scoped_internal_mcp_authz_wrappers_return_forwarding_hint_when_hooks_active(
+        self,
+        handler,
+        hook_types,
+        expected_reason,
+    ):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        mock_plugin_manager = MagicMock()
+        mock_plugin_manager.has_hooks_for.side_effect = lambda hook_type: hook_type in hook_types
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.get_plugin_manager", new=AsyncMock(return_value=mock_plugin_manager)),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "directExecutionEligible": False,
+            "fallbackReason": expected_reason,
+        }
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
@@ -7816,7 +8199,12 @@ class TestRpcHandling:
             response = await handle_internal_mcp_tools_call_resolve(request)
 
         assert response.status_code == 403
-        assert json.loads(response.body.decode())["code"] == -32003
+        payload = json.loads(response.body.decode())
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == "resolve-2"
+        assert payload["error"]["code"] == -32003
+        assert payload["error"]["message"] == "Access denied"
+        assert payload["error"]["data"] == {"method": "tools/call"}
 
     async def test_handle_internal_mcp_tools_call_resolve_commits_success_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resolve-3", "method": "tools/call", "params": {"name": "echo"}})
@@ -9017,7 +9405,6 @@ class TestRpcHandling:
 
         async def _capture_register_run(run_id, *, name, cancel_callback, owner_email=None, owner_team_ids=None):  # noqa: ANN001, ARG001
             cancel_callback_holder["cb"] = cancel_callback
-            return None
 
         with (
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
@@ -9049,17 +9436,19 @@ class TestRpcHandling:
         assert result["error"]["message"] == "Not authorized to cancel this run"
 
     @pytest.mark.asyncio
-    async def test_handle_rpc_notifications_cancelled_denies_unknown_run_for_non_admin(self):
+    async def test_handle_rpc_notifications_cancelled_accepts_unknown_run_as_noop(self):
         payload_cancel = {"jsonrpc": "2.0", "id": "33", "method": "notifications/cancelled", "params": {"requestId": "unknown-run", "reason": "stop"}}
         request_cancel = self._make_request(payload_cancel)
 
         with (
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=False)) as cancel_run,
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com", "is_admin": False})
 
-        assert result["error"]["message"] == "Not authorized to cancel this run"
+        assert result["result"] == {}
+        cancel_run.assert_awaited_once_with("unknown-run", reason="stop")
 
 
 class TestA2AListAndGet:
@@ -9100,9 +9489,10 @@ class TestA2AListAndGet:
         request.state = MagicMock()
 
         with (
-            patch("mcpgateway.main.a2a_service.get_agent", new=AsyncMock(return_value={"id": "agent-1"})),
+            patch("mcpgateway.main.a2a_service") as mock_service,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
+            mock_service.get_agent = AsyncMock(return_value={"id": "agent-1"})
             result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["id"] == "agent-1"
 
@@ -9368,6 +9758,24 @@ class TestMessageEndpointElicitation:
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == "Session owner metadata unavailable"
 
+    async def test_message_endpoint_sets_trace_session_id_before_authorization(self, monkeypatch):
+        """message_endpoint should capture session_id even when the owner check fails."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_session_id
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-trace"}
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(return_value={"hello": "world"}))
+
+        with pytest.raises(HTTPException):
+            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+
+        assert get_trace_session_id() == "session-trace"
+        clear_trace_context()
+
 
 class TestRemainingCoverageGaps:
     """Targeted unit tests for remaining uncovered main.py branches (per HTML coverage report)."""
@@ -9455,7 +9863,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
@@ -9501,7 +9909,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
         async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
             return func(*args, **kwargs)
@@ -9527,7 +9935,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
         async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
             return func(*args, **kwargs)
@@ -9630,7 +10038,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
 
         response = FastAPIResponse()
@@ -10104,7 +10512,6 @@ class TestRemainingCoverageGaps:
         # Third-Party
         import orjson
 
-
         # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
@@ -10292,7 +10699,6 @@ class TestRemainingCoverageGaps:
         """Test list_tools with parsed_apijsonpath=None and include_pagination=True (lines 3674-3681)."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.schemas import JsonPathModifier
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -10717,7 +11123,6 @@ class TestRemainingCoverageGaps:
     async def test_update_tool_endpoint_coverage(self, monkeypatch):
         """Test update_tool endpoint (lines 3848-3851)."""
         # First-Party
-        from mcpgateway.db import Tool as DbTool
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import ToolUpdate
         from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -11278,7 +11683,6 @@ class TestRemainingCoverageGaps:
         async def fake_to_thread(_func, *args, **kwargs):  # noqa: ANN001
             # Yield control so task cancellation hits an await point.
             await asyncio.sleep(0.05)
-            return None
 
         monkeypatch.setattr(main_mod.asyncio, "wait_for", fake_wait_for)
         monkeypatch.setattr(main_mod.asyncio, "to_thread", fake_to_thread)
@@ -11365,7 +11769,6 @@ class TestRemainingCoverageGaps:
             if state["calls"] == 1:
                 raise asyncio.TimeoutError()
             await asyncio.sleep(0.01)
-            return None
 
         monkeypatch.setattr(main_mod.asyncio, "wait_for", fake_wait_for)
 
@@ -11543,35 +11946,48 @@ class TestRemainingCoverageGaps:
         )
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
-        mod = _import_fresh_main_module(
+        # First-Party
+        import mcpgateway.plugins as plugin_module
+
+        # Reset plugin state before test
+        plugin_module.enable_plugins(False)
+        plugin_module.reset_plugin_manager_factory()
+
+        _import_fresh_main_module(
             monkeypatch,
             env={
                 "PLUGINS_ENABLED": "false",
                 "PLUGINS_SERVER_PORT": "abc",
             },
         )
-        await asyncio.sleep(0)
-        assert mod.plugin_manager is None
+        # settings.enabled is False → get_plugin_manager() short-circuits to None
+        result = await plugin_module.get_plugin_manager()
+        assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
-        import cpex.framework.settings as plugin_settings_mod
+        import mcpgateway.plugins as plugin_module
+
+        class _DummyFactory:
+            def __init__(self, *_a, **_k):
+                pass
+
+            async def get_manager(self, server_id=None):
+                return SimpleNamespace(plugin_count=0)
 
         monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_enabled_settings",
-            lambda **_kwargs: SimpleNamespace(enabled=True),
-        )
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_startup_settings",
-            lambda **_kwargs: SimpleNamespace(config_file="plugins/config.yaml", plugin_timeout=30),
-        )
+        plugin_module.reset_plugin_manager_factory()
+        plugin_module.enable_plugins(True)
 
-        mod = _import_fresh_main_module(monkeypatch)
-        await asyncio.sleep(0)
-        assert mod.plugin_manager is not None
+        # Create the factory instance
+        plugin_module._plugin_manager_factory = _DummyFactory()
+
+        _import_fresh_main_module(monkeypatch)
+        # settings.enabled is True → get_plugin_manager() returns a manager
+        result = await plugin_module.get_plugin_manager()
+        assert result is not None
+        # Clean up the global factory to avoid polluting subsequent tests
+        plugin_module.reset_plugin_manager_factory()
 
 
 class TestHardeningHelperCoverage:

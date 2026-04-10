@@ -163,7 +163,7 @@ class ToolsPage(BasePage):
             # re-navigate to the tools tab.
             self.page.reload(wait_until="domcontentloaded")
             self.page.wait_for_function(
-                "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+                "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
                 timeout=30000,
             )
             self.sidebar.click_tools_tab()

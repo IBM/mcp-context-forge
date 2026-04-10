@@ -40,10 +40,9 @@ include .env.make
 include .env.example
 include .interrogaterc
 include .jshintrc
+include .npmrc
 include whitesource.config
-include .darglint
 include .dockerignore
-include .flake8
 include .htmlhintrc
 include .pycodestyle
 include .pylintrc*
@@ -75,6 +74,7 @@ recursive-include infra *.sh
 recursive-include infra *.yaml
 recursive-include infra *.yml
 include infra/nginx/Dockerfile
+include infra/s390x/Containerfile
 
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
@@ -102,10 +102,11 @@ recursive-include plugins_rust *.toml
 recursive-include plugins_rust *.md
 recursive-include plugins_rust *.py
 recursive-include plugins_rust *.pyi
-recursive-include plugins_rust *.lock
+recursive-include plugins_rust *.json
 recursive-include plugins_rust Makefile
-exclude plugins_rust/Cargo.lock
+recursive-include plugins_rust *.lock
 prune plugins_rust/target
+recursive-exclude plugins_rust/*/target *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -145,6 +146,7 @@ prune .pytest_cache
 prune .ruff_cache
 prune .mypy_cache
 prune htmlcov
+global-exclude **/.mypy_cache/*
 
 # Virtual environments (including nested in plugins)
 prune venv
@@ -154,6 +156,7 @@ prune node_modules
 prune plugins/external/opa/.venv
 prune plugins/external/llmguard/.venv
 prune plugins/external/cedar/.venv
+prune plugins_rust/url_reputation/.venv
 global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
@@ -188,6 +191,8 @@ exclude .prospector.yaml
 exclude .hadolint.yaml
 exclude .ruff.toml
 exclude .pre-commit-config.yaml
+exclude .secrets.baseline
+exclude .npmrc
 
 # Backup and temporary files
 global-exclude *~

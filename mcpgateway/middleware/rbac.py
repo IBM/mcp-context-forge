@@ -15,8 +15,9 @@ functions for protecting routes.
 import functools
 from functools import wraps
 import logging
-from typing import Callable, Generator, List, Optional
+from typing import Any, Callable, Generator, List, Optional
 import uuid
+import warnings
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -28,6 +29,14 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.utils.trace_context import (
+    clear_trace_context,
+    set_trace_auth_method,
+    set_trace_context_from_teams,
+    set_trace_team_scope,
+    set_trace_user_email,
+    set_trace_user_is_admin,
+)
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
@@ -39,14 +48,23 @@ _ACCESS_DENIED_MSG = "Access denied"
 security = HTTPBearer(auto_error=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db(request: Request = None) -> Generator[Session, None, None]:
     """Get database session for dependency injection.
 
-    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
-    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+    New code should use the request-scoped session from request.state.db or
+    get_db() from main.py.
 
-    Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
+    For backwards compatibility, this function now reuses the middleware session
+    when available, eliminating duplicate session creation (Issue #3622).
+
+    **Migration Path**:
+    - Route handlers: Use `db: Session = Depends(get_db)` from main.py
+    - RBAC checks: Access request.state.db directly in middleware context
+
+    Args:
+        request: Optional FastAPI request object (automatically injected by FastAPI
+                 dependency system when used with Depends())
 
     Yields:
         Session: SQLAlchemy database session
@@ -54,19 +72,47 @@ def get_db() -> Generator[Session, None, None]:
     Raises:
         Exception: Re-raises any exception after rolling back the transaction.
 
+    Note:
+        When used as a FastAPI dependency via Depends(get_db), the request parameter
+        is automatically provided by FastAPI's dependency injection system.
+
     Examples:
         >>> gen = get_db()
         >>> db = next(gen)
         >>> hasattr(db, 'query')
         True
     """
-    db = SessionLocal()
+    warnings.warn(
+        "rbac.get_db() is deprecated. Use request.state.db or get_db() from main.py",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    # Check if middleware already created a request-scoped session
+    # This matches the pattern from main.py:get_db() (line 3089)
+    db = None
+    owned = False
+
+    if request is not None:
+        db = getattr(request.state, "db", None)
+        if db is not None:
+            logger.debug(f"[RBAC] Reusing session from middleware: {id(db)}")
+
+    # Fallback: create own session (legacy behavior)
+    if db is None:
+        logger.debug("[RBAC] Creating new session (no middleware session available)")
+        db = SessionLocal()
+        owned = True
+
     try:
         yield db
-        db.commit()
+        # Only commit if we own the session (backwards compatibility)
+        if owned:
+            db.commit()
     except Exception:
         try:
-            db.rollback()
+            if owned:
+                db.rollback()
         except Exception:
             try:
                 db.invalidate()
@@ -74,7 +120,8 @@ def get_db() -> Generator[Session, None, None]:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        db.close()
+        if owned:
+            db.close()
 
 
 async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
@@ -121,6 +168,18 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             async def protected_route(user = Depends(get_current_user_with_permissions)):
                 return {"user": user["email"]}
     """
+
+    def _set_trace_context_for_identity(*, email: Optional[str], is_admin: bool, auth_method: str, token_teams: Optional[List[str]] = None, team_scope_known: bool = False) -> None:
+        clear_trace_context()
+        set_trace_user_email(email)
+        set_trace_user_is_admin(is_admin)
+        set_trace_auth_method(auth_method)
+        trace_team_name = getattr(request.state, "trace_team_name", None)
+        if team_scope_known:
+            set_trace_context_from_teams(token_teams, user_email=email, is_admin=is_admin, auth_method=auth_method, team_name=trace_team_name)
+        elif is_admin:
+            set_trace_team_scope("admin")
+
     # Check for proxy authentication first (if MCP client auth is disabled)
     if not settings.mcp_client_auth_enabled:
         # Read plugin context from request.state for cross-hook context sharing
@@ -157,6 +216,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
 
+                _set_trace_context_for_identity(email=proxy_user, is_admin=is_admin, auth_method="proxy")
                 return {
                     "email": proxy_user,
                     "full_name": full_name,
@@ -189,6 +249,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
 
             # auth_required=false: allow anonymous access
 
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -220,6 +281,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 detail="Authentication required but no auth method configured",
             )
 
+        _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",
@@ -280,6 +342,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # AUTH_REQUIRED=false no longer implies admin access.
         # Preserve explicit unsafe override for local-only compatibility.
         if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
+            _set_trace_context_for_identity(email=settings.platform_admin_email, is_admin=True, auth_method="disabled")
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -293,6 +356,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             }
 
         if not settings.auth_required:
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -534,7 +598,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         """
 
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args, **kwargs: dict[str, Any]):
             """Async wrapper function that performs permission check before calling original function.
 
             Args:
@@ -585,7 +649,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             # First-Party
             from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
 
-            plugin_manager = get_plugin_manager()
+            plugin_manager = await get_plugin_manager()
             if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
                 # Get plugin contexts from user_context (stored in request.state by HttpAuthMiddleware)
                 # These enable cross-hook context sharing between HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
@@ -598,10 +662,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     global_context = plugin_global_context
                 else:
                     request_id = user_context.get("request_id") or uuid.uuid4().hex
+                    request: Optional[Request] = kwargs.get("request")
+                    content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
                     global_context = GlobalContext(
                         request_id=request_id,
                         server_id=None,
                         tenant_id=None,
+                        content_type=content_type,
                     )
 
                 # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
@@ -714,6 +781,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
 
+        # Store permission metadata as function attributes for introspection
+        # This enables validation tools to extract permissions without fragile closure inspection
+        # Using setattr() to avoid pylint protected-access warnings
+        setattr(wrapper, "_required_permission", permission)
+        setattr(wrapper, "_resource_type", resource_type)
+        setattr(wrapper, "_allow_admin_bypass", allow_admin_bypass)
+
         return wrapper
 
     return decorator
@@ -735,7 +809,7 @@ def require_admin_permission():
         >>> class DummyPS:
         ...     def __init__(self, db):
         ...         pass
-        ...     async def check_admin_permission(self, email):
+        ...     async def check_admin_permission(self, email, token_teams=None):
         ...         return True
         >>> @require_admin_permission()
         ... async def demo(user=None):
@@ -777,15 +851,16 @@ def require_admin_permission():
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
+            token_teams = user_context.get("token_teams")  # Forward token scope
             if db_session:
                 # Use existing session from endpoint or user_context
                 permission_service = PermissionService(db_session)
-                has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+                has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
             else:
                 # Create fresh db session for permission check
                 with fresh_db_session() as db:
                     permission_service = PermissionService(db)
-                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -1008,14 +1083,15 @@ class PermissionChecker:
         Returns:
             bool: True if user has admin permissions
         """
+        token_teams = self.user_context.get("token_teams")
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.

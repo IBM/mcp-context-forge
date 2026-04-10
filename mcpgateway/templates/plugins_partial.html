@@ -213,6 +213,7 @@
         >
           <option value="">All Modes</option>
           <option value="enforce">Enforce</option>
+          <option value="enforce_ignore_error">Enforce Ignore Error</option>
           <option value="permissive">Permissive</option>
           <option value="disabled">Disabled</option>
         </select>
@@ -306,17 +307,17 @@
         >
           Enforce
         </span>
+        {% elif plugin.mode == 'enforce_ignore_error' %}
+        <span
+          class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
+        >
+          Enforce Ignore Error
+        </span>
         {% elif plugin.mode == 'permissive' %}
         <span
           class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
         >
           Permissive
-        </span>
-        {% else %}
-        <span
-          class="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-medium rounded dark:bg-gray-700 dark:text-gray-300"
-        >
-          Disabled
         </span>
         {% endif %}
 
@@ -341,17 +342,13 @@
       <!-- Tags -->
       {% if plugin.tags %}
       <div class="flex flex-wrap gap-1 mb-4">
-        {% for tag in plugin.tags[:3] %}
+        {% for tag in plugin.tags %}
         <span
           class="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded dark:bg-gray-700 dark:text-gray-300"
         >
           {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
         </span>
-        {% endfor %} {% if plugin.tags|length > 3 %}
-        <span class="px-2 py-1 text-gray-500 text-xs">
-          +{{ plugin.tags|length - 3 }} more
-        </span>
-        {% endif %}
+        {% endfor %}
       </div>
       {% endif %}
 
@@ -360,12 +357,10 @@
       <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
         <div class="font-medium mb-1">Hooks:</div>
         <div class="flex flex-wrap gap-1">
-          {% for hook in plugin.hooks[:2] %}
+          {% for hook in plugin.hooks %}
           <span class="text-xs">{{ hook.replace('_', ' ') }}</span>
-          {% if not loop.last %}<span>,</span>{% endif %} {% endfor %} {% if
-          plugin.hooks|length > 2 %}
-          <span>... ({{ plugin.hooks|length }} total)</span>
-          {% endif %}
+          {% if not loop.last %}<span>,</span>{% endif %}
+          {% endfor %}
         </div>
       </div>
       {% endif %}

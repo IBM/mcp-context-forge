@@ -191,7 +191,6 @@ podman-compose*.yaml
 # Testing configurations
 .coveragerc
 .pylintrc
-.flake8
 pytest.ini
 tox.ini
 .pytest.ini
@@ -251,6 +250,11 @@ mcpgateway/test_migration.db
 *.log
 logs/
 log/
+reports/
+coverage/
+artifacts/
+.tmp/
+tmp/
 
 # Certificates and secrets
 certs/
@@ -297,6 +301,8 @@ docs/build/
 
 # PyBuilder
 target/
+**/target/
+**/target/**
 
 # Jupyter Notebook
 .ipynb_checkpoints

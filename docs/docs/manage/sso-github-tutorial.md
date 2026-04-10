@@ -71,7 +71,7 @@ SSO_ENABLED=true
 # GitHub OAuth Configuration
 SSO_GITHUB_ENABLED=true
 SSO_GITHUB_CLIENT_ID=Iv1.a1b2c3d4e5f6g7h8
-SSO_GITHUB_CLIENT_SECRET=ghp_1234567890abcdef1234567890abcdef12345678
+SSO_GITHUB_CLIENT_SECRET=ghp_1234567890abcdef1234567890abcdef12345678  # pragma: allowlist secret
 
 # Optional: Auto-create users on first login
 SSO_AUTO_CREATE_USERS=true

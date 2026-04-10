@@ -1,11 +1,15 @@
 # ----------------------------------------------------------------
 # 💡 Build system (PEP 517)
-#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - setuptools ≥ 78.1.1 gives SPDX licence support (PEP 639) and fixes CVE-2025-47273
 #     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+exclude-newer = "10 days"
+exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -77,7 +81,7 @@ dependencies = [
     "sse-starlette>=3.3.3",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "cpex>=0.1.0.dev10,<0.2.0",
+    "cpex @ git+https://github.com/contextforge-org/contextforge-plugins-framework.git@feat/cf_sync",
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
@@ -93,22 +97,19 @@ dev = [
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
-    "black>=25.9.0",
+    "black>=26.3.1",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.7",
-    "darglint>=1.8.1",
+    "detect-secrets @ git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976", # equates to Tag "0.13.1+ibm.64.dss"
     "diff-cover>=9.0.0",
-    "dlint>=0.16.0",
     "dodgy>=0.2.1",
     "faker>=20.0.0",
     "fawltydeps>=0.20.0",
-    "flake8>=7.3.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.140.3",
-    "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.1.0",
     "locust>=2.35.0",
@@ -154,7 +155,6 @@ dev = [
     "twine>=6.2.0",
     "ty>=0.0.1a21",
     "types-tabulate>=0.9.0.20241207",
-    "unimport>=1.3.0",
     "url-normalize>=2.2.1",
     "uv>=0.8.23",
     "vulture>=2.14",
@@ -169,6 +169,8 @@ dev = [
     "pipdeptree>=2.31.0",
     "setuptools>=82.0.0",
     "debugpy>=1.8.20",
+    "maturin>=1.12.6",
+    "tornado>=6.5.5",
 ]
 
 # ----------------------------------------------------------------
@@ -193,14 +195,6 @@ redis-pure = [
 # Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
 postgres = [
     "psycopg[c,binary]>=3.3.3",
-]
-
-mysql = [
-    "pymysql>=1.1.2",
-]
-
-mariadb = [
-    "mariadb>=1.1.14",
 ]
 
 llmchat = [
@@ -360,6 +354,7 @@ ignore = [
     "tests/**",
     ".github/**",
     "Makefile",
+    "mcpgateway/admin_ui/**",
 ]
 
 [tool.black]
@@ -413,7 +408,7 @@ target-version = "py311"
 # Also "D1" for docstring present checks.
 # "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
 # TODO: Enable "I" for import sorting as a separate PR.
-select = ["E3", "E4", "E7", "E9", "F", "D1", "PL"]
+select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL"]
 ignore = [
     # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
     "PLR0904",  # too-many-public-methods  (pylint R0904)
@@ -446,20 +441,20 @@ preview = true
 
 # Ignore D1 (docstring checks) in tests and other non-production code
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D1"]
-"scripts/**/*.py" = ["D1"]
-"mcp-servers/**/*.py" = ["D1"]
-".github/**/*.py" = ["D1"]
-"migration_add_annotations.py" = ["D1"]
-"playwright.config.py" = ["D1"]
-"run_mutmut.py" = ["D1"]
+"tests/**/*.py" = ["D1", "D417"]
+"scripts/**/*.py" = ["D1", "D417"]
+"mcp-servers/**/*.py" = ["D1", "D417"]
+".github/**/*.py" = ["D1", "D417"]
+"migration_add_annotations.py" = ["D1", "D417"]
+"playwright.config.py" = ["D1", "D417"]
+"run_mutmut.py" = ["D1", "D417"]
 
 [tool.ruff.lint.pylint]
 # Match thresholds from .pylintrc [DESIGN] and [REFACTORING] sections
 max-args = 12               # .pylintrc max-args
 max-positional-args = 16    # .pylintrc max-positional-arguments
 max-returns = 16            # .pylintrc max-returns
-max-bool-expr = 6           # .pylintrc max-bool-expr
+max-bool-expr = 10          # .pylintrc max-bool-expr
 max-branches = 12           # .pylintrc max-branches (ignored; PLR0912 disabled)
 max-statements = 50         # .pylintrc max-statements (ignored; PLR0915 disabled)
 max-locals = 15             # .pylintrc max-locals (ignored; PLR0914 disabled)
@@ -657,7 +652,7 @@ markers = [
     "mcp_client_features: marks roots/sampling/elicitation checks",
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
-    "mcp_auth: marks authorization discovery checks",
+    "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
     "mcp_security: marks security compliance checks",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
@@ -696,13 +691,10 @@ ignore_unused = [
   "code2flow",
   "cookiecutter",
   "coverage",
-  "darglint",
   "diff-cover",
-  "flake8",
   "fawltydeps",
   "gprof2dot",
   "gunicorn",
-  "importchecker",
   "isort",
   "ty",
   "tomlcheck",
@@ -760,6 +752,8 @@ also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
 # --------------------------------------------------------------------
 [tool.coverage.run]
 source = ["mcpgateway"]
+parallel = true
+concurrency = ["thread", "multiprocessing"]
 omit = [
     "mcpgateway/alembic/*",
     "mcpgateway/tools/builder/*",

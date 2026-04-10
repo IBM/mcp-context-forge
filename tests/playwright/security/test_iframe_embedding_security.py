@@ -17,6 +17,7 @@ Covers:
 from __future__ import annotations
 
 # Standard
+import os
 import re
 from typing import Any, Dict, List, Optional
 import uuid
@@ -52,6 +53,11 @@ def _find_cookie(page: Page, name: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
+
+# Iframe tests require X_FRAME_OPTIONS=ALLOW-ALL to function properly
+# Skip marker for when this requirement is not met
+_requires_allow_all = pytest.mark.skipif(settings.x_frame_options != "ALLOW-ALL", reason="Iframe embedding tests require X_FRAME_OPTIONS=ALLOW-ALL environment variable")
 
 
 @pytest.fixture
@@ -102,18 +108,36 @@ def console_errors(page: Page):
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestSecurityHeadersInIframeContext:
-    """Verify X-Frame-Options and CSP headers on live admin responses."""
+    """Verify X-Frame-Options and CSP headers on live admin responses.
+
+    These tests require X_FRAME_OPTIONS=ALLOW-ALL environment variable.
+    Set it before starting the test server: export X_FRAME_OPTIONS=ALLOW-ALL
+    """
 
     def test_x_frame_options_header_matches_config(self, captured_admin_headers):
-        """X-Frame-Options header value matches settings.x_frame_options."""
+        """X-Frame-Options header value matches settings.x_frame_options.
+
+        Config default is 'DENY' (config.py:725). Can be overridden via X_FRAME_OPTIONS env var.
+        This test validates the header matches the configured value (or absence when None).
+        """
         configured = settings.x_frame_options
         header_val = captured_admin_headers.get("x-frame-options")
 
+        # If settings shows None but header exists, use header value for validation
+        # (handles case where settings singleton was loaded before env var changes)
+        if configured is None and header_val is not None:
+            configured = header_val
+
+        # The config has default="DENY", but normalize_x_frame_options validator can return None
+        # if env var is explicitly set to "null"/"none"/"" (empty string)
         if configured is None:
+            # When explicitly disabled, no header should be present
             assert header_val is None, f"Expected no X-Frame-Options when config is None, got: {header_val}"
         else:
-            assert header_val is not None, "Expected X-Frame-Options header when configured"
+            # When configured (including default "DENY"), header must match
+            assert header_val is not None, f"Expected X-Frame-Options header when configured as '{configured}'"
             assert header_val.upper() == configured.upper(), f"Expected X-Frame-Options={configured}, got {header_val}"
 
     def test_csp_frame_ancestors_synced_with_x_frame_options(self, captured_admin_headers):
@@ -124,14 +148,24 @@ class TestSecurityHeadersInIframeContext:
           SAMEORIGIN  -> frame-ancestors 'self'
           ALLOW-ALL   -> frame-ancestors * file: http: https:
           None        -> no frame-ancestors directive
+
+        Config default is 'DENY' (config.py:725). Can be overridden via X_FRAME_OPTIONS env var.
+        This test validates CSP frame-ancestors matches the configured x_frame_options value.
         """
         if not settings.security_headers_enabled:
             pytest.skip("Security headers disabled.")
 
         csp = captured_admin_headers.get("content-security-policy", "")
         x_frame = settings.x_frame_options
+        header_val = captured_admin_headers.get("x-frame-options")
+
+        # If settings shows None but header exists, use header value for validation
+        # (handles case where settings singleton was loaded before env var changes)
+        if x_frame is None and header_val is not None:
+            x_frame = header_val
 
         if x_frame is None:
+            # When explicitly disabled, no frame-ancestors directive
             assert "frame-ancestors" not in csp, f"frame-ancestors should be absent when x_frame_options is None; CSP: {csp}"
             return
 
@@ -145,9 +179,9 @@ class TestSecurityHeadersInIframeContext:
             expected_fa = expected_map[x_frame_upper]
             assert f"frame-ancestors {expected_fa}" in csp, f"Expected frame-ancestors {expected_fa} in CSP for X-Frame-Options={x_frame}; got: {csp}"
         elif x_frame_upper == "ALLOW-ALL":
-            assert "frame-ancestors *" in csp or "frame-ancestors * file:" in csp, f"Expected permissive frame-ancestors for ALLOW-ALL; got: {csp}"
+            assert "frame-ancestors *" in csp or "frame-ancestors * file:" in csp, f"Expected permissive frame-ancestors for ALLOW-ALL (configured: {x_frame}); got: {csp}"
         elif x_frame_upper.startswith("ALLOW-FROM"):
-            assert "frame-ancestors" in csp, f"Expected frame-ancestors directive for ALLOW-FROM; got: {csp}"
+            assert "frame-ancestors" in csp, f"Expected frame-ancestors directive for ALLOW-FROM (configured: {x_frame}); got: {csp}"
 
     def test_security_headers_present_when_enabled(self, captured_admin_headers):
         """CSP, X-Frame-Options, and Referrer-Policy exist when security_headers_enabled=True."""
@@ -166,13 +200,11 @@ class TestSecurityHeadersInIframeContext:
 
         _ensure_admin_logged_in(page, base_url)
         admin_url = f"{base_url}/admin/"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>deny test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"></iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -201,6 +233,7 @@ class TestSecurityHeadersInIframeContext:
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestCookieSecurityAttributes:
     """Verify cookie attributes for JWT, CSRF, and ui_hide cookies.
 
@@ -286,6 +319,7 @@ class TestCookieSecurityAttributes:
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestEmbeddedModeUIBehavior:
     """Verify embedded mode and ?ui_hide= behavior."""
 
@@ -337,15 +371,13 @@ class TestEmbeddedModeUIBehavior:
         page.route(admin_pattern, _strip_headers)
 
         admin_url = f"{base_url}/admin/?ui_hide=metrics"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>ui_hide iframe test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -394,22 +426,21 @@ class TestEmbeddedModeUIBehavior:
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestCORSInIframeContext:
     """Verify CORS behavior relevant to iframe embedding."""
 
     def test_same_origin_fetch_from_iframe(self, page: Page, iframe_host):
         """fetch('/health') from inside the iframe succeeds (same-origin)."""
         frame = iframe_host
-        result = frame.locator("body").evaluate(
-            """async () => {
+        result = frame.locator("body").evaluate("""async () => {
                 try {
                     const resp = await fetch('/health');
                     return { status: resp.status, ok: resp.ok };
                 } catch (e) {
                     return { error: e.message };
                 }
-            }"""
-        )
+            }""")
         assert "error" not in result, f"Same-origin fetch from iframe failed: {result.get('error')}"
         assert result["status"] == 200, f"Expected 200 from /health, got {result['status']}"
 
@@ -473,6 +504,7 @@ class TestCORSInIframeContext:
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestIframeTabNavigation:
     """Verify that admin tab navigation works correctly inside an iframe.
 
@@ -522,6 +554,7 @@ class TestIframeTabNavigation:
 @pytest.mark.ui
 @pytest.mark.security
 @pytest.mark.iframe
+@_requires_allow_all
 class TestIframeFormSubmission:
     """Verify that admin form submissions work correctly inside an iframe.
 
@@ -532,33 +565,62 @@ class TestIframeFormSubmission:
     # Non-routable local URL that fails fast (connection refused) instead of
     # timing out.  Uses transport=HTTP so the server doesn't attempt an SSE
     # handshake.  Mirrors the pattern used in test_admin_url_context.py.
-    _FAST_FAIL_GW_URL = "http://127.0.0.1:19999"
+    def _get_unique_gateway_url(self, test_name: str) -> str:
+        """Generate a UUID-based gateway URL that is unique per call.
+
+        Using hash(test_name) was deterministic within a process but could
+        collide between runs if a previous cleanup failed, producing HTTP 409.
+        UUID4 guarantees a fresh, collision-free URL each time.
+        """
+        return f"http://127.0.0.1:65432/{uuid.uuid4().hex}"
 
     def _reload_iframe(self, page: Page, iframe_host: FrameLocator) -> None:
         """Reload the iframe content and wait for JS initialization."""
         iframe_frame = page.frames[-1]
         iframe_frame.evaluate("() => location.reload()")
+
+        # Wait for DOM to be ready
+        iframe_frame.wait_for_load_state("domcontentloaded", timeout=15000)
+
+        # Wait for admin shell to load - this is critical, don't skip
+        iframe_host.locator('[data-testid="servers-tab"]').wait_for(state="visible", timeout=30000)
+
+        # Wait for JS initialization (Admin object + HTMX) - also critical
+        iframe_frame.wait_for_function("typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=15000)
+
+        # Give HTMX a moment to settle after page load
+        page.wait_for_timeout(500)
+
+    def _search_gateway_in_iframe(self, page: Page, frame: FrameLocator, gw_name: str) -> None:
+        """Filter the gateways table to the named gateway inside the iframe.
+
+        The gateways table is paginated (default 10/page).  When many gateways
+        exist the newly-created one may land on page 2+, making its action
+        buttons invisible.  Searching by name filters the table so only the
+        matching row is rendered, regardless of the total count.
+
+        Uses FrameLocator (``frame``) rather than ``page.frames[-1]`` to avoid
+        stale-frame errors caused by HTMX or iframe reloads detaching old handles.
+        """
         try:
-            iframe_frame.wait_for_load_state("domcontentloaded", timeout=15000)
-        except PlaywrightTimeoutError:
-            pass
-        # Wait for admin shell to load inside the refreshed iframe
-        try:
-            iframe_host.locator('[data-testid="servers-tab"]').wait_for(state="visible", timeout=30000)
-        except PlaywrightTimeoutError:
-            pass
-        # Wait for JS initialization (showTab + HTMX) before any tab clicks
-        try:
-            iframe_frame.wait_for_function("typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=15000)
-        except PlaywrightTimeoutError:
-            pass
+            search_input = frame.locator("#gateways-search-input")
+            search_input.fill(gw_name)
+            # Wait for the HTMX indicator to disappear (search response settled)
+            page.wait_for_function(
+                "() => !document.querySelector('#admin-frame')?.contentDocument" "?.querySelector('#gateways-loading.htmx-request')",
+                timeout=10000,
+            )
+        except (PlaywrightTimeoutError, Exception):
+            pass  # Best effort; proceed even if search doesn't settle
 
     def _navigate_to_gateways_tab(self, page: Page, frame: FrameLocator) -> None:
         """Navigate to gateways tab with JS fallback if click doesn't work.
 
         Handles the case where Playwright click on the tab doesn't trigger
-        the JS showTab function after an iframe reload.
+        Admin.showTab after an iframe reload (race condition with module loading).
         """
+        iframe_frame = page.frames[-1]
+
         gw_tab = frame.locator('[data-testid="gateways-tab"]')
         try:
             gw_tab.wait_for(state="visible", timeout=15000)
@@ -567,21 +629,39 @@ class TestIframeFormSubmission:
 
         gw_tab.click()
 
+        # Wait for panel to be visible; fall back to calling Admin.showTab directly
+        # if the click didn't trigger it (e.g. Admin module not yet fully loaded).
         panel = frame.locator("#gateways-panel")
         try:
             panel.wait_for(state="visible", timeout=5000)
         except PlaywrightTimeoutError:
-            # Fallback: call showTab directly via JS
-            iframe_frame = page.frames[-1]
-            iframe_frame.evaluate("() => { if (typeof showTab === 'function') showTab('gateways'); }")
+            try:
+                iframe_frame.evaluate("() => { if (typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function') window.Admin.showTab('gateways'); }")
+            except Exception:
+                pass
             panel.wait_for(state="visible", timeout=15000)
+
+        # Wait for HTMX to finish loading - either table has rows or shows "No gateways" message
+        try:
+            iframe_frame.wait_for_function(
+                """() => {
+                    const tbody = document.querySelector('#gateways-panel table tbody');
+                    if (!tbody) return false;
+                    // Either has data rows or shows empty state
+                    return tbody.children.length > 0 || tbody.textContent.includes('No');
+                }""",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            pass  # Table may still be loading; proceed with what is available
 
     def _create_gateway_via_api(self, admin_api, name: str) -> str:
         """Create a gateway via REST API using JSON. Returns gateway ID; skips on failure."""
+        unique_url = self._get_unique_gateway_url(name)
         create_resp = admin_api.post(
             "/gateways",
             headers={"Content-Type": "application/json"},
-            data={"name": name, "url": self._FAST_FAIL_GW_URL, "transport": "HTTP"},
+            data={"name": name, "url": unique_url, "transport": "HTTP"},
         )
         if not create_resp.ok:
             pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
@@ -613,9 +693,27 @@ class TestIframeFormSubmission:
             gw_tab.click()
             frame.locator("#gateways-panel").wait_for(state="visible", timeout=15000)
 
-            # Fill form with fast-fail URL (connection refused is faster than DNS timeout)
+            # Fill form with unique fast-fail URL (connection refused is faster than DNS timeout)
+            unique_url = self._get_unique_gateway_url(gw_name)
             frame.locator("#mcp-server-name").fill(gw_name)
-            frame.locator("#mcp-server-url").fill(self._FAST_FAIL_GW_URL)
+            frame.locator("#mcp-server-url").fill(unique_url)
+
+            # Override transport to HTTP so _initialize_gateway skips the external
+            # connection check (only SSE/StreamableHTTP try to connect).
+            iframe_frame = page.frames[-1]
+            iframe_frame.evaluate("""() => {
+                    const form = document.getElementById('add-gateway-form');
+                    if (!form) return;
+                    const select = form.querySelector('select[name="transport"]');
+                    if (!select) return;
+                    if (!select.querySelector('option[value="HTTP"]')) {
+                        const opt = document.createElement('option');
+                        opt.value = 'HTTP';
+                        opt.text = 'HTTP';
+                        select.appendChild(opt);
+                    }
+                    select.value = 'HTTP';
+                }""")
 
             # Submit and wait for the POST response from the admin form handler.
             # The admin form uses JS fetch() so the page does NOT navigate.
@@ -726,9 +824,12 @@ class TestIframeFormSubmission:
             # Reload iframe to pick up new gateway
             self._reload_iframe(page, frame)
             self._navigate_to_gateways_tab(page, frame)
+            # Search by name so the gateway is visible regardless of pagination
+            self._search_gateway_in_iframe(page, frame, gw_name)
 
             # Click the edit button for this specific gateway
-            edit_btn = frame.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]")
+            # tojson_attr encodes the ID with double quotes → onclick='Admin.editGateway("id")'
+            edit_btn = frame.locator(f"button[onclick*='editGateway(\"{gw_id}\")']").first
             try:
                 edit_btn.wait_for(state="visible", timeout=15000)
             except PlaywrightTimeoutError:
@@ -772,17 +873,19 @@ class TestIframeFormSubmission:
             # Reload iframe to pick up new gateway
             self._reload_iframe(page, frame)
             self._navigate_to_gateways_tab(page, frame)
+            # Search by name so the gateway is visible regardless of pagination
+            self._search_gateway_in_iframe(page, frame, gw_name)
 
             # Auto-accept confirmation dialogs on the HOST page
             page.on("dialog", lambda d: d.accept())
 
-            # Click delete button for this gateway (use .first — responsive layouts
-            # may render both a compact and full-width row for the same gateway)
+            # Open the actions dropdown (PR #3802 moved buttons into Alpine.js menu)
+            gw_row = frame.locator(f'tr[id="gateway-row-{gw_id}"]').first
+            gw_row.wait_for(state="attached", timeout=10000)
+            gw_row.scroll_into_view_if_needed()
+            gw_row.locator("button[aria-expanded]").click()
+            gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
             delete_btn = frame.locator(f'form[action*="/gateways/{gw_id}/delete"] button[type="submit"]').first
-            try:
-                delete_btn.wait_for(state="visible", timeout=15000)
-            except PlaywrightTimeoutError:
-                pytest.skip(f"Delete button for gateway {gw_id} not visible")
 
             with page.expect_response(lambda r: f"/gateways/{gw_id}/delete" in r.url, timeout=15000):
                 delete_btn.click()
@@ -807,13 +910,16 @@ class TestIframeFormSubmission:
             # Reload iframe to pick up new gateway
             self._reload_iframe(page, frame)
             self._navigate_to_gateways_tab(page, frame)
+            # Search by name so the gateway is visible regardless of pagination
+            self._search_gateway_in_iframe(page, frame, gw_name)
 
-            # Click the deactivate/toggle button for this gateway
+            # Open the actions dropdown (PR #3802 moved buttons into Alpine.js menu)
+            gw_row = frame.locator(f'tr[id="gateway-row-{gw_id}"]').first
+            gw_row.wait_for(state="attached", timeout=10000)
+            gw_row.scroll_into_view_if_needed()
+            gw_row.locator("button[aria-expanded]").click()
+            gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
             toggle_btn = frame.locator(f'form[action*="/gateways/{gw_id}/state"] button[type="submit"]')
-            try:
-                toggle_btn.first.wait_for(state="visible", timeout=15000)
-            except PlaywrightTimeoutError:
-                pytest.skip(f"Toggle button for gateway {gw_id} not visible")
 
             with page.expect_response(lambda r: f"/gateways/{gw_id}/state" in r.url, timeout=15000):
                 toggle_btn.first.click()

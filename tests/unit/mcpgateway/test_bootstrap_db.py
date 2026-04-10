@@ -115,25 +115,6 @@ class TestAdvisoryLock:
 
         assert conn.execute.call_count == 2
 
-    def test_mysql_lock_timeout_raises(self):
-        conn = MagicMock()
-        conn.dialect.name = "mysql"
-        conn.execute.return_value.scalar.return_value = 0
-
-        with pytest.raises(TimeoutError):
-            with advisory_lock(conn):
-                pass
-
-    def test_mysql_lock_acquire_and_release(self):
-        conn = MagicMock()
-        conn.dialect.name = "mariadb"
-        conn.execute.return_value.scalar.return_value = 1
-
-        with advisory_lock(conn):
-            pass
-
-        assert conn.execute.call_count == 2
-
 
 class TestBootstrapAdminUser:
     """Test bootstrap_admin_user function."""
@@ -1139,21 +1120,23 @@ class TestBootstrapResourceAssignments:
         mock_server.owner_email = None
         mock_server.visibility = None
         mock_server.federation_source = None
+        mock_server.name = "test-server"
 
         mock_tool = Mock()
         mock_tool.team_id = None
         mock_tool.owner_email = None
         mock_tool.visibility = None
+        mock_tool.name = "test-tool"
 
         def mock_query_handler(model):
-            query = Mock()
+            query = MagicMock()
             query.filter.return_value = query
 
-            if model.__name__ == "EmailUser":
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
                 query.first.return_value = mock_admin_user
-            elif model.__name__ == "Server":
+            elif hasattr(model, "__name__") and model.__name__ == "Server":
                 query.all.return_value = [mock_server]
-            elif model.__name__ == "Tool":
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
                 query.all.return_value = [mock_tool]
             else:
                 query.all.return_value = []
@@ -1185,6 +1168,168 @@ class TestBootstrapResourceAssignments:
                                                 assert mock_tool.visibility == "public"
 
                                                 mock_logger.info.assert_any_call("Successfully assigned 2 orphaned resources to admin team")
+
+    @pytest.mark.asyncio
+    async def test_name_conflict_with_existing(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan whose name already exists in admin team is renamed with a -2 suffix."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — only Server has orphans here
+                query.__iter__ = Mock(return_value=iter([("Web Search",)]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server.name == "Web Search-2"
+                    assert mock_server.team_id == mock_personal_team.id
+                    assert mock_server.owner_email == mock_admin_user.email
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-2'")
+
+    @pytest.mark.asyncio
+    async def test_intra_batch_duplicates(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Two orphans with the same name — first keeps name, second is renamed to name-2."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server1 = Mock()
+        mock_server1.team_id = None
+        mock_server1.owner_email = None
+        mock_server1.visibility = None
+        mock_server1.federation_source = None
+        mock_server1.name = "Web Search"
+
+        mock_server2 = Mock()
+        mock_server2.team_id = None
+        mock_server2.owner_email = None
+        mock_server2.visibility = None
+        mock_server2.federation_source = None
+        mock_server2.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server1, mock_server2]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — no existing conflicts
+                query.__iter__ = Mock(return_value=iter([]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server1.name == "Web Search"
+                    assert mock_server2.name == "Web Search-2"
+                    assert mock_server1.team_id == mock_personal_team.id
+                    assert mock_server2.team_id == mock_personal_team.id
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-2'")
+
+    @pytest.mark.asyncio
+    async def test_existing_suffix_collision(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan name conflicts and admin team already has name-2 — renamed to name-3."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — admin team already has name and name-2
+                query.__iter__ = Mock(return_value=iter([("Web Search",), ("Web Search-2",)]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server.name == "Web Search-3"
+                    assert mock_server.team_id == mock_personal_team.id
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-3'")
+
+    @pytest.mark.asyncio
+    async def test_null_field_value_skips_conflict_detection(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan with None unique-field value is assigned without conflict detection."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = None
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                query.__iter__ = Mock(return_value=iter([]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    # Resource should be assigned even with None name
+                    assert mock_server.name is None
+                    assert mock_server.team_id == mock_personal_team.id
+                    assert mock_server.owner_email == mock_admin_user.email
+                    assert mock_server.visibility == "public"
+                    # No warning about renaming should appear
+                    for call in mock_logger.warning.call_args_list:
+                        assert "Name conflict" not in str(call)
 
     @pytest.mark.asyncio
     async def test_resource_assignments_per_resource_error_continues(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
@@ -1305,49 +1450,6 @@ class TestMain:
                                                         mock_command.stamp.assert_called_once_with(mock_config, "head")
                                                         mock_command.upgrade.assert_not_called()
                                                         mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
-
-    @pytest.mark.asyncio
-    async def test_main_empty_database_mysql_applies_mariadb_mods(self, mock_settings):
-        """Empty DB + MySQL/MariaDB URL should apply compatibility modifications."""
-        mock_settings.database_url = "mysql://user:pass@localhost/db"
-
-        mock_engine = Mock()
-        mock_engine.dispose = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []  # Empty database
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.alembic.env._modify_metadata_for_mariadb") as mock_mod:
-                                                        with patch("mcpgateway.alembic.env.mariadb_naming_convention", {"foo": "bar"}):
-                                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                                await main()
-
-                                                                assert mock_mod.called
-                                                                mock_logger.info.assert_any_call("Applied MariaDB compatibility modifications")
-                                                                mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                                mock_command.stamp.assert_called_once_with(mock_config, "head")
 
     @pytest.mark.asyncio
     async def test_main_existing_database(self, mock_settings):

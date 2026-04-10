@@ -118,7 +118,7 @@ class TestVirtualServerCRUD:
 
         Steps:
         1. Navigate to Servers tab
-        2. Click "Add Server" button
+        2. Scroll to add-server form
         3. Fill in server details
         4. Submit form
         5. Verify server appears in list
@@ -130,20 +130,19 @@ class TestVirtualServerCRUD:
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
 
-        # Step 2: Click Add Server button (use visible filter — hidden form also has "Add Server")
-        add_button = admin_page.locator('button:has-text("Add Server"):visible, button:has-text("Create Server"):visible').first
-        expect(add_button).to_be_visible(timeout=5_000)
-        add_button.click()
+        # Step 2: Scroll to the add-server form section
+        add_form = admin_page.locator("#add-server-form")
+        add_form.scroll_into_view_if_needed(timeout=5_000)
 
         # Step 3: Fill in server details
         server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
 
-        name_input = admin_page.locator('#server-name')
+        name_input = admin_page.locator("#server-name")
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(server_name)
 
-        # Step 4: Submit form (the "Add Server" button is the submit button within the catalog panel)
-        submit_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Add Server"):visible').first
+        # Step 4: Submit form
+        submit_button = admin_page.locator('#add-server-form button[type="submit"]')
         expect(submit_button).to_be_visible(timeout=5_000)
         submit_button.click()
 
@@ -190,7 +189,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find first server row with edit button
-        edit_button = admin_page.locator('#catalog-panel button:has-text("Edit"):visible').first
+        edit_button = admin_page.locator('[data-testid="server-item"] button:has-text("Edit")').first
 
         try:
             edit_button.wait_for(state="visible", timeout=3_000)
@@ -202,10 +201,16 @@ class TestVirtualServerCRUD:
 
         # Step 4: Wait for edit modal and modify server name
         edit_modal = admin_page.locator('#server-edit-modal')
-        edit_modal.wait_for(state="visible", timeout=5_000)
+        edit_modal.wait_for(state="visible", timeout=10_000)
 
         modal_name_input = edit_modal.locator('input[name="name"]')
         expect(modal_name_input).to_be_visible(timeout=5_000)
+
+        # Wait for editServer() async API call to complete and populate the name field
+        admin_page.wait_for_function(
+            "() => { const f = document.querySelector('#edit-server-name'); return f && f.value !== ''; }",
+            timeout=10_000,
+        )
 
         # Get current name from modal input and update it
         original_name = modal_name_input.input_value()
@@ -218,8 +223,10 @@ class TestVirtualServerCRUD:
         save_button.click()
 
         # Step 6: Verify changes persisted (search to handle pagination)
-        admin_page.wait_for_timeout(2_000)
+        # Wait for modal to close before interacting with the table
+        edit_modal.wait_for(state="hidden", timeout=10_000)
         search_box = admin_page.locator('#catalog-panel input[type="text"][placeholder*="Search" i]').first
+        expect(search_box).to_be_visible(timeout=5_000)
         search_box.fill(updated_name)
         updated_cell = admin_page.locator(f'#catalog-panel td:has-text("{updated_name}")')
         expect(updated_cell.first).to_be_visible(timeout=10_000)
@@ -260,13 +267,44 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
         admin_page.wait_for_timeout(1_000)
 
-        # Step 2: Find delete button within catalog panel
-        delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
+        # Step 2: Find delete button scoped to server rows via data-testid
+        delete_button = admin_page.locator('[data-testid="server-item"] button:has-text("Delete")').first
 
         try:
             delete_button.wait_for(state="visible", timeout=3_000)
         except PlaywrightTimeoutError:
-            pytest.skip("No servers available to delete")
+            # No servers available - create one first
+            add_button = admin_page.locator('button:has-text("Add Server"):visible, button:has-text("Create Server"):visible').first
+            expect(add_button).to_be_visible(timeout=5_000)
+            add_button.click()
+
+            server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
+            name_input = admin_page.locator('#server-name')
+            expect(name_input).to_be_visible(timeout=5_000)
+            name_input.fill(server_name)
+
+            submit_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Add Server"):visible').first
+            expect(submit_button).to_be_visible(timeout=5_000)
+
+            # handleServerFormSubmit calls navigateAdmin("catalog") on success,
+            # which triggers a full page navigation.  Wait for it to complete
+            # (wait_until="load" ensures Alpine.js and HTMX have initialised).
+            with admin_page.expect_navigation(wait_until="load", timeout=15_000):
+                submit_button.click()
+
+            # The page reloaded to #catalog; HTMX loads the servers partial
+            # automatically — no need to click the tab again (doing so can
+            # trigger a second HTMX request that races with the first).
+            # Wait for the newly-created server's row specifically: this
+            # confirms the partial has fully rendered and the correct row
+            # (with an interactive delete button) is in the DOM.
+            admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
+            server_row = admin_page.locator(f'#servers-table-body tr:has(td:has-text("{server_name}"))')
+            expect(server_row).to_be_visible(timeout=10_000)
+
+            # Scope delete button to this row to avoid matching stale elements
+            delete_button = server_row.locator('button[type="submit"]:has-text("Delete")')
+            expect(delete_button).to_be_visible(timeout=5_000)
 
         # Capture the server ID from the first delete form so we can
         # verify it disappears after deletion (row counts are unreliable
@@ -281,21 +319,18 @@ class TestVirtualServerCRUD:
         # Step 3 & 4: Accept native confirm() dialogs and click delete.
         # handleDeleteSubmit shows two native confirm() dialogs, then
         # handleToggleSubmit does fetch(redirect:'manual') followed by
-        # _navigateAdmin() which reloads the page via location change.
+        # navigateAdmin() which reloads the page via location change.
         admin_page.on("dialog", lambda d: d.accept())
-        delete_button.click()
 
-        # Step 5: Wait for the async fetch to complete, then force a
-        # clean page reload.  The JS _navigateAdmin triggers a page
-        # reload, but it may race with HTMX partial rendering and
-        # produce stale counts.  Waiting briefly for the fetch, then
-        # performing an explicit reload guarantees fresh server-side
-        # data in the DOM.
-        admin_page.wait_for_timeout(3_000)
-        admin_page.reload(wait_until="domcontentloaded")
-        servers_tab = admin_page.locator('[data-testid="servers-tab"]')
-        expect(servers_tab).to_be_visible(timeout=10_000)
-        servers_tab.click()
+        # Wait for HTMX to refresh the table after deletion
+        # The new implementation uses htmx.ajax() instead of full page reload
+        with admin_page.expect_response(
+            lambda r: "/admin/servers/partial" in r.url and r.status == 200,
+            timeout=10_000
+        ):
+            delete_button.click()
+
+        # Step 5: Wait for HTMX partial to finish rendering
         admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
         admin_page.wait_for_timeout(1_000)
 
@@ -382,7 +417,7 @@ class TestStatePersistence:
         6. Verify no console errors
         """
         # Step 1: Try to open team selector
-        team_selector = admin_page.locator('#team-selector-button')
+        team_selector = admin_page.locator("#team-selector-button")
 
         try:
             team_selector.wait_for(state="visible", timeout=3_000)
@@ -392,8 +427,8 @@ class TestStatePersistence:
         team_selector.click()
         admin_page.wait_for_timeout(1_000)
 
-        # Click first team item
-        team_item = admin_page.locator('.team-selector-item').first
+        # Click first team item (scoped to dropdown container)
+        team_item = admin_page.locator("#team-selector-items .team-selector-item").first
         if not team_item.is_visible(timeout=3_000):
             pytest.skip("No teams available in selector")
 

@@ -1,3 +1,4 @@
+
 # Plugin Framework Specification
 
 **Version**: 1.0
@@ -256,6 +257,97 @@ The `conditions` array contains objects that specify when plugins should execute
 | `resources` | `string[]` | Execute only for specific resource URI patterns | `["https://api.example.com/*"]` |
 | `user_patterns` | `string[]` | Execute for users matching regex patterns | `["admin_.*", ".*@company.com"]` |
 | `content_types` | `string[]` | Execute for specific content types | `["application/json", "text/plain"]` |
+
+The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution.
+
+#### Evaluation Logic
+
+**Behavior:**
+- **Within a condition object**: ALL fields must match (AND logic)
+- **Across condition objects**: ANY object can match (OR logic)
+
+This enables expressions like: `(tenant=X AND tool=Y) OR (server=Z AND user=W)`
+
+**Evaluation Order within each condition object:**
+1. GlobalContext conditions (server_id, tenant_id, user_patterns)
+2. Payload-specific conditions (tools, prompts, resources, agents)
+
+**Short-circuit:**
+- Within a condition object: Evaluation stops at the first non-matching field (fail-fast)
+- Across condition objects: Evaluation stops at the first fully matching object (first-match-wins)
+
+#### Configuration Examples
+
+#### Single Condition Object
+
+```yaml
+plugins:
+  - name: "TenantFilter"
+    conditions:
+      - tenant_ids: ["healthcare", "finance"]
+    # Executes ONLY for healthcare OR finance tenants
+```
+
+#### Multiple Fields in Single Condition (AND Logic)
+
+```yaml
+plugins:
+  - name: "PIIFilterPlugin"
+    conditions:
+      - tenant_ids: ["healthcare"]
+        tools: ["patient_data_reader"]
+        server_ids: ["prod-server"]
+    # Executes ONLY when ALL match:
+    # - tenant = healthcare AND
+    # - tool = patient_data_reader AND
+    # - server = prod-server
+```
+
+#### Multiple Condition Objects (OR Logic)
+
+```yaml
+plugins:
+  - name: "SecurityPlugin"
+    conditions:
+      - tenant_ids: ["enterprise"]
+        tools: ["sensitive_tool"]
+      - server_ids: ["prod-server"]
+        user_patterns: ["admin_.*"]
+    # Executes when:
+    # (tenant=enterprise AND tool=sensitive_tool) OR
+    # (server=prod-server AND user matches admin_.*)
+    #
+    # This means the plugin runs if EITHER:
+    # - Request is from enterprise tenant using sensitive_tool, OR
+    # - Request is on prod-server from a user matching admin_.*
+```
+
+### Use Cases
+
+| Scenario | Configuration Pattern |
+|----------|----------------------|
+| Tenant-specific plugin | `tenant_ids: ["tenant1"]` |
+| Tool-specific security | `tools: ["sensitive_tool"]` |
+| Multi-factor control | `tenant_ids: [...], tools: [...], user_patterns: [...]` (all in one object) |
+| Production-only | `server_ids: ["prod-server"]` |
+| Admin-only operations | `user_patterns: ["admin_.*"]` |
+| Multiple independent scenarios | Multiple condition objects with different field combinations |
+
+#### Debugging Condition Evaluation
+
+Enable debug logging to see condition evaluation details:
+
+```bash
+LOG_LEVEL=DEBUG python -m mcpgateway.main
+```
+
+Log output includes:
+- Number of condition objects being evaluated
+- Which condition object is being checked (1/N, 2/N, etc.)
+- GlobalContext mismatch details (server_id, tenant_id, user)
+- Payload mismatch details (tool name, prompt_id, etc.)
+- Success message when condition fully matches
+- Final execution decision (execute or skip)
 
 #### MCP Configuration Fields
 
@@ -1009,6 +1101,93 @@ class PluginCondition(BaseModel):
     user_patterns: Optional[list[str]] = None  # Execute for users matching patterns
     content_types: Optional[list[str]] = None  # Execute for specific content types
 ```
+
+#### Content Type Filtering
+
+Plugins can be configured to execute only for specific content types using the `content_types` condition. This enables fine-grained control over when plugins process requests based on the HTTP `Content-Type` header.
+
+**Configuration Example:**
+
+```yaml
+plugins:
+  - name: "JsonValidator"
+    kind: "plugins.json_validator.JsonValidator"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types: ["application/json"]
+```
+
+**Matching Behavior:**
+
+- **Case-insensitive**: `APPLICATION/JSON` matches `application/json`
+- **Parameter stripping**: `application/json; charset=utf-8` matches `application/json`
+- **Multiple types**: Supports OR logic - plugin executes if any content type matches
+- **Permissive default**: If `content_types` is not specified or request has no Content-Type header, plugin executes normally
+
+**Common Content Types:**
+
+| Content Type | Description | Use Case |
+|--------------|-------------|----------|
+| `application/json` | JSON data | API requests, structured data validation |
+| `text/plain` | Plain text | Simple text processing, logging |
+| `text/html` | HTML documents | Web scraping, content extraction |
+| `application/xml` | XML data | Legacy API integration, SOAP services |
+| `multipart/form-data` | File uploads | File validation, virus scanning |
+| `application/x-www-form-urlencoded` | Form submissions | Form data validation |
+
+**Example: JSON-Only Security Plugin**
+
+```yaml
+plugins:
+  - name: "JsonSecurityScanner"
+    kind: "plugins.security.json_scanner.JsonSecurityScanner"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    mode: "enforce"
+    priority: 10
+    conditions:
+      - content_types: ["application/json"]
+        server_ids: ["production-api"]
+```
+
+**Example: Multi-Format Data Validator**
+
+```yaml
+plugins:
+  - name: "DataValidator"
+    kind: "plugins.validation.data_validator.DataValidator"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types:
+          - "application/json"
+          - "application/xml"
+          - "text/csv"
+```
+
+**Combined Conditions:**
+
+Content type filtering works seamlessly with other conditions:
+
+```yaml
+plugins:
+  - name: "TeamJsonProcessor"
+    kind: "plugins.processors.json_processor.JsonProcessor"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types: ["application/json"]
+        tenant_ids: ["team-alpha", "team-beta"]
+        tools: ["data_analysis", "report_generation"]
+```
+
+**Security Considerations:**
+
+!!! warning "Content-Type Spoofing"
+    Clients can set arbitrary Content-Type headers. Use `content_types` for filtering and optimization, not as a security boundary. Combine with other conditions (server_ids, tenant_ids) for defense-in-depth.
+
+**Performance Benefits:**
+
+- **Reduced overhead**: Skip expensive processing for irrelevant content types
+- **Targeted validation**: Apply format-specific validators only when needed
+- **Resource optimization**: Prevent unnecessary plugin execution
 
 ## Hook Reference Documentation
 

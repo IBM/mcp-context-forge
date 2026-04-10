@@ -86,11 +86,11 @@ For production deployments, always include JTI in issued tokens to enable proper
 ## Authorization & Access Control
 
 - **Role-Based Access Control (RBAC).** `PermissionService` and `RoleService` implement global/team/personal scopes with caching, inheritance, and audit logging (`PermissionAuditLog`). Admin bypass is explicit, and permission checks default to deny on error.
-- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`. Operators can disable self-service team creation (`ALLOW_TEAM_CREATION`), join requests (`ALLOW_TEAM_JOIN_REQUESTS`), and invitations (`ALLOW_TEAM_INVITATIONS`).
+- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). The `MAX_MEMBERS_PER_TEAM` cap is enforced at the service layer for both create and update operations; platform admins are exempt and may set a higher limit. Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`. Operators can disable self-service team creation (`ALLOW_TEAM_CREATION`), join requests (`ALLOW_TEAM_JOIN_REQUESTS`), and invitations (`ALLOW_TEAM_INVITATIONS`).
 - **Resource visibility.** Tools, prompts, resources, and gateways include a `visibility` flag (private/team/public) that PermissionService respects when resolving access.
 - **Feature gating.** Administrative capabilities stay off unless you opt in: `MCPGATEWAY_UI_ENABLED`, `MCPGATEWAY_ADMIN_API_ENABLED`, `MCPGATEWAY_BULK_IMPORT_ENABLED`, `MCPGATEWAY_CATALOG_ENABLED`, and `MCPGATEWAY_A2A_ENABLED` all default to safe values.
 - **Scoped API credentials.** Tokens can be restricted to individual virtual servers, explicit permission strings, and IP ranges; blocked requests are captured via `TokenUsageLog.blocked`.
-- **Header passthrough controls.** `utils/passthrough_headers.py` keeps passthrough disabled unless `ENABLE_HEADER_PASSTHROUGH=true`, sanitises header names/values, rejects conflicting `Authorization` headers, and lets clients safely supply `X-Upstream-Authorization` for upstream delegation.
+- **Header passthrough controls.** `utils/passthrough_headers.py` keeps passthrough disabled unless `ENABLE_HEADER_PASSTHROUGH=true`, sanitises header names/values, rejects conflicting `Authorization` headers, and lets clients safely supply `X-Upstream-Authorization` for upstream delegation. Internal loopback transports (SSE, WebSocket, Streamable HTTP affinity) apply defense-in-depth filtering that prevents passthrough headers from overriding gateway-internal headers (`Authorization`, `Content-Type`, session IDs, proxy-user identity), with values re-sanitised at both extraction and merge time.
 - **Policy-as-code plugins.** The plugin framework powers deny/allow decisions before and after prompt/tool/resource execution. Security-focused plugins include `deny_filter`, `pii_filter`, `content_moderation`, `output_length_guard`, `schema_guard`, `sql_sanitizer`, `secrets_detection`, `rate_limiter`, `url_reputation`, `vault`, `watchdog`, and the optional external OPA integration for Rego policies (`plugins/external/opa`).
 
 ## Data Protection & Secret Handling
@@ -114,12 +114,40 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Header and payload hygiene.** Passthrough headers strip control characters, clamp values to 4 KB, and refuse malformed names; request/response retries honour jitter and backoff to mitigate abuse.
 - **Secure invitation flows.** Team invitations use cryptographically random, URL-safe tokens, enforce owner-only issuance, respect expiry, and prevent over-subscribing teams (`TeamInvitationService`).
 
+## Content Security & Resource Protection
+
+- **Content size limits.** `ContentSecurityService` enforces configurable size limits for resources (`CONTENT_MAX_RESOURCE_SIZE`, default 100KB) and prompts (`CONTENT_MAX_PROMPT_SIZE`, default 10KB) to prevent memory exhaustion and DoS attacks. Violations return HTTP 413 (Payload Too Large) with detailed size information.
+- **MIME type validation.** Resource MIME types are validated against a configurable allowlist (`CONTENT_ALLOWED_RESOURCE_MIMETYPES`) to prevent malicious content injection. In strict mode, only types explicitly listed in the allowlist are accepted — vendor types (`application/x-*`, `text/x-*`) and structured-syntax suffix types (e.g., `application/vnd.api+json`) must be added explicitly if needed. Violations return HTTP 415 (Unsupported Media Type).
+- **Feature flag for safe migration.** `CONTENT_STRICT_MIME_VALIDATION` enables log-only mode (default `false`) where MIME type violations are logged but not blocked, allowing gradual rollout and monitoring before enforcement.
+- **Prometheus metrics.** Content security violations are tracked via `content_size_violations_total` (labeled by `content_type`: resource/prompt) and `content_type_violations_total` (labeled by `content_type` and `mime_type`) for monitoring and alerting.
+- **PII-safe audit logging.** All content security events log sanitized user context (SHA256-hashed email, masked IP addresses) to enable security investigations while protecting privacy.
+- **Service-layer enforcement.** Validation occurs in `ResourceService.register_resource()` and `ResourceService.update_resource()` before database operations, ensuring consistent enforcement across all entry points (REST API, MCP protocol, bulk import).
+
+**Configuration Example:**
+
+```bash
+# Enable strict MIME type validation
+CONTENT_STRICT_MIME_VALIDATION=true
+
+# Customize size limits (bytes)
+CONTENT_MAX_RESOURCE_SIZE=204800  # 200KB
+CONTENT_MAX_PROMPT_SIZE=20480     # 20KB
+
+# Customize allowed MIME types (comma-separated)
+CONTENT_ALLOWED_RESOURCE_MIMETYPES=text/plain,text/markdown,application/json,image/png,image/jpeg
+```
+
+**Default Allowed MIME Types:**
+
+The default allowlist includes common text, data, and media formats: `text/plain`, `text/markdown`, `text/html`, `text/csv`, `application/json`, `application/xml`, `application/yaml`, `application/pdf`, `image/png`, `image/jpeg`, `image/gif`, `image/svg+xml`, `image/webp`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/webm`.
+
+
 ## Operational Security & Monitoring
 
 - **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).
 - **Security event logging.** `SECURITY_LOGGING_ENABLED` persists authentication attempts, authorization failures, and security-relevant events to the `security_events` table for audit and investigation. `SECURITY_LOGGING_LEVEL` controls verbosity: `all` (every event, high DB load), `failures_only` (default, authentication/authorization failures), or `high_severity` (critical events only). Disabled by default for performance.
 - **Continuous telemetry.** Permission checks, OAuth flows, and token usage log structured events with timestamps, IP addresses, user-agent strings, span attributes, and success/failure flags for downstream monitoring.
-- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make gitleaks`, `make trivy`, `make grype-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
+- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make gitleaks`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
 - **Observability hooks.** OpenTelemetry exports (when configured) tag spans with error flags, latency, and success status, supporting tracing-based detection of anomalies.
 - **Support bundle hygiene.** Operators can gather diagnostics without leaking credentials thanks to sanitisation routines and configurable size/time limits.
 
@@ -131,7 +159,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 - [ ] **Keep auth mandatory.** Maintain `AUTH_REQUIRED=true`, `MCP_CLIENT_AUTH_ENABLED=true`, and only enable `TRUST_PROXY_AUTH` behind a trusted authentication proxy.
 - [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.
-- [ ] **Secure the data plane.** Terminate TLS with real certificates (`make certs`/`make serve-ssl` or a fronting proxy), and prefer PostgreSQL/MySQL with TLS over SQLite in production.
+- [ ] **Secure the data plane.** Terminate TLS with real certificates (`make certs`/`make serve-ssl` or a fronting proxy), and prefer PostgreSQL with TLS over SQLite in production.
 - [ ] **Monitor activity.** Ship `token_usage_logs`, `email_auth_events`, audit trails, and structured logs to your SIEM/observability stack; alert on repeated failures or blocked requests.
 - [ ] **Automate security checks.** Integrate the security Make targets into CI/CD so images, dependencies, and IaC are scanned before deployment.
 

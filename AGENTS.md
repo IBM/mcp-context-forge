@@ -65,7 +65,10 @@ make serve-ssl                    # HTTPS on :4444 (creates certs if needed)
 make autoflake isort black pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
-make flake8 bandit interrogate pylint verify
+make ruff bandit interrogate pylint verify
+
+# Before committing Rust changes (plugins_rust/ or tools_rust/):
+make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ## Authentication & RBAC Overview
@@ -77,7 +80,7 @@ ContextForge implements a **two-layer security model**:
 
 ### Token Scoping Quick Reference
 
-The `teams` claim in JWT tokens determines resource visibility:
+**API / legacy tokens** — JWT `teams` claim is the sole authority (`normalize_token_teams()`):
 
 | JWT `teams` State | `is_admin: true` | `is_admin: false` |
 |-------------------|------------------|-------------------|
@@ -86,11 +89,20 @@ The `teams` claim in JWT tokens determines resource visibility:
 | `teams: []` | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
 | `teams: ["t1"]` | Team + Public | Team + Public |
 
+**Session tokens** (`token_use: "session"`) — DB is the authority; JWT `teams` only narrows (`resolve_session_teams()`):
+
+| JWT `teams` State | DB admin? | Result | Access Level |
+|-------------------|-----------|--------|--------------|
+| any | yes | `None` | ADMIN BYPASS (DB authority) |
+| Missing/null/`[]` | no | DB teams | Full DB membership |
+| `["t1"]` | no | intersection | Narrowed to overlap |
+| `["revoked"]` | no | `[]` | Public-only (fail-closed) |
+
 **Key behaviors:**
 
-- Missing `teams` key = public-only access (secure default)
-- Admin bypass requires BOTH `teams: null` AND `is_admin: true`
-- `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+- **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
+- **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
+- **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 
 ### Security Invariants (Required)
 
@@ -99,7 +111,7 @@ The `teams` claim in JWT tokens determines resource visibility:
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
-- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.
@@ -115,13 +127,46 @@ The `teams` claim in JWT tokens determines resource visibility:
 | `platform_admin` | global | `*` (all) |
 | `team_admin` | team | teams.*, tools.read/execute, resources.read |
 | `developer` | team | tools.read/execute, resources.read |
-| `viewer` | team | tools.read, resources.read (read-only) |
+| `viewer` | team | tools.read/execute, resources.read |
 
 ### Documentation
 
 - **Full RBAC guide**: `docs/docs/manage/rbac.md`
 - **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
 - **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+
+## Observability Transaction Behavior
+
+**Issue #3883 - Separate Session Pattern**
+
+Observability write operations use **independent database sessions** that commit immediately (best-effort pattern). This means:
+
+- Observability data persists even when the main request fails
+- Traces may show "in progress" or partial states for failed requests
+- **NOT atomic** with main request transaction (intentional trade-off)
+- Provides visibility into partial failures at the cost of atomicity
+
+### Implementation Details
+
+**Write methods** (use independent sessions):
+- `start_trace()`, `end_trace()`
+- `start_span()`, `end_span()`
+- `add_event()`, `record_token_usage()`, `record_metric()`, `delete_old_traces()`
+
+**Query methods** (use request-scoped sessions):
+- `get_trace()`, `get_traces()`, `get_spans()`, etc.
+- These accept a `db: Session` parameter for RBAC/token scoping
+
+**Context managers** (create single independent session for lifecycle):
+- `trace_span()`, `trace_tool_invocation()`, `trace_a2a_request()`
+
+**Pattern**: Follows existing SQL instrumentation approach in `instrumentation/sqlalchemy.py:58-87`
+
+**Middleware**: `ObservabilityMiddleware` no longer creates `request.state.db`. Each observability operation creates its own short-lived session.
+
+**Security**: Query operations use request-scoped sessions for RBAC/token scoping. Write operations are not RBAC-protected (observability visibility is platform-wide).
+
+**Connection Pool Sizing**: The separate session pattern creates 4-6 independent database sessions per traced request (trace start/end, span start/end, metrics, events). Default configuration (`DB_POOL_SIZE=200`, `DB_MAX_OVERFLOW=10`) provides 210 total connections, supporting ~35 concurrent traced requests. This is adequate for typical deployments. High-traffic production systems (>50 req/sec sustained) should increase pool size via environment variables: `DB_POOL_SIZE=500`, `DB_MAX_OVERFLOW=100` to support 80+ concurrent requests. Monitor for "QueuePool limit exceeded" errors and adjust pool sizing accordingly. Note: SQLite connections are capped at 50 due to file-based limitations.
 
 ## Key Environment Variables
 
@@ -271,6 +316,16 @@ make test
 - Include tests for behavior changes
 - Require green lint and tests before PR
 - Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
+
+### Tone for GitHub Comments
+
+When posting PR reviews, issue comments, or any public-facing text on GitHub, use a collaborative and constructive tone:
+
+- Lead with what's good before raising concerns.
+- Frame issues as questions or options ("worth considering", "a couple of approaches") rather than directives.
+- Remember contributors are people doing their jobs — be direct about problems without being harsh.
+- Categorize findings clearly (blocking, suggestions, minor notes) so the author knows what must change vs. what's optional.
+- Avoid sounding algorithmic or robotic; write the way a respectful senior colleague would in a code review.
 
 ## GitHub Issues (Brief)
 

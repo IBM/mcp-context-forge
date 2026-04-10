@@ -142,7 +142,7 @@ BASIC_AUTH_USER = _get_config("BASIC_AUTH_USER", "admin")
 BASIC_AUTH_PASSWORD = _get_config("BASIC_AUTH_PASSWORD", "changeme")
 
 # JWT settings for auto-generation (if MCPGATEWAY_BEARER_TOKEN not set)
-JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
@@ -1256,10 +1256,18 @@ class MCPJsonRpcUser(BaseUser):
         Uses JSON-RPC validation to detect errors returned with HTTP 200.
         Tolerates 502/504 from reverse proxy under high concurrency.
         """
+        # Add baggage test headers for OTEL tracing validation
+        headers = {
+            **self.auth_headers,
+            "Content-Type": "application/json",
+            "X-Tenant-ID": f"tenant-{self.environment.runner.user_count}",
+            "X-User-ID": f"user-{id(self)}",
+            "X-Request-ID": f"req-{time.time()}",
+        }
         with self.client.post(
             "/rpc",
             json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
+            headers=headers,
             name=name,
             catch_response=True,
         ) as response:

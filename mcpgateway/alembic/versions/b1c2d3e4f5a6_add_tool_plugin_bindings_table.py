@@ -1,0 +1,57 @@
+# -*- coding: utf-8 -*-
+"""Add tool_plugin_bindings table for per-tool per-tenant plugin policies
+
+Revision ID: b1c2d3e4f5a6
+Revises: cbedf4e580e0
+Create Date: 2026-04-03 00:00:00.000000
+
+"""
+
+# Third-Party
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers, used by Alembic.
+revision: str = "b1c2d3e4f5a6"
+down_revision = "cbedf4e580e0"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    """Create tool_plugin_bindings table if it does not already exist."""
+    inspector = sa.inspect(op.get_bind())
+
+    if "tool_plugin_bindings" in inspector.get_table_names():
+        return
+
+    op.create_table(
+        "tool_plugin_bindings",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("team_id", sa.String(36), sa.ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("tool_name", sa.String(255), nullable=False),
+        sa.Column("plugin_id", sa.String(64), nullable=False),
+        sa.Column("mode", sa.String(20), nullable=False, server_default="enforce"),
+        sa.Column("priority", sa.Integer(), nullable=False, server_default="50"),
+        sa.Column("config", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("created_by", sa.String(255), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_by", sa.String(255), nullable=False),
+        sa.UniqueConstraint("team_id", "tool_name", "plugin_id", name="uq_tool_plugin_binding"),
+    )
+
+    op.create_index("ix_tool_plugin_bindings_team_id", "tool_plugin_bindings", ["team_id"])
+    op.create_index("ix_tool_plugin_bindings_tool_name", "tool_plugin_bindings", ["tool_name"])
+
+
+def downgrade() -> None:
+    """Drop tool_plugin_bindings table."""
+    inspector = sa.inspect(op.get_bind())
+
+    if "tool_plugin_bindings" not in inspector.get_table_names():
+        return
+
+    op.drop_index("ix_tool_plugin_bindings_tool_name", table_name="tool_plugin_bindings")
+    op.drop_index("ix_tool_plugin_bindings_team_id", table_name="tool_plugin_bindings")
+    op.drop_table("tool_plugin_bindings")

@@ -468,3 +468,39 @@ async def test_cleanup_expired_tokens_exception(service, mock_db):
     result = await service.cleanup_expired_tokens(max_age_days=30)
     assert result == 0
     mock_db.rollback.assert_called_once()
+
+
+# ---------- token_type validation in get_user_token ----------
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_warns_on_non_bearer_token_type(service, mock_db, caplog):
+    """get_user_token logs a warning when token_type is not 'Bearer'."""
+    record = _make_token_record(token_type="mac")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        result = await service.get_user_token("gw-1", "user@test.com")
+
+    # Token should still be returned (warning only)
+    assert result == "decrypted_value"
+    assert any("token_type" in msg.lower() and "mac" in msg.lower() for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
+    """get_user_token does not warn when token_type is 'Bearer' or 'bearer'."""
+    record = _make_token_record(token_type="Bearer")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        result = await service.get_user_token("gw-1", "user@test.com")
+
+    assert result == "decrypted_value"
+    assert not any("token_type" in msg.lower() for msg in caplog.messages)

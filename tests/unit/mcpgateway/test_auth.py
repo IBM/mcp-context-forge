@@ -237,7 +237,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.WARNING, logger="mcpgateway.auth")
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
@@ -288,7 +288,220 @@ class TestGetCurrentUser:
 
                     assert user.email == mock_user.email
                     assert user.auth_provider == "api_token"
-                    assert user.password_change_required is False
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_single_team_narrows_via_resolve_session_teams(self, monkeypatch):
+        """Session tokens with a JWT teams claim narrow DB teams via resolve_session_teams."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # JWT carries one team; DB has two — intersection narrows to one
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-123"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_123",
+        }
+
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-123", "team-456"]) as mock_resolve_db:
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    assert user.email == "test@example.com"
+                    mock_resolve_db.assert_called_once()
+                    # JWT teams=["team-123"] intersected with DB=["team-123","team-456"]
+                    assert request.state.token_teams == ["team-123"]
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_multiple_teams_resolves_from_db(self, monkeypatch):
+        """Test that session tokens with multiple teams resolve from DB (else branch of line 1056)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # Session token with multiple teams
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-1", "team-2"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_456",
+        }
+
+        # Mock cached context
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Enable auth cache
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1", "db-team-2"]) as mock_resolve_db:
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    assert user.email == "test@example.com"
+                    # Verify _resolve_teams_from_db WAS called
+                    mock_resolve_db.assert_called_once()
+                    # JWT teams ["team-1","team-2"] don't overlap with DB teams
+                    # ["db-team-1","db-team-2"], so intersection is empty →
+                    # returns [] (public-only, denied from team-scoped resources)
+                    assert request.state.token_teams == []
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_teams_claim_still_resolves_from_db(self):
+        """Session tokens always resolve teams from DB even when a teams claim is present."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_with_teams")
+
+        # Session token with explicit single team claim — should still go to DB
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-123"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-123"]) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        assert user.email == mock_user.email
+                        # Session tokens always resolve from DB for current membership
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_session_token_without_teams_claim_resolves_from_db(self):
+        """Test that session tokens without 'teams' claim resolve teams from DB."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_no_teams")
+
+        # Session token WITHOUT teams claim
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1"]) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db WAS called
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_null_teams_claim_uses_db_resolve(self):
+        """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_null_teams")
+
+        # Session token with explicit null teams (admin bypass)
+        jwt_payload = {
+            "sub": "admin@example.com",
+            "token_use": "session",
+            "teams": None,
+            "is_admin": True,
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="admin@example.com",
+            password_hash="hash",
+            full_name="Admin User",
+            is_admin=True,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db WAS called (teams=null is not a list with len==1)
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_api_token_always_uses_embedded_teams(self):
+        """Test that API tokens always use embedded teams regardless of teams claim."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_jwt_token")
+
+        # API token (not session)
+        jwt_payload = {
+            "sub": "api@example.com",
+            "token_use": "api",
+            "teams": ["api-team-1"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db was NOT called (API tokens use embedded teams)
+                        mock_resolve_teams.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_expired_api_token_raises_401(self):
@@ -435,7 +648,7 @@ class TestGetCurrentUser:
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.config.settings.require_user_in_db", True):
-                        with caplog.at_level(logging.WARNING):
+                        with caplog.at_level(logging.WARNING, logger="mcpgateway.auth"):
                             with pytest.raises(HTTPException):
                                 await get_current_user(credentials=credentials)
 
@@ -1069,11 +1282,9 @@ class TestUpdateApiTokenLastUsed:
         import sys
 
         # First-Party
+        from mcpgateway import auth
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
-
-        # First-Party
-        from mcpgateway import auth
 
         # Clear the module-level in-memory cache
         auth._LAST_USED_CACHE.clear()
@@ -1119,11 +1330,9 @@ class TestUpdateApiTokenLastUsed:
     def test_update_api_token_last_used_sync_redis_exception_falls_back_to_memory(self):
         """Test that _update_api_token_last_used_sync falls back to memory cache when Redis operations fail."""
         # First-Party
+        from mcpgateway import auth
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
-
-        # First-Party
-        from mcpgateway import auth
 
         # Clear the module-level in-memory cache
         auth._LAST_USED_CACHE.clear()
@@ -2905,41 +3114,6 @@ class TestGetUserTeamRoles:
 class TestResolveTeamsFromDbHelpers:
     """Targeted tests for small cache/DB helper branches in auth.py."""
 
-    def test_resolve_teams_from_db_sync_cache_read_exception(self, monkeypatch):
-        """Cache read errors are non-fatal and fall back to DB (lines 224-225)."""
-        # First-Party
-        from mcpgateway.auth import _resolve_teams_from_db_sync
-        from mcpgateway.cache.auth_cache import auth_cache
-
-        class BadGetDict(dict):
-            def get(self, *args, **kwargs):  # noqa: ANN002, ANN003 - test helper
-                raise RuntimeError("cache read fail")
-
-        monkeypatch.setattr(auth_cache, "_teams_list_cache", BadGetDict())
-
-        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
-            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-
-    def test_resolve_teams_from_db_sync_cache_write_exception(self, monkeypatch):
-        """Cache write errors are non-fatal and still return DB result (lines 243-244)."""
-        # First-Party
-        from mcpgateway.auth import _resolve_teams_from_db_sync
-        from mcpgateway.cache.auth_cache import auth_cache
-
-        class ExplodingLock:
-            def __enter__(self):  # noqa: ANN001 - test helper
-                raise RuntimeError("lock fail")
-
-            def __exit__(self, exc_type, exc, tb):  # noqa: ANN001 - test helper
-                return False
-
-        monkeypatch.setattr(auth_cache, "_lock", ExplodingLock())
-        # Ensure L1 cache is empty so we reach the write path
-        monkeypatch.setattr(auth_cache, "_teams_list_cache", {})
-
-        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
-            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-
     @pytest.mark.asyncio
     async def test_resolve_teams_from_db_cache_get_exception(self):
         """Async cache read errors are non-fatal and fall back to DB (lines 274-275)."""
@@ -2971,6 +3145,193 @@ class TestResolveTeamsFromDbHelpers:
             teams = await _resolve_teams_from_db("user@example.com", {"is_admin": False})
 
         assert teams == ["t1"]
+
+
+class TestResolveSessionTeams:
+    """Direct tests for resolve_session_teams."""
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_teams_returns_full_db_teams(self):
+        """Without a JWT teams claim, returns full DB membership."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]) as mock_db:
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1", "t2"]
+        mock_db.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_narrows_to_intersection(self):
+        """JWT teams claim narrows result to intersection with DB teams."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_all_revoked_returns_empty(self):
+        """If all JWT teams were revoked, returns empty list (public-only / denied)."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["revoked-team"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_ignores_jwt_teams(self):
+        """Admin bypass (None from DB) is returned regardless of JWT teams."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "admin@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None):
+            result = await resolve_session_teams(payload, "admin@example.com", {"is_admin": True})
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_db_teams_returns_empty(self):
+        """User with no DB teams returns empty list (public-only)."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=[]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_preresolved_db_teams_skips_db_call(self):
+        """When preresolved_db_teams is provided, skips the DB call."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db") as mock_db:
+            result = await resolve_session_teams(
+                payload,
+                "u@example.com",
+                {"is_admin": False},
+                preresolved_db_teams=["t1", "t2"],
+            )
+
+        assert result == ["t1"]
+        mock_db.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preresolved_none_returns_admin_bypass(self):
+        """Preresolved None (admin) returns None without DB call."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "admin@example.com"}
+        with patch("mcpgateway.auth._resolve_teams_from_db") as mock_db:
+            result = await resolve_session_teams(
+                payload,
+                "admin@example.com",
+                {"is_admin": True},
+                preresolved_db_teams=None,
+            )
+
+        assert result is None
+        mock_db.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_null_returns_full_db_teams(self):
+        """Explicit teams: null in JWT is not a list, so no narrowing."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": None}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_empty_list_returns_full_db_teams(self):
+        """Explicit teams: [] in JWT is empty, so no narrowing."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": []}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_no_email_returns_public_only(self):
+        """Identity-less session token gets public-only scope, never admin bypass."""
+        from mcpgateway.auth import resolve_session_teams
+
+        # Even with is_admin=True, no email means no DB lookup and no admin bypass
+        assert await resolve_session_teams({"is_admin": True}, None, {"is_admin": True}) == []
+        assert await resolve_session_teams({"is_admin": True}, "", {"is_admin": True}) == []
+        assert await resolve_session_teams({}, None, {"is_admin": False}) == []
+
+
+class TestNarrowByJwtTeams:
+    """Direct unit tests for the _narrow_by_jwt_teams helper."""
+
+    def test_admin_bypass_passthrough(self):
+        """Admin bypass (db_teams=None) is returned unchanged regardless of JWT teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        assert _narrow_by_jwt_teams({"teams": ["t1"]}, None) is None
+        assert _narrow_by_jwt_teams({}, None) is None
+
+    def test_normal_intersection(self):
+        """Intersection of DB teams and JWT teams returns only the overlap."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["t1", "t3"]}, ["t1", "t2"])
+        assert result == ["t1"]
+
+    def test_empty_intersection(self):
+        """No overlap between JWT and DB teams returns empty list."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["gone"]}, ["t1", "t2"])
+        assert result == []
+
+    def test_empty_jwt_teams_no_narrowing(self):
+        """Explicit teams: [] means 'no restriction' — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": []}, ["t1", "t2"])
+        assert result == ["t1", "t2"]
+
+    def test_missing_jwt_teams_no_narrowing(self):
+        """Missing teams key means 'no restriction' — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({}, ["t1", "t2"])
+        assert result == ["t1", "t2"]
+
+    def test_null_jwt_teams_no_narrowing(self):
+        """Explicit teams: null is not a list — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": None}, ["t1"])
+        assert result == ["t1"]
+
+    def test_malformed_entries_filtered_by_normalize(self):
+        """Non-string entries in JWT teams are handled by normalize_token_teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        # normalize_token_teams stringifies numeric entries
+        result = _narrow_by_jwt_teams({"teams": [123, None, "t1"]}, ["t1", "123"])
+        assert "t1" in result
+
+    def test_empty_db_teams_returns_empty(self):
+        """If user has no DB teams, intersection with any JWT teams is empty."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["t1"]}, [])
+        assert result == []
 
 
 class TestSessionTokenBranches:
@@ -3249,12 +3610,18 @@ class TestSessionTokenBranches:
 
     @pytest.mark.asyncio
     async def test_batched_session_token_caches_team_list(self, monkeypatch):
-        """Batched session token populates teams-list cache (line 996)."""
+        """Batched session token caches raw DB teams, not the narrowed intersection.
+
+        The JWT claims teams=["t1"] so the narrowed result is ["t1"], but the
+        cache must receive the full batch_teams=["t1","t2"] so that other
+        sessions for the same user can narrow independently.
+        """
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
             "token_use": "session",
+            "teams": ["t1"],  # narrows intersection to ["t1"]
             "user": {"auth_provider": "local"},
         }
         auth_ctx = {
@@ -3281,7 +3648,85 @@ class TestSessionTokenBranches:
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "user@example.com"
-        mock_cache.set_user_teams.assert_called_once()
+        # Must cache raw DB teams (batch_teams=["t1","t2"]), not the narrowed
+        # intersection (["t1"]), to prevent cross-session cache poisoning.
+        mock_cache.set_user_teams.assert_called_once_with("user@example.com:True", ["t1", "t2"])
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_populates_trace_context(self, monkeypatch):
+        """Cache-hit auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_name, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            personal_team_id="team-trace",
+        )
+        request = SimpleNamespace(state=SimpleNamespace(token_teams=["team-trace"]))
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "jwt"
+        assert get_trace_team_scope() == "public"
+        assert get_trace_team_name() is None
+        clear_trace_context()
+
+    @pytest.mark.asyncio
+    async def test_batched_auth_populates_primary_trace_team_name(self, monkeypatch):
+        """Batched auth should resolve and store the primary team display name."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_team_name, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "token_use": "session",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            "team_ids": ["team-trace"],
+            "team_names": {"team-trace": "Trace Team"},
+            "personal_team_id": "team-trace",
+            "is_token_revoked": False,
+        }
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_team_scope() == "team-trace"
+        assert get_trace_team_name() == "Trace Team"
+        clear_trace_context()
 
 
 def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():
@@ -3291,3 +3736,373 @@ def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email()
 
     assert auth_module._resolve_plugin_authenticated_user_sync({}) is None
     assert auth_module._resolve_plugin_authenticated_user_sync({"email": "   "}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_prefers_db_name_for_session_tokens(monkeypatch):
+    """Session-token trace team names should prefer DB-authoritative values.
+
+    Args:
+        monkeypatch: Pytest fixture for patching team lookup behavior.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "token_use": "session",
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", lambda _team_id: "DB Team")
+
+    resolved = await resolve_trace_team_name(payload, ["team-1"])
+
+    assert resolved == "DB Team"
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monkeypatch):
+    """Batched DB names should win over JWT team display names.
+
+    Args:
+        monkeypatch: Pytest fixture for patching unexpected DB fallback calls.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    def _unexpected_lookup(_team_id):
+        raise AssertionError("DB fallback should not run when batched team names are present")
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", _unexpected_lookup)
+
+    resolved = await resolve_trace_team_name(
+        payload,
+        ["team-1"],
+        preresolved_team_names={"team-1": "Batched Team"},
+    )
+
+    assert resolved == "Batched Team"
+
+
+# =============================================================================
+# P0/P1 Tests — tenant_id propagation from auth layer to GlobalContext
+# =============================================================================
+
+
+class TestTenantIdPropagation:
+    """Verify that _inject_userinfo_instate and auth paths propagate team_id → tenant_id.
+
+    The auth middleware resolves request.state.team_id from the JWT teams claim
+    (single-team tokens only).  These tests verify that this value is propagated
+    into GlobalContext.tenant_id so that the rate limiter plugin can enforce
+    per-tenant limits correctly.
+
+    These tests verify that _propagate_tenant_id() correctly propagates
+    team_id into GlobalContext.tenant_id at every return path in
+    get_current_user().
+    """
+
+    def _make_request(self, team_id=None, existing_global_context=None):
+        """Build a minimal mock request with configurable state."""
+        state = SimpleNamespace(
+            team_id=team_id,
+            plugin_global_context=existing_global_context,
+        )
+        return SimpleNamespace(state=state, client=None, headers={})
+
+    def _make_user(self, email="alice@example.com"):
+        # Standard
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        # First-Party
+        from mcpgateway.db import EmailUser  # noqa: PLC0415
+
+        return EmailUser(
+            email=email,
+            password_hash="h",
+            full_name="Alice",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    def test_single_team_propagates_tenant_id(self):
+        """P0: the get_current_user() calling sequence must propagate team_id → tenant_id.
+
+        In production, _inject_userinfo_instate() runs first (may create
+        GlobalContext), then _propagate_tenant_id() fills in tenant_id.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1")
+        request = self._make_request(team_id="team-acme", existing_global_context=global_context)
+        user = self._make_user()
+
+        # Mirror the actual calling sequence in get_current_user():
+        auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into " "global_context.tenant_id for single-team tokens"
+
+    def test_no_team_id_leaves_tenant_id_none(self):
+        """P1: when request.state.team_id is None (multi-team or no team), tenant_id stays None.
+
+        Multi-team tokens have team_id=None because there is no single authoritative tenant.
+        The plugin must receive tenant_id=None and skip by_tenant — not invent a 'default'.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1")
+        request = self._make_request(team_id=None, existing_global_context=global_context)
+        user = self._make_user()
+
+        auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), " "tenant_id must remain None — no fake 'default' tenant should be invented"
+
+    def test_existing_tenant_id_is_not_overwritten(self):
+        """P1: if global_context.tenant_id is already set (e.g. by an auth plugin), do not overwrite it.
+
+        _propagate_tenant_id() must not clobber an explicit tenant identity.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id="existing-tenant")
+        request = self._make_request(team_id="different-team", existing_global_context=global_context)
+        user = self._make_user()
+
+        auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "existing-tenant", "An already-set tenant_id must not be overwritten by team_id resolution"
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_fallback_propagates_team_id_to_tenant_id(self):
+        """get_current_user() fallback constructs GlobalContext with tenant_id=team_id.
+
+        When request.state has no plugin_global_context (i.e. middleware did not
+        pre-populate it), get_current_user() must construct a GlobalContext with
+        tenant_id set from request.state.team_id so the rate limiter can enforce
+        per-tenant limits on this request path.
+        """
+        # First-Party
+        from cpex.framework import PluginResult  # noqa: PLC0415
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        request = SimpleNamespace(
+            state=SimpleNamespace(team_id="team-acme"),  # no plugin_global_context set
+            client=None,
+            headers={},
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config.plugin_settings.include_user_info = False
+        plugin_result = PluginResult(modified_payload={"email": "alice@example.com"}, continue_processing=False)
+        mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
+        db_user = self._make_user("alice@example.com")
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._inject_userinfo_instate"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        call_kwargs = mock_pm.invoke_hook.call_args
+        global_context = call_kwargs.kwargs.get("global_context")
+        assert global_context is not None
+        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id " "into GlobalContext.tenant_id for by_tenant rate limiting"
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_fallback_tenant_id_none_when_no_team(self):
+        """get_current_user() fallback sets tenant_id=None when team_id is absent.
+
+        When request.state.team_id is None (multi-team or admin token), the
+        constructed GlobalContext must have tenant_id=None so the rate limiter
+        skips by_tenant enforcement rather than inventing a phantom tenant.
+        """
+        # First-Party
+        from cpex.framework import PluginResult  # noqa: PLC0415
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        request = SimpleNamespace(
+            state=SimpleNamespace(team_id=None),  # no plugin_global_context set
+            client=None,
+            headers={},
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config.plugin_settings.include_user_info = False
+        plugin_result = PluginResult(modified_payload={"email": "alice@example.com"}, continue_processing=False)
+        mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
+        db_user = self._make_user("alice@example.com")
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._inject_userinfo_instate"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        call_kwargs = mock_pm.invoke_hook.call_args
+        global_context = call_kwargs.kwargs.get("global_context")
+        assert global_context is not None
+        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — " "no phantom tenant should be invented"
+
+    def test_propagate_tenant_id_on_middleware_seeded_context(self):
+        """_propagate_tenant_id must work when middleware has already created GlobalContext.
+
+        Regression: the original fix only propagated team_id → tenant_id inside
+        _inject_userinfo_instate (gated by include_user_info, default False) or
+        in the get_current_user fallback (skipped when plugin_global_context exists).
+        On the normal middleware path, tenant_id stayed None.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        # Simulate middleware pre-creating context with tenant_id=None
+        global_context = GlobalContext(request_id="r1", tenant_id=None)
+        request = self._make_request(team_id="team-acme", existing_global_context=global_context)
+
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "team-acme", (
+            "_propagate_tenant_id must fill tenant_id even when middleware " "has already created plugin_global_context with tenant_id=None"
+        )
+
+    def test_propagate_tenant_id_no_overwrite(self):
+        """_propagate_tenant_id must not overwrite an already-set tenant_id."""
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id="plugin-set-tenant")
+        request = self._make_request(team_id="different-team", existing_global_context=global_context)
+
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "plugin-set-tenant", "_propagate_tenant_id must not overwrite an already-set tenant_id"
+
+    def test_propagate_tenant_id_none_request_is_noop(self):
+        """_propagate_tenant_id with None request must not raise."""
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+
+        # Should not raise
+        auth_module._propagate_tenant_id(None)
+
+    def test_propagate_tenant_id_missing_team_id_attribute(self):
+        """_propagate_tenant_id must handle request.state without team_id attribute.
+
+        Deny-path: request.state may not have team_id (e.g. unauthenticated
+        requests or middleware that doesn't set it).  The function uses getattr
+        fallback — verify it leaves tenant_id as None rather than raising.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id=None)
+        # State has plugin_global_context but NO team_id attribute
+        state = SimpleNamespace(plugin_global_context=global_context)
+        request = SimpleNamespace(state=state, client=None, headers={})
+
+        auth_module._propagate_tenant_id(request)
+
+        assert global_context.tenant_id is None, "When request.state has no team_id attribute, tenant_id must remain None"
+
+    @pytest.mark.asyncio
+    async def test_propagate_tenant_id_on_cache_hit_path(self):
+        """_propagate_tenant_id must be called on the auth cache hit return path.
+
+        Regression: if _propagate_tenant_id(request) is accidentally removed
+        from the cache-hit branch of get_current_user(), by_tenant rate limiting
+        would silently stop working for cached auth requests.
+        """
+        with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            payload = {
+                "sub": "test@example.com",
+                "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+                "jti": "jti-prop-cache",
+                "teams": ["team-acme"],
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "auth_provider": "local"},
+            }
+            cached_ctx = SimpleNamespace(
+                is_token_revoked=False,
+                user={"email": "test@example.com", "full_name": "T", "is_admin": False, "is_active": True},
+                personal_team_id="team_123",
+            )
+            request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+            with (
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+                patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+                patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            ):
+                mock_settings.auth_cache_enabled = True
+                mock_settings.auth_required = True
+                mock_settings.jwt_secret = "secret"
+                mock_settings.admin_api_enabled = True
+                mock_settings.require_user_in_db = False
+                await get_current_user(credentials=credentials, request=request)
+
+            assert mock_prop.called, "_propagate_tenant_id must be called on the cache-hit return path"
+
+    @pytest.mark.asyncio
+    async def test_propagate_tenant_id_on_batched_query_path(self):
+        """_propagate_tenant_id must be called on the batched DB query return path.
+
+        Regression: if _propagate_tenant_id(request) is accidentally removed
+        from the batched-query branch of get_current_user(), by_tenant rate
+        limiting would silently stop working for batched-auth requests.
+        """
+        with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            payload = {
+                "sub": "test@example.com",
+                "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+                "jti": "jti-prop-batch",
+                "teams": ["team-acme"],
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "auth_provider": "local"},
+            }
+            auth_ctx = {
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "is_active": True},
+                "personal_team_id": "team_123",
+                "is_token_revoked": False,
+            }
+            request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+            with (
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+                patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+                patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            ):
+                mock_settings.auth_cache_enabled = False
+                mock_settings.auth_cache_batch_queries = True
+                mock_settings.auth_required = True
+                mock_settings.jwt_secret = "secret"
+                mock_settings.admin_api_enabled = True
+                await get_current_user(credentials=credentials, request=request)
+
+            assert mock_prop.called, "_propagate_tenant_id must be called on the batched-query return path"

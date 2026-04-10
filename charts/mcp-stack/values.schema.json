@@ -932,6 +932,27 @@
             "OTEL_ENABLE_OBSERVABILITY": {
               "type": "string"
             },
+            "OTEL_EMIT_LANGFUSE_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_IDENTITY_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS": {
+              "type": "string"
+            },
+            "OTEL_REDACT_FIELDS": {
+              "type": "string"
+            },
+            "OTEL_MAX_TRACE_PAYLOAD_SIZE": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_INPUT_SPANS": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_OUTPUT_SPANS": {
+              "type": "string"
+            },
             "OTEL_SERVICE_NAME": {
               "type": "string"
             },
@@ -1040,6 +1061,16 @@
               "type": "string",
               "description": "Redis leader election TTL in seconds",
               "default": "15"
+            },
+            "MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of UI sections to hide for admin users. When empty, admins see all sections. Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS.",
+              "default": ""
+            },
+            "MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
+              "default": ""
             },
             "REDIS_MAX_BACKOFF_SECONDS": {
               "type": "string",
@@ -1304,6 +1335,12 @@
               ]
             },
             "VALIDATION_MAX_REQUESTS_PER_MINUTE": {
+              "type": "string"
+            },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED": {
+              "type": "string"
+            },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS": {
               "type": "string"
             },
             "VALIDATION_MIDDLEWARE_ENABLED": {
@@ -1905,7 +1942,7 @@
             "JWT_SECRET_KEY": {
               "type": "string",
               "description": "JWT secret key",
-              "default": "my-test-key"
+              "default": "my-test-key-but-now-longer-than-32-bytes"
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
               "type": "string"
@@ -1947,6 +1984,39 @@
               "type": "string"
             },
             "OAUTH_REQUEST_TIMEOUT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_USER": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_HEADERS": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_ZIPKIN_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_RESOURCE_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_PASSWORD": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_AUTH": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_ENDPOINT": {
+              "type": "string"
+            },
+            "LANGFUSE_PUBLIC_KEY": {
+              "type": "string"
+            },
+            "LANGFUSE_SECRET_KEY": {
               "type": "string"
             },
             "PASSWORD_CHANGE_ENFORCEMENT_ENABLED": {
@@ -2084,6 +2154,9 @@
               "type": "string"
             },
             "SSO_OKTA_ENABLED": {
+              "type": "string"
+            },
+            "SSO_ADFS_ENABLED": {
               "type": "string"
             },
             "SSRF_BLOCKED_HOSTS": {

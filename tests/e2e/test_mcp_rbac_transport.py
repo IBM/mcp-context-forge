@@ -37,6 +37,7 @@ import uuid
 import pytest
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
+# Third-Party
 from playwright.sync_api import APIRequestContext, Playwright
 
 # First-Party
@@ -63,7 +64,7 @@ pytestmark = [pytest.mark.e2e, skip_no_gateway]
 RBAC_PREFIX = "mcp-rbac"
 SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
-_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 
 
 # ---------------------------------------------------------------------------
@@ -682,11 +683,11 @@ class TestMcpToolCallByRole:
         assert has_error, f"Expected error for non-existent tool: {resp}"
         print("    -> Outsider nonexistent tool: error (expected)")
 
-    def test_viewer_denied_tools_execute(self, test_users: dict) -> None:
-        """Viewer has tools.read but NOT tools.execute even in team scope."""
+    def test_viewer_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Viewer has team-scoped tools.execute but default /mcp checks global scope only."""
         resp = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
         _assert_access_denied_tool_call(resp)
-        print("    -> Viewer denied tools.execute (expected)")
+        print("    -> Viewer denied tools.execute on default endpoint (expected)")
 
 
 # ---------------------------------------------------------------------------

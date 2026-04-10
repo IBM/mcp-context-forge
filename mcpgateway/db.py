@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -109,7 +109,7 @@ elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
     connect_args["check_same_thread"] = False
 
-# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
+# 4. Other backends leave `connect_args` empty.
 
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
@@ -132,6 +132,9 @@ def build_engine() -> Engine:
 
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
+
+    Raises:
+        ValueError: If the database backend is not postgresql or sqlite.
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
@@ -160,22 +163,8 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    if backend in ("mysql", "mariadb"):
-        # MariaDB/MySQL specific configuration
-        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
-
-        return create_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            connect_args=connect_args,
-            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
-            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
-            echo=_sqlalchemy_echo,
-        )
+    if backend != "postgresql":
+        raise ValueError(f"Unsupported database backend: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
 
     # Determine if PgBouncer is in use (detected via URL or explicit config)
     is_pgbouncer = "pgbouncer" in settings.database_url.lower()
@@ -1117,7 +1106,7 @@ def _compute_metrics_summary(
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-    # MariaDB-compatible naming convention for foreign keys
+    # Naming convention for foreign keys
     metadata = MetaData(
         naming_convention={
             "fk": "fk_%(table_name)s_%(column_0_name)s",
@@ -1267,6 +1256,7 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
@@ -1994,6 +1984,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -2020,6 +2011,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
@@ -3234,6 +3226,7 @@ class Tool(Base):
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -3575,6 +3568,7 @@ class Resource(Base):
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
@@ -3953,6 +3947,7 @@ class Prompt(Base):
     custom_name: Mapped[str] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
@@ -4604,6 +4599,10 @@ class Gateway(Base):
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
     ca_certificate_sig: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
+
+    # mTLS client certificate/key for upstream gateway authentication
+    client_cert: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    client_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan", passive_deletes=True)
@@ -5770,25 +5769,6 @@ def get_for_update(
 fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
-def patch_string_columns_for_mariadb(base, engine_) -> None:
-    """
-    MariaDB requires VARCHAR to have an explicit length.
-    Auto-assign VARCHAR(255) to any String() columns without a length.
-
-    Args:
-        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
-        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
-    """
-    if engine_.dialect.name != "mariadb":
-        return
-
-    for table in base.metadata.tables.values():
-        for column in table.columns:
-            if isinstance(column.type, String) and column.type.length is None:
-                # Replace with VARCHAR(255)
-                column.type = VARCHAR(255)
-
-
 def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
@@ -5833,9 +5813,6 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
-        # Apply MariaDB compatibility fix
-        patch_string_columns_for_mariadb(Base, engine)
-
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
@@ -6101,12 +6078,12 @@ class LLMProviderType:
                 "description": "Anthropic Claude models",
             },
             cls.OLLAMA: {
-                "api_base": "http://localhost:11434/v1",
+                "api_base": "http://localhost:11434",
                 "default_model": "llama3.2",
                 "supports_model_list": True,
-                "models_endpoint": "/models",
+                "models_endpoint": "/api/tags",
                 "requires_api_key": False,
-                "description": "Local Ollama server (OpenAI-compatible)",
+                "description": "Local Ollama server",
             },
             cls.OPENAI_COMPATIBLE: {
                 "api_base": "http://localhost:8080/v1",
@@ -6571,3 +6548,84 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
     else:
         target.name = target.custom_name_slug
+
+
+# ---------------------------------------------------------------------------
+# ToolPluginBinding — per-tool per-tenant plugin policy bindings
+# ---------------------------------------------------------------------------
+
+
+class ToolPluginBinding(Base):
+    """ORM model for per-tool per-tenant plugin policy bindings.
+
+    Each row represents a single plugin policy applied to a specific tool
+    within a specific team.  Multiple rows for the same (team, tool) pair
+    are allowed as long as the plugin_id differs — each plugin type may only
+    appear once per (team_id, tool_name, plugin_id) triple (enforced via
+    UniqueConstraint).  A POST with an existing triple performs an upsert
+    (updates the existing row's config/mode/priority).
+
+    Supported plugin_id values:
+        - ``OUTPUT_LENGTH_GUARD`` — truncate/block responses exceeding a char limit.
+        - ``RATE_LIMITER``        — per-user / per-tenant / per-tool rate gating.
+        - ``SECRETS_DETECTION``   — redact or block secret patterns in output.
+
+    Attributes:
+        id (str): UUID primary key.
+        team_id (str): FK to ``email_teams.id``.
+        tool_name (str): Name of the tool the policy applies to; ``"*"`` means all team tools.
+        plugin_id (str): One of the supported plugin identifiers.
+        mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
+        priority (int): Execution priority — lower numbers run first.
+        config (dict): Plugin-specific JSON configuration blob.
+        created_at (datetime): Row creation timestamp (UTC).
+        created_by (str): Email of the user who created the binding.
+        updated_at (datetime): Last update timestamp (UTC).
+        updated_by (str): Email of the user who last updated the binding.
+
+    Examples:
+        >>> binding = ToolPluginBinding(
+        ...     team_id="abc123",
+        ...     tool_name="*",
+        ...     plugin_id="OUTPUT_LENGTH_GUARD",
+        ...     mode="enforce",
+        ...     priority=10,
+        ...     config={"max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+        ...     created_by="admin@example.com",
+        ... )
+        >>> binding.plugin_id
+        'OUTPUT_LENGTH_GUARD'
+        >>> binding.mode
+        'enforce'
+    """
+
+    __tablename__ = "tool_plugin_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Relationship back to team
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", foreign_keys=[team_id])
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "tool_name", "plugin_id", name="uq_tool_plugin_binding"),
+        Index("ix_tool_plugin_bindings_team_id", "team_id"),
+        Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            str: String representation of ToolPluginBinding instance.
+        """
+        return f"<ToolPluginBinding(id='{self.id}', team_id='{self.team_id}', tool_name='{self.tool_name}', plugin_id='{self.plugin_id}')>"

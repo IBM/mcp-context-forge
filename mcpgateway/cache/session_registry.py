@@ -71,6 +71,7 @@ from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -2120,49 +2121,59 @@ class SessionRegistry(SessionBackend):
             ...     e.status_code
             400
         """
+        # First-Party
+        from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
         protocol_version = body.get("protocol_version") or body.get("protocolVersion")
         client_capabilities = body.get("capabilities", {})
-        # body.get("client_info") or body.get("clientInfo", {})
+        span_attributes: Dict[str, Any] = {
+            "mcp.protocol_version": protocol_version,
+            "mcp.session_id": session_id,
+            "server.id": server_id,
+        }
 
-        if not protocol_version:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing protocol version",
-                headers={"MCP-Error-Code": "-32002"},
+        with create_span("mcp.initialize", span_attributes):
+            # body.get("client_info") or body.get("clientInfo", {})
+
+            if not protocol_version:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Missing protocol version",
+                    headers={"MCP-Error-Code": "-32002"},
+                )
+
+            if protocol_version != settings.protocol_version:
+                logger.warning(f"Using non default protocol version: {protocol_version}")
+
+            # Store client capabilities if session_id provided
+            if session_id and client_capabilities:
+                await self.store_client_capabilities(session_id, client_capabilities)
+                logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
+
+            # Build experimental capabilities (including OAuth if configured)
+            experimental: Optional[Dict[str, Dict[str, Any]]] = None
+
+            # Query OAuth configuration if server_id is provided
+            if server_id:
+                try:
+                    # Run synchronous DB query in threadpool to avoid blocking the event loop
+                    experimental = await asyncio.to_thread(self._get_oauth_experimental_config, server_id)
+                except Exception as e:
+                    logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
+
+            return InitializeResult(
+                protocolVersion=protocol_version,
+                capabilities=ServerCapabilities(
+                    prompts={"listChanged": True},
+                    resources={"subscribe": True, "listChanged": True},
+                    tools={"listChanged": True},
+                    logging={},
+                    completions={},  # Advertise completions capability per MCP spec
+                    experimental=experimental,  # OAuth capability when configured
+                ),
+                serverInfo=Implementation(name=settings.app_name, version=__version__),
+                instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
             )
-
-        if protocol_version != settings.protocol_version:
-            logger.warning(f"Using non default protocol version: {protocol_version}")
-
-        # Store client capabilities if session_id provided
-        if session_id and client_capabilities:
-            await self.store_client_capabilities(session_id, client_capabilities)
-            logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
-
-        # Build experimental capabilities (including OAuth if configured)
-        experimental: Optional[Dict[str, Dict[str, Any]]] = None
-
-        # Query OAuth configuration if server_id is provided
-        if server_id:
-            try:
-                # Run synchronous DB query in threadpool to avoid blocking the event loop
-                experimental = await asyncio.to_thread(self._get_oauth_experimental_config, server_id)
-            except Exception as e:
-                logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
-
-        return InitializeResult(
-            protocolVersion=protocol_version,
-            capabilities=ServerCapabilities(
-                prompts={"listChanged": True},
-                resources={"subscribe": True, "listChanged": True},
-                tools={"listChanged": True},
-                logging={},
-                completions={},  # Advertise completions capability per MCP spec
-                experimental=experimental,  # OAuth capability when configured
-            ),
-            serverInfo=Implementation(name=settings.app_name, version=__version__),
-            instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
-        )
 
     async def store_client_capabilities(self, session_id: str, capabilities: Dict[str, Any]) -> None:
         """Store client capabilities for a session.
@@ -2300,15 +2311,26 @@ class SessionRegistry(SessionBackend):
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 if settings.mcpgateway_session_affinity_enabled:
                     headers["x-mcp-session-id"] = transport.session_id
+                # Forward passthrough headers captured at SSE connection time (see #3640).
+                # This ensures X-Upstream-Authorization and other client passthrough headers
+                # reach the /rpc endpoint, which then forwards them to upstream MCP servers.
+                # Defense-in-depth: filter via filter_loopback_skip_headers() so passthrough
+                # can never override the gateway's internal JWT, content-type, or session/routing headers.
+                # First-Party
+                from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers  # pylint: disable=import-outside-toplevel
+
+                passthrough = user.get("_passthrough_headers") or {}
+                if passthrough and isinstance(passthrough, dict):
+                    headers.update(filter_loopback_skip_headers(passthrough))
                 # Use loopback for internal RPC call (consistent with other self-call sites
                 # in mcp_session_pool.py and streamablehttp_transport.py). This avoids
                 # failures when the client-facing URL is not reachable from the server
                 # (e.g., behind a reverse proxy or service mesh). See #3049.
-                rpc_url = f"http://127.0.0.1:{settings.port}/rpc"
+                rpc_url = f"{internal_loopback_base_url()}/rpc"
 
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
-                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}) as client:
                     logger.info(f"SSE RPC: Sending request to {rpc_url}")
                     rpc_response = await client.post(
                         url=rpc_url,
