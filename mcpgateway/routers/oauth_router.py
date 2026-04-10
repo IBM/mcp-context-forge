@@ -446,7 +446,7 @@ async def oauth_callback(
 
     try:
         # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        root_path = settings.app_root_path if request else ""
         safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code

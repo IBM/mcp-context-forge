@@ -309,7 +309,7 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/admin/")
     assert set_cookie.called
 
 
@@ -347,7 +347,7 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/admin/")
     assert "sso_id_token_hint=id-token-hint" in response.headers.get("set-cookie", "")
     assert set_cookie.called
 
@@ -387,7 +387,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/admin/")
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
