@@ -1271,7 +1271,7 @@ async def test_redis_fallback_enforces_limit_via_memory():
 
     # Freeze time to ensure all requests occur within the same 1-second window
     frozen_time = 1000.0
-    with patch('time.time', return_value=frozen_time):
+    with patch("time.time", return_value=frozen_time):
         r1 = await plugin.tool_pre_invoke(payload, ctx)
         r2 = await plugin.tool_pre_invoke(payload, ctx)
         r3 = await plugin.tool_pre_invoke(payload, ctx)
