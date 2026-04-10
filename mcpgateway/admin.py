@@ -12136,6 +12136,18 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     if scopes:
                         oauth_config["scopes"] = scopes
 
+                # Parse extra authorization parameters (JSON)
+                extra_auth_params_raw = str(form.get("oauth_extra_auth_params", "")).strip()
+                if extra_auth_params_raw:
+                    try:
+                        # Standard
+                        import json
+                        extra_auth_params = json.loads(extra_auth_params_raw)
+                        if isinstance(extra_auth_params, dict):
+                            oauth_config["extra_auth_params"] = extra_auth_params
+                    except (json.JSONDecodeError, ValueError):
+                        pass  # silently ignore invalid JSON
+
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
 
@@ -12407,6 +12419,18 @@ async def admin_edit_gateway(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Parse extra authorization parameters (JSON)
+                extra_auth_params_raw = str(form.get("oauth_extra_auth_params", "")).strip()
+                if extra_auth_params_raw:
+                    try:
+                        # Standard
+                        import json
+                        extra_auth_params = json.loads(extra_auth_params_raw)
+                        if isinstance(extra_auth_params, dict):
+                            oauth_config["extra_auth_params"] = extra_auth_params
+                    except (json.JSONDecodeError, ValueError):
+                        pass  # silently ignore invalid JSON
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
