@@ -7140,6 +7140,76 @@ class TestRustMcpExecutionPlan:
 
         assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
+    def test_build_rust_native_tool_post_invoke_retry_policy_from_cpex_package(self, tool_service):
+        """RetryWithBackoffPlugin should produce a native retry policy when the package is installed."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {
+            "max_retries": settings.max_tool_retries + 5,
+            "backoff_base_ms": 250,
+            "max_backoff_ms": 5000,
+            "retry_on_status": [429, 503],
+            "jitter": False,
+            "tool_overrides": {"tool-one": {"max_retries": 1, "backoff_base_ms": 75}},
+        }
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
+
+        assert requires_python_fallback is False
+        assert policy == {
+            "kind": "retry_with_backoff",
+            "maxRetries": 1,
+            "backoffBaseMs": 75,
+            "maxBackoffMs": 5000,
+            "retryOnStatus": [429, 503],
+            "jitter": False,
+        }
+
+    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_without_cpex_package(self, tool_service):
+        """Missing optional retry package should force Python fallback."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {"max_retries": 3}
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        real_import = __import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "cpex_retry_with_backoff":
+                raise ImportError("package not installed")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+                mock_pm,
+                "tool-one",
+                None,
+            )
+
+        assert policy is None
+        assert requires_python_fallback is True
+
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_trace_id_forces_fallback(self, tool_service):
         """Active observability trace should bypass Rust direct execution."""
