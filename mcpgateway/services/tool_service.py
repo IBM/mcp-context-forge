@@ -3361,7 +3361,7 @@ class ToolService(BaseService):
         from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
         # Third-Party/Local
-        from plugins.retry_with_backoff.retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
+        from cpex_retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
 
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})

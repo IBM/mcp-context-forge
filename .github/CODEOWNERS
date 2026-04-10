@@ -6,7 +6,6 @@
 /mcpgateway/plugins @araujof @terylt @jonpspri
 
 # Rust projects
-/plugins_rust/ @lucarlig @dima-zakharov
 /tools_rust/ @lucarlig @dima-zakharov
 /mcp-servers/rust/ @lucarlig @dima-zakharov
 

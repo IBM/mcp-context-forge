@@ -153,7 +153,7 @@ Below is an example of a plugin configuration file. A plugin configuration file 
 plugins:
 
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
+    kind: "cpex_pii_filter.PIIFilterPlugin"  # Plugin class path
     description: "Detects and masks PII"       # Human-readable description
     version: "1.0.0"                          # Plugin version
     author: "Security Team"                   # Plugin author
@@ -195,7 +195,7 @@ Details of each field are below:
 | Field | Type | Required | Default | Description | Example Values |
 |-------|------|----------|---------|-------------|----------------|
 | `name` | `string` | Yes | - | Unique plugin identifier within the configuration | `"PIIFilterPlugin"`, `"OpenAIModeration"` |
-| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"`, `"external"` |
+| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"cpex_pii_filter.PIIFilterPlugin"`, `"external"` |
 | `description` | `string` |  | `null` | Human-readable description of plugin functionality | `"Detects and masks PII in requests"` |
 | `author` | `string` |  | `null` | Plugin author or team responsible for maintenance | `"Security Team"`, `"AI Safety Group"` |
 | `version` | `string` |  | `null` | Plugin version for tracking and compatibility | `"1.0.0"`, `"2.3.1-beta"` |
@@ -398,7 +398,7 @@ The plugin manifest follows a structured YAML format that captures comprehensive
 ```yaml
 # plugin-manifest.yaml
 name: "Advanced PII Filter"
-kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+kind: "cpex_pii_filter.PIIFilterPlugin"
 description: "Comprehensive PII detection and masking with configurable sensitivity levels"
 author: "Security Engineering Team"
 version: "2.1.0"
@@ -495,7 +495,7 @@ deployment:
 | Field | Type | Required | Description | Example |
 |-------|------|----------|-------------|---------|
 | `name` | `string` | Yes | Human-readable plugin name | `"Advanced PII Filter"` |
-| `kind` | `string` | Yes | Plugin class path | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"` |
+| `kind` | `string` | Yes | Plugin class path | `"cpex_pii_filter.PIIFilterPlugin"` |
 | `description` | `string` | Yes | Detailed plugin description | `"Comprehensive PII detection with GDPR compliance"` |
 | `author` | `string` | Yes | Plugin author or team | `"Security Engineering Team"` |
 | `version` | `string` | Yes | Semantic version | `"2.1.0"` |
@@ -1761,7 +1761,7 @@ class TestPIIFilterPlugin:
     async def test_pii_detection_and_masking(self):
         config = PluginConfig(
             name="test_pii",
-            kind="plugins.pii_filter.pii_filter.PIIFilterPlugin",
+            kind="cpex_pii_filter.PIIFilterPlugin",
             hooks=[HookType.PROMPT_PRE_FETCH],
             config={"detect_ssn": True, "mask_strategy": "partial"}
         )

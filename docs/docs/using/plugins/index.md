@@ -178,7 +178,7 @@ is below. It contains two main sections: `plugins` and `plugin_settings`.
 plugins:
 
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
+    kind: "cpex_pii_filter.PIIFilterPlugin"  # Plugin class path
     description: "Detects and masks PII"       # Human-readable description
     version: "1.0.0"                          # Plugin version
     author: "Security Team"                   # Plugin author
@@ -224,7 +224,7 @@ Use the native plugins out of the box:
 plugins:
 
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "permissive"
     priority: 50
@@ -289,7 +289,7 @@ are defined as follows:
 | Field | Type | Required | Default | Description | Example Values |
 |-------|------|----------|---------|-------------|----------------|
 | `name` | `string` | Yes | - | Unique plugin identifier within the configuration | `"PIIFilterPlugin"`, `"OpenAIModeration"` |
-| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"`, `"external"` |
+| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"cpex_pii_filter.PIIFilterPlugin"`, `"external"` |
 | `description` | `string` |  | `null` | Human-readable description of plugin functionality | `"Detects and masks PII in requests"` |
 | `author` | `string` |  | `null` | Plugin author or team responsible for maintenance | `"Security Team"`, `"AI Safety Group"` |
 | `version` | `string` |  | `null` | Plugin version for tracking and compatibility | `"1.0.0"`, `"2.3.1-beta"` |
@@ -1250,7 +1250,7 @@ Plugin management endpoints are not exposed in the gateway at this time.
 plugins:
   # Step 1: PII Detection and Masking (Highest Priority)
   - name: "PIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "enforce"
     priority: 10
@@ -1337,7 +1337,7 @@ plugins:
 plugins:
 
   - name: "DevPIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     mode: "permissive"  # Don't block in dev
     priority: 50
@@ -1355,7 +1355,7 @@ plugins:
 plugins:
 
   - name: "ProdPIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "enforce"  # Block in production
     priority: 10
