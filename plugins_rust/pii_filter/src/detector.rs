@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn test_built_in_patterns_keep_explicit_mask_strategy() {
+    fn test_built_in_patterns_follow_global_default_mask_strategy() {
         let config = PIIConfig {
             detect_ssn: true,
             detect_email: true,
@@ -736,16 +736,16 @@ mod tests {
 
         assert_eq!(
             detections[&PIIType::Ssn][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Redact
         );
         assert_eq!(
             detections[&PIIType::Email][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Redact
         );
     }
 
     #[test]
-    fn test_built_in_mask_strategy_matrix_survives_global_override() {
+    fn test_built_in_mask_strategy_matrix_follows_global_override() {
         let config = PIIConfig {
             detect_ssn: true,
             detect_credit_card: true,
@@ -763,23 +763,23 @@ mod tests {
 
         assert_eq!(
             detections[&PIIType::Ssn][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Hash
         );
         assert_eq!(
             detections[&PIIType::CreditCard][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Hash
         );
         assert_eq!(
             detections[&PIIType::Email][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Hash
         );
         assert_eq!(
             detections[&PIIType::Phone][0].mask_strategy,
-            MaskingStrategy::Partial
+            MaskingStrategy::Hash
         );
         assert_eq!(
             detections[&PIIType::IpAddress][0].mask_strategy,
-            MaskingStrategy::Redact
+            MaskingStrategy::Hash
         );
     }
 
