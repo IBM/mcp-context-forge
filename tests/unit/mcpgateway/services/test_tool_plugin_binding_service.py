@@ -115,7 +115,7 @@ def simple_request():
                     PluginPolicyItem(
                         tool_names=["tool_x"],
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                        mode=PluginBindingMode.ENFORCE,
+                        mode=PluginBindingMode.SEQUENTIAL,
                         priority=50,
                         config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
                     )
@@ -169,7 +169,7 @@ class TestUpsertBindings:
         assert r.team_id == "team-a"
         assert r.tool_name == "tool_x"
         assert r.plugin_id == "OUTPUT_LENGTH_GUARD"
-        assert r.mode == "enforce"
+        assert r.mode == "sequential"
         assert r.priority == 50
         assert r.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
         assert r.created_by == "admin@example.com"
@@ -189,7 +189,7 @@ class TestUpsertBindings:
                         PluginPolicyItem(
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=10,
                             config={"min_chars": 0, "max_chars": 500, "strategy": "truncate", "ellipsis": "..."},
                         )
@@ -207,7 +207,7 @@ class TestUpsertBindings:
                         PluginPolicyItem(
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.ENFORCE,
+                            mode=PluginBindingMode.SEQUENTIAL,
                             priority=50,
                             config={"min_chars": 0, "max_chars": 2000, "strategy": "block", "ellipsis": "..."},
                         )
@@ -221,7 +221,7 @@ class TestUpsertBindings:
 
         r = updated[0]
         assert r.id == original_id                       # primary key preserved
-        assert r.mode == "enforce"
+        assert r.mode == "sequential"
         assert r.priority == 50
         assert r.config == {"min_chars": 0, "max_chars": 2000, "strategy": "block", "ellipsis": "..."}
         assert r.updated_by == "updater@example.com"
@@ -260,7 +260,7 @@ class TestUpsertBindings:
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
                             plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=20,
                             config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
                         )
@@ -279,14 +279,14 @@ class TestUpsertBindings:
         tool_a = by_tool["tool_a"]
         assert tool_a.team_id == "team-a"
         assert tool_a.plugin_id == "RATE_LIMITER"
-        assert tool_a.mode == "permissive"
+        assert tool_a.mode == "audit"
         assert tool_a.priority == 20
         assert tool_a.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
 
         tool_b = by_tool["tool_b"]
         assert tool_b.team_id == "team-a"
         assert tool_b.plugin_id == "RATE_LIMITER"
-        assert tool_b.mode == "permissive"
+        assert tool_b.mode == "audit"
         assert tool_b.priority == 20
         assert tool_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
 
@@ -586,7 +586,7 @@ class TestPluginPolicyItemValidation:
             plugin_id=PluginId.RATE_LIMITER,
             config={"by_user": None, "by_tenant": None, "by_tool": None},
         )
-        assert item.mode == PluginBindingMode.ENFORCE
+        assert item.mode == PluginBindingMode.SEQUENTIAL
         assert item.priority == 50
 
     def test_output_length_guard_valid_config(self):
@@ -745,8 +745,8 @@ class TestTopLevelSchemas:
 
     def test_plugin_binding_mode_enum_values(self):
         """PluginBindingMode enum covers all expected execution modes."""
-        assert PluginBindingMode.ENFORCE == "enforce"
-        assert PluginBindingMode.PERMISSIVE == "permissive"
+        assert PluginBindingMode.SEQUENTIAL == "sequential"
+        assert PluginBindingMode.AUDIT == "audit"
         assert PluginBindingMode.DISABLED == "disabled"
 
     def test_all_plugin_errors_collected_across_list(self):
@@ -812,7 +812,7 @@ class TestGetBindingsForTool:
                         PluginPolicyItem(
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.ENFORCE,
+                            mode=PluginBindingMode.SEQUENTIAL,
                             priority=50,
                             config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
                         )
@@ -830,7 +830,7 @@ class TestGetBindingsForTool:
                         PluginPolicyItem(
                             tool_names=["*"],
                             plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=10,
                             config={"by_user": "100/m", "by_tenant": "1000/m", "by_tool": None},
                         )
@@ -868,7 +868,7 @@ class TestGetBindingsForTool:
                         PluginPolicyItem(
                             tool_names=["*"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=1,
                             config={"min_chars": 0, "max_chars": 100, "strategy": "truncate", "ellipsis": "..."},
                         )
@@ -886,7 +886,7 @@ class TestGetBindingsForTool:
                         PluginPolicyItem(
                             tool_names=["tool_z"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.ENFORCE,
+                            mode=PluginBindingMode.SEQUENTIAL,
                             priority=99,
                             config={"min_chars": 0, "max_chars": 9999, "strategy": "truncate", "ellipsis": "..."},
                         )

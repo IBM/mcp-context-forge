@@ -7875,10 +7875,19 @@ PLUGIN_ID_TO_NAME: dict[str, str] = {
 
 
 class PluginBindingMode(str, Enum):
-    """Plugin execution mode for tool plugin bindings."""
+    """Plugin execution mode for tool plugin bindings.
 
-    ENFORCE = "enforce"
-    PERMISSIVE = "permissive"
+    Values match cpex ``PluginMode`` names (lower-cased).  Legacy values
+    ``enforce`` and ``permissive`` are accepted at the DB/gateway layer
+    via ``_LEGACY_MODE_MAP`` in ``gateway_plugin_manager.py`` for
+    backwards compatibility with existing rows.
+    """
+
+    SEQUENTIAL = "sequential"
+    AUDIT = "audit"
+    FIRE_AND_FORGET = "fire_and_forget"
+    CONCURRENT = "concurrent"
+    TRANSFORM = "transform"
     DISABLED = "disabled"
 
 
@@ -8002,7 +8011,7 @@ class PluginPolicyItem(BaseModel):
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
     plugin_id: PluginId = Field(..., description="Plugin to bind")
-    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
+    mode: PluginBindingMode = Field(PluginBindingMode.SEQUENTIAL, description="Execution mode (matches cpex PluginMode)")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ..., description="Plugin-specific configuration; always provide all fields you care about — on upsert the config is fully replaced, so any key you omit reverts to the plugin's default value"

@@ -132,7 +132,7 @@ class TestGetConfigFromDb:
                         PluginPolicyItem(
                             tool_names=["my_tool"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.ENFORCE,
+                            mode=PluginBindingMode.SEQUENTIAL,
                             priority=42,
                             config={"min_chars": 0, "max_chars": 500, "strategy": "truncate", "ellipsis": "..."},
                         )
@@ -192,7 +192,7 @@ class TestGetConfigFromDb:
                         PluginPolicyItem(
                             tool_names=["*"],
                             plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=5,
                             config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
                         )

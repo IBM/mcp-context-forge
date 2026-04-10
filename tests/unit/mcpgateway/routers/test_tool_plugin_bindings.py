@@ -94,7 +94,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                     PluginPolicyItem(
                         tool_names=["tool_x"],
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                        mode=PluginBindingMode.ENFORCE,
+                        mode=PluginBindingMode.SEQUENTIAL,
                         priority=50,
                         config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
                     )
@@ -113,7 +113,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                     PluginPolicyItem(
                         tool_names=["tool_x"],
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                        mode=PluginBindingMode.ENFORCE,
+                        mode=PluginBindingMode.SEQUENTIAL,
                         priority=50,
                         config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
                     )
@@ -124,7 +124,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                     PluginPolicyItem(
                         tool_names=["tool_y"],
                         plugin_id=PluginId.RATE_LIMITER,
-                        mode=PluginBindingMode.PERMISSIVE,
+                        mode=PluginBindingMode.AUDIT,
                         priority=30,
                         config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
                     )
@@ -168,7 +168,7 @@ class TestToolPluginBindingsRouter:
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
-        assert binding.mode == "enforce"
+        assert binding.mode == "sequential"
         assert binding.priority == 50
         assert binding.created_by == "admin@example.com"
 
@@ -187,7 +187,7 @@ class TestToolPluginBindingsRouter:
                         PluginPolicyItem(
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.PERMISSIVE,
+                            mode=PluginBindingMode.AUDIT,
                             priority=99,
                             config={"min_chars": 0, "max_chars": 500, "strategy": "block", "ellipsis": "..."},
                         )
@@ -203,7 +203,7 @@ class TestToolPluginBindingsRouter:
 
         assert result.total == 1
         binding = result.bindings[0]
-        assert binding.mode == "permissive"
+        assert binding.mode == "audit"
         assert binding.priority == 99
         assert binding.config["max_chars"] == 500
 
@@ -333,7 +333,7 @@ class TestToolPluginBindingsRouter:
         team_a = by_team["team-a"]
         assert team_a.tool_name == "tool_x"
         assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
-        assert team_a.mode == "enforce"
+        assert team_a.mode == "sequential"
         assert team_a.priority == 50
         assert team_a.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
         assert team_a.created_by == "admin@example.com"
@@ -341,7 +341,7 @@ class TestToolPluginBindingsRouter:
         team_b = by_team["team-b"]
         assert team_b.tool_name == "tool_y"
         assert team_b.plugin_id == "RATE_LIMITER"
-        assert team_b.mode == "permissive"
+        assert team_b.mode == "audit"
         assert team_b.priority == 30
         assert team_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
         assert team_b.created_by == "admin@example.com"
@@ -370,7 +370,7 @@ class TestToolPluginBindingsRouter:
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
-        assert binding.mode == "enforce"
+        assert binding.mode == "sequential"
         assert binding.priority == 50
         assert binding.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
         assert binding.created_by == "admin@example.com"
