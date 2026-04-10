@@ -2890,11 +2890,19 @@ ocp-verify-pv:                               ## Verify Postgres + Redis PVs are 
 				echo "  ERROR: PV $$pv does not exist"; fail=1; continue; \
 			fi; \
 			status=$$(oc get pv $$pv -o jsonpath="{.status.phase}"); \
-			if [ "$$status" != "Available" ]; then \
-				echo "  ERROR: status is $$status (expected Available)"; \
-				if [ "$$status" = "Released" ]; then \
-					echo "         Fix: oc patch pv $$pv -p '\''{\"spec\":{\"claimRef\": null}}'\''"; \
+			if [ "$$status" = "Released" ]; then \
+				echo "  status: Released (stale claimRef from previous deployment) — auto-clearing..."; \
+				oc patch pv $$pv -p "{\"spec\":{\"claimRef\": null}}" >/dev/null; \
+				sleep 2; \
+				status=$$(oc get pv $$pv -o jsonpath="{.status.phase}"); \
+				if [ "$$status" = "Available" ]; then \
+					echo "  status: Available (auto-fixed)"; \
+				else \
+					echo "  ERROR: auto-fix failed, status is now $$status"; \
+					fail=1; \
 				fi; \
+			elif [ "$$status" != "Available" ]; then \
+				echo "  ERROR: status is $$status (expected Available)"; \
 				fail=1; \
 			else \
 				echo "  status: Available"; \
@@ -3009,17 +3017,23 @@ ocp-deploy:                                  ## Deploy ContextForge on OCP (requ
 		--timeout 10m
 	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
 
-ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS, REDIS_PV)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<redis-pv>"; exit 1; fi
+	@if [ -z "$(REDIS_PV)" ]; then \
+		echo "ERROR: REDIS_PV is required (same value used in ocp-deploy) to preserve the Redis PVC volumeName binding."; \
+		echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<redis-pv>"; \
+		exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-benchmark-setup: Enable Locust for benchmarking"
 	@echo "========================================"
 	@echo "Namespace: $(OCP_NS)"
+	@echo "Redis PV:  $(REDIS_PV)"
 	@echo ""
 	@echo "This will:"
 	@echo "  1. Generate a JWT token from inside the gateway pod"
 	@echo "  2. Fetch the virtual server UUID from /servers"
 	@echo "  3. Run helm upgrade with testing.locust.enabled=true and the server ID"
+	@echo "     (Redis volumeName is preserved so the PVC binding stays intact)"
 	@echo "  4. Wait up to 90s for 3 Locust workers to schedule"
 	@echo "  5. If only some workers schedule due to CPU pressure, continue with"
 	@echo "     a warning explaining the impact"
@@ -3042,19 +3056,21 @@ ocp-benchmark-setup:                         ## Enable Locust and configure serv
 			-n $(OCP_NS) \
 			-f $(OCP_VALUES) \
 			-f $(OCP_SECRETS) \
+			--set redis.persistence.volumeName=$(REDIS_PV) \
 			--set testing.locust.enabled=true \
 			--set testing.locust.mcpServerID=$$SERVER_ID > /dev/null && \
 		echo "   Helm upgrade complete." && \
 		echo "Waiting for Locust workers (up to 90s)..." && \
-		want=3 && elapsed=0 && timeout=90 && interval=10 && \
+		want=3; elapsed=0; timeout=90; interval=10; \
 		while [ $$elapsed -lt $$timeout ]; do \
-			running=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running ") || running=0; \
-			pending=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Pending ") || pending=0; \
+			pods=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null); \
+			running=$$(echo "$$pods" | grep -c " Running "); \
+			pending=$$(echo "$$pods" | grep -c " Pending "); \
 			echo "   $$running/$$want workers Running, $$pending Pending"; \
 			if [ "$$running" -ge "$$want" ]; then break; fi; \
 			sleep $$interval; elapsed=$$((elapsed + interval)); \
 		done; \
-		final=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running ") || final=0; \
+		final=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running "); \
 		if [ "$$final" -lt "$$want" ]; then \
 			echo ""; \
 			echo "WARNING: only $$final of $$want Locust workers scheduled."; \
@@ -3079,13 +3095,14 @@ ocp-benchmark:                               ## Run MCP benchmark on OCP (requir
 		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
 	@echo "Benchmark running. Results in ~60s."
 
-ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS; optional REDIS_PV)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace> [REDIS_PV=<redis-pv>]"; exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-uninstall: Uninstall ContextForge Helm release"
 	@echo "========================================"
 	@echo "Namespace: $(OCP_NS)"
 	@echo "Release:   $(OCP_NS)"
+	@if [ -n "$(REDIS_PV)" ]; then echo "Redis PV:  $(REDIS_PV) (claimRef will be auto-cleared)"; fi
 	@echo ""
 	@echo "This will helm uninstall the release, removing:"
 	@echo "  - Gateway pods (3)"
@@ -3098,14 +3115,19 @@ ocp-uninstall:                               ## Uninstall the ContextForge Helm 
 	@echo "Preserved:"
 	@echo "  - Namespace itself"
 	@echo "  - PostgresCluster CR (Postgres + PgBouncer keep running)"
-	@echo "  - PV data (PVs remain Bound to the PostgresCluster)"
+	@echo "  - PV data (PVs remain Bound to the PostgresCluster; Redis PV goes Released and is auto-cleared if REDIS_PV is provided)"
 	@echo "  - Local secrets file"
 	@echo ""
-	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) (re-installs the release)"
+	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) REDIS_PV=... (re-installs the release)"
 	@echo ""
 	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
 	@echo ""
 	helm uninstall $(OCP_NS) -n $(OCP_NS)
+	@if [ -n "$(REDIS_PV)" ]; then \
+		sleep 3; \
+		echo "Clearing Redis PV claimRef to keep it Available for the next deploy..."; \
+		oc patch pv $(REDIS_PV) -p '{"spec":{"claimRef": null}}' 2>&1; \
+	fi
 	@echo "Uninstall complete."
 
 # =============================================================================
