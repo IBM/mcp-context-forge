@@ -83,12 +83,7 @@ def upgrade() -> None:
         with op.batch_alter_table("a2a_agents", schema=None) as batch_op:
             # Extend id column to accommodate UAID format
             if need_id_resize:
-                batch_op.alter_column(
-                    "id",
-                    type_=sa.String(512),
-                    existing_type=sa.String(36),
-                    existing_nullable=False
-                )
+                batch_op.alter_column("id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
                 print("  - Extended id column from VARCHAR(36) to VARCHAR(512)")
 
             # Add UAID metadata columns
@@ -107,13 +102,7 @@ def upgrade() -> None:
     else:
         # PostgreSQL: Use direct operations (more efficient than batch mode)
         if need_id_resize:
-            op.alter_column(
-                "a2a_agents",
-                "id",
-                type_=sa.String(512),
-                existing_type=sa.String(36),
-                existing_nullable=False
-            )
+            op.alter_column("a2a_agents", "id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
             print("  - Extended id column from VARCHAR(36) to VARCHAR(512)")
 
         # Add UAID metadata columns
@@ -179,12 +168,7 @@ def downgrade() -> None:
             # Shrink id column back to String(36)
             # WARNING: This will truncate any UAID-based agent IDs!
             if "id" in columns:
-                batch_op.alter_column(
-                    "id",
-                    type_=sa.String(36),
-                    existing_type=sa.String(512),
-                    existing_nullable=False
-                )
+                batch_op.alter_column("id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
                 print("  - ⚠️  Shrunk id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
     else:
         # PostgreSQL: Use direct operations
@@ -205,13 +189,7 @@ def downgrade() -> None:
         # Shrink id column back to String(36)
         # WARNING: This will truncate any UAID-based agent IDs!
         if "id" in columns:
-            op.alter_column(
-                "a2a_agents",
-                "id",
-                type_=sa.String(36),
-                existing_type=sa.String(512),
-                existing_nullable=False
-            )
+            op.alter_column("a2a_agents", "id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
             print("  - ⚠️  Shrunk id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
 
     print("✅ UAID support removed from a2a_agents table.")

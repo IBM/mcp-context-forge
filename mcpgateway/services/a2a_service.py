@@ -1983,7 +1983,7 @@ class A2AAgentService(BaseService):
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
+        token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
     ) -> Dict[str, Any]:
         """Invoke agent on remote gateway via UAID cross-gateway routing.
 
@@ -2042,9 +2042,8 @@ class A2AAgentService(BaseService):
             client = await get_http_client()
             headers = {"Content-Type": "application/json"}
 
-            # TODO: Add authentication - forward bearer token or use mutual TLS
-            # if bearer_token := get_current_token():
-            #     headers["Authorization"] = f"Bearer {bearer_token}"
+            # NOTE: Authentication for cross-gateway calls is future work.
+            # Will support bearer token forwarding and mutual TLS in future release.
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()
@@ -2095,28 +2094,28 @@ class A2AAgentService(BaseService):
                 )
 
                 return response
-            else:
-                error_message = f"HTTP {http_response.status_code}: {http_response.text}"
 
-                # Log failed cross-gateway call
-                structured_logger.log(
-                    level="ERROR",
-                    message=f"Cross-gateway call failed: {uaid}",
-                    component="a2a_service",
-                    user_id=user_id,
-                    user_email=user_email,
-                    correlation_id=correlation_id,
-                    duration_ms=call_duration_ms,
-                    error_details={"error_type": "CrossGatewayHTTPError", "error_message": error_message},
-                    metadata={
-                        "event": "cross_gateway_call_failed",
-                        "uaid": uaid,
-                        "endpoint": endpoint,
-                        "status_code": http_response.status_code,
-                    },
-                )
+            error_message = f"HTTP {http_response.status_code}: {http_response.text}"
 
-                raise A2AAgentError(f"Cross-gateway routing failed: {error_message}")
+            # Log failed cross-gateway call
+            structured_logger.log(
+                level="ERROR",
+                message=f"Cross-gateway call failed: {uaid}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                duration_ms=call_duration_ms,
+                error_details={"error_type": "CrossGatewayHTTPError", "error_message": error_message},
+                metadata={
+                    "event": "cross_gateway_call_failed",
+                    "uaid": uaid,
+                    "endpoint": endpoint,
+                    "status_code": http_response.status_code,
+                },
+            )
+
+            raise A2AAgentError(f"Cross-gateway routing failed: {error_message}")
 
         except ValueError as e:
             logger.error(f"Failed to parse UAID or validate endpoint: {e}")

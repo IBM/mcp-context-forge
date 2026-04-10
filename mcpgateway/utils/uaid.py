@@ -204,10 +204,12 @@ def generate_uaid(
     ]
     if normalized_registry:
         parts.append(f"registry={normalized_registry}")
-    parts.extend([
-        f"proto={normalized_protocol}",
-        f"nativeId={normalized_native_id}",
-    ])
+    parts.extend(
+        [
+            f"proto={normalized_protocol}",
+            f"nativeId={normalized_native_id}",
+        ]
+    )
 
     return ";".join(parts)
 
