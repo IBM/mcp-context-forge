@@ -2932,6 +2932,24 @@ ocp-setup:                                   ## Set up OCP namespace and Crunchy
 		echo "Usage: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; \
 		echo "Run 'make ocp-verify-pv' first to validate your PVs."; \
 		exit 1; fi
+	@echo "========================================"
+	@echo "make ocp-setup: Set up namespace and CrunchyData Postgres"
+	@echo "========================================"
+	@echo "Namespace:        $(OCP_NS)"
+	@echo "Postgres PV:      $(POSTGRES_PV)"
+	@echo "Postgres Repo PV: $(POSTGRES_REPO_PV)"
+	@echo "CR template:      $(OCP_PG_CR)"
+	@echo ""
+	@echo "This will:"
+	@echo "  1. Verify the CrunchyData PGO operator is installed"
+	@echo "  2. Create the namespace if it does not exist"
+	@echo "  3. Apply the PostgresCluster CR (with PV names substituted)"
+	@echo "  4. Wait for the Postgres pods to become Ready"
+	@echo ""
+	@echo "Each step is skipped if already present (idempotent)."
+	@echo ""
+	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	@echo ""
 	@echo "=== OCP Setup ==="
 	@echo "Checking CrunchyData PGO operator..."
 	@/bin/bash -c 'oc get csv -A 2>/dev/null | grep -qi crunchy || \
@@ -2957,10 +2975,24 @@ ocp-setup:                                   ## Set up OCP namespace and Crunchy
 
 ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
-	@echo "Deploying ContextForge to OCP..."
-	@echo "   Namespace: $(OCP_NS)"
-	@echo "   Values:    $(OCP_VALUES)"
-	@echo "   Secrets:   $(OCP_SECRETS)"
+	@echo "========================================"
+	@echo "make ocp-deploy: Deploy ContextForge stack"
+	@echo "========================================"
+	@echo "Namespace:  $(OCP_NS)"
+	@echo "Values:     $(OCP_VALUES)"
+	@echo "Secrets:    $(OCP_SECRETS)"
+	@echo ""
+	@echo "This will helm install:"
+	@echo "  - 3 gateway pods (Gunicorn, 8 workers each, Python MCP core)"
+	@echo "  - 3 NGINX pods (UBI9, reverse proxy)"
+	@echo "  - 1 Redis pod"
+	@echo "  - 2 fast-time-server pods"
+	@echo "  - Connects to PGO-managed Postgres + PgBouncer"
+	@echo ""
+	@echo "Note: Locust is not deployed at this stage (enabled later by ocp-benchmark-setup)."
+	@echo ""
+	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	@echo ""
 	helm install $(OCP_NS) charts/mcp-stack \
 		-n $(OCP_NS) \
 		-f $(OCP_VALUES) \
@@ -2970,6 +3002,21 @@ ocp-deploy:                                  ## Deploy ContextForge on OCP (requ
 
 ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+	@echo "========================================"
+	@echo "make ocp-benchmark-setup: Enable Locust for benchmarking"
+	@echo "========================================"
+	@echo "Namespace: $(OCP_NS)"
+	@echo ""
+	@echo "This will:"
+	@echo "  1. Generate a JWT token from inside the gateway pod"
+	@echo "  2. Fetch the virtual server UUID from /servers"
+	@echo "  3. Run helm upgrade with testing.locust.enabled=true and the server ID"
+	@echo "  4. Wait up to 90s for 3 Locust workers to schedule"
+	@echo "  5. If only some workers schedule due to CPU pressure, continue with"
+	@echo "     a warning explaining the impact"
+	@echo ""
+	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	@echo ""
 	@echo "=== Benchmark Setup ==="
 	@/bin/bash -c '\
 		echo "Fetching JWT secret and generating token..." && \
@@ -3022,6 +3069,35 @@ ocp-benchmark:                               ## Run MCP benchmark on OCP (requir
 		urllib.parse.urlencode({'user_count':125,'spawn_rate':30,'run_time':'60s', \
 		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
 	@echo "Benchmark running. Results in ~60s."
+
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
+	@echo "========================================"
+	@echo "make ocp-uninstall: Uninstall ContextForge Helm release"
+	@echo "========================================"
+	@echo "Namespace: $(OCP_NS)"
+	@echo "Release:   $(OCP_NS)"
+	@echo ""
+	@echo "This will helm uninstall the release, removing:"
+	@echo "  - Gateway pods (3)"
+	@echo "  - NGINX pods (3)"
+	@echo "  - Redis pod"
+	@echo "  - fast-time-server pods"
+	@echo "  - Locust pods (if enabled)"
+	@echo "  - Helm-managed ConfigMaps and Secrets"
+	@echo ""
+	@echo "Preserved:"
+	@echo "  - Namespace itself"
+	@echo "  - PostgresCluster CR (Postgres + PgBouncer keep running)"
+	@echo "  - PV data (PVs remain Bound to the PostgresCluster)"
+	@echo "  - Local secrets file"
+	@echo ""
+	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) (re-installs the release)"
+	@echo ""
+	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	@echo ""
+	helm uninstall $(OCP_NS) -n $(OCP_NS)
+	@echo "Uninstall complete."
 
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING

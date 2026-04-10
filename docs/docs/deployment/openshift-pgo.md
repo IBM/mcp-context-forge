@@ -174,6 +174,16 @@ make ocp-benchmark OCP_NS=<namespace>
 
 `ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
 
+**To uninstall and start over:**
+
+```bash
+make ocp-uninstall OCP_NS=<namespace>
+```
+
+This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres.
+
+The destructive Make targets (`ocp-setup`, `ocp-deploy`, `ocp-benchmark-setup`, `ocp-uninstall`) all show what they will do and prompt for confirmation before running.
+
 For step-by-step details, troubleshooting, or if the Make commands don't work as expected, see the detailed manual steps below.
 
 ---
