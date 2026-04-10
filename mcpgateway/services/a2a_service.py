@@ -1614,11 +1614,11 @@ class A2AAgentService(BaseService):
     async def invoke_agent(
         self,
         db: Session,
-        agent_name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        parameters: Dict[str, Any] = None,
+        agent_name: str,
+        parameters: Dict[str, Any],
         interaction_type: str = "query",
         *,
+        agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
@@ -1627,10 +1627,10 @@ class A2AAgentService(BaseService):
 
         Args:
             db: Database session.
-            agent_name: Name of the agent to invoke (deprecated, use agent_id).
-            agent_id: ID of the agent (UUID or UAID format).
+            agent_name: Name of the agent to invoke.
             parameters: Parameters for the interaction.
             interaction_type: Type of interaction.
+            agent_id: Optional agent ID (UUID or UAID format). If provided, takes precedence over agent_name.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
             token_teams: Teams from JWT token. None = admin (no filtering),
@@ -1642,17 +1642,10 @@ class A2AAgentService(BaseService):
         Raises:
             A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or invocation fails.
-            ValueError: If neither agent_name nor agent_id is provided.
         """
-        if parameters is None:
-            parameters = {}
-
-        if not agent_name and not agent_id:
-            raise ValueError("Either agent_name or agent_id must be provided")
-
-        # Backward compatibility: use agent_name if agent_id not provided
+        # Use agent_id if provided, otherwise use agent_name
         identifier = agent_id if agent_id else agent_name
-        is_name_lookup = bool(agent_name and not agent_id)
+        is_name_lookup = bool(not agent_id and agent_name)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # UAID HANDLING: Check if identifier is UAID format
@@ -1692,12 +1685,15 @@ class A2AAgentService(BaseService):
             agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == identifier)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
             if not agent_row:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
         else:
             agent_row = identifier
-
-        agent = get_for_update(db, DbA2AAgent, agent_row)
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         # Use agent name for logging throughout
         agent_name = agent.name
@@ -1707,6 +1703,8 @@ class A2AAgentService(BaseService):
         # Return 404 (not 403) to avoid leaking existence of private agents
         # ═══════════════════════════════════════════════════════════════════════════
         if not self._check_agent_access(agent, user_email, token_teams):
+            if is_name_lookup:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
             raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
