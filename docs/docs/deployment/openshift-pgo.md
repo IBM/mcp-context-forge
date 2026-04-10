@@ -163,7 +163,7 @@ This checks the PGO operator is installed, creates the namespace if needed, subs
 make ocp-deploy OCP_NS=<namespace>
 ```
 
-This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis, Locust (1 master + 3 workers), and connects to the PGO-managed Postgres.
+This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis, and connects to the PGO-managed Postgres. Locust is **not** deployed at this stage to save cluster resources — it is enabled on demand by `ocp-benchmark-setup`.
 
 **6. Run the MCP benchmark:**
 
@@ -172,7 +172,7 @@ make ocp-benchmark-setup OCP_NS=<namespace>
 make ocp-benchmark OCP_NS=<namespace>
 ```
 
-`ocp-benchmark-setup` auto-fetches the virtual server ID and configures Locust (run once after deploy). `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
+`ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
 
 For step-by-step details, troubleshooting, or if the Make commands don't work as expected, see the detailed manual steps below.
 
@@ -310,8 +310,9 @@ oc get pods -n contextforge -w
 #   3 NGINX pods (1/1 Running)
 #   1 Redis pod (1/1 Running)
 #   2 fast-time-server pods (1/1 Running)
-#   1 Locust master + 3 workers (1/1 Running)
 ```
+
+Locust pods are **not** deployed at this stage — they are enabled on demand by `make ocp-benchmark-setup` (see "Running the MCP Benchmark" below).
 
 Registration hooks run automatically — the fast-time server is registered and a virtual server is created.
 
@@ -401,34 +402,47 @@ To validate the deployment with an MCP protocol benchmark using Locust.
 
 </details>
 
-The Helm chart deploys Locust with the MCP protocol locustfile and standardized configuration from `values-ocp-pgo.yaml`:
+Locust is **off by default** in the OCP values file (`testing.locust.enabled: false`) so that `ocp-deploy` doesn't waste cluster resources on test pods. The Locust master and workers are enabled on demand by `make ocp-benchmark-setup`.
 
-- 3 Locust workers (auto-connected via ZeroMQ)
+When enabled, Locust is configured with:
+
+- 3 worker replicas (auto-connected via ZeroMQ)
 - 125 users, 30/s spawn rate, 60s runtime
+- `expectWorkers: 1` so the master starts as soon as 1 worker connects (additional workers join as they come up)
 - OCP-patched locustfile deployed from `charts/mcp-stack/tests/locustfile_mcp_protocol_ocp.py`
 
-**1. Pass the virtual server ID:**
-
-After the initial install (Step 5), registration hooks create the virtual server. Get its ID and update the deployment:
+**1. Enable Locust and configure the server ID:**
 
 ```bash
-# Get the virtual server UUID
+make ocp-benchmark-setup OCP_NS=<namespace>
+```
+
+This is the recommended path. The target:
+- Fetches a JWT token from inside the gateway pod
+- Calls `/servers` to get the virtual server UUID created by the registration hooks
+- Runs `helm upgrade` with `--set testing.locust.enabled=true --set testing.locust.mcpServerID=<uuid>`
+- Waits up to 90s for the 3 Locust workers to schedule, polling every 10s
+- If only some workers schedule due to CPU pressure, prints a warning explaining the impact and continues
+
+If you prefer to do it manually, it's equivalent to:
+
+```bash
 SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/servers | \
   python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
 
-# Update Locust with the server ID
 helm upgrade <release> charts/mcp-stack \
   -n <namespace> \
   -f charts/mcp-stack/values-ocp-pgo.yaml \
   -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
+  --set testing.locust.enabled=true \
   --set testing.locust.mcpServerID=$SERVER_ID
 ```
 
 **2. Run the benchmark:**
 
 ```bash
-make benchmark-ocp OCP_NS=<namespace>
+make ocp-benchmark OCP_NS=<namespace>
 ```
 
 Results appear in the Locust web UI or pod logs after ~60s.
@@ -475,7 +489,8 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 | Gateway pods stuck at 0/1 Running | Check `oc logs` for DB connectivity. Verify PGO Postgres and PgBouncer pods are Running. |
 | Gateway pod Pending | Insufficient CPU on worker nodes. Check `oc describe pod` for scheduling errors. Free resources from other namespaces or reduce CPU requests. |
 | Redis PVC stuck in Pending | No dynamic PV provisioner. Set `redis.persistence.enabled: false` in values, or provision a PV manually. |
-| Locust workers not connecting | Ensure `testing.enabled: true` in values. ZeroMQ ports 5557/5558 are included in the Locust Service template. If workers still fail, check DNS resolution to `<release>-mcp-stack-locust`. |
+| Locust workers not connecting | Locust is off by default in the OCP values file. Run `make ocp-benchmark-setup` to enable it (sets `testing.locust.enabled=true`). If still failing, check DNS resolution to `<release>-mcp-stack-locust` — ZeroMQ ports 5557/5558 are included in the Locust Service template. |
+| Only some Locust workers scheduled | Cluster CPU is at high allocation. The benchmark setup target waits 90s and continues with whatever workers are available. RPS may be slightly lower than the 3-worker baseline. Free CPU on worker nodes if you want all 3. |
 | `helm upgrade` fails with field conflicts | Manual `oc` patches create field manager conflicts. Use `helm uninstall` + `helm install` instead. |
 | Route returns 503 | Gateway pods not Ready yet. Check `oc get pods` and wait for 1/1 Running. |
 | Rate limiter not blocking | Plugin mode is `permissive` (default). Change to `enforce` in the plugin ConfigMap and restart gateways. |

@@ -2968,26 +2968,48 @@ ocp-deploy:                                  ## Deploy ContextForge on OCP (requ
 		--timeout 10m
 	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
 
-ocp-benchmark-setup:                         ## Fetch server ID and configure Locust for benchmark (requires OCP_NS)
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
-	@echo "Fetching server ID and configuring Locust..."
+	@echo "=== Benchmark Setup ==="
 	@/bin/bash -c '\
+		echo "Fetching JWT secret and generating token..." && \
 		JWT_SECRET=$$(oc -n $(OCP_NS) get secret $(OCP_NS)-mcp-stack-gateway-secret -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d) && \
 		TOKEN=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
 			python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 5 --secret "$$JWT_SECRET" 2>/dev/null | tail -1) && \
+		echo "Fetching virtual server ID..." && \
 		SERVER_ID=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
 			curl -s -H "Authorization: Bearer $$TOKEN" http://localhost:4444/servers 2>/dev/null | \
 			python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])") && \
 		echo "   Server ID: $$SERVER_ID" && \
-		echo "Updating Locust with server ID..." && \
+		echo "Enabling Locust and configuring server ID..." && \
 		helm upgrade $(OCP_NS) charts/mcp-stack \
 			-n $(OCP_NS) \
 			-f $(OCP_VALUES) \
 			-f $(OCP_SECRETS) \
-			--set testing.locust.mcpServerID=$$SERVER_ID && \
-		echo "Waiting for Locust pods to restart..." && \
-		sleep 30 && \
-		echo "Setup complete. Run: make ocp-benchmark OCP_NS=$(OCP_NS)"'
+			--set testing.locust.enabled=true \
+			--set testing.locust.mcpServerID=$$SERVER_ID > /dev/null && \
+		echo "   Helm upgrade complete." && \
+		echo "Waiting for Locust workers (up to 90s)..." && \
+		want=3 && elapsed=0 && timeout=90 && interval=10 && \
+		while [ $$elapsed -lt $$timeout ]; do \
+			running=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running ") || running=0; \
+			pending=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Pending ") || pending=0; \
+			echo "   $$running/$$want workers Running, $$pending Pending"; \
+			if [ "$$running" -ge "$$want" ]; then break; fi; \
+			sleep $$interval; elapsed=$$((elapsed + interval)); \
+		done; \
+		final=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running ") || final=0; \
+		if [ "$$final" -lt "$$want" ]; then \
+			echo ""; \
+			echo "WARNING: only $$final of $$want Locust workers scheduled."; \
+			echo "Reason: insufficient CPU on cluster nodes (worker nodes are likely at high allocation)."; \
+			echo "Impact: benchmark will run with $$final worker(s). RPS may be slightly lower than the 3-worker baseline."; \
+		else \
+			echo "   All $$want workers ready."; \
+		fi; \
+		echo "" && \
+		echo "=== Setup complete ===" && \
+		echo "Run: make ocp-benchmark OCP_NS=$(OCP_NS)"'
 
 ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace>"; exit 1; fi

@@ -403,10 +403,11 @@ testing:
   a2aEchoAgent:
     enabled: false
   locust:
+    enabled: false                           # off by default; ocp-benchmark-setup enables it on demand
     users: 125
     spawnRate: 30
     runTime: 60s
-    expectWorkers: 3
+    expectWorkers: 1                         # master starts with 1 worker; more join as they come up
     script:
       file: "tests/locustfile_mcp_protocol_ocp.py"
     worker:
