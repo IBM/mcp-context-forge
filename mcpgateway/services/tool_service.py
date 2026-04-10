@@ -562,6 +562,77 @@ class ToolTimeoutError(ToolInvocationError):
         self.retry_delay_ms = retry_delay_ms
 
 
+def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> int:
+    """Normalize retry policy integer settings from plugin config."""
+    if raw_value is None:
+        return default
+    value = int(raw_value)
+    if value < minimum:
+        raise ValueError(f"Retry policy integer must be >= {minimum}")
+    return value
+
+
+def _coerce_retry_policy_statuses(raw_value: Any) -> List[int]:
+    """Normalize retryable status codes from plugin config."""
+    if raw_value is None:
+        return [429, 500, 502, 503, 504]
+    if isinstance(raw_value, (str, bytes)) or not isinstance(raw_value, (list, tuple, set)):
+        raise ValueError("Retry policy retry_on_status must be a sequence of integers")
+    return [int(code) for code in raw_value]
+
+
+def _coerce_retry_policy_bool(raw_value: Any, *, default: bool) -> bool:
+    """Normalize retry policy booleans using explicit string parsing."""
+    if raw_value is None:
+        return default
+    if isinstance(raw_value, bool):
+        return raw_value
+    if isinstance(raw_value, (int, float)) and raw_value in (0, 1):
+        return bool(raw_value)
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off"}:
+            return False
+    raise ValueError("Retry policy boolean must be a bool-like value")
+
+
+def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str) -> Dict[str, Any]:
+    """Build a gateway-owned retry policy view from plugin config."""
+    cfg = raw_cfg or {}
+    if not isinstance(cfg, dict):
+        raise ValueError("Retry policy config must be a mapping")
+    effective_cfg: Dict[str, Any] = {
+        "max_retries": _coerce_retry_policy_int(cfg.get("max_retries"), default=2, minimum=0),
+        "backoff_base_ms": _coerce_retry_policy_int(cfg.get("backoff_base_ms"), default=200, minimum=1),
+        "max_backoff_ms": _coerce_retry_policy_int(cfg.get("max_backoff_ms"), default=5000, minimum=1),
+        "retry_on_status": _coerce_retry_policy_statuses(cfg.get("retry_on_status")),
+        "jitter": _coerce_retry_policy_bool(cfg.get("jitter"), default=True),
+        "check_text_content": _coerce_retry_policy_bool(cfg.get("check_text_content"), default=False),
+    }
+
+    tool_overrides = cfg.get("tool_overrides") or {}
+    if not isinstance(tool_overrides, dict):
+        raise ValueError("Retry policy tool_overrides must be a mapping")
+
+    overrides = tool_overrides.get(tool_name)
+    if overrides:
+        if not isinstance(overrides, dict):
+            raise ValueError("Retry policy tool override must be a mapping")
+        effective_cfg.update({key: value for key, value in overrides.items() if key in effective_cfg})
+        effective_cfg["max_retries"] = _coerce_retry_policy_int(effective_cfg.get("max_retries"), default=2, minimum=0)
+        effective_cfg["backoff_base_ms"] = _coerce_retry_policy_int(effective_cfg.get("backoff_base_ms"), default=200, minimum=1)
+        effective_cfg["max_backoff_ms"] = _coerce_retry_policy_int(effective_cfg.get("max_backoff_ms"), default=5000, minimum=1)
+        effective_cfg["retry_on_status"] = _coerce_retry_policy_statuses(effective_cfg.get("retry_on_status"))
+        effective_cfg["jitter"] = _coerce_retry_policy_bool(effective_cfg.get("jitter"), default=True)
+        effective_cfg["check_text_content"] = _coerce_retry_policy_bool(effective_cfg.get("check_text_content"), default=False)
+
+    effective_cfg["max_retries"] = min(effective_cfg["max_retries"], settings.max_tool_retries)
+
+    return effective_cfg
+
+
 class ToolService(BaseService):
     """Service for managing and invoking tools.
 
@@ -3360,9 +3431,6 @@ class ToolService(BaseService):
         from mcpgateway.plugins.framework import PluginMode  # pylint: disable=import-outside-toplevel
         from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
-        # Third-Party/Local
-        from plugins.retry_with_backoff.retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
-
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
         hook_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
@@ -3382,31 +3450,22 @@ class ToolService(BaseService):
             return (None, True)
 
         retry_hook = active_hook_refs[0]
-        effective_cfg = RetryConfig(**(retry_hook.plugin_ref.plugin.config.config or {}))
-        ceiling = settings.max_tool_retries
-        if effective_cfg.max_retries > ceiling:
-            effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
+        try:
+            effective_cfg = _build_retry_policy_config(retry_hook.plugin_ref.plugin.config.config or {}, tool_name)
+        except (TypeError, ValueError):
+            return (None, True)
 
-        overrides = effective_cfg.tool_overrides.get(tool_name)
-        if overrides:
-            merged_cfg = effective_cfg.model_dump()
-            merged_cfg.update(overrides)
-            merged_cfg.pop("tool_overrides", None)
-            effective_cfg = RetryConfig(**merged_cfg)
-            if effective_cfg.max_retries > ceiling:
-                effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
-
-        if effective_cfg.check_text_content:
+        if effective_cfg["check_text_content"]:
             return (None, True)
 
         return (
             {
                 "kind": "retry_with_backoff",
-                "maxRetries": int(effective_cfg.max_retries),
-                "backoffBaseMs": int(effective_cfg.backoff_base_ms),
-                "maxBackoffMs": int(effective_cfg.max_backoff_ms),
-                "retryOnStatus": list(effective_cfg.retry_on_status),
-                "jitter": bool(effective_cfg.jitter),
+                "maxRetries": effective_cfg["max_retries"],
+                "backoffBaseMs": effective_cfg["backoff_base_ms"],
+                "maxBackoffMs": effective_cfg["max_backoff_ms"],
+                "retryOnStatus": effective_cfg["retry_on_status"],
+                "jitter": effective_cfg["jitter"],
             },
             False,
         )

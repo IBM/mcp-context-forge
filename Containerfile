@@ -1,10 +1,3 @@
-###############################################################################
-# Rust builder stage - builds Rust plugins in manylinux2014 container
-# To build WITH Rust: docker build --build-arg ENABLE_RUST=true .
-# To build WITHOUT Rust (default): docker build .
-###############################################################################
-ARG ENABLE_RUST=false
-
 ###########################
 # Frontend builder stage
 ###########################
@@ -24,49 +17,6 @@ COPY vite.config.js ./
 # Run Vite build (cleans old bundles and generates fresh manifest)
 RUN npm run vite:build
 
-FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
-ARG ENABLE_RUST
-
-# Set shell with pipefail for safety
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Only build if ENABLE_RUST=true
-RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/rust-wheels; \
-        exit 0; \
-    fi
-
-# Install Rust toolchain (only if ENABLE_RUST=true)
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
-    fi
-ENV PATH="/root/.cargo/bin:$PATH"
-
-WORKDIR /build
-
-# Copy only Rust plugin files (only if ENABLE_RUST=true)
-COPY plugins_rust/ /build/plugins_rust/
-
-# Build each Rust plugin independently using Python 3.12 from manylinux image
-# Each plugin has its own Cargo.toml and is built separately
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        mkdir -p /build/rust-wheels && \
-        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        for plugin_dir in /build/plugins_rust/*/; do \
-            if [ -f "$plugin_dir/Cargo.toml" ]; then \
-                plugin_name=$(basename "$plugin_dir"); \
-                echo "🦀 Building Rust plugin: $plugin_name"; \
-                (cd "$plugin_dir" && /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels) || exit 1; \
-            fi; \
-        done && \
-        echo "✅ Rust plugins built successfully"; \
-    else \
-        echo "⏭️  Skipping Rust plugin build"; \
-    fi
-
-FROM rust-builder-base AS rust-builder
-
 ###############################################################################
 # Main application stage
 ###############################################################################
@@ -77,7 +27,6 @@ LABEL maintainer="Mihai Criveti" \
       description="ContextForge: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
-ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # Install Python and build dependencies
 # hadolint ignore=DL3041
@@ -109,25 +58,13 @@ COPY . /app
 # Copy frontend build artifacts from frontend-builder stage
 COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 
-# Copy Rust plugin wheels from builder (if any exist)
-COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
-
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
-# Including observability packages for OpenTelemetry support and Rust plugins (if built)
+# Including observability packages for OpenTelemetry support and plugins from PyPI
 # Granian is included as an optional high-performance alternative to Gunicorn
-ARG ENABLE_RUST=false
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian]" && \
-    if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
-        echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \
-        /app/.venv/bin/python3 -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
-    else \
-        echo "⏭️  Rust plugins not available - using Python implementations"; \
-    fi && \
-    rm -rf /tmp/rust-wheels
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \

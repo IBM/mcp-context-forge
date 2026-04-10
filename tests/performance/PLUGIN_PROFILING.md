@@ -2,6 +2,16 @@
 
 This guide explains how to use the plugin performance profiling tool in `test_plugins_performance.py`.
 
+## Prerequisites
+
+The profiling config (`tests/performance/plugins/config.yaml`) references several plugins from the `[plugins]` extra (`cpex-pii-filter`, `cpex-rate-limiter`, `cpex-retry-with-backoff`, `cpex-secrets-detection`, `cpex-url-reputation`). Install them before running the profiler:
+
+```bash
+pip install -e '.[plugins]'
+```
+
+If any of these packages are missing, the script will print a clear "skipping plugin perf profiling" message naming the missing packages and exit cleanly without producing any profile files.
+
 ## Quick Start
 
 ### Run with Summary Table Only (Default)

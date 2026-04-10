@@ -11,6 +11,7 @@ Arguments:
     approvals_csv  Optional CSV with columns: pr_number,approvals
 """
 
+# Standard
 import csv
 import json
 import os
@@ -167,7 +168,7 @@ def compute_security_score(files, labels):
     return min(score, 5)
 
 
-PROD_PREFIXES = ("mcpgateway/", "plugins/", "plugins_rust/", "a2a-agents/", "mcp-servers/", "tools_rust/")
+PROD_PREFIXES = ("mcpgateway/", "plugins/", "a2a-agents/", "mcp-servers/", "tools_rust/")
 
 
 def compute_test_score(files):

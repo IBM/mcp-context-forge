@@ -9,6 +9,7 @@ if [ "$(uname -m)" = "s390x" ]; then
 fi
 
 HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
+APP_ROOT="${APP_ROOT:-/app}"
 RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
 RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
 RUST_MCP_SESSION_AUTH_REUSE="${RUST_MCP_SESSION_AUTH_REUSE:-}"
@@ -47,7 +48,8 @@ RUST_MCP_PID=""
 SERVER_PID=""
 
 apply_rust_mcp_mode_defaults() {
-    local normalized_mode="${RUST_MCP_MODE,,}"
+    local normalized_mode
+    normalized_mode="$(printf '%s' "${RUST_MCP_MODE}" | tr '[:upper:]' '[:lower:]')"
     local runtime_enabled_default="false"
     local managed_default="true"
     local session_core_default="false"
@@ -389,7 +391,66 @@ sys.exit(1)
 PY
 }
 
+install_plugin_requirements() {
+    RELOAD_PLUGIN_REQUIREMENTS_TXT="${RELOAD_PLUGIN_REQUIREMENTS_TXT:-false}"
+    PLUGIN_REQUIREMENTS_TXT_PATH="${PLUGIN_REQUIREMENTS_TXT_PATH:-${APP_ROOT}/plugins/requirements.txt}"
+
+    if [[ "${RELOAD_PLUGIN_REQUIREMENTS_TXT}" != "true" ]]; then
+        return 0
+    fi
+
+    # Resolve both APP_ROOT and the requested path to their canonical forms, then
+    # require the requested path to live inside APP_ROOT. Canonicalizing APP_ROOT too
+    # handles the case where /app is itself a symlink (uncommon in this repo's
+    # Containerfiles, but defensive). This prevents env-controlled path
+    # injection like PLUGIN_REQUIREMENTS_TXT_PATH=/tmp/evil-requirements.txt.
+    local app_root resolved_path
+    app_root="$(readlink -f "${APP_ROOT}" 2>/dev/null)"
+    if [[ -z "${app_root}" ]]; then
+        echo "❌ ${APP_ROOT} could not be resolved; refusing to start with RELOAD_PLUGIN_REQUIREMENTS_TXT=true"
+        return 1
+    fi
+    local requirements_dir requirements_file
+    requirements_dir="$(dirname "${PLUGIN_REQUIREMENTS_TXT_PATH}")"
+    requirements_file="$(basename "${PLUGIN_REQUIREMENTS_TXT_PATH}")"
+    if ! resolved_path="$(readlink -f "${requirements_dir}" 2>/dev/null)"; then
+        echo "❌ PLUGIN_REQUIREMENTS_TXT_PATH=${PLUGIN_REQUIREMENTS_TXT_PATH} could not be resolved; refusing to start"
+        return 1
+    fi
+    resolved_path="${resolved_path}/${requirements_file}"
+    if [[ "${resolved_path}" != "${app_root}/"* ]]; then
+        echo "❌ PLUGIN_REQUIREMENTS_TXT_PATH must resolve under ${app_root}/ (got ${resolved_path}); refusing to start"
+        return 1
+    fi
+    if [[ ! -f "${resolved_path}" ]]; then
+        echo "❌ Plugin requirements file ${resolved_path} not found; refusing to start with RELOAD_PLUGIN_REQUIREMENTS_TXT=true"
+        return 1
+    fi
+
+    local requirement_count
+    requirement_count="$(grep -cve '^\s*$' -e '^\s*#' "${resolved_path}" || true)"
+    echo "🧩 Installing ${requirement_count} plugin package requirement(s) from ${resolved_path}"
+
+    local max_retries=3
+    local attempt=1
+    while (( attempt <= max_retries )); do
+        if "${app_root}/.venv/bin/pip" install --no-cache-dir -r "${resolved_path}"; then
+            return 0
+        fi
+        echo "⚠️  Plugin package install attempt ${attempt}/${max_retries} failed"
+        (( attempt++ ))
+        (( attempt <= max_retries )) && sleep 2
+    done
+    echo "❌ Plugin package install failed after ${max_retries} attempts; refusing to start with incomplete plugin dependencies"
+    return 1
+}
+
+if [[ "${CONTEXTFORGE_TEST_ONLY_SOURCE:-false}" = "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 apply_rust_mcp_mode_defaults
+install_plugin_requirements
 build_server_command "$@"
 print_mcp_runtime_mode
 

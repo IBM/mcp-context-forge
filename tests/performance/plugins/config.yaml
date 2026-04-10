@@ -53,7 +53,7 @@ plugins:
 
   # PII Filter Plugin - Run first with highest priority for security
   - name: PIIFilterPlugin
-    kind: plugins.pii_filter.pii_filter.PIIFilterPlugin
+    kind: cpex_pii_filter.PIIFilterPlugin
     description: Detects and masks Personally Identifiable Information
     version: 0.1.0
     author: Mihai Criveti
@@ -236,12 +236,12 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (fixed_window algorithm, memory backend — default)
+  # Rate limiter (cpex-rate-limiter package)
   - name: RateLimiterPlugin
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
-    description: Per-user/tenant/tool rate limits — fixed window algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    kind: cpex_rate_limiter.RateLimiterPlugin
+    description: Per-user/tenant/tool rate limits
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -256,10 +256,10 @@ plugins:
 
   # Rate limiter (sliding_window algorithm, memory backend)
   - name: RateLimiterPlugin_sliding_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -274,10 +274,10 @@ plugins:
 
   # Rate limiter (token_bucket algorithm, memory backend)
   - name: RateLimiterPlugin_token_bucket
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -292,10 +292,10 @@ plugins:
 
   # Rate limiter (fixed_window algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_fixed_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — fixed window algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -313,10 +313,10 @@ plugins:
 
   # Rate limiter (sliding_window algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_sliding_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: ContextForge
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -334,10 +334,10 @@ plugins:
 
   # Rate limiter (token_bucket algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_token_bucket
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: ContextForge
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -419,10 +419,10 @@ plugins:
 
   # URL reputation static checks
   - name: URLReputationPlugin
-    kind: plugins.url_reputation.url_reputation.URLReputationPlugin
+    kind: cpex_url_reputation.URLReputationPlugin
     description: Blocks known-bad domains or patterns before fetch
     version: 0.1.0
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [resource_pre_fetch]
     tags: [security, url, reputation]
     mode: permissive
@@ -453,10 +453,10 @@ plugins:
 
   # Retry with exponential backoff — triggers real gateway re-invocation
   - name: RetryWithBackoffPlugin
-    kind: plugins.retry_with_backoff.retry_with_backoff.RetryWithBackoffPlugin
+    kind: cpex_retry_with_backoff.RetryWithBackoffPlugin
     description: Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay
     version: 0.1.0
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [tool_post_invoke]
     tags: [retry, backoff, resilience]
     mode: permissive
@@ -795,7 +795,7 @@ plugins:
 
   # Secrets Detection - regex-based detector for common secrets/keys
   - name: SecretsDetection
-    kind: plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin
+    kind: cpex_secrets_detection.SecretsDetectionPlugin
     description: Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking
     version: 0.1.0
     author: ContextForge

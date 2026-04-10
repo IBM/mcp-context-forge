@@ -31,7 +31,7 @@ ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 ###############################################################################
-# Rust builder stage - builds Rust plugins in manylinux2014 container
+# Rust builder stage - builds Rust MCP runtime
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
@@ -45,7 +45,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/rust-wheels /build/tools_rust/mcp_runtime/target/release; \
+        mkdir -p /build/tools_rust/mcp_runtime/target/release; \
         printf '#!/usr/bin/env sh\n' > /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
@@ -61,24 +61,11 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust plugin/runtime files (only if ENABLE_RUST=true)
-COPY plugins_rust/ /build/plugins_rust/
+# Copy only Rust MCP runtime files (only if ENABLE_RUST=true)
 COPY tools_rust/mcp_runtime/ /build/tools_rust/mcp_runtime/
 
-# Build each Rust plugin independently using Python 3.12 from manylinux image
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        mkdir -p /build/rust-wheels && \
-        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        for plugin_dir in "/build/plugins_rust/"*/; do \
-            if [ -f "$plugin_dir/Cargo.toml" ]; then \
-                plugin_name=$(basename "$plugin_dir"); \
-                echo "🦀 Building Rust plugin: $plugin_name"; \
-                (cd "$plugin_dir" && /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels) || exit 1; \
-            fi; \
-        done && \
-        echo "✅ Rust plugins built successfully"; \
-    else \
-        echo "⏭️  Skipping Rust plugin build"; \
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
 WORKDIR /build/tools_rust/mcp_runtime
@@ -164,11 +151,11 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 # This maximizes Docker layer caching - dependencies change less often
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY plugins/requirements.txt /app/plugins/requirements.txt
 
 # ----------------------------------------------------------------------------
-# Copy Rust plugin wheels from rust-builder stage (if any exist)
+# Copy Rust MCP runtime from rust-builder stage
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
 # ----------------------------------------------------------------------------
@@ -182,7 +169,7 @@ COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
-#  - Install Rust plugins from pre-built wheels (if built)
+#  - Install plugins from PyPI (cpex-* packages)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
@@ -196,19 +183,12 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && if [ "$(uname -m)" = "s390x" ]; then \
         echo "📦 Installing dependencies for s390x architecture..."; \
-        /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian]" \
+        /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian,plugins]" \
         && /app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins]"; \
     fi \
-    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/rust-wheels/"*.whl 1> /dev/null 2>&1; then \
-        echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/python3 -m pip install "/tmp/rust-wheels/"*.whl && \
-        /app/.venv/bin/python3 -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
-    else \
-        echo "⏭️  Rust plugins not available - using Python implementations"; \
-    fi \
-    && rm -rf /tmp/rust-wheels \
+    && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \

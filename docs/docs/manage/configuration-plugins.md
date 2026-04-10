@@ -26,6 +26,17 @@ Inside the gateway, plugin settings are exposed under `settings.plugins`.
 | `PLUGINS_LOG_LEVEL`           | Plugin framework log level                       | `INFO`                | string  |
 | `PLUGINS_SKIP_SSL_VERIFY`     | Skip TLS verification for plugin HTTP requests   | `false`               | bool    |
 
+### Plugin Package Installation (docker-entrypoint.sh)
+
+These variables are evaluated by `docker-entrypoint.sh` at container startup, before the application server begins. They allow re-installing or overriding plugin packages at runtime without rebuilding the container image.
+
+When `RELOAD_PLUGIN_REQUIREMENTS_TXT=true`, startup is fail-closed: the requirements file must resolve under `/app`, exist, and install successfully, or the container exits before serving traffic.
+
+| Setting                            | Description                                                      | Default                            | Options |
+| ---------------------------------- | ---------------------------------------------------------------- | ---------------------------------- | ------- |
+| `RELOAD_PLUGIN_REQUIREMENTS_TXT`  | Re-install plugin packages from requirements file at startup     | `false`                            | bool    |
+| `PLUGIN_REQUIREMENTS_TXT_PATH`    | Path to the plugin requirements file                             | `/app/plugins/requirements.txt`    | string  |
+
 ### HTTP Client Settings
 
 | Setting                                   | Description                                      | Default | Options |

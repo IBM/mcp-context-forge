@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z" }
+exclude-newer-package = { "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -258,6 +258,17 @@ templating = [
     "cookiecutter>=2.7.1",
 ]
 
+# External plugin packages (optional)
+# Install with: pip install mcp-contextforge-gateway[plugins]
+plugins = [
+    "cpex-rate-limiter>=0.0.3",
+    "cpex-encoded-exfil-detection>=0.2.0",
+    "cpex-pii-filter>=0.2.0",
+    "cpex-retry-with-backoff>=0.1.0",
+    "cpex-secrets-detection>=0.1.0",
+    "cpex-url-reputation>=0.1.1",
+]
+
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
@@ -282,7 +293,7 @@ all = [
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=0.9.0",
 ]
 
 # --------------------------------------------------------------------

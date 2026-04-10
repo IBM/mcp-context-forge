@@ -34,7 +34,7 @@ plugin_settings:
 plugins:
   # PII Filter — detect and mask sensitive data
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     description: "Detects and masks Personally Identifiable Information"
     version: "0.1.0"
     hooks:

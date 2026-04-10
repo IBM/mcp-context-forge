@@ -92,7 +92,7 @@ class PluginExecutor:
 plugins:
 
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 50     # Lower = higher priority
