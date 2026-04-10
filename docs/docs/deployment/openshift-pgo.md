@@ -190,19 +190,19 @@ This runs `helm install` with the PGO values and secrets files. Deploys gateway 
 **6. Run the MCP benchmark:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
+make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
 make ocp-benchmark OCP_NS=<namespace>
 ```
 
-`ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
+`ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. `REDIS_PV` is required here too so the Redis PVC's `volumeName` binding is preserved during the `helm upgrade`. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
 
 **To uninstall and start over:**
 
 ```bash
-make ocp-uninstall OCP_NS=<namespace>
+make ocp-uninstall OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
 ```
 
-This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres.
+This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres. Passing `REDIS_PV` is optional — when provided, the target auto-clears the Redis PV `claimRef` after uninstall so the PV goes straight back to `Available` and the next deploy works without any manual `oc patch`. `ocp-verify-pv` also auto-fixes a `Released` Redis PV as a safety net, so both paths are covered.
 
 The destructive Make targets (`ocp-setup`, `ocp-deploy`, `ocp-benchmark-setup`, `ocp-uninstall`) all show what they will do and prompt for confirmation before running.
 
@@ -446,13 +446,13 @@ When enabled, Locust is configured with:
 **1. Enable Locust and configure the server ID:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
+make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
 ```
 
 This is the recommended path. The target:
 - Fetches a JWT token from inside the gateway pod
 - Calls `/servers` to get the virtual server UUID created by the registration hooks
-- Runs `helm upgrade` with `--set testing.locust.enabled=true --set testing.locust.mcpServerID=<uuid>`
+- Runs `helm upgrade` with `--set testing.locust.enabled=true --set testing.locust.mcpServerID=<uuid> --set redis.persistence.volumeName=<redis-pv>` (the Redis volumeName must be re-passed so Helm doesn't try to remove it from the PVC spec on upgrade — PVCs have an immutable volumeName, so dropping it would break the binding)
 - Waits up to 90s for the 3 Locust workers to schedule, polling every 10s
 - If only some workers schedule due to CPU pressure, prints a warning explaining the impact and continues
 
@@ -467,6 +467,7 @@ helm upgrade <release> charts/mcp-stack \
   -n <namespace> \
   -f charts/mcp-stack/values-ocp-pgo.yaml \
   -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
+  --set redis.persistence.volumeName=<your-ns>-redis-pv \
   --set testing.locust.enabled=true \
   --set testing.locust.mcpServerID=$SERVER_ID
 ```
