@@ -518,9 +518,44 @@ class A2AAgentService(BaseService):
                         # Query param auth doesn't use auth_value
                         auth_value = None
 
+                # Generate UAID if requested
+                agent_id: Optional[str] = None
+                uaid_metadata: Dict[str, Optional[str]] = {}
+
+                if getattr(agent_data, "generate_uaid", False):
+                    # First-Party
+                    from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                    try:
+                        uaid = generate_uaid(
+                            registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
+                            name=agent_data.name,
+                            version=getattr(agent_data, "version", None) or "1.0.0",
+                            protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
+                            native_id=agent_data.endpoint_url,
+                            skills=getattr(agent_data, "uaid_skills", None) or [],
+                        )
+
+                        # Use UAID as primary ID
+                        agent_id = uaid
+                        uaid_metadata = {
+                            "uaid": uaid,
+                            "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
+                            "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
+                            "uaid_native_id": agent_data.endpoint_url,
+                        }
+                        logger.info(f"Generated UAID for agent {agent_data.name}: {uaid}")
+                    except Exception as uaid_error:
+                        logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID.")
+                        # Fall back to UUID on error
+                        agent_id = None
+                        uaid_metadata = {}
+
                 # Create new agent
                 new_agent = DbA2AAgent(
+                    id=agent_id,  # Will use UUID default if None
                     name=agent_data.name,
+                    **uaid_metadata,  # Add UAID fields if generated
                     description=agent_data.description,
                     endpoint_url=agent_data.endpoint_url,
                     agent_type=agent_data.agent_type,
@@ -1579,19 +1614,21 @@ class A2AAgentService(BaseService):
     async def invoke_agent(
         self,
         db: Session,
-        agent_name: str,
-        parameters: Dict[str, Any],
+        agent_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        parameters: Dict[str, Any] = None,
         interaction_type: str = "query",
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke an A2A agent.
+        """Invoke an A2A agent by name or ID (UUID/UAID).
 
         Args:
             db: Database session.
-            agent_name: Name of the agent to invoke.
+            agent_name: Name of the agent to invoke (deprecated, use agent_id).
+            agent_id: ID of the agent (UUID or UAID format).
             parameters: Parameters for the interaction.
             interaction_type: Type of interaction.
             user_id: Identifier of the user initiating the call.
@@ -1605,7 +1642,44 @@ class A2AAgentService(BaseService):
         Raises:
             A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or invocation fails.
+            ValueError: If neither agent_name nor agent_id is provided.
         """
+        if parameters is None:
+            parameters = {}
+
+        if not agent_name and not agent_id:
+            raise ValueError("Either agent_name or agent_id must be provided")
+
+        # Backward compatibility: use agent_name if agent_id not provided
+        identifier = agent_id if agent_id else agent_name
+        is_name_lookup = bool(agent_name and not agent_id)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # UAID HANDLING: Check if identifier is UAID format
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.utils.uaid import is_uaid  # pylint: disable=import-outside-toplevel
+
+        if is_uaid(identifier):
+            # Try local lookup first (by id or uaid column)
+            agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
+
+            if not agent_row:
+                # Not found locally - attempt cross-gateway routing
+                logger.info(f"UAID agent not found locally, attempting cross-gateway routing: {identifier}")
+                return await self._invoke_remote_agent(
+                    uaid=identifier,
+                    parameters=parameters,
+                    interaction_type=interaction_type,
+                    user_id=user_id,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
+
+            # Found locally - continue with normal invocation
+            identifier = agent_row  # Use the actual ID for lookup
+            is_name_lookup = False
+
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
         # then release the lock before performing the external HTTP call.
@@ -1614,20 +1688,26 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
 
         # Lookup the agent id, then lock the row by id using get_for_update
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+        if is_name_lookup:
+            agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == identifier)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            if not agent_row:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+        else:
+            agent_row = identifier
 
         agent = get_for_update(db, DbA2AAgent, agent_row)
         if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
+
+        # Use agent name for logging throughout
+        agent_name = agent.name
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
         # Return 404 (not 403) to avoid leaking existence of private agents
         # ═══════════════════════════════════════════════════════════════════════════
         if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
             raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
@@ -1894,6 +1974,156 @@ class A2AAgentService(BaseService):
                     set_span_attribute(span, "duration.ms", response_time * 1000)
 
         return response or {"error": error_message}
+
+    async def _invoke_remote_agent(
+        self,
+        uaid: str,
+        parameters: Dict[str, Any],
+        interaction_type: str = "query",
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Invoke agent on remote gateway via UAID cross-gateway routing.
+
+        Args:
+            uaid: Universal Agent ID with embedded routing metadata
+            parameters: Parameters for the interaction
+            interaction_type: Type of interaction
+            user_id: Identifier of the user initiating the call
+            user_email: Email of the user initiating the call
+            token_teams: Teams from JWT token
+
+        Returns:
+            Agent response from remote gateway
+
+        Raises:
+            A2AAgentError: If routing fails or remote invocation fails
+            ValueError: If UAID parsing fails or endpoint not allowed
+        """
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.uaid import extract_routing_info  # pylint: disable=import-outside-toplevel
+
+        try:
+            routing = extract_routing_info(uaid)
+            protocol = routing["protocol"]
+            endpoint = routing["endpoint"]
+            registry = routing.get("registry")
+
+            logger.info(f"Cross-gateway routing: {uaid} -> {protocol}://{endpoint}")
+
+            # Security: Validate endpoint against allowlist
+            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if allowed_domains:
+                if not any(endpoint.endswith(d) for d in allowed_domains):
+                    raise ValueError(f"Cross-gateway routing to {endpoint} not allowed. Endpoint not in UAID_ALLOWED_DOMAINS.")
+
+            # Construct URL based on protocol
+            if protocol == "a2a":
+                url = f"https://{endpoint}/a2a/invoke"
+            elif protocol == "mcp":
+                url = f"https://{endpoint}/mcp/tools/call"
+            else:
+                raise ValueError(f"Unsupported protocol in UAID: {protocol}")
+
+            # Prepare request payload
+            request_data = {
+                "agent_id": uaid,
+                "parameters": parameters,
+                "interaction_type": interaction_type,
+            }
+
+            # Make HTTP request using shared client
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_http_client()
+            headers = {"Content-Type": "application/json"}
+
+            # TODO: Add authentication - forward bearer token or use mutual TLS
+            # if bearer_token := get_current_token():
+            #     headers["Authorization"] = f"Bearer {bearer_token}"
+
+            # Add correlation ID for distributed tracing
+            correlation_id = get_correlation_id()
+            if correlation_id:
+                headers["X-Correlation-ID"] = correlation_id
+
+            # Log cross-gateway call start
+            call_start_time = datetime.now(timezone.utc)
+            structured_logger.log(
+                level="INFO",
+                message=f"Cross-gateway call started: {uaid}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                metadata={
+                    "event": "cross_gateway_call_started",
+                    "uaid": uaid,
+                    "endpoint": endpoint,
+                    "protocol": protocol,
+                    "registry": registry,
+                },
+            )
+
+            # Make request
+            http_response = await client.post(url, json=request_data, headers=headers, timeout=30.0)
+            call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+
+            if http_response.status_code == 200:
+                response = http_response.json()
+
+                # Log successful cross-gateway call
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Cross-gateway call completed: {uaid}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    metadata={
+                        "event": "cross_gateway_call_completed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": http_response.status_code,
+                        "success": True,
+                    },
+                )
+
+                return response
+            else:
+                error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+
+                # Log failed cross-gateway call
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway call failed: {uaid}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayHTTPError", "error_message": error_message},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": http_response.status_code,
+                    },
+                )
+
+                raise A2AAgentError(f"Cross-gateway routing failed: {error_message}")
+
+        except ValueError as e:
+            logger.error(f"Failed to parse UAID or validate endpoint: {e}")
+            raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {e}")
+        except Exception as e:
+            logger.error(f"Cross-gateway routing failed: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: {e}")
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.
