@@ -8,7 +8,7 @@ Verifies:
 4. RetryWithBackoffPlugin.__init__ — max_retries clamping, tool_overrides clamping
 5. tool_post_invoke — first failure signals retry, exhaustion gives up, success resets state
 6. State isolation — unique request_id per make_context() call ensures natural key isolation
-7. Rust / Python path selection — Rust fast path taken when available, Python fallback when absent
+7. Execution-path selection — native state manager handles structured failures, local state path handles text-content inspection
 8. retry_policy metadata — all return paths include advisory policy dict; resource_post_fetch hook
 """
 
@@ -493,32 +493,29 @@ class TestGetState:
 
 
 # ---------------------------------------------------------------------------
-# 7. Rust / Python path selection
+# 7. Execution-path selection
 # ---------------------------------------------------------------------------
 
 
-class TestRustFallback:
-    """Verify that the plugin behaves identically whether the Rust extension is
-    present or absent, and that the correct code path is selected in each case.
-    """
+class TestExecutionPathSelection:
+    """Verify the plugin uses the correct state-management path for each signal type."""
 
     @pytest.mark.asyncio
-    async def test_python_fallback_when_rust_unavailable(self):
-        """With _rust patched to None the Python path must still retry correctly."""
+    async def test_local_state_path_handles_absent_native_manager(self):
+        """Without a native manager the local state path must still retry correctly."""
         plugin = make_plugin()
         ctx = make_context()
 
         with patch.object(plugin, "_rust", None):
             r1 = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
-            assert r1.retry_delay_ms > 0, "Python fallback should request a retry on first failure"
+            assert r1.retry_delay_ms > 0, "local state path should request a retry on first failure"
 
             r2 = await plugin.tool_post_invoke(make_payload("t", {"result": "ok"}), ctx)
-            assert r2.retry_delay_ms == 0, "Python fallback should return 0 on success"
+            assert r2.retry_delay_ms == 0, "local state path should return 0 on success"
 
     @pytest.mark.asyncio
-    async def test_rust_path_taken_when_available(self):
-        """When _RUST is not None and check_text_content=False, check_and_update
-        must be called instead of the Python state functions."""
+    async def test_native_state_manager_handles_structured_failures(self):
+        """Without text-content parsing the plugin should delegate retry tracking to the native state manager."""
         plugin = make_plugin()
         ctx = make_context()
 
@@ -534,9 +531,8 @@ class TestRustFallback:
         assert r.retry_delay_ms == 300
 
     @pytest.mark.asyncio
-    async def test_rust_path_bypassed_for_check_text_content(self):
-        """When check_text_content=True the plugin must use the Python path
-        even if _RUST is present, because signal 3 isn't implemented in Rust."""
+    async def test_text_content_checks_bypass_native_state_manager(self):
+        """When check_text_content=True the plugin must use the local state path even when the native manager exists."""
         plugin = make_plugin({"check_text_content": True})
         ctx = make_context()
 

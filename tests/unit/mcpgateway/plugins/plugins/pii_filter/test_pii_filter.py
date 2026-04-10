@@ -19,16 +19,6 @@ def detector():
     return PIIDetectorRust({})
 
 
-def normalize_detection_keys(detections: dict) -> set:
-    keys = set()
-    for key in detections.keys():
-        key_str = str(key).lower()
-        if "." in key_str:
-            key_str = key_str.split(".")[-1]
-        keys.add(key_str)
-    return keys
-
-
 class TestPIIDetectorRust:
     def test_initialization(self):
         detector = PIIDetectorRust({})
@@ -36,7 +26,7 @@ class TestPIIDetectorRust:
 
     def test_ssn_detection_with_position(self):
         detections = PIIDetectorRust({"detect_ssn": True}).detect("My SSN is 123-45-6789")
-        assert "ssn" in normalize_detection_keys(detections)
+        assert "ssn" in detections
         entry = detections["ssn"][0]
         assert entry["value"] == "123-45-6789"
         assert entry["start"] == 10
@@ -44,34 +34,30 @@ class TestPIIDetectorRust:
 
     def test_bsn_detection_for_labeled_number(self):
         detections = PIIDetectorRust({"detect_bsn": True, "detect_ssn": False, "detect_phone": False, "detect_bank_account": False}).detect("My BSN is 180774955. Store it and confirm.")
-        detection_keys = normalize_detection_keys(detections)
-        assert "bsn" in detection_keys
+        assert "bsn" in detections
 
     def test_bsn_detection_for_bsn_prefix(self):
         detections = PIIDetectorRust({"detect_bsn": True, "detect_ssn": False, "detect_phone": False, "detect_bank_account": False}).detect("BSN: 123456789")
-        detection_keys = normalize_detection_keys(detections)
-        assert "bsn" in detection_keys
+        assert "bsn" in detections
 
     def test_bsn_detection_skips_unlabeled_regular_number(self):
         detections = PIIDetectorRust({"detect_bsn": True, "detect_ssn": False, "detect_phone": False, "detect_bank_account": False}).detect("Regular number 180774955")
-        detection_keys = normalize_detection_keys(detections)
-        assert "bsn" not in detection_keys
+        assert "bsn" not in detections
 
     def test_bsn_detection_ignores_clean_text(self):
         detections = PIIDetectorRust({"detect_bsn": True, "detect_ssn": False, "detect_phone": False, "detect_bank_account": False}).detect("No BSN here")
-        detection_keys = normalize_detection_keys(detections)
-        assert "bsn" not in detection_keys
+        assert "bsn" not in detections
 
     def test_contextual_phone_case_stays_undetected(self):
         detections = PIIDetectorRust({"detect_bsn": True, "detect_ssn": True, "detect_phone": True, "detect_bank_account": True}).detect("Phone: 555123456")
-        assert normalize_detection_keys(detections) == set()
+        assert detections == {}
 
     def test_whitelist_functionality(self):
         detector = PIIDetectorRust({"detect_email": True, "whitelist_patterns": ["test@example.com", "admin@localhost"]})
         detections = detector.detect("Contact test@example.com or admin@localhost")
-        assert "email" not in normalize_detection_keys(detections)
+        assert "email" not in detections
         detections = detector.detect("Contact real@email.com")
-        assert "email" in normalize_detection_keys(detections)
+        assert "email" in detections
 
     def test_mask_and_process_nested(self):
         detector = PIIDetectorRust({"detect_ssn": True, "detect_email": True})
@@ -82,7 +68,7 @@ class TestPIIDetectorRust:
 
         modified, new_data, nested = detector.process_nested({"user": {"ssn": "123-45-6789", "email": "john@example.com"}}, "")
         assert modified is True
-        assert "ssn" in normalize_detection_keys(nested)
+        assert "ssn" in nested
         assert new_data["user"]["ssn"] != "123-45-6789"
 
 

@@ -316,7 +316,7 @@ plugins:
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm, Redis backend
     version: 0.0.2
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -337,7 +337,7 @@ plugins:
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm, Redis backend
     version: 0.0.2
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -422,7 +422,7 @@ plugins:
     kind: cpex_url_reputation.URLReputationPlugin
     description: Blocks known-bad domains or patterns before fetch
     version: 0.1.0
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [resource_pre_fetch]
     tags: [security, url, reputation]
     mode: permissive
@@ -456,7 +456,7 @@ plugins:
     kind: cpex_retry_with_backoff.RetryWithBackoffPlugin
     description: Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay
     version: 0.1.0
-    author: Mihai Criveti
+    author: ContextForge
     hooks: [tool_post_invoke]
     tags: [retry, backoff, resilience]
     mode: permissive
