@@ -15,21 +15,17 @@ name: Tests & Coverage
 on:
   push:
     branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "tests/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/pytest.yml"
+    paths:
+      - "**.py"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "tests/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/pytest.yml"
-  # schedule:
-  #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+    paths:
+      - "**.py"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
