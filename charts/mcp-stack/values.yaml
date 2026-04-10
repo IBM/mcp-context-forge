@@ -1283,6 +1283,7 @@ redis:
                                 #   GKE: "standard", "ssd", "premium-rw"
                                 #   Azure AKS: "default", "managed-premium", "azurefile"
                                 #   Bare Metal: "local-path", "nfs-client"
+    volumeName: ""               # Pin to a specific PV by name (optional). When set, the PVC binds to that PV.
     accessModes: [ReadWriteOnce]
     size: 1Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)

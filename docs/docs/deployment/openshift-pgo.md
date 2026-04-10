@@ -81,14 +81,22 @@ For the manual YAML deployment approach (without Helm or PGO), see [openshift.md
 
 If you have the PGO operator already installed on your cluster, you can deploy and benchmark with a few commands.
 
-**1. Create two PersistentVolumes** (one for Postgres data, one for the pgBackRest repo):
+**1. Create three PersistentVolumes** (Postgres data, pgBackRest repo, Redis):
 
-PGO requires two separate PVs — one for the database files and one for backups. Pick names that are unique to your namespace (e.g. prefixed with your namespace name) so they don't collide with other users on the cluster.
+For production deployments you need three persistent volumes — one for the Postgres database, one for backups, and one for Redis. Pick names that are unique to your namespace so they don't collide with other users on the cluster.
+
+| PV | Purpose | Capacity |
+|----|---------|---------|
+| `<your-ns>-postgres-pv` | Postgres database files (users, tools, servers, sessions) | 2Gi |
+| `<your-ns>-postgres-repo-pv` | pgBackRest backups + WAL archives | 2Gi |
+| `<your-ns>-redis-pv` | Auth cache, session pool, registry cache, rate limiter counters, MCP session affinity | 1Gi |
 
 Each PV must have:
 - `accessModes: [ReadWriteOnce]`
-- `capacity.storage: >= 2Gi`
-- `storageClassName: nfs-client` (or whichever storage class your cluster uses; the PVCs request `nfs-client`)
+- `storageClassName: nfs-client` (or whichever storage class your cluster uses)
+- `persistentVolumeReclaimPolicy: Retain` (don't lose data if the PVC is deleted)
+
+Why all three matter in production: losing the Postgres data PV means losing the database. Losing the repo PV means losing point-in-time recovery. Losing Redis persistence means every restart wipes auth tokens, active sessions, and rate limit windows — users get logged out, requests fail, in-flight MCP sessions break.
 
 Example PV YAML (NFS-backed):
 
@@ -120,6 +128,20 @@ spec:
   nfs:
     path: /data/nfsx/<your-ns>-postgres-repo
     server: <nfs-server-ip>
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: <your-ns>-redis-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-client
+  nfs:
+    path: /data/nfsx/<your-ns>-redis
+    server: <nfs-server-ip>
 ```
 
 Apply with `oc apply -f <file>.yaml`.
@@ -127,10 +149,10 @@ Apply with `oc apply -f <file>.yaml`.
 **2. Verify your PVs are ready:**
 
 ```bash
-make ocp-verify-pv POSTGRES_PV=<your-ns>-postgres-pv POSTGRES_REPO_PV=<your-ns>-postgres-repo-pv
+make ocp-verify-pv POSTGRES_PV=<your-ns>-postgres-pv POSTGRES_REPO_PV=<your-ns>-postgres-repo-pv REDIS_PV=<your-ns>-redis-pv
 ```
 
-This checks both PVs exist, are `Available` (not Bound or Released), have `ReadWriteOnce`, capacity ≥ 2Gi, and the right storage class. If anything is wrong, it prints the exact `oc patch` command to fix it.
+This checks all three PVs exist, are `Available` (not Bound or Released), have `ReadWriteOnce`, the right storage class, and prints exact `oc patch` commands to fix any issues.
 
 **3. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
 
@@ -160,7 +182,7 @@ This checks the PGO operator is installed, creates the namespace if needed, subs
 **5. Deploy the full stack:**
 
 ```bash
-make ocp-deploy OCP_NS=<namespace>
+make ocp-deploy OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
 ```
 
 This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis, and connects to the PGO-managed Postgres. Locust is **not** deployed at this stage to save cluster resources — it is enabled on demand by `ocp-benchmark-setup`.

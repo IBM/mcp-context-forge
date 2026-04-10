@@ -2876,14 +2876,15 @@ OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
 OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
 POSTGRES_PV ?=
 POSTGRES_REPO_PV ?=
+REDIS_PV ?=
 
-ocp-verify-pv:                               ## Verify Postgres PVs are ready (requires POSTGRES_PV, POSTGRES_REPO_PV)
-	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ]; then \
-		echo "Usage: make ocp-verify-pv POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; exit 1; fi
+ocp-verify-pv:                               ## Verify Postgres + Redis PVs are ready (requires POSTGRES_PV, POSTGRES_REPO_PV, REDIS_PV)
+	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ] || [ -z "$(REDIS_PV)" ]; then \
+		echo "Usage: make ocp-verify-pv POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv> REDIS_PV=<redis-pv>"; exit 1; fi
 	@echo "=== Verifying PVs ==="
 	@/bin/bash -c '\
 		fail=0; \
-		for pv in $(POSTGRES_PV) $(POSTGRES_REPO_PV); do \
+		for pv in $(POSTGRES_PV) $(POSTGRES_REPO_PV) $(REDIS_PV); do \
 			echo "Checking PV: $$pv"; \
 			if ! oc get pv $$pv >/dev/null 2>&1; then \
 				echo "  ERROR: PV $$pv does not exist"; fail=1; continue; \
@@ -2919,6 +2920,7 @@ ocp-verify-pv:                               ## Verify Postgres PVs are ready (r
 			echo ""; \
 			echo "=== All PVs ready ==="; \
 			echo "Next: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=$(POSTGRES_PV) POSTGRES_REPO_PV=$(POSTGRES_REPO_PV)"; \
+			echo "Then: make ocp-deploy OCP_NS=<namespace> REDIS_PV=$(REDIS_PV)"; \
 		else \
 			echo ""; \
 			echo "=== PV verification failed ==="; \
@@ -2973,19 +2975,25 @@ ocp-setup:                                   ## Set up OCP namespace and Crunchy
 	@echo "Next: create secrets file at $(OCP_SECRETS) (see values file header for required keys)"
 	@echo "Then: make ocp-deploy OCP_NS=$(OCP_NS)"
 
-ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS, REDIS_PV)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace> REDIS_PV=<redis-pv>"; exit 1; fi
+	@if [ -z "$(REDIS_PV)" ]; then \
+		echo "ERROR: REDIS_PV is required."; \
+		echo "Usage: make ocp-deploy OCP_NS=<namespace> REDIS_PV=<redis-pv>"; \
+		echo "Run 'make ocp-verify-pv' first to validate your PVs."; \
+		exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-deploy: Deploy ContextForge stack"
 	@echo "========================================"
 	@echo "Namespace:  $(OCP_NS)"
 	@echo "Values:     $(OCP_VALUES)"
 	@echo "Secrets:    $(OCP_SECRETS)"
+	@echo "Redis PV:   $(REDIS_PV)"
 	@echo ""
 	@echo "This will helm install:"
 	@echo "  - 3 gateway pods (Gunicorn, 8 workers each, Python MCP core)"
 	@echo "  - 3 NGINX pods (UBI9, reverse proxy)"
-	@echo "  - 1 Redis pod"
+	@echo "  - 1 Redis pod (PVC pinned to $(REDIS_PV))"
 	@echo "  - 2 fast-time-server pods"
 	@echo "  - Connects to PGO-managed Postgres + PgBouncer"
 	@echo ""
@@ -2997,6 +3005,7 @@ ocp-deploy:                                  ## Deploy ContextForge on OCP (requ
 		-n $(OCP_NS) \
 		-f $(OCP_VALUES) \
 		-f $(OCP_SECRETS) \
+		--set redis.persistence.volumeName=$(REDIS_PV) \
 		--timeout 10m
 	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
 
