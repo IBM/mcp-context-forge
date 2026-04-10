@@ -13,6 +13,10 @@ STATIC_DIR = ROOT / "mcpgateway" / "static"
 TEMPLATES_DIR = ROOT / "mcpgateway" / "templates"
 
 
+def test_change():
+    assert 1 == 1
+
+
 # ---------------------------------------------------------------------------
 # 1. Static assets referenced by HTML templates exist on disk
 # ---------------------------------------------------------------------------
@@ -38,14 +42,13 @@ def test_template_logo_assets_exist(template_name: str):
     paths = _extract_static_image_paths(template)
     assert paths, f"No static image paths found in {template_name}"
     for filename in paths:
-        assert (STATIC_DIR / filename).exists(), (
-            f"{template_name} references static/{filename} but file does not exist"
-        )
+        assert (STATIC_DIR / filename).exists(), f"{template_name} references static/{filename} but file does not exist"
 
 
 # ---------------------------------------------------------------------------
 # 2. Docs theme logo exists
 # ---------------------------------------------------------------------------
+
 
 def test_docs_theme_logo_exists():
     """The logo configured in docs/base.yml must exist in docs/theme/."""
@@ -55,14 +58,13 @@ def test_docs_theme_logo_exists():
     match = re.search(r'^\s*logo:\s*"([^"]+)"', base_yml.read_text(), re.MULTILINE)
     assert match, "No theme logo configured in docs/base.yml"
     logo = match.group(1)
-    assert (ROOT / "docs" / "theme" / logo).exists(), (
-        f"docs/base.yml references theme logo '{logo}' but file does not exist"
-    )
+    assert (ROOT / "docs" / "theme" / logo).exists(), f"docs/base.yml references theme logo '{logo}' but file does not exist"
 
 
 # ---------------------------------------------------------------------------
 # 3. README banner image exists
 # ---------------------------------------------------------------------------
+
 
 def test_readme_banner_image_exists():
     """The contextforge banner image in README.md must exist on disk."""
@@ -74,9 +76,7 @@ def test_readme_banner_image_exists():
     for img_path in matches:
         if img_path.startswith("http"):
             continue
-        assert (ROOT / img_path).exists(), (
-            f"README.md references '{img_path}' but file does not exist"
-        )
+        assert (ROOT / img_path).exists(), f"README.md references '{img_path}' but file does not exist"
 
 
 # ---------------------------------------------------------------------------
@@ -93,14 +93,13 @@ def test_no_reference_to_removed_logo(template_name: str):
     if not template.exists():
         pytest.skip(f"{template_name} not found")
     paths = _extract_static_image_paths(template)
-    assert REMOVED_LOGO not in paths, (
-        f"{template_name} still references the removed static/{REMOVED_LOGO}"
-    )
+    assert REMOVED_LOGO not in paths, f"{template_name} still references the removed static/{REMOVED_LOGO}"
 
 
 # ---------------------------------------------------------------------------
 # 5. Helm chart icon URL uses new asset (not old logo.png)
 # ---------------------------------------------------------------------------
+
 
 def test_helm_chart_icon_not_old_logo():
     """Helm Chart.yaml icon must not point to the old docs/theme/logo.png."""
@@ -109,14 +108,13 @@ def test_helm_chart_icon_not_old_logo():
     match = re.search(r"^icon:\s*(.+)$", chart.read_text(), re.MULTILINE)
     assert match, "No icon field found in Chart.yaml"
     icon = match.group(1).strip()
-    assert "logo.png" not in icon, (
-        f"Helm Chart.yaml icon still references old logo.png: {icon}"
-    )
+    assert "logo.png" not in icon, f"Helm Chart.yaml icon still references old logo.png: {icon}"
 
 
 # ---------------------------------------------------------------------------
 # 6. Logo img tags have alt text
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("template_name", TEMPLATE_FILES)
 def test_logo_images_have_alt_text(template_name: str):
@@ -128,6 +126,4 @@ def test_logo_images_have_alt_text(template_name: str):
     # Find <img> tags that reference contextforge assets
     img_tags = re.findall(r"<img\b[^>]*contextforge[^>]*>", text)
     for tag in img_tags:
-        assert 'alt="' in tag, (
-            f'{template_name} has a contextforge <img> without alt text: {tag[:80]}'
-        )
+        assert 'alt="' in tag, f"{template_name} has a contextforge <img> without alt text: {tag[:80]}"
