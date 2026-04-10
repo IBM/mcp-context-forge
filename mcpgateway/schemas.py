@@ -2850,7 +2850,8 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3209,7 +3210,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3564,7 +3566,8 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
     )
 
     # Query Parameter Authentication (masked for security)

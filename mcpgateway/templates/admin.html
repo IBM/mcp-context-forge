@@ -5878,6 +5878,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       OAuth audience parameter (for Atlassian, Auth0, etc.)
                     </p>
                   </div>
+
+                  <div class="space-y-1">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Extra Authorization Parameters
+                      <span class="text-xs text-gray-400 font-normal ml-1">(additional query parameters for the OAuth authorization URL, e.g., access_type=offline, prompt=consent)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onclick="Admin.addExtraAuthParam('extra-auth-params-container-gw')"
+                      class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                      </svg>
+                      Add Parameter
+                    </button>
+                  </div>
+                  <div id="extra-auth-params-container-gw" class="space-y-2 mt-2">
+                    <!-- Rows added dynamically -->
+                  </div>
+                  <input type="hidden" name="oauth_extra_auth_params" id="extra-auth-params-json-gw" value="" />
                 </div>
               </div>
 
@@ -10320,6 +10341,26 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               read:user")
                             </p>
                           </div>
+                          <div class="space-y-1">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Extra Authorization Parameters
+                              <span class="text-xs text-gray-400 font-normal ml-1">(additional query parameters for the OAuth authorization URL, e.g., access_type=offline, prompt=consent)</span>
+                            </label>
+                            <button
+                              type="button"
+                              onclick="Admin.addExtraAuthParam('extra-auth-params-container-gw-edit')"
+                              class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            >
+                              <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                              </svg>
+                              Add Parameter
+                            </button>
+                          </div>
+                          <div id="extra-auth-params-container-gw-edit" class="space-y-2 mt-2">
+                            <!-- Rows added dynamically -->
+                          </div>
+                          <input type="hidden" name="oauth_extra_auth_params" id="extra-auth-params-json-gw-edit" value="" />
                         </div>
                       </div>
                     </div>

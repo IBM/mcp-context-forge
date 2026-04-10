@@ -653,7 +653,12 @@ class OAuthManager:
         oauth = OAuth2Session(client_id, redirect_uri=redirect_uri, scope=scopes)
 
         # Generate authorization URL with state for CSRF protection
-        auth_url, state = oauth.authorization_url(authorization_url)
+        # Include extra_auth_params if provided (e.g. Google's access_type, Auth0's audience)
+        extra = credentials.get("extra_auth_params", {})
+        if extra and isinstance(extra, dict):
+            auth_url, state = oauth.authorization_url(authorization_url, **extra)
+        else:
+            auth_url, state = oauth.authorization_url(authorization_url)
 
         logger.info(f"Generated authorization URL for client {client_id}")
 
@@ -1492,7 +1497,7 @@ class OAuthManager:
             Authorization URL string with PKCE parameters
         """
         # Standard
-        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
+        from urllib.parse import parse_qs, urlencode, urlparse  # pylint: disable=import-outside-toplevel
 
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]
@@ -1518,9 +1523,22 @@ class OAuthManager:
         if self._should_include_resource_parameter(credentials, scopes):
             params["resource"] = resource  # urlencode with doseq=True handles lists
 
-        # Build full URL (doseq=True handles list values like multiple resource params)
-        query_string = urlencode(params, doseq=True)
-        return f"{authorization_url}?{query_string}"
+        # Merge extra_auth_params (e.g. Google's access_type, Auth0's audience)
+        # without overriding core OAuth parameters
+        extra = credentials.get("extra_auth_params")
+        if extra and isinstance(extra, dict):
+            for k, v in extra.items():
+                if k not in params:
+                    params[k] = v
+
+        # Build full URL, preserving any existing query parameters in authorization_url
+        parsed = urlparse(authorization_url)
+        existing_params = parse_qs(parsed.query, keep_blank_values=True)
+        # New params override existing ones from the base URL
+        for k, v in params.items():
+            existing_params[k] = [v] if not isinstance(v, list) else v
+        query_string = urlencode(existing_params, doseq=True)
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{query_string}"
 
     async def _exchange_code_for_tokens(
         self, credentials: Dict[str, Any], code: str, code_verifier: str = None, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
