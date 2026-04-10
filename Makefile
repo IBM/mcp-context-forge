@@ -679,7 +679,7 @@ test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
 	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
 			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
 		echo "✅ mcp-cli protocol tests passed!"'
 
@@ -687,9 +687,9 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv pip show pytest-playwright >/dev/null 2>&1 || \
-			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && playwright install --with-deps chromium; } && \
-		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; $(VENV_DIR)/bin/pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
 
@@ -697,7 +697,7 @@ test-mcp-access-matrix:  ## Detailed Rust MCP role/access matrix test with stron
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
 			|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }; \
 		echo "✅ MCP role/access matrix tests passed!"'
 
@@ -705,7 +705,7 @@ test-mcp-plugin-parity:  ## MCP plugin parity E2E for current Python or Rust sta
 	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
 			|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }; \
 		echo "✅ MCP plugin parity tests passed!"'
 
@@ -713,7 +713,7 @@ test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust pu
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
 		echo "✅ MCP session/auth isolation tests passed!"'
 
@@ -746,7 +746,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+		$(VENV_DIR)/bin/pytest -n auto --maxfail=0 -v --durations=5 \
 			$(PYTEST_IGNORE_FLAGS)"
 
 test-verbose:
@@ -757,7 +757,7 @@ test-verbose:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
+		$(VENV_DIR)/bin/pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -767,7 +767,7 @@ test-profile:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
+		$(VENV_DIR)/bin/pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
 
 .PHONY: coverage-pytest
 coverage-pytest: install-dev
@@ -910,7 +910,7 @@ test-db-perf:                    ## Run database performance and N+1 detection t
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest tests/performance/test_db_query_patterns.py -v --tb=short"
+		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v --tb=short"
 
 test-db-perf-verbose:            ## Run database performance tests with full SQL query output
 	@echo "🔍 Running database performance tests with query logging..."
@@ -920,7 +920,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export SQLALCHEMY_ECHO=true && \
-		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
 
 2025-11-25:                      ## Run full MCP 2025-11-25 compliance suite
 	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
@@ -934,7 +934,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-core:                 ## Run MCP core compliance subset
 	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
@@ -948,7 +948,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-tasks:                ## Run MCP tasks compliance subset
 	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
@@ -962,7 +962,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-auth:                 ## Run MCP authorization compliance subset
 	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
@@ -976,7 +976,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-report:               ## Run MCP suite and emit JUnit XML + Markdown reports
 	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
@@ -991,7 +991,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
 			--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
 			--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
 			$(MCP_2025_PYTEST_ARGS)"
@@ -1675,17 +1675,17 @@ demo-a2a-up:                               ## Start all 3 A2A demo agents with a
 	@echo ""
 	@# Start Basic Auth agent (PYTHONUNBUFFERED=1 ensures print output is captured immediately)
 	@echo "Starting Basic Auth agent on port $(DEMO_A2A_BASIC_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register > /tmp/demo-a2a-basic.log 2>&1 & echo $$! > $(DEMO_A2A_BASIC_PID)
 	@sleep 1
 	@# Start Bearer Token agent
 	@echo "Starting Bearer Token agent on port $(DEMO_A2A_BEARER_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register > /tmp/demo-a2a-bearer.log 2>&1 & echo $$! > $(DEMO_A2A_BEARER_PID)
 	@sleep 1
 	@# Start X-API-Key agent
 	@echo "Starting X-API-Key agent on port $(DEMO_A2A_APIKEY_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register > /tmp/demo-a2a-apikey.log 2>&1 & echo $$! > $(DEMO_A2A_APIKEY_PID)
 	@sleep 2
 	@echo ""
@@ -1737,15 +1737,15 @@ demo-a2a-status:                           ## Show status of A2A demo agents
 
 demo-a2a-basic:                            ## Start only Basic Auth demo agent
 	@echo "🔐 Starting Basic Auth demo agent on port $(DEMO_A2A_BASIC_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
 
 demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@echo "🎫 Starting Bearer Token demo agent on port $(DEMO_A2A_BEARER_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
 demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
 # help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
@@ -3851,16 +3851,16 @@ CHECK ?=
 
 black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🎨  black --check $(TARGET)..." && uv run black -l 200 --check --diff $(TARGET); \
+		echo "🎨  black --check $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 --check --diff $(TARGET); \
 	else \
-		echo "🎨  black $(TARGET)..." && uv run black -l 200 $(TARGET); \
+		echo "🎨  black $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 $(TARGET); \
 	fi
 
 isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🔀  isort --check $(TARGET)..." && uv run isort --check-only --diff $(TARGET); \
+		echo "🔀  isort --check $(TARGET)..." && $(VENV_DIR)/bin/isort --check-only --diff $(TARGET); \
 	else \
-		echo "🔀  isort $(TARGET)..." && uv run isort $(TARGET); \
+		echo "🔀  isort $(TARGET)..." && $(VENV_DIR)/bin/isort $(TARGET); \
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
@@ -3877,7 +3877,7 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	@uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+	@$(VENV_DIR)/bin/pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -3968,7 +3968,7 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	select_flag=""; \
 	if [ -n "$(RUFF_SELECT)" ]; then select_flag="--select $(RUFF_SELECT)"; fi; \
 	echo "⚡ ruff $$ruff_cmd $$select_flag $(TARGET)..."; \
-	uv run ruff $$ruff_cmd $$select_flag $(TARGET)
+	$(VENV_DIR)/bin/ruff $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
 # deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
@@ -3992,7 +3992,7 @@ future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged f
 		echo "ℹ️  No Python files diverged from main"; \
 	else \
 		echo "⚡ ruff check --select G,BLE on $$(echo $$changed | wc -w | tr -d ' ') file(s)..."; \
-		uv run ruff check --select G,BLE $$changed; \
+		$(VENV_DIR)/bin/ruff check --select G,BLE $$changed; \
 	fi
 
 ty:                                 ## ⚡  Ty type checker
@@ -7310,7 +7310,7 @@ test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests 
 	@mkdir -p $(ZAP_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		uv run --active pytest tests/playwright/security/owasp/ \
+		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
 			-v -m owasp_a01 --tb=short \
 			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
 	@echo "✅ OWASP security tests completed!"
@@ -7329,7 +7329,7 @@ test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP d
 		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
 		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
 		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
-		uv run --active pytest tests/playwright/security/owasp/ \
+		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
 			-v -m owasp_a01_zap --tb=short \
 			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
@@ -7420,7 +7420,7 @@ interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv run --active interrogate -vv mcpgateway || true"
+		$(VENV_DIR)/bin/interrogate -vv mcpgateway || true"
 
 prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
