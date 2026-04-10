@@ -4825,7 +4825,6 @@ renderConfig();
     { name:"Web Lint", file:"lint-web.yml", desc:"ESLint, HTMLHint, Stylelint in separate matrix jobs.", triggers:["push","PR"] },
     { name:"Playwright CI Smoke", file:"playwright.yml", desc:"UI automation smoke tests against live gateway.", triggers:["push","PR","manual"] },
     { name:"Rust Tools CI/CD", file:"rust-tools.yml", desc:"Cargo test and clippy for tools_rust/ and mcp-servers/rust/.", triggers:["push"] },
-    { name:"Rust Plugins CI/CD", file:"rust-plugins.yml", desc:"Cargo test and clippy for plugins_rust/ on all OS.", triggers:["push"] },
     { name:"Alembic Upgrade Validation", file:"alembic-upgrade-validation.yml", desc:"Validate DB migration paths (upgrade testing).", triggers:["PR","push","manual"] },
     { name:"License Check", file:"license-check.yml", desc:"Scan for license compliance on dependency changes.", triggers:["push","PR"] },
     { name:"Full Linting", file:"linting-full.yml", desc:"Comprehensive linting pass on main branch.", triggers:["push","manual"] },

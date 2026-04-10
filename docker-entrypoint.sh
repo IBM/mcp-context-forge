@@ -393,20 +393,50 @@ install_plugin_requirements() {
     RELOAD_PLUGIN_REQUIREMENTS_TXT="${RELOAD_PLUGIN_REQUIREMENTS_TXT:-false}"
     PLUGIN_REQUIREMENTS_TXT_PATH="${PLUGIN_REQUIREMENTS_TXT_PATH:-/app/plugins/requirements.txt}"
 
-    if [[ "${RELOAD_PLUGIN_REQUIREMENTS_TXT}" = "true" && -f "${PLUGIN_REQUIREMENTS_TXT_PATH}" ]]; then
-        echo "🧩 Installing plugin packages from ${PLUGIN_REQUIREMENTS_TXT_PATH}..."
-        local max_retries=3
-        local attempt=1
-        while (( attempt <= max_retries )); do
-            if /app/.venv/bin/pip install --no-cache-dir -r "${PLUGIN_REQUIREMENTS_TXT_PATH}"; then
-                return 0
-            fi
-            echo "⚠️  Plugin package install attempt ${attempt}/${max_retries} failed"
-            (( attempt++ ))
-            (( attempt <= max_retries )) && sleep 2
-        done
-        echo "⚠️  Plugin package install failed after ${max_retries} attempts; continuing without plugin packages"
+    if [[ "${RELOAD_PLUGIN_REQUIREMENTS_TXT}" != "true" ]]; then
+        return 0
     fi
+
+    # Resolve both /app and the requested path to their canonical forms, then
+    # require the requested path to live inside /app. Canonicalizing /app too
+    # handles the case where /app is itself a symlink (uncommon in this repo's
+    # Containerfiles, but defensive). This prevents env-controlled path
+    # injection like PLUGIN_REQUIREMENTS_TXT_PATH=/tmp/evil-requirements.txt.
+    local app_root resolved_path
+    app_root="$(readlink -f /app 2>/dev/null)"
+    if [[ -z "${app_root}" ]]; then
+        echo "⚠️  /app could not be resolved; skipping plugin install"
+        return 0
+    fi
+    if ! resolved_path="$(readlink -f "${PLUGIN_REQUIREMENTS_TXT_PATH}" 2>/dev/null)"; then
+        echo "⚠️  PLUGIN_REQUIREMENTS_TXT_PATH=${PLUGIN_REQUIREMENTS_TXT_PATH} could not be resolved; skipping plugin install"
+        return 0
+    fi
+    if [[ "${resolved_path}" != "${app_root}/"* ]]; then
+        echo "⚠️  PLUGIN_REQUIREMENTS_TXT_PATH must resolve under ${app_root}/ (got ${resolved_path}); refusing to install"
+        return 0
+    fi
+    if [[ ! -f "${resolved_path}" ]]; then
+        echo "ℹ️  Plugin requirements file ${resolved_path} not found; skipping plugin install"
+        return 0
+    fi
+
+    echo "🧩 Installing plugin packages from ${resolved_path}:"
+    # Log non-comment, non-blank lines so operators can see exactly which packages
+    # are being installed at startup before pip reaches the network.
+    grep -vE '^\s*(#|$)' "${resolved_path}" | sed 's/^/    /' || true
+
+    local max_retries=3
+    local attempt=1
+    while (( attempt <= max_retries )); do
+        if /app/.venv/bin/pip install --no-cache-dir -r "${resolved_path}"; then
+            return 0
+        fi
+        echo "⚠️  Plugin package install attempt ${attempt}/${max_retries} failed"
+        (( attempt++ ))
+        (( attempt <= max_retries )) && sleep 2
+    done
+    echo "⚠️  Plugin package install failed after ${max_retries} attempts; continuing without plugin packages"
 }
 
 apply_rust_mcp_mode_defaults

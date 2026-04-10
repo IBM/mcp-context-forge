@@ -69,6 +69,7 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 # This maximizes Docker layer caching - dependencies change less often
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY plugins/requirements.txt /app/plugins/requirements.txt
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment

@@ -1,6 +1,6 @@
 # ADR-0041: Top-Level Rust Workspace (Cargo.toml at Repository Root)
 
-- *Status:* Accepted
+- *Status:* Partially superseded — `plugins_rust/` was removed when in-tree Rust plugins migrated to standalone PyPI packages (`cpex-*`). The remaining Rust workspace members (`tools_rust/`, etc.) are unaffected.
 - *Date:* 2026-02-26
 - *Deciders:* Core Engineering Team
 

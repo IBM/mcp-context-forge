@@ -3360,9 +3360,6 @@ class ToolService(BaseService):
         from mcpgateway.plugins.framework import PluginMode  # pylint: disable=import-outside-toplevel
         from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
-        # Third-Party/Local
-        from cpex_retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
-
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
         hook_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
@@ -3379,6 +3376,14 @@ class ToolService(BaseService):
             return (None, False)
 
         if len(active_hook_refs) != 1 or active_hook_refs[0].plugin_ref.name != "RetryWithBackoffPlugin":
+            return (None, True)
+
+        try:
+            # Third-Party
+            from cpex_retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            # cpex-retry-with-backoff is in the optional [plugins] extra; without it
+            # we cannot build a native Rust retry policy — fall back to Python.
             return (None, True)
 
         retry_hook = active_hook_refs[0]
