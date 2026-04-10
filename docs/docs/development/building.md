@@ -28,17 +28,28 @@ This will:
 
 ## 🐍 Manual Python Setup
 
+If you need to bypass the Makefile, use `uv` directly — the project's dev
+dependency group is defined via PEP 735 (`[dependency-groups]`), so the
+traditional `pip install -e ".[dev]"` form does not apply:
+
 ```bash
-python3 -m venv .venv
+uv venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+uv pip install --group dev '.[plugins]'
 ```
 
 This installs:
 
 * Core app dependencies
-* Dev tools (`ruff`, `black`, `mypy`, etc.)
-* Test runners (`pytest`, `coverage`)
+* Dev dependencies (`pytest`, `coverage`, `mypy`, `bandit`, etc.)
+* Plugin framework extras
+
+Formatters and linters (`ruff`, `black`, `isort`, `pylint`, `vulture`,
+`interrogate`, `radon`, `yamllint`, `tomlcheck`) are **not** installed into the
+venv — they are invoked on demand through the Makefile targets (`make ruff`,
+`make black`, `make isort`, `make pylint`, `make vulture`, `make interrogate`,
+`make radon`, `make yamllint`, `make tomllint`), which fetch pinned versions
+via `uv tool run`.
 
 ---
 

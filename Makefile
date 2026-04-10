@@ -180,6 +180,54 @@ uv:
 UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
 export UV_BIN
 
+# ----------------------------------------------------------------------------
+# Virtual environment execution policy
+# ----------------------------------------------------------------------------
+# Targets in this Makefile deliberately split how they use `uv`:
+#
+#   * Execution: invoke tools via `$(VENV_DIR)/bin/<tool>` directly (e.g.
+#     pytest, black, ruff, pylint, python). `uv run` — even with `--active` —
+#     has historically resolved against an unexpected environment when the
+#     caller has already `source`d the project venv, producing confusing
+#     "works on my machine" failures. Direct invocation removes the ambiguity:
+#     the tool that runs is unambiguously the one installed in $(VENV_DIR).
+#
+#   * Package management: continue to use `uv pip install` / `uv pip show` /
+#     `uv pip list`. These are intentionally NOT rewritten to
+#     `$(VENV_DIR)/bin/pip` because `uv venv` does not seed `pip` into the
+#     created environment (no `--seed` flag is passed in the `venv` target
+#     above), so `$(VENV_DIR)/bin/pip` simply does not exist. `uv pip` is also
+#     materially faster than vanilla pip and is the supported way to manage
+#     packages in a uv-managed venv.
+#
+# If you add a new target: use `$(VENV_DIR)/bin/<tool>` to *run* something and
+# `uv pip ...` to *install* something. Do not reintroduce `uv run`.
+#
+# Exception — linters/formatters via `uvx`: `black`, `isort`, `ruff`, and
+# `pylint` are invoked through `uvx <tool>==<pinned>` (see the pins just
+# below). This isolates the linter versions from whatever is resolved into
+# $(VENV_DIR) by the dev dependency group, so CI and local runs always use the
+# same formatter/linter version regardless of when the venv was last rebuilt.
+# These targets still depend on the `uv` target so `uvx` is guaranteed present.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# Pinned linter/formatter versions (invoked via `uvx`)
+# ----------------------------------------------------------------------------
+# Bump these in lockstep with the lower bounds in pyproject.toml's dev group
+# so editors (which typically use the venv-installed version) and Makefile
+# targets (which use these pins via uvx) stay aligned.
+BLACK_VERSION           ?= 26.3.1
+ISORT_VERSION           ?= 6.1.0
+RUFF_VERSION            ?= 0.15.1
+PYLINT_VERSION          ?= 3.3.9
+PYLINT_PYDANTIC_VERSION ?= 0.3.5
+VULTURE_VERSION         ?= 2.14
+INTERROGATE_VERSION     ?= 1.7.0
+RADON_VERSION           ?= 6.0.1
+YAMLLINT_VERSION        ?= 1.38.0
+TOMLCHECK_VERSION       ?= 0.2.3
+
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
@@ -687,8 +735,8 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pip show pytest-playwright >/dev/null 2>&1 || \
-			{ echo "📦 Installing playwright dependencies..."; $(VENV_DIR)/bin/pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
+		uv pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
 		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
@@ -1672,6 +1720,7 @@ DEMO_A2A_APIKEY_PID := /tmp/demo-a2a-apikey.pid
 
 demo-a2a-up:                               ## Start all 3 A2A demo agents with auto-registration
 	@echo "🤖 Starting A2A demo agents for authentication testing (Issue #2002)..."
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	@echo ""
 	@# Start Basic Auth agent (PYTHONUNBUFFERED=1 ensures print output is captured immediately)
 	@echo "Starting Basic Auth agent on port $(DEMO_A2A_BASIC_PORT)..."
@@ -1737,14 +1786,17 @@ demo-a2a-status:                           ## Show status of A2A demo agents
 
 demo-a2a-basic:                            ## Start only Basic Auth demo agent
 	@echo "🔐 Starting Basic Auth demo agent on port $(DEMO_A2A_BASIC_PORT)..."
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
 
 demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@echo "🎫 Starting Bearer Token demo agent on port $(DEMO_A2A_BEARER_PORT)..."
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
 demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
@@ -3366,9 +3418,7 @@ images:
 		python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pylint && \
-		$(VENV_DIR)/bin/pyreverse --colorized mcpgateway || true"
+	@$(UV_BIN) tool run --from pylint==$(PYLINT_VERSION) pyreverse --colorized mcpgateway || true
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
@@ -3851,16 +3901,16 @@ CHECK ?=
 
 black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🎨  black --check $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 --check --diff $(TARGET); \
+		echo "🎨  black --check $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 --check --diff $(TARGET); \
 	else \
-		echo "🎨  black $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 $(TARGET); \
+		echo "🎨  black $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 $(TARGET); \
 	fi
 
 isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🔀  isort --check $(TARGET)..." && $(VENV_DIR)/bin/isort --check-only --diff $(TARGET); \
+		echo "🔀  isort --check $(TARGET)..." && $(UV_BIN) tool run isort==$(ISORT_VERSION) --check-only --diff $(TARGET); \
 	else \
-		echo "🔀  isort $(TARGET)..." && $(VENV_DIR)/bin/isort $(TARGET); \
+		echo "🔀  isort $(TARGET)..." && $(UV_BIN) tool run isort==$(ISORT_VERSION) $(TARGET); \
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
@@ -3877,7 +3927,7 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	@$(VENV_DIR)/bin/pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+	@$(UV_BIN) tool run --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -3968,7 +4018,7 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	select_flag=""; \
 	if [ -n "$(RUFF_SELECT)" ]; then select_flag="--select $(RUFF_SELECT)"; fi; \
 	echo "⚡ ruff $$ruff_cmd $$select_flag $(TARGET)..."; \
-	$(VENV_DIR)/bin/ruff $$ruff_cmd $$select_flag $(TARGET)
+	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
 # deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
@@ -3992,7 +4042,7 @@ future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged f
 		echo "ℹ️  No Python files diverged from main"; \
 	else \
 		echo "⚡ ruff check --select G,BLE on $$(echo $$changed | wc -w | tr -d ' ') file(s)..."; \
-		$(VENV_DIR)/bin/ruff check --select G,BLE $$changed; \
+		$(UV_BIN) tool run ruff==$(RUFF_VERSION) check --select G,BLE $$changed; \
 	fi
 
 ty:                                 ## ⚡  Ty type checker
@@ -4001,11 +4051,11 @@ ty:                                 ## ⚡  Ty type checker
 pyright:                            ## 🏷️  Pyright type-checking
 	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
 
-radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s $(TARGET) && \
-	$(VENV_DIR)/bin/radon cc -s $(TARGET) && \
-	$(VENV_DIR)/bin/radon hal $(TARGET) && \
-	$(VENV_DIR)/bin/radon raw -s $(TARGET)
+radon: uv                           ## 📈  Complexity / MI metrics
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi -s $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) cc -s $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) hal $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) raw -s $(TARGET)
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
@@ -4115,8 +4165,8 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
-vulture:                            ## 🧹  Dead code detection
-	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
+vulture: uv                         ## 🧹  Dead code detection
+	@echo "🧹  vulture $(TARGET) …" && $(UV_BIN) tool run vulture==$(VULTURE_VERSION) $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
 
 # Shell script linting for individual files
 shell-lint-file:                    ## 🐚  Lint shell script
@@ -4456,16 +4506,13 @@ lint-stats:								## 📊 Show linting statistics
 	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" 2>/dev/null || true
 
 # Analyze code complexity
-lint-complexity:						## 📈 Analyze code complexity
+lint-complexity: uv					## 📈 Analyze code complexity
 	@echo "📈 Analyzing code complexity for $(TARGET)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q radon && \
-		echo '📊 Cyclomatic Complexity:' && \
-		$(VENV_DIR)/bin/radon cc $(TARGET) -s && \
-		echo '' && \
-		echo '📊 Maintainability Index:' && \
-		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
+	@echo '📊 Cyclomatic Complexity:'
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) cc $(TARGET) -s
+	@echo ''
+	@echo '📊 Maintainability Index:'
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi $(TARGET) -s
 
 # -----------------------------------------------------------------------------
 # 📑 CONTAINER SECURITY REVIEW
@@ -4490,13 +4537,9 @@ LINTERS += yamllint jsonlint tomllint
 # ➋  Individual targets
 .PHONY: yamllint jsonlint tomllint
 
-yamllint:                         ## 📑 YAML linting
+yamllint: uv                      ## 📑 YAML linting
 	@echo '📑  yamllint ...'
-	$(call ensure_pip_package,yamllint)
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q yamllint 2>/dev/null || true"
-	@$(VENV_DIR)/bin/yamllint -c .yamllint .
+	@$(UV_BIN) tool run yamllint==$(YAMLLINT_VERSION) -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
 	@command -v jq >/dev/null 2>&1 || { \
@@ -4518,17 +4561,14 @@ jsonlint:                         ## 📑 JSON validation (jq)
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 
-tomllint:                         ## 📑 TOML validation (tomlcheck)
+tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' \
 	  -not -path './.cache/*' \
 	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
-	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
+	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
 # =============================================================================
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
@@ -7418,9 +7458,7 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 
 interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/interrogate -vv mcpgateway || true"
+	@$(UV_BIN) tool run interrogate==$(INTERROGATE_VERSION) -vv mcpgateway || true
 
 prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
@@ -7470,9 +7508,9 @@ async-test: async-lint async-debug
 		--junitxml=$(REPORTS_DIR)/async-test-results.xml \
 		-v
 
-async-lint:
+async-lint: uv
 	@echo "🔍 Running async-aware linting..."
-	@$(VENV_DIR)/bin/ruff check mcpgateway/ tests/ \
+	@$(UV_BIN) tool run ruff==$(RUFF_VERSION) check mcpgateway/ tests/ \
 		--select=F,E,B,ASYNC \
 		--output-format=github
 	@$(VENV_DIR)/bin/mypy mcpgateway/ \
