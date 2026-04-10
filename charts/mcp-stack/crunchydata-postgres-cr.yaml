@@ -2,6 +2,7 @@
 # Tuned to match VM benchmark Postgres configuration
 # Apply with: oc apply -n gp-context-forge -f charts/mcp-stack/crunchydata-postgres-cr.yaml
 # Requires: CrunchyData PGO operator installed from OperatorHub
+#           Substitute __POSTGRES_PV__ and __POSTGRES_REPO_PV__ with your pre-created PV names
 apiVersion: postgres-operator.crunchydata.com/v1beta1
 kind: PostgresCluster
 metadata:
@@ -24,10 +25,7 @@ spec:
         resources:
           requests:
             storage: 2Gi
-        selector:
-          matchLabels:
-            role: postgres
-            type: nfs
+        volumeName: __POSTGRES_PV__
   patroni:
     dynamicConfiguration:
       postgresql:
@@ -56,10 +54,7 @@ spec:
               resources:
                 requests:
                   storage: 2Gi
-              selector:
-                matchLabels:
-                  role: postgres
-                  type: nfs
+              volumeName: __POSTGRES_REPO_PV__
   proxy:
     pgBouncer:
       replicas: 1

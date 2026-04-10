@@ -2874,9 +2874,64 @@ OCP_NS ?=
 OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
 OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
 OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
+POSTGRES_PV ?=
+POSTGRES_REPO_PV ?=
 
-ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
+ocp-verify-pv:                               ## Verify Postgres PVs are ready (requires POSTGRES_PV, POSTGRES_REPO_PV)
+	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ]; then \
+		echo "Usage: make ocp-verify-pv POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; exit 1; fi
+	@echo "=== Verifying PVs ==="
+	@/bin/bash -c '\
+		fail=0; \
+		for pv in $(POSTGRES_PV) $(POSTGRES_REPO_PV); do \
+			echo "Checking PV: $$pv"; \
+			if ! oc get pv $$pv >/dev/null 2>&1; then \
+				echo "  ERROR: PV $$pv does not exist"; fail=1; continue; \
+			fi; \
+			status=$$(oc get pv $$pv -o jsonpath="{.status.phase}"); \
+			if [ "$$status" != "Available" ]; then \
+				echo "  ERROR: status is $$status (expected Available)"; \
+				if [ "$$status" = "Released" ]; then \
+					echo "         Fix: oc patch pv $$pv -p '\''{\"spec\":{\"claimRef\": null}}'\''"; \
+				fi; \
+				fail=1; \
+			else \
+				echo "  status: Available"; \
+			fi; \
+			modes=$$(oc get pv $$pv -o jsonpath="{.spec.accessModes}"); \
+			if ! echo "$$modes" | grep -q "ReadWriteOnce"; then \
+				echo "  ERROR: accessModes $$modes does not include ReadWriteOnce"; fail=1; \
+			else \
+				echo "  accessModes: $$modes"; \
+			fi; \
+			capacity=$$(oc get pv $$pv -o jsonpath="{.spec.capacity.storage}"); \
+			echo "  capacity: $$capacity"; \
+			sc=$$(oc get pv $$pv -o jsonpath="{.spec.storageClassName}"); \
+			if [ "$$sc" != "nfs-client" ]; then \
+				echo "  ERROR: storageClassName is \"$$sc\" (expected nfs-client)"; \
+				echo "         Fix: oc patch pv $$pv -p '\''{\"spec\":{\"storageClassName\":\"nfs-client\"}}'\''"; \
+				fail=1; \
+			else \
+				echo "  storageClassName: nfs-client"; \
+			fi; \
+		done; \
+		if [ $$fail -eq 0 ]; then \
+			echo ""; \
+			echo "=== All PVs ready ==="; \
+			echo "Next: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=$(POSTGRES_PV) POSTGRES_REPO_PV=$(POSTGRES_REPO_PV)"; \
+		else \
+			echo ""; \
+			echo "=== PV verification failed ==="; \
+			exit 1; \
+		fi'
+
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS, POSTGRES_PV, POSTGRES_REPO_PV)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; exit 1; fi
+	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ]; then \
+		echo "ERROR: POSTGRES_PV and POSTGRES_REPO_PV are required."; \
+		echo "Usage: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; \
+		echo "Run 'make ocp-verify-pv' first to validate your PVs."; \
+		exit 1; fi
 	@echo "=== OCP Setup ==="
 	@echo "Checking CrunchyData PGO operator..."
 	@/bin/bash -c 'oc get csv -A 2>/dev/null | grep -qi crunchy || \
@@ -2889,8 +2944,9 @@ ocp-setup:                                   ## Set up OCP namespace and Crunchy
 	@echo "Checking PostgresCluster..."
 	@oc get pods -n $(OCP_NS) -l postgres-operator.crunchydata.com/cluster --no-headers 2>/dev/null | grep -q Running && \
 		echo "   PostgresCluster: already running" || \
-		(echo "   Applying PostgresCluster CR..." && \
-		oc apply -n $(OCP_NS) -f $(OCP_PG_CR) && \
+		(echo "   Applying PostgresCluster CR with PVs $(POSTGRES_PV) / $(POSTGRES_REPO_PV)..." && \
+		sed -e 's|__POSTGRES_PV__|$(POSTGRES_PV)|g' -e 's|__POSTGRES_REPO_PV__|$(POSTGRES_REPO_PV)|g' $(OCP_PG_CR) | \
+		oc apply -n $(OCP_NS) -f - && \
 		echo "   Waiting for Postgres pods (this may take a few minutes)..." && \
 		oc -n $(OCP_NS) wait --for=condition=Ready pod -l postgres-operator.crunchydata.com/role=master --timeout=300s 2>/dev/null || \
 		echo "   Postgres pods still starting. Check: oc get pods -n $(OCP_NS)")
