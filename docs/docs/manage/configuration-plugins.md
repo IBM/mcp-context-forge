@@ -30,6 +30,8 @@ Inside the gateway, plugin settings are exposed under `settings.plugins`.
 
 These variables are evaluated by `docker-entrypoint.sh` at container startup, before the application server begins. They allow re-installing or overriding plugin packages at runtime without rebuilding the container image.
 
+When `RELOAD_PLUGIN_REQUIREMENTS_TXT=true`, startup is fail-closed: the requirements file must resolve under `/app`, exist, and install successfully, or the container exits before serving traffic.
+
 | Setting                            | Description                                                      | Default                            | Options |
 | ---------------------------------- | ---------------------------------------------------------------- | ---------------------------------- | ------- |
 | `RELOAD_PLUGIN_REQUIREMENTS_TXT`  | Re-install plugin packages from requirements file at startup     | `false`                            | bool    |

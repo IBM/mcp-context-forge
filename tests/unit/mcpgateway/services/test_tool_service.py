@@ -34,6 +34,7 @@ from mcpgateway.plugins.framework.hooks.tools import ToolHookType
 from mcpgateway.plugins.framework.models import PluginResult
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    _build_retry_policy_config,
     _decrypt_tool_header_value,
     _decrypt_tool_headers_for_runtime,
     _encrypt_tool_header_value,
@@ -7178,13 +7179,13 @@ class TestRustMcpExecutionPlan:
             "jitter": False,
         }
 
-    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_without_cpex_package(self, tool_service):
-        """Missing optional retry package should force Python fallback."""
+    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_for_invalid_override(self, tool_service):
+        """Invalid retry config should force Python fallback."""
         mock_hook_ref = MagicMock()
         mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
         mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
         mock_hook_ref.plugin_ref.conditions = None
-        mock_hook_ref.plugin_ref.plugin.config.config = {"max_retries": 3}
+        mock_hook_ref.plugin_ref.plugin.config.config = {"max_retries": 3, "tool_overrides": {"tool-one": "invalid"}}
 
         mock_registry = MagicMock()
         mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
@@ -7193,19 +7194,60 @@ class TestRustMcpExecutionPlan:
         mock_pm.has_hooks_for.return_value = True
         mock_pm._registry = mock_registry
 
-        real_import = __import__
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
 
-        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "cpex_retry_with_backoff":
-                raise ImportError("package not installed")
-            return real_import(name, globals, locals, fromlist, level)
+        assert policy is None
+        assert requires_python_fallback is True
 
-        with patch("builtins.__import__", side_effect=fake_import):
-            policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
-                mock_pm,
-                "tool-one",
-                None,
-            )
+    def test_build_retry_policy_config_parses_bool_like_values_and_clamps_override(self):
+        """Gateway-owned retry parser should keep bool-like semantics and override clamping."""
+        cfg = _build_retry_policy_config(
+            {
+                "jitter": "false",
+                "check_text_content": "0",
+                "tool_overrides": {
+                    "tool-one": {
+                        "max_retries": settings.max_tool_retries + 4,
+                        "check_text_content": "true",
+                    }
+                },
+            },
+            "tool-one",
+        )
+
+        assert cfg["jitter"] is False
+        assert cfg["check_text_content"] is True
+        assert cfg["max_retries"] == settings.max_tool_retries
+
+    def test_build_retry_policy_config_rejects_scalar_retry_status_string(self):
+        """Scalar retry_on_status strings should fail instead of being split into digits."""
+        with pytest.raises(ValueError, match="retry_on_status"):
+            _build_retry_policy_config({"retry_on_status": "429"}, "tool-one")
+
+    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_for_text_check_override(self, tool_service):
+        """Text-content inspection in an override should force Python fallback."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {"tool_overrides": {"tool-one": {"check_text_content": "true"}}}
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
 
         assert policy is None
         assert requires_python_fallback is True

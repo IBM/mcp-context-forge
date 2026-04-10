@@ -202,7 +202,7 @@ plugins:
     config:                                   # Plugin-specific configuration
       detect_ssn: true
       detect_credit_card: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       redaction_text: "[REDACTED]"
 
 # Global plugin settings
@@ -215,7 +215,13 @@ plugin_settings:
 
 ## Getting Started (Native Plugins)
 
-Use the native plugins out of the box:
+Use the packaged native plugins after installing the optional plugin extra:
+
+```bash
+uv sync --extra plugins
+```
+
+Or install the published plugin wheels with `pip install 'mcp-contextforge-gateway[plugins]'`.
 
 1. Copy and adapt the example config (enable any subset):
 
@@ -298,7 +304,7 @@ are defined as follows:
 | `mode` | `string` |  | `"enforce"` | Plugin execution mode controlling behavior on violations | `"enforce"`, `"enforce_ignore_error"`, `"permissive"`, `"disabled"` |
 | `priority` | `integer` |  | `null` | Execution priority (lower number = higher priority) | `10`, `50`, `100` |
 | `conditions` | `object[]` |  | `[]` | Conditional execution rules for targeting specific contexts | See [Condition Fields](#condition-fields) below |
-| `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "mask_strategy": "partial"}` |
+| `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "default_mask_strategy": "partial"}` |
 | `mcp` | `object` |  | `null` | External MCP server configuration (required for external plugins) | See [MCP Configuration](#mcp-configuration-fields) below |
 
 #### Hook Types
@@ -1258,7 +1264,7 @@ plugins:
       detect_ssn: true
       detect_credit_card: true
       detect_email: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       block_on_detection: false
 
   # Step 2: External AI Safety Service (LlamaGuard)
@@ -1344,7 +1350,7 @@ plugins:
     config:
       detect_ssn: true
       log_detections: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       whitelist_patterns:
 
         - "test@example.com"
@@ -1366,8 +1372,8 @@ plugins:
       detect_email: true
       detect_api_keys: true
       block_on_detection: true
-      audit_detections: true
-      compliance_mode: "strict"
+      log_detections: true
+      include_detection_details: true
 ```
 
 ## Performance and Scalability

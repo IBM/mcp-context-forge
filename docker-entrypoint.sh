@@ -405,26 +405,25 @@ install_plugin_requirements() {
     local app_root resolved_path
     app_root="$(readlink -f /app 2>/dev/null)"
     if [[ -z "${app_root}" ]]; then
-        echo "⚠️  /app could not be resolved; skipping plugin install"
-        return 0
+        echo "❌ /app could not be resolved; refusing to start with RELOAD_PLUGIN_REQUIREMENTS_TXT=true"
+        return 1
     fi
     if ! resolved_path="$(readlink -f "${PLUGIN_REQUIREMENTS_TXT_PATH}" 2>/dev/null)"; then
-        echo "⚠️  PLUGIN_REQUIREMENTS_TXT_PATH=${PLUGIN_REQUIREMENTS_TXT_PATH} could not be resolved; skipping plugin install"
-        return 0
+        echo "❌ PLUGIN_REQUIREMENTS_TXT_PATH=${PLUGIN_REQUIREMENTS_TXT_PATH} could not be resolved; refusing to start"
+        return 1
     fi
     if [[ "${resolved_path}" != "${app_root}/"* ]]; then
-        echo "⚠️  PLUGIN_REQUIREMENTS_TXT_PATH must resolve under ${app_root}/ (got ${resolved_path}); refusing to install"
-        return 0
+        echo "❌ PLUGIN_REQUIREMENTS_TXT_PATH must resolve under ${app_root}/ (got ${resolved_path}); refusing to start"
+        return 1
     fi
     if [[ ! -f "${resolved_path}" ]]; then
-        echo "ℹ️  Plugin requirements file ${resolved_path} not found; skipping plugin install"
-        return 0
+        echo "❌ Plugin requirements file ${resolved_path} not found; refusing to start with RELOAD_PLUGIN_REQUIREMENTS_TXT=true"
+        return 1
     fi
 
-    echo "🧩 Installing plugin packages from ${resolved_path}:"
-    # Log non-comment, non-blank lines so operators can see exactly which packages
-    # are being installed at startup before pip reaches the network.
-    grep -vE '^\s*(#|$)' "${resolved_path}" | sed 's/^/    /' || true
+    local requirement_count
+    requirement_count="$(grep -cve '^\s*$' -e '^\s*#' "${resolved_path}" || true)"
+    echo "🧩 Installing ${requirement_count} plugin package requirement(s) from ${resolved_path}"
 
     local max_retries=3
     local attempt=1
@@ -436,7 +435,8 @@ install_plugin_requirements() {
         (( attempt++ ))
         (( attempt <= max_retries )) && sleep 2
     done
-    echo "⚠️  Plugin package install failed after ${max_retries} attempts; continuing without plugin packages"
+    echo "❌ Plugin package install failed after ${max_retries} attempts; refusing to start with incomplete plugin dependencies"
+    return 1
 }
 
 apply_rust_mcp_mode_defaults

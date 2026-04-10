@@ -60,7 +60,7 @@ plugins:
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     description: "Detects and masks Personally Identifiable Information"
-    version: "0.1.0"
+    version: "0.2.0"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
@@ -210,7 +210,7 @@ plugins:
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"
-    version: "0.0.2"
+    version: "0.0.3"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
@@ -290,7 +290,7 @@ plugins:
   - name: "URLReputationPlugin"
     kind: "cpex_url_reputation.URLReputationPlugin"
     description: "Blocks known-bad domains or patterns before fetch"
-    version: "0.1.0"
+    version: "0.1.1"
     author: "Mihai Criveti"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
@@ -665,9 +665,9 @@ plugins:
 
   # Encoded Exfil Detector - detect suspicious encoded payloads in prompts/tool outputs
   - name: "EncodedExfilDetector"
-    kind: "plugins.encoded_exfil_detector.encoded_exfil_detector.EncodedExfilDetectorPlugin"
+    kind: "cpex_encoded_exfil_detection.EncodedExfilDetectorPlugin"
     description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
-    version: "0.1.0"
+    version: "0.2.0"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_post_invoke"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
