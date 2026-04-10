@@ -86,9 +86,6 @@ try:
     # Third-Party
     from cpex.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
-    # First-Party
-    from mcpgateway.plugins import get_plugin_manager
-
     PLUGINS_AVAILABLE = True
 except ImportError:
     PLUGINS_AVAILABLE = False

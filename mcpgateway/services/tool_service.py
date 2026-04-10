@@ -36,7 +36,6 @@ from cpex.framework import (
     HttpHeaderPayload,
     PluginContextTable,
     PluginError,
-    PluginManager,
     PluginViolationError,
     ToolHookType,
     ToolPostInvokePayload,
@@ -71,7 +70,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -3358,10 +3356,11 @@ class ToolService(BaseService):
         if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             return (None, False)
 
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
         from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
+        # First-Party
         # Third-Party/Local
         from plugins.retry_with_backoff.retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
 

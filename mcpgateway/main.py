@@ -47,7 +47,7 @@ import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
+from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler

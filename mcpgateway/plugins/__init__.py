@@ -16,7 +16,6 @@ from typing import Callable, Optional
 
 # Third-Party
 from cpex.framework import ObservabilityProvider, TenantPluginManager, TenantPluginManagerFactory
-from cpex.framework.settings import settings as _plugin_settings
 
 # --- Global plugin manager factory singleton ---
 _PLUGINS_ENABLED = False

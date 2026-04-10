@@ -18,11 +18,11 @@ import logging
 from typing import Callable, Optional
 
 # Third-Party
+from cpex.framework.manager import TenantPluginManagerFactory
+from cpex.framework.models import PluginConfigOverride, PluginMode
 from sqlalchemy.orm import Session
 
 # First-Party
-from cpex.framework.manager import TenantPluginManagerFactory
-from cpex.framework.models import PluginConfigOverride, PluginMode
 from mcpgateway.schemas import PLUGIN_ID_TO_NAME
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 
