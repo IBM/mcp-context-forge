@@ -94,6 +94,7 @@ class ToolPluginBindingService:
             mode=binding.mode,
             priority=binding.priority,
             config=binding.config,
+            binding_reference_id=binding.binding_reference_id,
             created_at=binding.created_at,
             created_by=binding.created_by,
             updated_at=binding.updated_at,
@@ -117,6 +118,13 @@ class ToolPluginBindingService:
         - If a row already exists → update mode/priority/config/updated_by/updated_at.
         - If no row exists → insert a new row.
 
+        **Stale tool pruning**: when a policy carries a ``binding_reference_id``,
+        any existing binding that shares the same ``binding_reference_id`` and
+        ``plugin_id`` but whose ``tool_name`` is *not* in the incoming
+        ``tool_names`` list is deleted.  This keeps the stored state in sync
+        when an external system (e.g. WXO) sends a full replacement list of
+        tools on an UPDATE event.
+
         **Config replacement policy**: ``config`` is always fully replaced on
         update — it is NOT merged with the stored value.  To preserve existing
         keys the caller must include them in the new request payload.
@@ -139,8 +147,19 @@ class ToolPluginBindingService:
         existing_rows = db.query(ToolPluginBinding).filter(ToolPluginBinding.team_id.in_(team_ids)).all()
         existing_map: dict = {(b.team_id, b.tool_name, b.plugin_id): b for b in existing_rows}
 
+        # Track which (binding_reference_id, plugin_id) pairs appear in this
+        # request and which tool_names are authoritative for each pair so we
+        # can prune stale rows after the upsert loop.
+        # Structure: {(binding_reference_id, plugin_id_value): set_of_incoming_tool_names}
+        ref_plugin_tool_names: dict = {}
+
         for team_id, team_policies in request.teams.items():
             for policy in team_policies.policies:
+                # Build the authoritative tool-name set for stale pruning.
+                if policy.binding_reference_id:
+                    key = (policy.binding_reference_id, policy.plugin_id.value)
+                    ref_plugin_tool_names.setdefault(key, set()).update(policy.tool_names)
+
                 for tool_name in policy.tool_names:
                     existing = existing_map.get((team_id, tool_name, policy.plugin_id.value))
 
@@ -149,6 +168,7 @@ class ToolPluginBindingService:
                         existing.mode = policy.mode.value
                         existing.priority = policy.priority
                         existing.config = policy.config
+                        existing.binding_reference_id = policy.binding_reference_id
                         existing.updated_at = now
                         existing.updated_by = caller_email
                         results.append(self._to_response(existing))
@@ -168,6 +188,7 @@ class ToolPluginBindingService:
                             mode=policy.mode.value,
                             priority=policy.priority,
                             config=policy.config,
+                            binding_reference_id=policy.binding_reference_id,
                             created_at=now,
                             created_by=caller_email,
                             updated_at=now,
@@ -183,7 +204,30 @@ class ToolPluginBindingService:
                             policy.plugin_id.value,
                         )
 
-        db.flush()  # single flush for all inserts/updates
+        # Prune stale tool bindings for any (binding_reference_id, plugin_id)
+        # pair present in this request — rows whose tool_name is no longer in
+        # the authoritative incoming list are deleted.
+        for (ref_id, plugin_id_val), incoming_tools in ref_plugin_tool_names.items():
+            stale_rows = (
+                db.query(ToolPluginBinding)
+                .filter(
+                    ToolPluginBinding.binding_reference_id == ref_id,
+                    ToolPluginBinding.plugin_id == plugin_id_val,
+                    ToolPluginBinding.tool_name.notin_(incoming_tools),
+                )
+                .all()
+            )
+            for stale in stale_rows:
+                logger.debug(
+                    "Pruning stale tool binding id=%s ref=%s tool=%s plugin=%s",
+                    stale.id,
+                    ref_id,
+                    stale.tool_name,
+                    plugin_id_val,
+                )
+                db.delete(stale)
+
+        db.flush()  # single flush for all inserts/updates/deletes
         return results
 
     # ------------------------------------------------------------------
@@ -194,12 +238,14 @@ class ToolPluginBindingService:
         self,
         db: Session,
         team_id: Optional[str] = None,
+        binding_reference_id: Optional[str] = None,
     ) -> List[ToolPluginBindingResponse]:
-        """Return all bindings, optionally filtered by team.
+        """Return all bindings, optionally filtered by team and/or binding_reference_id.
 
         Args:
             db: SQLAlchemy session.
             team_id: If provided, return only bindings for this team.
+            binding_reference_id: If provided, return only bindings with this reference ID.
 
         Returns:
             List[ToolPluginBindingResponse]: Matching bindings.
@@ -207,6 +253,8 @@ class ToolPluginBindingService:
         query = db.query(ToolPluginBinding)
         if team_id:
             query = query.filter(ToolPluginBinding.team_id == team_id)
+        if binding_reference_id:
+            query = query.filter(ToolPluginBinding.binding_reference_id == binding_reference_id)
         bindings = query.order_by(ToolPluginBinding.team_id, ToolPluginBinding.priority).all()
         return [self._to_response(b) for b in bindings]
 
@@ -238,3 +286,31 @@ class ToolPluginBindingService:
         db.flush()  # flush so the DELETE is sent before the caller's commit
         logger.debug("Deleted tool plugin binding id=%s", binding_id)
         return response
+
+    def delete_bindings_by_reference(
+        self,
+        db: Session,
+        binding_reference_id: str,
+    ) -> List[ToolPluginBindingResponse]:
+        """Delete all bindings tagged with a given external reference ID.
+
+        Intended for use by external systems (e.g. WXO sidecar) that need to
+        remove all ContextForge bindings associated with one of their own
+        binding objects on a BINDING_DELETED event, without knowing the
+        internal ContextForge UUIDs.
+
+        Args:
+            db: SQLAlchemy session.
+            binding_reference_id: The external reference ID to match.
+
+        Returns:
+            List[ToolPluginBindingResponse]: All deleted binding records.
+                Returns an empty list (not an error) if no bindings matched.
+        """
+        rows = db.query(ToolPluginBinding).filter(ToolPluginBinding.binding_reference_id == binding_reference_id).all()
+        responses = [self._to_response(r) for r in rows]
+        for row in rows:
+            logger.debug("Deleted tool plugin binding id=%s ref=%s", row.id, binding_reference_id)
+            db.delete(row)
+        db.flush()
+        return responses

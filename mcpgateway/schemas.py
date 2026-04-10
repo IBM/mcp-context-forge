@@ -8116,6 +8116,7 @@ class PluginPolicyItem(BaseModel):
     config: Dict[str, Any] = Field(
         ..., description="Plugin-specific configuration; always provide all fields you care about — on upsert the config is fully replaced, so any key you omit reverts to the plugin's default value"
     )
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID (e.g. WXO binding ID) for correlating this binding with an upstream system")
 
     @model_validator(mode="after")
     def validate_config_for_plugin(self) -> "PluginPolicyItem":
@@ -8214,6 +8215,7 @@ class ToolPluginBindingResponse(BaseModelWithConfigDict):
     mode: str = Field(..., description="Execution mode")
     priority: int = Field(..., description="Execution priority")
     config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID for correlating with an upstream system")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="Email of creator")
     updated_at: datetime = Field(..., description="Last update timestamp")
