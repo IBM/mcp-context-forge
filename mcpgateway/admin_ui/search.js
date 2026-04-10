@@ -405,16 +405,16 @@ export const ensureNoResultsElement = function (
   msg.id = msgId;
   msg.className = "text-gray-700 dark:text-gray-300 mt-2";
   msg.style.display = "none";
-  const span = document.createElement("span");
-  span.id = spanId;
+  const newSpan = document.createElement("span");
+  newSpan.id = spanId;
   msg.appendChild(
     document.createTextNode(`No ${entityLabel} found containing \u201C`)
   );
-  msg.appendChild(span);
+  msg.appendChild(newSpan);
   msg.appendChild(document.createTextNode("\u201D"));
   // Insert right after the container
   container.parentNode.insertBefore(msg, container.nextSibling);
-  return { msg, span };
+  return { msg, span: newSpan };
 };
 
 /**
