@@ -342,6 +342,12 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 
 `/admin/gateways/test` enforces SSRF URL validation. Under strict defaults, localhost/private targets are blocked unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local dev overrides).
 
+???+ info "📖 Understanding Test Gateway Connectivity"
+
+    The "Test Gateway Connectivity" feature performs a **basic HTTP reachability check**, not a full MCP protocol test. It verifies network connectivity but does not establish MCP sessions or test tool functionality.
+
+    For comprehensive testing guidance including SSE session testing and tool invocation, see the [Gateway Testing section in UI Concepts](../overview/ui-concepts.md#testing-gateway-connectivity).
+
 ## 14. Input Validation Testing
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
