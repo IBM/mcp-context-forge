@@ -17,7 +17,7 @@ import uuid
 import pytest
 from unittest.mock import MagicMock, patch
 
-from plugins.retry_with_backoff.retry_with_backoff import (
+from cpex_retry_with_backoff.retry_with_backoff import (
     RetryWithBackoffPlugin,
     RetryConfig,
     _STATE,
@@ -281,19 +281,19 @@ class TestCfgFor:
 
 class TestPluginInit:
     def test_max_retries_not_clamped_when_within_ceiling(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 5
             plugin = make_plugin({"max_retries": 3})
             assert plugin._cfg.max_retries == 3
 
     def test_max_retries_clamped_to_gateway_ceiling(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 2
             plugin = make_plugin({"max_retries": 5})
             assert plugin._cfg.max_retries == 2
 
     def test_tool_override_max_retries_clamped(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 2
             plugin = make_plugin(
                 {
@@ -304,7 +304,7 @@ class TestPluginInit:
             assert plugin._cfg.tool_overrides["slow_api"]["max_retries"] == 2
 
     def test_clamping_emits_warning(self, caplog):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 1
             with caplog.at_level(logging.WARNING):
                 make_plugin({"max_retries": 5})
@@ -312,7 +312,7 @@ class TestPluginInit:
 
     def test_max_retries_equal_ceiling_not_clamped(self):
         """max_retries exactly equal to the gateway ceiling must not be clamped."""
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 3
             plugin = make_plugin({"max_retries": 3})
             assert plugin._cfg.max_retries == 3
@@ -467,7 +467,7 @@ class TestGetState:
 
         key = "evict_tool:evict_req"
         # Inject a stale entry directly into _STATE
-        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+        from cpex_retry_with_backoff.retry_with_backoff import _ToolRetryState
 
         _STATE[key] = _ToolRetryState(consecutive_failures=3, last_failure_at=time.monotonic() - _STATE_TTL_SECONDS - 1)
         assert key in _STATE
@@ -482,7 +482,7 @@ class TestGetState:
         import time
 
         key = "fresh_tool:fresh_req"
-        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+        from cpex_retry_with_backoff.retry_with_backoff import _ToolRetryState
 
         _STATE[key] = _ToolRetryState(consecutive_failures=1, last_failure_at=time.monotonic())
         _get_state("other_tool2", "other_req2")

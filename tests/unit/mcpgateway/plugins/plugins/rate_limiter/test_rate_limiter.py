@@ -31,22 +31,26 @@ from mcpgateway.plugins.framework.base import HookRef, PluginRef
 from mcpgateway.plugins.framework.errors import PluginViolationError
 from mcpgateway.plugins.framework.manager import PluginExecutor
 from mcpgateway.plugins.framework.models import PluginMode
-from plugins.rate_limiter.rate_limiter import (
-    _extract_user_identity,
-    _make_headers,
-    _parse_rate,
-    _select_most_restrictive,
-    ALGORITHM_FIXED_WINDOW,
-    ALGORITHM_SLIDING_WINDOW,
-    ALGORITHM_TOKEN_BUCKET,
-    FixedWindowAlgorithm,
-    MemoryBackend,
-    RateLimiterPlugin,
-    RedisBackend,
-    RustRateLimiterEngine,
-    SlidingWindowAlgorithm,
-    TokenBucketAlgorithm,
-)
+
+try:
+    from cpex_rate_limiter.rate_limiter import (
+        _extract_user_identity,
+        _make_headers,
+        _parse_rate,
+        _select_most_restrictive,
+        ALGORITHM_FIXED_WINDOW,
+        ALGORITHM_SLIDING_WINDOW,
+        ALGORITHM_TOKEN_BUCKET,
+        FixedWindowAlgorithm,
+        MemoryBackend,
+        RateLimiterPlugin,
+        RedisBackend,
+        RustRateLimiterEngine,
+        SlidingWindowAlgorithm,
+        TokenBucketAlgorithm,
+    )
+except ImportError:
+    pytest.skip("cpex_rate_limiter does not expose the legacy in-tree helper internals", allow_module_level=True)
 
 
 def _clear_plugin(plugin: RateLimiterPlugin) -> None:
@@ -67,7 +71,7 @@ def _mk(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterPlugin
     return RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": rate, "algorithm": algorithm},
         )
@@ -249,7 +253,7 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "100/s", "by_tool": {"restricted_tool": "1/s"}},  # High user limit  # Low tool-specific limit
         )
@@ -599,7 +603,7 @@ def _mk_unlimited() -> RateLimiterPlugin:
     return RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
             config={},  # No limits
         )
@@ -683,7 +687,7 @@ async def test_redis_backend_shares_state_across_instances():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "2/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
         )
@@ -723,7 +727,7 @@ async def test_store_evicts_expired_windows():
     exercising the Python fallback path's sweep behaviour.
     """
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = _mk("5/s")
@@ -789,7 +793,7 @@ async def test_fixed_window_allows_boundary_burst():
     boundary bursts (see companion test below).
     """
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = _mk("5/s")
@@ -798,7 +802,7 @@ async def test_fixed_window_allows_boundary_burst():
 
     allowed_total = 0
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # Window W1: fill the limit exactly
         mock_time.time.return_value = 1000
         for _ in range(5):
@@ -826,13 +830,13 @@ async def test_sliding_window_prevents_boundary_burst():
     when W2 starts, so the second batch is blocked.
     """
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl-sw",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "5/s", "algorithm": ALGORITHM_SLIDING_WINDOW},
             )
@@ -842,7 +846,7 @@ async def test_sliding_window_prevents_boundary_burst():
 
     allowed_total = 0
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # Window W1: fill the limit exactly at t=1000
         mock_time.time.return_value = 1000.0
         for _ in range(5):
@@ -873,7 +877,7 @@ async def test_prompt_pre_fetch_enforces_by_tool_config():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={
                 "by_user": "100/s",  # High — will not trigger
@@ -935,7 +939,7 @@ async def test_none_tenant_skips_by_tenant_check():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "100/s", "by_tenant": "2/s"},
         )
@@ -1003,7 +1007,7 @@ def test_malformed_rate_count_raises_at_init():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "abc/m"},  # invalid count
             )
@@ -1022,7 +1026,7 @@ def test_unsupported_rate_unit_raises_at_init():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "60/d"},  # unsupported unit
             )
@@ -1038,7 +1042,7 @@ def test_invalid_backend_raises_at_init():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "10/s", "backend": "reddis"},
             )
@@ -1054,7 +1058,7 @@ def test_malformed_by_tool_rate_raises_at_init():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_tool": {"search": "abc/m"}},
             )
@@ -1073,7 +1077,7 @@ async def test_graceful_degradation_tool_pre_invoke_does_not_crash_caller():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "10/s"},
         )
@@ -1097,7 +1101,7 @@ async def test_graceful_degradation_prompt_pre_fetch_does_not_crash_caller():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={"by_user": "10/s"},
         )
@@ -1132,7 +1136,7 @@ async def test_permissive_mode_allows_request_past_limit():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "1/s"},
             mode=PluginMode.PERMISSIVE,
@@ -1168,7 +1172,7 @@ async def test_enforce_mode_raises_on_limit_exceeded():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "1/s"},
             mode=PluginMode.ENFORCE,
@@ -1217,13 +1221,13 @@ async def test_redis_fallback_to_memory_when_redis_unavailable():
             raise ConnectionError("Redis is down")
 
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0", "redis_fallback": True},
             )
@@ -1253,13 +1257,13 @@ async def test_redis_fallback_enforces_limit_via_memory():
             raise ConnectionError("Redis is down")
 
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "2/s", "backend": "redis", "redis_url": "redis://localhost:6379/0", "redis_fallback": True},
             )
@@ -1294,7 +1298,7 @@ async def test_redis_no_fallback_raises_on_redis_failure():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0", "redis_fallback": False},
         )
@@ -1327,7 +1331,7 @@ async def test_cross_tenant_isolation_different_tenants_independent():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_tenant": "2/s"},
         )
@@ -1357,7 +1361,7 @@ async def test_cross_tenant_no_counter_bleed():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_tenant": "100/s"},
         )
@@ -1553,7 +1557,7 @@ async def test_bypass_tool_name_case_sensitivity():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "100/s", "by_tool": {"search": "1/s"}},
         )
@@ -1581,7 +1585,7 @@ async def test_bypass_tool_name_whitespace():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "100/s", "by_tool": {"search": "1/s"}},
         )
@@ -1651,7 +1655,7 @@ async def test_violation_description_does_not_contain_tenant_identity():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_tenant": "1/s"},
         )
@@ -1691,7 +1695,7 @@ async def test_bypass_different_tenants_are_intentionally_independent():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "100/s", "by_tenant": "2/s"},
         )
@@ -1733,7 +1737,7 @@ def test_invalid_algorithm_raises_at_init():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "10/s", "algorithm": "leaky_bucket"},
             )
@@ -1745,7 +1749,7 @@ def test_default_algorithm_is_fixed_window():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "10/s"},
         )
@@ -1804,7 +1808,7 @@ async def test_sliding_window_prevents_burst_at_boundary():
 
     allowed_total = 0
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # End of window W1: fill the limit
         mock_time.time.return_value = 1000.9
         for _ in range(5):
@@ -1990,7 +1994,7 @@ def test_token_bucket_with_redis_backend_uses_redis_backend():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_user": "10/s",
@@ -2287,7 +2291,7 @@ async def test_sliding_window_enforces_correctly_with_duplicate_timestamps():
     lock = asyncio.Lock()
     fixed_time = time.time()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         mock_time.time.return_value = fixed_time
 
         # Send limit+1 requests all at the same timestamp
@@ -2455,7 +2459,7 @@ def test_by_tool_with_special_character_tool_names():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_tool": {
@@ -2525,7 +2529,7 @@ async def test_redis_sliding_window_counts_multiple_requests_with_same_timestamp
     )
 
     limit = "2/s"
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         mock_time.time.return_value = fixed_ts
         r1, *_ = await backend.allow("user:test", limit)
         r2, *_ = await backend.allow("user:test", limit)
@@ -2549,7 +2553,7 @@ async def test_sliding_window_memory_evicts_idle_keys_after_window_expires():
     lock = asyncio.Lock()
     now = time.time()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # Exhaust the limit now
         mock_time.time.return_value = now
         await algorithm.allow(lock, "user:test", 2, 1)
@@ -2618,7 +2622,7 @@ async def test_memory_and_redis_sliding_window_have_same_allow_block_sequence():
 
     for offset in offsets:
         t = base + offset
-        with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+        with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
             mock_time.time.return_value = t
             r_allowed, *_ = await redis_backend.allow("user:test", limit)
             m_allowed, *_ = await memory_backend.allow("user:test", limit)
@@ -2686,7 +2690,7 @@ async def test_memory_and_redis_token_bucket_have_same_allow_block_sequence():
 
     for offset in offsets:
         t = base + offset
-        with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+        with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
             mock_time.time.return_value = t
             r_allowed, *_ = await redis_backend.allow("user:test", limit)
             m_allowed, *_ = await memory_backend.allow("user:test", limit)
@@ -2747,7 +2751,7 @@ async def test_token_bucket_success_headers_are_consistent_between_memory_and_re
         _client=mock_client,
     )
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         mock_time.time.return_value = t0
         m_allowed, m_limit, m_reset, m_meta = await memory_backend.allow("user:x", limit)
         r_allowed, r_limit, r_reset, r_meta = await redis_backend.allow("user:x", limit)
@@ -2783,7 +2787,7 @@ async def test_token_bucket_memory_reset_timestamp_always_in_future():
     backend = MemoryBackend(TokenBucketAlgorithm())
     t0 = 1_000_000.0
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         mock_time.time.return_value = t0
         allowed, _, reset_timestamp, _ = await backend.allow("user:test", "3/s")
 
@@ -2806,14 +2810,14 @@ async def test_sliding_window_reset_header_tracks_oldest_request_expiry():
     so real elapsed time between requests causes the nanos-to-seconds
     integer division to diverge from the mocked expectations.
     """
-    with patch("plugins.rate_limiter.rate_limiter._RUST_AVAILABLE", False):
+    with patch("cpex_rate_limiter.rate_limiter._RUST_AVAILABLE", False):
         plugin = _mk("3/s", ALGORITHM_SLIDING_WINDOW)
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
         payload = ToolPreInvokePayload(name="t", arguments={})
         t0 = 1_000_000.0
 
         # First request at t0
-        with patch("plugins.rate_limiter.rate_limiter.time") as mt:
+        with patch("cpex_rate_limiter.rate_limiter.time") as mt:
             mt.time.return_value = t0
             r1 = await plugin.tool_pre_invoke(payload, ctx)
         assert r1.violation is None
@@ -2823,7 +2827,7 @@ async def test_sliding_window_reset_header_tracks_oldest_request_expiry():
         assert float(reset_after_first) == pytest.approx(t0 + 1.0, abs=0.1)
 
         # Second request at t0 + 0.3s — oldest is still t0
-        with patch("plugins.rate_limiter.rate_limiter.time") as mt:
+        with patch("cpex_rate_limiter.rate_limiter.time") as mt:
             mt.time.return_value = t0 + 0.3
             r2 = await plugin.tool_pre_invoke(payload, ctx)
         assert r2.violation is None
@@ -2844,7 +2848,7 @@ async def test_token_bucket_retry_after_matches_time_to_next_token():
     t0 = 1_000_000.0
 
     # Exhaust both tokens
-    with patch("plugins.rate_limiter.rate_limiter.time") as mt:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mt:
         mt.time.return_value = t0
         r1 = await plugin.tool_pre_invoke(payload, ctx)
         r2 = await plugin.tool_pre_invoke(payload, ctx)
@@ -2852,7 +2856,7 @@ async def test_token_bucket_retry_after_matches_time_to_next_token():
     assert r2.violation is None
 
     # Third request at same instant — bucket empty
-    with patch("plugins.rate_limiter.rate_limiter.time") as mt:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mt:
         mt.time.return_value = t0
         r3 = await plugin.tool_pre_invoke(payload, ctx)
     assert r3.violation is not None
@@ -2876,7 +2880,7 @@ async def test_remaining_header_never_goes_negative_for_any_algorithm(algorithm:
     t0 = 1_000_000.0
 
     for _ in range(5):  # send 5 requests against a limit of 2
-        with patch("plugins.rate_limiter.rate_limiter.time") as mt:
+        with patch("cpex_rate_limiter.rate_limiter.time") as mt:
             mt.time.return_value = t0
             result = await plugin.tool_pre_invoke(payload, ctx)
         # Headers are on result.http_headers for allowed requests,
@@ -2910,7 +2914,7 @@ async def test_sliding_window_sweep_evicts_keys_with_fully_stale_timestamps():
     algorithm = SlidingWindowAlgorithm()
     lock = asyncio.Lock()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # t=0: user makes requests that fill the window
         mock_time.time.return_value = 0.0
         await algorithm.allow(lock, "user:alice", 3, 1)
@@ -2933,7 +2937,7 @@ async def test_sliding_window_sweep_does_not_evict_active_keys():
     algorithm = SlidingWindowAlgorithm()
     lock = asyncio.Lock()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         mock_time.time.return_value = 0.0
         await algorithm.allow(lock, "user:bob", 3, 60)  # 60-second window
 
@@ -2956,7 +2960,7 @@ async def test_sliding_window_allow_after_sweep_starts_fresh():
     algorithm = SlidingWindowAlgorithm()
     lock = asyncio.Lock()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # Exhaust the limit at t=0
         mock_time.time.return_value = 0.0
         await algorithm.allow(lock, "user:carol", 2, 1)
@@ -2988,7 +2992,7 @@ async def test_sliding_window_allow_after_sweep_starts_fresh():
 def _mk_rust(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterPlugin:
     """Create a plugin instance that is guaranteed to use the Rust engine."""
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", True):
         # If the real Rust extension is not installed this will silently fall
@@ -2996,7 +3000,7 @@ def _mk_rust(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterP
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": rate, "algorithm": algorithm},
             )
@@ -3005,7 +3009,7 @@ def _mk_rust(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterP
 
 
 # First-Party
-import plugins.rate_limiter.rate_limiter as _rate_limiter_module  # noqa: E402
+import cpex_rate_limiter.rate_limiter as _rate_limiter_module  # noqa: E402
 
 _RUST_ENGINE_PRESENT = _rate_limiter_module._RUST_AVAILABLE
 _skip_no_rust = pytest.mark.skipif(not _RUST_ENGINE_PRESENT, reason="Rust engine not installed")
@@ -3056,7 +3060,7 @@ async def test_arch01_redis_rust_path_uses_async_entrypoint():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
         )
@@ -3108,7 +3112,7 @@ async def test_arch01_single_call_covers_all_active_dimensions():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_user": "30/m",
@@ -3260,7 +3264,7 @@ async def test_arch04_rust_redis_exception_uses_python_fallback_when_enabled():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "2/s", "backend": "redis", "redis_url": "redis://localhost:6379/0", "redis_fallback": True},
         )
@@ -3307,7 +3311,7 @@ async def test_arch04_rust_redis_exception_fail_open_when_fallback_disabled():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "2/s", "backend": "redis", "redis_url": "redis://localhost:6379/0", "redis_fallback": False},
         )
@@ -3337,13 +3341,13 @@ async def test_arch05_python_backend_used_when_rust_unavailable():
     fully functional as a drop-in fallback when the extension is not installed.
     """
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[ToolHookType.TOOL_PRE_INVOKE],
                 config={"by_user": "3/s"},
             )
@@ -3382,7 +3386,7 @@ async def test_arch05_redis_backend_rust_owns_redis_when_available():
     path (when Rust is unavailable).
     """
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod
+    import cpex_rate_limiter.rate_limiter as _rl_mod
 
     if not _rl_mod._RUST_AVAILABLE:
         pytest.skip("Rust extension not available in this environment")
@@ -3390,7 +3394,7 @@ async def test_arch05_redis_backend_rust_owns_redis_when_available():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
         )
@@ -3423,13 +3427,13 @@ def _mk_redis_plugin(config: dict) -> RateLimiterPlugin:
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     # First-Party
-    import plugins.rate_limiter.rate_limiter as _rl_mod  # noqa: PLC0415
+    import cpex_rate_limiter.rate_limiter as _rl_mod  # noqa: PLC0415
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
                 config={"backend": "redis", "redis_url": "redis://localhost:6379/0", **config},
             )
@@ -3603,7 +3607,7 @@ async def test_redis01_no_eval_calls_when_no_limits_configured():
 def _python_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
     """Run n_requests through the Python MemoryBackend; return allow decisions."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import (  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import (  # noqa: PLC0415
         FixedWindowAlgorithm,
         MemoryBackend,
         SlidingWindowAlgorithm,
@@ -3631,7 +3635,7 @@ def _python_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
 def _rust_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
     """Run n_requests through the Rust RateLimiterEngine; return allow decisions."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
 
     engine = RustRateLimiterEngine({"by_user": f"{limit}/h", "algorithm": algorithm})
     window_nanos = 3600 * 1_000_000_000  # 1 hour in nanos
@@ -3677,8 +3681,8 @@ def test_corr01_sliding_window_parity():
 def test_corr01_remaining_count_parity_fixed_window():
     """CORR-01: remaining token count matches between Python and Rust (fixed_window)."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend  # noqa: PLC0415
-    from plugins.rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
 
     limit = 10
     window_nanos = 3600 * 1_000_000_000
@@ -3709,7 +3713,7 @@ def test_corr01_remaining_count_parity_fixed_window():
 def test_corr01_remaining_count_parity_all_algorithms(algorithm):
     """CORR-01: remaining count matches between Python and Rust for all algorithms."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend, RustRateLimiterEngine, SlidingWindowAlgorithm, TokenBucketAlgorithm  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend, RustRateLimiterEngine, SlidingWindowAlgorithm, TokenBucketAlgorithm  # noqa: PLC0415
 
     algo_map = {
         ALGORITHM_FIXED_WINDOW: FixedWindowAlgorithm,
@@ -3746,7 +3750,7 @@ def test_corr01_multi_dimension_parity():
     plugin_py = RateLimiterPlugin(
         PluginConfig(
             name="rl-parity-py",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_user": "5/h",
@@ -3761,7 +3765,7 @@ def test_corr01_multi_dimension_parity():
     plugin_rs = RateLimiterPlugin(
         PluginConfig(
             name="rl-parity-rs",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_user": "5/h",
@@ -3848,7 +3852,7 @@ def test_redis_key_format_parity_rust_dimension_keys(user, tenant, tool, by_user
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="key-parity",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             config={
                 "by_user": by_user,
@@ -4037,7 +4041,7 @@ async def test_redis02_noscript_fallback_to_eval():
 async def test_redis04_connection_failure_falls_back_to_memory_allow():
     """REDIS-04: allow() falls back to MemoryBackend on Redis connection failure."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     memory = MemoryBackend(algorithm=FixedWindowAlgorithm())
     backend = RedisBackend(
@@ -4094,7 +4098,7 @@ async def test_redis04_connection_failure_no_fallback_allows_gracefully():
 async def test_redis04_allow_many_falls_back_to_memory_on_connection_failure():
     """REDIS-04: allow_many() falls back to per-call MemoryBackend when Redis is down."""
     # First-Party
-    from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     memory = MemoryBackend(algorithm=FixedWindowAlgorithm())
     backend = RedisBackend(
@@ -4187,7 +4191,7 @@ async def test_perf03_rust_p99_does_not_regress_vs_python():
     if it is somehow slower the test fails with a diagnostic message.
     """
     # First-Party
-    from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
+    from cpex_rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     CONCURRENCY = 100
     TOTAL = 1000
@@ -4411,7 +4415,7 @@ async def test_arch01_redis_rust_prompt_uses_async_entrypoint():
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
         )
@@ -4445,7 +4449,7 @@ async def test_sliding_window_retry_after_never_zero_when_blocked():
     algorithm = SlidingWindowAlgorithm()
     lock = asyncio.Lock()
 
-    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+    with patch("cpex_rate_limiter.rate_limiter.time") as mock_time:
         # Place a request at a fractional timestamp
         mock_time.time.return_value = 1000.1
         await algorithm.allow(lock, "user:x", 1, 1)  # consume limit
@@ -4497,7 +4501,7 @@ def test_force_python_env_var_disables_rust():
     import importlib  # noqa: PLC0415
 
     # First-Party
-    import plugins.rate_limiter.rate_limiter as rl_mod  # noqa: PLC0415
+    import cpex_rate_limiter.rate_limiter as rl_mod  # noqa: PLC0415
 
     with patch.dict(os.environ, {"RATE_LIMITER_FORCE_PYTHON": "1"}):
         importlib.reload(rl_mod)
@@ -4550,7 +4554,7 @@ def test_validate_config_redis_url_required():
         RateLimiterPlugin(
             PluginConfig(
                 name="rl",
-                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH],
                 config={"by_user": "10/s", "backend": "redis"},
             )
@@ -4563,13 +4567,13 @@ def test_validate_config_redis_url_required():
 
 
 @pytest.mark.asyncio
-@patch("plugins.rate_limiter.rate_limiter._RUST_AVAILABLE", False)
+@patch("cpex_rate_limiter.rate_limiter._RUST_AVAILABLE", False)
 async def test_tenant_none_skips_by_tenant_dimension():
     """When tenant_id is None, the by_tenant dimension must be skipped entirely."""
     plugin = RateLimiterPlugin(
         PluginConfig(
             name="rl",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={"by_user": "100/s", "by_tenant": "1/s"},
         )

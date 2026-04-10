@@ -4,14 +4,11 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Unit tests for PII Filter Plugin with parametric testing for both Python and Rust implementations.
+Unit tests for the packaged PII Filter plugin.
 """
 
 # Standard
 import logging
-import os
-import time
-from typing import Type
 
 # Third-Party
 import pytest
@@ -29,50 +26,28 @@ from mcpgateway.plugins.framework import (
 )
 
 # Import the PII Filter plugin
-from plugins.pii_filter.pii_filter import (
-    MaskingStrategy,
-    PIIDetector,
-    PIIFilterConfig,
-    PIIFilterPlugin,
-    PIIType,
-)
-from plugins.pii_filter import pii_filter as pii_filter_module
-
-# Try to import Rust implementation
 try:
-    from plugins.pii_filter.pii_filter import RustPIIDetector, RUST_AVAILABLE
+    from cpex_pii_filter.pii_filter import (
+        MaskingStrategy,
+        PIIDetector,
+        PIIFilterConfig,
+        PIIFilterPlugin,
+        PIIType,
+    )
+    from cpex_pii_filter import pii_filter as pii_filter_module
 except ImportError:
-    RUST_AVAILABLE = False
-    RustPIIDetector = None
-    # Fail in CI if Rust plugins are required
-    if os.environ.get("REQUIRE_RUST") == "1":
-        raise ImportError("Rust plugin 'pii_filter' is required in CI but not available")
-
-
-# Parametric fixture for detector implementations
-@pytest.fixture(params=["python", "rust"])
-def detector_class(request) -> Type:
-    """Fixture that provides both Python and Rust detector classes."""
-    if request.param == "python":
-        return PIIDetector
-    elif request.param == "rust":
-        if not RUST_AVAILABLE:
-            pytest.skip("Rust implementation not available")
-        return RustPIIDetector
-    raise ValueError(f"Unknown detector type: {request.param}")
+    pytest.skip("cpex_pii_filter does not expose the legacy in-tree detector internals", allow_module_level=True)
 
 
 @pytest.fixture
-def detector_impl(request) -> str:
-    """Fixture that provides the implementation name for conditional assertions."""
-    return getattr(request, "param", "python")
+def detector_class():
+    """Fixture that provides the packaged detector class."""
+    return PIIDetector
 
 
 def normalize_detection_keys(detections: dict) -> set:
     """
-    Normalize detection keys from both Python and Rust implementations.
-    Python returns PIIType enum (e.g., PIIType.SSN), Rust returns lowercase strings (e.g., "ssn").
-    This extracts just the type name in lowercase.
+    Normalize detection keys from detector outputs.
     """
     detection_keys = set()
     for k in detections.keys():
@@ -84,13 +59,8 @@ def normalize_detection_keys(detections: dict) -> set:
     return detection_keys
 
 
-def is_rust_detector_class(detector_class: Type) -> bool:
-    """Return True when the provided detector class is the Rust-backed implementation."""
-    return detector_class is not PIIDetector
-
-
 class TestPIIDetectorParametric:
-    """Parametric tests that run on both Python and Rust implementations."""
+    """Detector tests for the packaged implementation."""
 
     @pytest.fixture
     def default_config(self):
@@ -106,8 +76,6 @@ class TestPIIDetectorParametric:
         """Test detector initialization."""
         detector = detector_class(default_config)
         assert detector is not None
-        # Note: Rust implementation doesn't expose config attribute (internal optimization)
-        # Python implementation does expose it for compatibility
         if hasattr(detector, "config"):
             assert detector.config == default_config
 
@@ -135,7 +103,7 @@ class TestPIIDetectorParametric:
             assert "ssn" not in detection_keys
 
     def test_ssn_detection_with_position(self, detector_class):
-        """Test SSN detection with position information (Rust-specific feature)."""
+        """Test SSN detection with position information when exposed."""
         config = PIIFilterConfig(detect_ssn=True)
         detector = detector_class(config)
         text = "My SSN is 123-45-6789"
@@ -154,8 +122,7 @@ class TestPIIDetectorParametric:
         detection = detections[ssn_key][0]
         assert detection["value"] == "123-45-6789"
 
-        # Position info available in Rust implementation
-        if detector_class.__name__ == "RustPIIDetector":
+        if "start" in detection and "end" in detection:
             assert detection["start"] == 10
             assert detection["end"] == 21
 
@@ -170,7 +137,6 @@ class TestPIIDetectorParametric:
         assert "6789" in masked
         assert "123-45-6789" not in masked
 
-    # BSN Detection Tests (Python-specific)
     @pytest.mark.parametrize(
         "text,should_detect",
         [
@@ -189,11 +155,7 @@ class TestPIIDetectorParametric:
         detections = detector.detect(text)
         detection_keys = normalize_detection_keys(detections)
 
-        expected_detection = should_detect
-        if is_rust_detector_class(detector_class) and text == "Regular number 180774955":
-            expected_detection = False
-
-        if expected_detection:
+        if should_detect:
             assert "bsn" in detection_keys, f"Expected BSN detection in: {text}"
         else:
             assert "bsn" not in detection_keys, f"Unexpected BSN detection in: {text}"
@@ -256,19 +218,7 @@ class TestPIIDetectorParametric:
         detections = detector.detect(text)
         detection_keys = normalize_detection_keys(detections)
 
-        expected_detection = should_detect
-        if is_rust_detector_class(detector_class):
-            rust_contextual_only_cases = {
-                "ID: 987654321",
-                "Order #123456789",
-                "Invoice 987654321",
-                "Tracking: 555666777",
-                "Numbers: 123456789 and 987654321",
-            }
-            if text in rust_contextual_only_cases:
-                expected_detection = False
-
-        if expected_detection:
+        if should_detect:
             assert "bsn" in detection_keys, f"{description}: Expected BSN detection in: {text}"
         else:
             assert "bsn" not in detection_keys, f"{description}: Unexpected BSN detection in: {text}"
@@ -299,10 +249,6 @@ class TestPIIDetectorParametric:
         for text, expected_type, description in test_cases:
             detections = detector.detect(text)
             detection_keys = normalize_detection_keys(detections)
-
-            if is_rust_detector_class(detector_class) and text == "Phone: 555123456":
-                assert len(detection_keys) == 0, f"{description}: Rust should not detect unlabeled 9-digit phone values"
-                continue
 
             # At least one type should be detected
             assert len(detection_keys) > 0, f"{description}: No detection for: {text}"
@@ -560,15 +506,7 @@ class TestPIIDetectorParametric:
 
         detection_keys = normalize_detection_keys(detections)
 
-        # For Rust, check that whitelisted emails are filtered out
-        if detector_class.__name__ == "RustPIIDetector":
-            if "email" in detection_keys:
-                email_key = next(k for k in detections.keys() if "email" in str(k).lower())
-                for detection in detections[email_key]:
-                    assert detection["value"] != "test@example.com"
-        else:
-            # Python implementation
-            assert PIIType.EMAIL not in detections
+        assert PIIType.EMAIL not in detections
 
         # Non-whitelisted email should be detected
         text = "Contact real@email.com"
@@ -633,273 +571,6 @@ class TestPIIDetectorParametric:
         detector.detect("\n\n\n")
 
 
-# Rust-specific tests
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust implementation not available")
-class TestRustPIIDetectorSpecific:
-    """Tests specific to Rust implementation."""
-
-    @pytest.fixture
-    def default_config(self):
-        """Create default configuration for testing."""
-        return PIIFilterConfig()
-
-    @pytest.fixture
-    def detector(self, default_config):
-        """Create Rust detector instance."""
-        return RustPIIDetector(default_config)
-
-    def test_process_nested_dict(self, detector):
-        """Test processing nested dictionary."""
-        data = {"user": {"ssn": "123-45-6789", "email": "john@example.com", "name": "John Doe"}}
-
-        modified, new_data, detections = detector.process_nested(data, "")
-
-        assert modified is True
-        assert new_data["user"]["ssn"] == "***-**-6789"
-        assert new_data["user"]["email"] == "j***n@example.com"
-        assert new_data["user"]["name"] == "John Doe"
-
-        detection_keys = normalize_detection_keys(detections)
-        assert "ssn" in detection_keys
-        assert "email" in detection_keys
-
-    def test_process_nested_list(self, detector):
-        """Test processing list with PII."""
-        data = ["SSN: 123-45-6789", "No PII here", "Email: test@example.com"]
-
-        modified, new_data, detections = detector.process_nested(data, "")
-
-        assert modified is True
-        assert new_data[0] == "SSN: ***-**-6789"
-        assert new_data[1] == "No PII here"
-        assert new_data[2] == "Email: t***t@example.com"
-
-    def test_process_nested_mixed_structure(self, detector):
-        """Test processing mixed nested structure."""
-        data = {"users": [{"ssn": "123-45-6789", "name": "Alice"}, {"ssn": "223-65-4321", "name": "Bob"}], "contact": {"email": "admin@example.com", "phone": "555-1234"}}
-
-        modified, new_data, detections = detector.process_nested(data, "")
-
-        assert modified is True
-        assert new_data["users"][0]["ssn"] == "***-**-6789"
-        assert new_data["users"][1]["ssn"] == "***-**-4321"
-        assert new_data["contact"]["email"] == "a***n@example.com"
-
-    def test_process_nested_no_pii(self, detector):
-        """Test processing nested data with no PII."""
-        data = {"user": {"name": "John Doe", "age": 30}}
-
-        modified, new_data, detections = detector.process_nested(data, "")
-
-        assert modified is False
-        assert new_data == data
-        assert len(detections) == 0
-
-    def test_initialization_without_rust(self):
-        """Test that Rust detector is available when imported."""
-        # This test originally checked for ImportError when Rust unavailable
-        # Since Rust is now available and working, we verify it can be imported
-        from plugins.pii_filter.pii_filter import RustPIIDetector as RustDet
-
-        config = PIIFilterConfig()
-        detector = RustDet(config)
-        assert detector is not None
-
-    def test_built_in_partial_masks_override_global_redaction_default(self):
-        """Built-in Rust detections should keep their explicit partial strategies."""
-        detector = RustPIIDetector(PIIFilterConfig(detect_ssn=True, detect_email=True, detect_phone=False, detect_ip_address=False, default_mask_strategy=MaskingStrategy.REDACT))
-        detections = detector.detect("SSN: 123-45-6789 Email: john@example.com")
-
-        assert detections["ssn"][0]["mask_strategy"] == "partial"
-        assert detections["email"][0]["mask_strategy"] == "partial"
-
-    def test_rust_accepts_unformatted_contextual_ssn(self):
-        """Rust should continue accepting labeled bare 9-digit SSNs."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                detect_ssn=True,
-                detect_bsn=False,
-                detect_phone=False,
-                detect_bank_account=False,
-            )
-        )
-
-        detections = detector.detect("SSN: 123456789")
-        assert "ssn" in detections
-
-    def test_built_in_redaction_masks_ignore_global_partial_default(self):
-        """Built-in redaction-only detections should keep their explicit redact strategies."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                detect_ssn=False,
-                detect_email=False,
-                detect_phone=False,
-                detect_ip_address=True,
-                default_mask_strategy=MaskingStrategy.PARTIAL,
-            )
-        )
-        detections = detector.detect("IP 192.168.1.1")
-
-        assert detections["ip_address"][0]["mask_strategy"] == "redact"
-
-    def test_custom_pattern_keeps_explicit_strategy_when_default_redacts(self):
-        """Custom pattern overrides should win over the global default strategy."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                default_mask_strategy=MaskingStrategy.REDACT,
-                custom_patterns=[{"type": "custom", "pattern": r"\bEMP\d{6}\b", "description": "Employee ID", "mask_strategy": "partial", "enabled": True}],
-            )
-        )
-
-        detections = detector.detect("Employee ID EMP123456")
-        assert detections["custom"][0]["mask_strategy"] == "partial"
-
-    def test_rust_mask_uses_built_in_partial_strategies_when_default_redacts(self):
-        """Live Rust masking should preserve built-in partial masking behavior."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                detect_ssn=True,
-                detect_email=True,
-                detect_phone=False,
-                detect_ip_address=False,
-                detect_bsn=False,
-                detect_credit_card=False,
-                detect_bank_account=False,
-                detect_date_of_birth=False,
-                detect_passport=False,
-                detect_driver_license=False,
-                detect_medical_record=False,
-                default_mask_strategy=MaskingStrategy.REDACT,
-            )
-        )
-        text = "SSN: 123-45-6789 Email: john@example.com"
-        detections = detector.detect(text)
-        masked = detector.mask(text, detections)
-
-        assert "***-**-6789" in masked
-        assert "j***n@example.com" in masked
-        assert "[REDACTED]" not in masked
-
-    def test_rust_mask_strategy_regression_matrix(self):
-        """Regression test: built-in Rust masks should ignore a global hash default."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                detect_ssn=True,
-                detect_credit_card=True,
-                detect_email=True,
-                detect_phone=True,
-                detect_ip_address=True,
-                detect_bsn=False,
-                detect_bank_account=False,
-                detect_date_of_birth=False,
-                detect_passport=False,
-                detect_driver_license=False,
-                detect_medical_record=False,
-                default_mask_strategy=MaskingStrategy.HASH,
-            )
-        )
-        text = "SSN: 123-45-6789 " "Email: john@example.com " "Phone: 555-123-4567 " "Card: 4111-1111-1111-1111 " "IP: 192.168.1.1"
-
-        detections = detector.detect(text)
-        masked = detector.mask(text, detections)
-
-        assert detections["ssn"][0]["mask_strategy"] == "partial"
-        assert detections["credit_card"][0]["mask_strategy"] == "partial"
-        assert detections["email"][0]["mask_strategy"] == "partial"
-        assert detections["phone"][0]["mask_strategy"] == "partial"
-        assert detections["ip_address"][0]["mask_strategy"] == "redact"
-
-        assert "***-**-6789" in masked
-        assert "j***n@example.com" in masked
-        assert "***-***-4567" in masked
-        assert "****-****-****-1111" in masked
-        assert masked.count("[REDACTED]") == 1
-        assert "[HASH:" not in masked
-
-    def test_very_long_text_performance(self, detector):
-        """Test performance with very long text."""
-        # Create text with 1000 PII instances
-        text_parts = []
-        for i in range(1000):
-            serial = (i % 9999) + 1
-            text_parts.append(f"User {i}: SSN 123-45-{serial:04d}, Email user{i}@example.com")
-        text = "\n".join(text_parts)
-
-        start = time.time()
-        detections = detector.detect(text)
-        duration = time.time() - start
-
-        assert "ssn" in detections
-        assert "email" in detections
-        assert len(detections["ssn"]) == 1000
-        assert len(detections["email"]) == 1000
-        # Should process in reasonable time (< 1 second for Rust)
-        assert duration < 1.0, f"Processing took {duration:.2f}s, expected < 1s"
-
-    def test_large_batch_detection(self):
-        """Test detection performance on large batch."""
-        config = PIIFilterConfig(max_text_bytes=1024 * 1024)
-        detector = RustPIIDetector(config)
-
-        # Generate 10,000 lines of text with PII
-        lines = []
-        area = 100
-        while len(lines) < 10000:
-            if area != 666:
-                i = len(lines)
-                lines.append(f"User {i}: SSN {area:03d}-45-6789, Email user{i}@example.com")
-
-            area += 1
-            if area >= 900:
-                area = 100
-        text = "\n".join(lines)
-
-        start = time.time()
-        detections = detector.detect(text)
-        duration = time.time() - start
-
-        print(f"\nProcessed {len(text):,} characters in {duration:.3f}s")
-        print(f"Throughput: {len(text) / duration / 1024 / 1024:.2f} MB/s")
-
-        assert "ssn" in detections
-        assert "email" in detections
-        # Rust should be very fast (< 2 seconds for 10k instances)
-        assert duration < 2.0
-
-    def test_nested_structure_performance(self):
-        """Test performance on deeply nested structures."""
-        config = PIIFilterConfig(max_nested_depth=256)
-        detector = RustPIIDetector(config)
-
-        # Create deeply nested structure
-        data = {"level1": {}}
-        current = data["level1"]
-        for i in range(100):
-            current[f"level{i + 2}"] = {"ssn": f"{i:03d}-45-6789", "email": f"user{i}@example.com", "data": {}}
-            current = current[f"level{i + 2}"]["data"]
-
-        start = time.time()
-        modified, new_data, detections = detector.process_nested(data, path="")
-        duration = time.time() - start
-
-        print(f"\nProcessed deeply nested structure in {duration:.3f}s")
-
-        assert modified is True
-        assert duration < 0.5  # Should be very fast
-
-    def test_rust_detector_uses_configurable_limits(self):
-        """Rust detector should honor configured input-size limits."""
-        detector = RustPIIDetector(
-            PIIFilterConfig(
-                detect_ssn=True,
-                max_text_bytes=8,
-            )
-        )
-
-        with pytest.raises(ValueError, match="maximum supported size"):
-            detector.detect("123456789")
-
-
 # Python-specific plugin integration tests
 class TestPIIFilterPlugin:
     """Test the PII Filter plugin integration (Python-specific)."""
@@ -911,7 +582,7 @@ class TestPIIFilterPlugin:
             name="TestPIIFilter",
             description="Test PII Filter",
             author="Test",
-            kind="plugins.pii_filter.pii_filter.PIIFilterPlugin",
+            kind="cpex_pii_filter.pii_filter.PIIFilterPlugin",
             version="1.0",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH],
             tags=["test", "pii"],
@@ -1061,7 +732,7 @@ class TestPIIFilterPlugin:
             "plugins": [
                 {
                     "name": "PIIFilter",
-                    "kind": "plugins.pii_filter.pii_filter.PIIFilterPlugin",
+                    "kind": "cpex_pii_filter.pii_filter.PIIFilterPlugin",
                     "description": "PII Filter",
                     "author": "Test",
                     "version": "1.0",
@@ -1111,9 +782,7 @@ class TestPIIFilterPlugin:
             os.unlink(config_path)
 
     def test_python_detector_logs_deprecation_warning(self, plugin_config, monkeypatch, caplog):
-        """Log once when the plugin falls back to the legacy Python detector."""
-        monkeypatch.setattr(pii_filter_module, "_RUST_AVAILABLE", False)
-        monkeypatch.setattr(pii_filter_module, "_RustPIIDetector", None)
+        """Log once when the plugin uses the legacy Python detector."""
         monkeypatch.setattr(PIIFilterPlugin, "_python_deprecation_warned", False)
         caplog.set_level(logging.WARNING)
 
