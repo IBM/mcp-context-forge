@@ -7228,6 +7228,32 @@ class TestRustMcpExecutionPlan:
         with pytest.raises(ValueError, match="retry_on_status"):
             _build_retry_policy_config({"retry_on_status": "429"}, "tool-one")
 
+    def test_build_retry_policy_config_accepts_numeric_bool_inputs(self):
+        """Numeric bool-like inputs should preserve 0/1 semantics."""
+        cfg = _build_retry_policy_config({"jitter": 0, "check_text_content": 1}, "tool-one")
+        assert cfg["jitter"] is False
+        assert cfg["check_text_content"] is True
+
+    def test_build_retry_policy_config_rejects_negative_retry_values(self):
+        """Negative integer-like retry settings should be rejected."""
+        with pytest.raises(ValueError, match=">= 0"):
+            _build_retry_policy_config({"max_retries": -1}, "tool-one")
+
+    def test_build_retry_policy_config_rejects_invalid_bool_values(self):
+        """Unknown bool-like strings should be rejected."""
+        with pytest.raises(ValueError, match="bool-like"):
+            _build_retry_policy_config({"jitter": "maybe"}, "tool-one")
+
+    def test_build_retry_policy_config_rejects_non_mapping_config(self):
+        """Top-level retry config must stay mapping-shaped."""
+        with pytest.raises(ValueError, match="must be a mapping"):
+            _build_retry_policy_config(["not", "a", "mapping"], "tool-one")
+
+    def test_build_retry_policy_config_rejects_non_mapping_tool_overrides(self):
+        """tool_overrides must be a mapping."""
+        with pytest.raises(ValueError, match="tool_overrides must be a mapping"):
+            _build_retry_policy_config({"tool_overrides": ["bad"]}, "tool-one")
+
     def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_for_text_check_override(self, tool_service):
         """Text-content inspection in an override should force Python fallback."""
         mock_hook_ref = MagicMock()
