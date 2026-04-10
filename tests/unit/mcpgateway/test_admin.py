@@ -6606,6 +6606,96 @@ class TestOAuthFunctionality:
             assert gateway_create.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
 
     @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_oauth_extra_auth_params_valid_json(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with valid extra_auth_params JSON from form fields."""
+        form_data = FakeForm(
+            {
+                "name": "OAuth_ExtraParams_Gateway",
+                "url": "https://extra.example.com",
+                "auth_type": "oauth",
+                "oauth_grant_type": "authorization_code",
+                "oauth_token_url": "https://issuer.example.com/token",
+                "oauth_authorization_url": "https://issuer.example.com/auth",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_extra_auth_params": '{"access_type": "offline", "prompt": "consent"}',
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_create = mock_register_gateway.call_args.args[1]
+            assert gateway_create.oauth_config["extra_auth_params"] == {"access_type": "offline", "prompt": "consent"}
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_oauth_extra_auth_params_invalid_json_ignored(self, mock_register_gateway, mock_request, mock_db):
+        """Test that invalid JSON in extra_auth_params is silently ignored."""
+        form_data = FakeForm(
+            {
+                "name": "OAuth_BadExtra_Gateway",
+                "url": "https://badextra.example.com",
+                "auth_type": "oauth",
+                "oauth_grant_type": "authorization_code",
+                "oauth_token_url": "https://issuer.example.com/token",
+                "oauth_authorization_url": "https://issuer.example.com/auth",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_extra_auth_params": "not-valid-json{",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_create = mock_register_gateway.call_args.args[1]
+            assert "extra_auth_params" not in gateway_create.oauth_config
+
+    @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_register_gateway, mock_request, mock_db):
         """Cover false branches in the OAuth form-fields assembly logic."""
         form_data = FakeForm(
@@ -6798,6 +6888,78 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
 
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_extra_auth_params_valid_json(self, mock_update_gateway, mock_request, mock_db):
+        """Test editing gateway with valid extra_auth_params JSON from form fields."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_ExtraParams_Gateway",
+                "url": "https://edited-extra.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_token_url": "https://issuer.example.com/token",
+                "oauth_authorization_url": "https://issuer.example.com/auth",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_extra_auth_params": '{"access_type": "offline", "prompt": "consent"}',
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}
+
+            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_update = mock_update_gateway.call_args.args[2]
+            assert gateway_update.oauth_config["extra_auth_params"] == {"access_type": "offline", "prompt": "consent"}
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_extra_auth_params_invalid_json_ignored(self, mock_update_gateway, mock_request, mock_db):
+        """Test that invalid JSON in extra_auth_params is silently ignored during edit."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_BadExtra_Gateway",
+                "url": "https://edited-badextra.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_token_url": "https://issuer.example.com/token",
+                "oauth_authorization_url": "https://issuer.example.com/auth",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_extra_auth_params": "{invalid json",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}
+
+            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_update = mock_update_gateway.call_args.args[2]
+            assert "extra_auth_params" not in gateway_update.oauth_config
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):

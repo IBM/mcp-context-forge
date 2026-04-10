@@ -12851,8 +12851,6 @@ async def admin_edit_gateway(
                 extra_auth_params_raw = str(form.get("oauth_extra_auth_params", "")).strip()
                 if extra_auth_params_raw:
                     try:
-                        # Standard
-                        import json
                         extra_auth_params = json.loads(extra_auth_params_raw)
                         if isinstance(extra_auth_params, dict):
                             oauth_config["extra_auth_params"] = extra_auth_params

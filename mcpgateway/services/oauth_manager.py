@@ -654,9 +654,12 @@ class OAuthManager:
 
         # Generate authorization URL with state for CSRF protection
         # Include extra_auth_params if provided (e.g. Google's access_type, Auth0's audience)
+        # Filter out core OAuth parameters to prevent injection/override
         extra = credentials.get("extra_auth_params", {})
         if extra and isinstance(extra, dict):
-            auth_url, state = oauth.authorization_url(authorization_url, **extra)
+            core_params = {"client_id", "redirect_uri", "response_type", "scope", "state"}
+            safe_extra = {k: v for k, v in extra.items() if k not in core_params}
+            auth_url, state = oauth.authorization_url(authorization_url, **safe_extra)
         else:
             auth_url, state = oauth.authorization_url(authorization_url)
 
@@ -1497,7 +1500,7 @@ class OAuthManager:
             Authorization URL string with PKCE parameters
         """
         # Standard
-        from urllib.parse import parse_qs, urlencode, urlparse  # pylint: disable=import-outside-toplevel
+        from urllib.parse import parse_qs, urlencode  # pylint: disable=import-outside-toplevel
 
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]

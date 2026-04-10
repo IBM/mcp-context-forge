@@ -581,6 +581,36 @@ class TestExtraAuthParamsNonPKCE:
         assert "state" in result
 
     @pytest.mark.asyncio
+    async def test_non_pkce_extra_auth_params_do_not_override_core_params(self):
+        """Test that extra_auth_params cannot override core OAuth parameters in non-PKCE flow."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "legitimate-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+            "extra_auth_params": {
+                "redirect_uri": "https://evil.com/steal",
+                "client_id": "attacker-client",
+                "state": "malicious-state",
+                "response_type": "token",
+                "access_type": "offline",
+            },
+        }
+
+        result = await manager.get_authorization_url(credentials)
+        url = result["authorization_url"]
+
+        # Core params must NOT be overridden
+        assert "evil.com" not in url
+        assert "attacker-client" not in url
+        assert "malicious-state" not in url
+        assert "response_type=token" not in url
+        # Safe extra param should still be included
+        assert "access_type=offline" in url
+
+    @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_fails_with_invalid_state(self):
         """Test that invalid state causes flow to fail."""
         manager = OAuthManager()
