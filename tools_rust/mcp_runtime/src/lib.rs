@@ -8440,7 +8440,7 @@ fn tools_call_error_type_from_payload(payload: &Value) -> &'static str {
     }
 }
 
-fn record_tools_call_metric(
+async fn record_tools_call_metric(
     state: &AppState,
     incoming_headers: &HeaderMap,
     plan: &ResolvedMcpToolCallPlan,
@@ -8460,15 +8460,9 @@ fn record_tools_call_metric(
         error_message,
     };
 
-    let state = state.clone();
-    let incoming_headers = incoming_headers.clone();
-    tokio::spawn(async move {
-        if let Err(err) =
-            send_tools_call_metric_to_backend(&state, &incoming_headers, &payload).await
-        {
-            warn!("{err}");
-        }
-    });
+    if let Err(err) = send_tools_call_metric_to_backend(state, incoming_headers, &payload).await {
+        warn!("{err}");
+    }
 }
 
 async fn execute_tools_call_direct(
@@ -8674,7 +8668,8 @@ async fn execute_tools_call_direct(
                         request_started.elapsed().as_secs_f64() * 1000.0,
                         false,
                         Some(err.clone()),
-                    );
+                    )
+                    .await;
                     set_span_attribute(&root_span, "success", false);
                     set_span_attribute(
                         &root_span,
@@ -8720,7 +8715,8 @@ async fn execute_tools_call_direct(
                     request_started.elapsed().as_secs_f64() * 1000.0,
                     success,
                     error_message.clone(),
-                );
+                )
+                .await;
 
                 if retry_attempt > 0 {
                     set_span_attribute(
@@ -8785,7 +8781,8 @@ async fn execute_tools_call_direct(
                         request_started.elapsed().as_secs_f64() * 1000.0,
                         success,
                         error_message.clone(),
-                    );
+                    )
+                    .await;
 
                     if retry_attempt > 0 {
                         set_span_attribute(
