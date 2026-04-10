@@ -8594,7 +8594,7 @@ conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manu
 # 🔴 OPENSHIFT DEPLOYMENT
 # =============================================================================
 # help: 🔴 OPENSHIFT DEPLOYMENT
-# help: oc-tls                      - Fetch OpenShift registry TLS cert via oc extract and trust it inside Colima VM
+# help: oc-tls                      - Fetch OpenShift registry TLS cert via oc extract and trust it (Colima/Docker Desktop/Linux Docker)
 # help: oc-image                    - Build mcpgateway image locally (no-cache, Rust) and push to OpenShift internal registry
 
 REGISTRY_URL    ?=
@@ -8603,10 +8603,9 @@ OC_NAMESPACE    ?= contextforge
 OC_TOKEN        ?=
 
 .PHONY: oc-tls
-oc-tls: ## 🔐 Fetch OpenShift registry TLS cert (oc extract) and trust it inside the Colima VM
+oc-tls: ## 🔐 Fetch OpenShift registry TLS cert (oc extract) and trust it (auto-detects Colima / Docker Desktop / Linux Docker)
 	@/bin/bash -c "set -euo pipefail; \
 		if ! command -v oc >/dev/null 2>&1; then echo '❌ oc CLI not found. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/'; exit 1; fi; \
-		if ! command -v colima >/dev/null 2>&1; then echo '❌ colima not found. Install with: brew install colima'; exit 1; fi; \
 		echo '📥 Fetching OpenShift router TLS certificate via oc extract...'; \
 		oc extract secret/router-certs-default -n openshift-ingress --to=/tmp/oc-router-certs/ --confirm; \
 		cp /tmp/oc-router-certs/tls.crt ~/openshift-registry.crt; \
@@ -8624,19 +8623,38 @@ oc-tls: ## 🔐 Fetch OpenShift registry TLS cert (oc extract) and trust it insi
 			echo '     make oc-tls'; \
 			exit 1; \
 		fi; \
+		OS=\$$(uname -s); \
 		echo ''; \
-		echo '🐳 Trusting certificate inside the Colima VM (REGISTRY_URL=$(REGISTRY_URL))...'; \
-		colima ssh -- sudo mkdir -p /etc/docker/certs.d/$(REGISTRY_URL); \
-		cat ~/openshift-registry.crt | colima ssh -- sudo tee /etc/docker/certs.d/$(REGISTRY_URL)/ca.crt >/dev/null; \
-		cat ~/openshift-registry.crt | colima ssh -- sudo tee /usr/local/share/ca-certificates/openshift-registry.crt >/dev/null; \
-		colima ssh -- sudo update-ca-certificates; \
-		colima ssh -- sudo systemctl restart docker; \
-		echo ''; \
-		echo '✅ TLS certificate trusted inside Colima VM. Docker daemon restarted.'; \
+		if [ \"\$$OS\" = \"Darwin\" ] && command -v colima >/dev/null 2>&1 && colima status 2>&1 | grep -q 'running'; then \
+			echo '🐳 Detected: Colima (macOS) — trusting certificate inside the Colima VM (REGISTRY_URL=$(REGISTRY_URL))...'; \
+			colima ssh -- sudo mkdir -p /etc/docker/certs.d/$(REGISTRY_URL); \
+			cat ~/openshift-registry.crt | colima ssh -- sudo tee /etc/docker/certs.d/$(REGISTRY_URL)/ca.crt >/dev/null; \
+			cat ~/openshift-registry.crt | colima ssh -- sudo tee /usr/local/share/ca-certificates/openshift-registry.crt >/dev/null; \
+			colima ssh -- sudo update-ca-certificates; \
+			colima ssh -- sudo systemctl restart docker; \
+			echo ''; \
+			echo '✅ TLS certificate trusted inside Colima VM. Docker daemon restarted.'; \
+		elif [ \"\$$OS\" = \"Darwin\" ]; then \
+			echo '🐳 Detected: Docker Desktop (macOS) — installing certificate into ~/.docker/certs.d/$(REGISTRY_URL)/...'; \
+			mkdir -p ~/.docker/certs.d/$(REGISTRY_URL); \
+			cp ~/openshift-registry.crt ~/.docker/certs.d/$(REGISTRY_URL)/ca.crt; \
+			echo ''; \
+			echo '✅ TLS certificate installed for Docker Desktop.'; \
+			echo '⚠️  You may need to restart Docker Desktop manually for the certificate to take effect.'; \
+		else \
+			echo '🐳 Detected: Linux — installing certificate into /etc/docker/certs.d/$(REGISTRY_URL)/...'; \
+			sudo mkdir -p /etc/docker/certs.d/$(REGISTRY_URL); \
+			sudo cp ~/openshift-registry.crt /etc/docker/certs.d/$(REGISTRY_URL)/ca.crt; \
+			sudo cp ~/openshift-registry.crt /usr/local/share/ca-certificates/openshift-registry.crt; \
+			sudo update-ca-certificates; \
+			sudo systemctl restart docker; \
+			echo ''; \
+			echo '✅ TLS certificate trusted on Linux host. Docker daemon restarted.'; \
+		fi; \
 		echo '   You can now push to $(REGISTRY_URL) without x509 errors.'"
 
 .PHONY: oc-image
-oc-image: ## 🚀 Build mcpgateway image (no-cache, Rust) and push to OpenShift internal registry (requires REGISTRY_URL, OC_TOKEN)
+oc-image: ## 🚀 Build mcpgateway image (python core) and push to OpenShift internal registry (requires REGISTRY_URL, OC_TOKEN)
 	@/bin/bash -c "set -euo pipefail; \
 		MISSING=0; \
 		if [ -z \"$(REGISTRY_URL)\" ]; then \
