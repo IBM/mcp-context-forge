@@ -619,10 +619,19 @@ filterwarnings = [
   "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
 ]
 
-# Set environment variables for all tests
+# Set environment variables for all tests.
+# Heavy optional features (admin API, admin UI, LLM chat) are disabled by
+# default so `import mcpgateway.main` stays cheap. `tests/conftest.py` also
+# force-sets these at bootstrap time in case a host env flipped them on.
+# Tests that exercise the admin API via main.app use the
+# `main_app_with_admin_api` session fixture (tests/conftest.py), which
+# clears the Settings lru_cache and reloads mcpgateway.main with the flags
+# flipped back on. LLM chat unit tests import the router module directly,
+# so they do not need it mounted on main.app.
 env = [
-    "MCPGATEWAY_ADMIN_API_ENABLED=true",
-    "MCPGATEWAY_UI_ENABLED=true",
+    "D:MCPGATEWAY_ADMIN_API_ENABLED=false",
+    "D:MCPGATEWAY_UI_ENABLED=false",
+    "D:LLMCHAT_ENABLED=false",
     "DATABASE_URL=sqlite:///:memory:",
     "TEST_DATABASE_URL=sqlite:///:memory:"
 ]

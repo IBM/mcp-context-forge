@@ -5152,6 +5152,32 @@ class TestGlobalConfigurationEndpoints:
 class TestA2AAgentManagement:
     """Test A2A agent management endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _force_a2a_enabled(self, monkeypatch):
+        """Force ``mcpgateway.admin.a2a_service`` + ``mcpgateway_a2a_enabled``.
+
+        ``admin.a2a_service`` is initialised at module-import time based on
+        ``settings.mcpgateway_a2a_enabled``. If admin.py was first imported
+        while A2A was disabled (possible under xdist if another file had
+        already set the env var), the module-level ``a2a_service`` is
+        ``None`` and every handler in this class short-circuits with a
+        403 JSON response before exercising the code path under test.
+        Force a real ``A2AAgentService`` instance and the flag so each
+        test in this class runs deterministically regardless of
+        collection order. A real instance (not a ``MagicMock``) is used
+        because several tests patch service methods at the class level
+        via ``@patch.object(A2AAgentService, "method")``, and class-level
+        patches only intercept calls routed through an actual
+        ``A2AAgentService`` instance. Tests that want to exercise the
+        disabled branch override these monkeypatches themselves (e.g.
+        ``test_admin_list_a2a_agents_disabled``).
+        """
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService
+
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", A2AAgentService(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+
     @patch.object(A2AAgentService, "list_agents")
     async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
         """Test listing A2A agents when A2A is enabled."""
@@ -21759,6 +21785,15 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_add_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        # ``mcpgateway.admin.a2a_service`` is initialised at module import
+        # time based on ``settings.mcpgateway_a2a_enabled``. If an earlier
+        # test (or test file collection order) ran with A2A disabled, the
+        # module-level ``a2a_service`` is None and ``admin_add_a2a_agent``
+        # short-circuits with a 403 JSON response instead of reaching the
+        # visibility guard. Force a truthy stub so the visibility check
+        # is always exercised.
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:
@@ -21768,6 +21803,8 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_edit_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:

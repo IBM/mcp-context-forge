@@ -386,8 +386,6 @@ class TestGatewayUpdateErrorHandlers:
             assert response.status_code == 500
 
 
-
-
 # --------------------------------------------------------------------------- #
 # A2A Agent Error Handler Tests                                                #
 # --------------------------------------------------------------------------- #
@@ -395,6 +393,11 @@ class TestGatewayUpdateErrorHandlers:
 
 class TestA2AAgentErrorHandlers:
     """Tests for error handling in A2A agent endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def _ensure_a2a_router(self, main_app_with_a2a_router):
+        """Guarantee ``a2a_router`` is mounted on ``main.app`` for this class."""
+        return main_app_with_a2a_router
 
     def test_update_a2a_agent_permission_error(self, test_client, auth_headers):
         """Test PermissionError handling in update_a2a_agent."""
@@ -599,10 +602,7 @@ def test_content_type_exception_handler():
     mock_request = MagicMock(spec=Request)
 
     # Create a ContentTypeError
-    exc = ContentTypeError(
-        mime_type="application/evil",
-        allowed_types=["text/plain", "application/json", "text/html"]
-    )
+    exc = ContentTypeError(mime_type="application/evil", allowed_types=["text/plain", "application/json", "text/html"])
 
     # Call the exception handler
     response = asyncio.run(content_type_exception_handler(mock_request, exc))

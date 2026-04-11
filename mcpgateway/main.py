@@ -74,9 +74,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
-from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
@@ -163,7 +161,6 @@ from mcpgateway.services.resource_service import ResourceError, ResourceLockConf
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
-from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
@@ -173,7 +170,6 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
     user_context_var,
 )
-from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -192,22 +188,10 @@ from mcpgateway.version import router as version_router
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
-# Share the logging service with admin module
-set_logging_service(logging_service)
-
 # Note: Logging configuration is handled by LoggingService during startup
 # Don't use basicConfig here as it conflicts with our dual logging setup
-
-# Wait for database to be ready before creating tables
-wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
-
-# Create database tables
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.run(bootstrap_db())
-else:
-    loop.create_task(bootstrap_db())
+# Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
+# startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
 # Enable plugin subsystem at module load time, mirroring the old singleton pattern.
 # get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
@@ -1654,6 +1638,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
 
+    # Wait for the database to be ready, then run bootstrap (alembic + seed).
+    # This used to run at module-import time, which made every test that
+    # imported mcpgateway.main pay for a real DB probe and migration check.
+    # `wait_for_db_ready(sync=True)` is a blocking probe, so offload it to
+    # a worker thread to avoid stalling the event loop during startup.
+    # First-Party
+    from mcpgateway.bootstrap_db import main as bootstrap_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.db_isready import wait_for_db_ready  # pylint: disable=import-outside-toplevel
+
+    await asyncio.to_thread(
+        wait_for_db_ready,
+        max_tries=int(settings.db_max_retries),
+        interval=int(settings.db_retry_interval_ms) / 1000,
+        sync=True,
+    )
+    await bootstrap_db()
+
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 
@@ -1709,11 +1710,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
         logger.info("MCP session pool initialized")
 
-    # Initialize LLM chat router Redis client
-    # First-Party
-    from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
+    # Initialize LLM chat router Redis client (only if LLM chat is enabled —
+    # importing the router pulls in the langchain stack which is several
+    # seconds of cold-start cost).
+    if settings.llmchat_enabled:
+        # First-Party
+        from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
 
-    await init_llmchat_redis()
+        await init_llmchat_redis()
 
     # Initialize observability (Phoenix tracing)
     init_telemetry()
@@ -11215,12 +11219,15 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
+    # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
+    # Only load it when the admin API is actually mounted.
+    # First-Party
+    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+
+    set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
     # Validate section-to-permission mapping consistency at startup
-    # First-Party
-    from mcpgateway.admin import validate_section_permissions
-
     validate_section_permissions(admin_router)
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
@@ -11300,6 +11307,9 @@ def _build_mcp_transport_app():
             _current_mcp_affinity_core_mode(),
             _current_mcp_session_auth_reuse_mode(),
         )
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 
     if settings.experimental_rust_mcp_runtime_enabled:
