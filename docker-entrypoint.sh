@@ -433,6 +433,10 @@ install_plugin_requirements() {
 
     local max_retries=3
     local retry_delay="${PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS:-2}"
+    if [[ ! "${retry_delay}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "⚠️  PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS=${retry_delay} is not a non-negative number; falling back to 2s"
+        retry_delay=2
+    fi
     local attempt=1
     while (( attempt <= max_retries )); do
         if "${app_root}/.venv/bin/pip" install --no-cache-dir -r "${resolved_path}"; then
