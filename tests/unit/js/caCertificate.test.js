@@ -279,6 +279,21 @@ describe("initializeCACertUpload", () => {
     expect(() => initializeCACertUpload()).not.toThrow();
   });
 
+  test("does not re-attach listeners when called twice on the same drop zone", () => {
+    const { dropZone, fileInput } = setupDropZone();
+    const addSpy = vi.spyOn(dropZone, "addEventListener");
+
+    initializeCACertUpload();
+    initializeCACertUpload();
+
+    const clickCalls = addSpy.mock.calls.filter((c) => c[0] === "click");
+    expect(clickCalls).toHaveLength(1);
+
+    const clickSpy = vi.spyOn(fileInput, "click");
+    dropZone.click();
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
   test("click on drop zone triggers file input click", () => {
     const { dropZone, fileInput } = setupDropZone();
     initializeCACertUpload();
