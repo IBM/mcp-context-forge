@@ -119,6 +119,7 @@ export const GLOBAL_SEARCH_ENTITY_CONFIG = {
   },
   teams: { label: "Teams", tab: "teams", viewFunction: "showTeamEditModal" },
   users: { label: "Users", tab: "users", viewFunction: "showUserEditModal" },
+  roots: { label: "Roots", tab: "roots", viewFunction: "viewRoot" },
 };
 
 // Configuration objects for each search type

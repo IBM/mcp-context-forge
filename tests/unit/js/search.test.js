@@ -648,6 +648,45 @@ describe("runGlobalSearch", () => {
     expect(container.innerHTML).toContain("Server 2");
     expect(container.innerHTML).not.toContain("Server 1");
   });
+
+  test("includes roots in entity_types for admin users", async () => {
+    const { fetchWithAuth } = await import("../../../mcpgateway/admin_ui/tokens.js");
+    const { isAdminUser } = await import("../../../mcpgateway/admin_ui/utils.js");
+    const { getUiHiddenSections } = await import("../../../mcpgateway/admin_ui/tabs.js");
+    isAdminUser.mockReturnValue(true);
+    getUiHiddenSections.mockReturnValue(new Set());
+    fetchWithAuth.mockResolvedValue({ ok: true, json: async () => ({ groups: [] }) });
+
+    const container = document.createElement("div");
+    container.id = "global-search-results";
+    document.body.appendChild(container);
+
+    await runGlobalSearch("tmp");
+
+    expect(fetchWithAuth).toHaveBeenCalledTimes(1);
+    const requestUrl = new URL(fetchWithAuth.mock.calls[0][0], "http://localhost");
+    const entityTypes = requestUrl.searchParams.get("entity_types").split(",");
+    expect(entityTypes).toContain("roots");
+  });
+
+  test("omits roots when the roots section is hidden", async () => {
+    const { fetchWithAuth } = await import("../../../mcpgateway/admin_ui/tokens.js");
+    const { isAdminUser } = await import("../../../mcpgateway/admin_ui/utils.js");
+    const { getUiHiddenSections } = await import("../../../mcpgateway/admin_ui/tabs.js");
+    isAdminUser.mockReturnValue(true);
+    getUiHiddenSections.mockReturnValue(new Set(["roots"]));
+    fetchWithAuth.mockResolvedValue({ ok: true, json: async () => ({ groups: [] }) });
+
+    const container = document.createElement("div");
+    container.id = "global-search-results";
+    document.body.appendChild(container);
+
+    await runGlobalSearch("tmp");
+
+    const requestUrl = new URL(fetchWithAuth.mock.calls[0][0], "http://localhost");
+    const entityTypes = requestUrl.searchParams.get("entity_types").split(",");
+    expect(entityTypes).not.toContain("roots");
+  });
 });
 
 // ---------------------------------------------------------------------------
