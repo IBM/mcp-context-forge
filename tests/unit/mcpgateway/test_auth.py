@@ -27,6 +27,16 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user, get_db, get_user_team_roles
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser
+from mcpgateway.transports.streamablehttp_transport import (
+    _StreamableHttpAuthHandler,
+    OAuthAuthResult,
+)
+from mcpgateway.utils.verify_credentials import (
+    _discover_oidc_metadata,
+    _oauth_jwks_client_cache,
+    _oauth_oidc_metadata_cache,
+    verify_oauth_access_token,
+)
 
 
 class TestGetDb:
@@ -3153,6 +3163,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_no_jwt_teams_returns_full_db_teams(self):
         """Without a JWT teams claim, returns full DB membership."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com"}
@@ -3165,6 +3176,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_jwt_teams_narrows_to_intersection(self):
         """JWT teams claim narrows result to intersection with DB teams."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": ["t1"]}
@@ -3176,6 +3188,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_jwt_teams_all_revoked_returns_empty(self):
         """If all JWT teams were revoked, returns empty list (public-only / denied)."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": ["revoked-team"]}
@@ -3187,6 +3200,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_admin_bypass_ignores_jwt_teams(self):
         """Admin bypass (None from DB) is returned regardless of JWT teams."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "admin@example.com", "teams": ["t1"]}
@@ -3198,6 +3212,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_empty_db_teams_returns_empty(self):
         """User with no DB teams returns empty list (public-only)."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": ["t1"]}
@@ -3209,6 +3224,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_preresolved_db_teams_skips_db_call(self):
         """When preresolved_db_teams is provided, skips the DB call."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": ["t1"]}
@@ -3226,6 +3242,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_preresolved_none_returns_admin_bypass(self):
         """Preresolved None (admin) returns None without DB call."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "admin@example.com"}
@@ -3243,6 +3260,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_jwt_teams_null_returns_full_db_teams(self):
         """Explicit teams: null in JWT is not a list, so no narrowing."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": None}
@@ -3254,6 +3272,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_jwt_teams_empty_list_returns_full_db_teams(self):
         """Explicit teams: [] in JWT is empty, so no narrowing."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         payload = {"sub": "u@example.com", "teams": []}
@@ -3265,6 +3284,7 @@ class TestResolveSessionTeams:
     @pytest.mark.asyncio
     async def test_no_email_returns_public_only(self):
         """Identity-less session token gets public-only scope, never admin bypass."""
+        # First-Party
         from mcpgateway.auth import resolve_session_teams
 
         # Even with is_admin=True, no email means no DB lookup and no admin bypass
@@ -3278,6 +3298,7 @@ class TestNarrowByJwtTeams:
 
     def test_admin_bypass_passthrough(self):
         """Admin bypass (db_teams=None) is returned unchanged regardless of JWT teams."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         assert _narrow_by_jwt_teams({"teams": ["t1"]}, None) is None
@@ -3285,6 +3306,7 @@ class TestNarrowByJwtTeams:
 
     def test_normal_intersection(self):
         """Intersection of DB teams and JWT teams returns only the overlap."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({"teams": ["t1", "t3"]}, ["t1", "t2"])
@@ -3292,6 +3314,7 @@ class TestNarrowByJwtTeams:
 
     def test_empty_intersection(self):
         """No overlap between JWT and DB teams returns empty list."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({"teams": ["gone"]}, ["t1", "t2"])
@@ -3299,6 +3322,7 @@ class TestNarrowByJwtTeams:
 
     def test_empty_jwt_teams_no_narrowing(self):
         """Explicit teams: [] means 'no restriction' — returns full DB teams."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({"teams": []}, ["t1", "t2"])
@@ -3306,6 +3330,7 @@ class TestNarrowByJwtTeams:
 
     def test_missing_jwt_teams_no_narrowing(self):
         """Missing teams key means 'no restriction' — returns full DB teams."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({}, ["t1", "t2"])
@@ -3313,6 +3338,7 @@ class TestNarrowByJwtTeams:
 
     def test_null_jwt_teams_no_narrowing(self):
         """Explicit teams: null is not a list — returns full DB teams."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({"teams": None}, ["t1"])
@@ -3320,6 +3346,7 @@ class TestNarrowByJwtTeams:
 
     def test_malformed_entries_filtered_by_normalize(self):
         """Non-string entries in JWT teams are handled by normalize_token_teams."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         # normalize_token_teams stringifies numeric entries
@@ -3328,6 +3355,7 @@ class TestNarrowByJwtTeams:
 
     def test_empty_db_teams_returns_empty(self):
         """If user has no DB teams, intersection with any JWT teams is empty."""
+        # First-Party
         from mcpgateway.auth import _narrow_by_jwt_teams
 
         result = _narrow_by_jwt_teams({"teams": ["t1"]}, [])
@@ -4140,9 +4168,6 @@ class TestVerifyOauthAccessToken:
 
     @pytest.fixture(autouse=True)
     def _clear_oauth_caches(self):
-        # First-Party
-        from mcpgateway.utils.verify_credentials import _oauth_jwks_client_cache, _oauth_oidc_metadata_cache  # pylint: disable=import-outside-toplevel
-
         _oauth_oidc_metadata_cache.clear()
         _oauth_jwks_client_cache.clear()
         yield
@@ -4173,9 +4198,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_valid_token_returns_claims(self):
         """A properly signed token from an allowed issuer returns verified claims."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4188,9 +4210,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_issuer_not_in_allowlist_returns_none(self):
         """A token whose issuer is not in the allowlist is rejected."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, _ = self._generate_rsa_keypair()
         token = self._sign_token({"iss": "https://evil.example.com/", "sub": "attacker", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4200,9 +4219,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_missing_issuer_claim_returns_none(self):
         """A token without an iss claim is rejected."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, _ = self._generate_rsa_keypair()
         token = self._sign_token({"sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4212,18 +4228,12 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_malformed_token_returns_none(self):
         """A non-JWT string is rejected gracefully."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         result = await verify_oauth_access_token("not-a-jwt", [self.ISSUER])
         assert result is None
 
     @pytest.mark.asyncio
     async def test_expired_token_returns_none(self):
         """An expired token is rejected."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 1000000000, "iat": 999999000}, private_key)
 
@@ -4235,9 +4245,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_wrong_signature_returns_none(self):
         """A token signed with a different key than JWKS provides is rejected."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, _ = self._generate_rsa_keypair()
         _, wrong_public_key = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
@@ -4250,9 +4257,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_oidc_discovery_failure_returns_none(self):
         """When OIDC discovery fails, verification returns None."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, _ = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4269,9 +4273,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_trailing_slash_normalization(self):
         """Trailing slash differences between token issuer and allowlist are tolerated."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         issuer_no_slash = "https://auth.example.com/application/o/test"
         token = self._sign_token({"iss": issuer_no_slash, "sub": "user@example.com", "email": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
@@ -4284,9 +4285,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_discovery_cache_reused(self):
         """Second call within TTL reuses cached OIDC metadata."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import _discover_oidc_metadata  # pylint: disable=import-outside-toplevel
-
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
@@ -4303,9 +4301,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_valid_audience_passes(self):
         """Token with matching aud claim passes when expected_audience is set."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         client_id = "my-client-id"
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "aud": client_id, "exp": 9999999999, "iat": 1700000000}, private_key)
@@ -4319,9 +4314,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_wrong_audience_rejected(self):
         """Token with mismatched aud claim is rejected when expected_audience is set."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "aud": "wrong-client", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4333,9 +4325,6 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_no_audience_check_when_not_configured(self):
         """Token passes without aud check when expected_audience is not provided."""
-        # First-Party
-        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
-
         private_key, public_key = self._generate_rsa_keypair()
         token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "aud": "any-audience", "exp": 9999999999, "iat": 1700000000}, private_key)
 
@@ -4343,3 +4332,1233 @@ class TestVerifyOauthAccessToken:
             result = await verify_oauth_access_token(token, [self.ISSUER])  # no expected_audience
 
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_discovery_negative_result_cached(self):
+        """Failed discovery is cached so a misbehaving IdP is not retried every call."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)):
+            r1 = await _discover_oidc_metadata(self.ISSUER)
+            r2 = await _discover_oidc_metadata(self.ISSUER)
+
+        assert r1 is None
+        assert r2 is None
+        # First call probes both the RFC 8414 OAuth metadata URL and the
+        # OIDC discovery URL; only after BOTH fail is the issuer negatively
+        # cached. The second call is served entirely from that cache.
+        assert mock_http.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_rfc8414_metadata_used_when_oidc_missing(self):
+        """A non-OIDC OAuth server's RFC 8414 metadata document is accepted."""
+
+        async def fake_get(url, *_args, **_kwargs):
+            resp = MagicMock()
+            if url.endswith("/.well-known/oauth-authorization-server"):
+                resp.status_code = 200
+                resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
+            else:
+                resp.status_code = 404
+            return resp
+
+        mock_http = AsyncMock()
+        mock_http.get.side_effect = fake_get
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)):
+            metadata = await _discover_oidc_metadata("https://auth.example.com")
+
+        assert metadata is not None
+        assert metadata["jwks_uri"] == self.JWKS_URI
+
+    @pytest.mark.asyncio
+    async def test_oidc_metadata_used_when_rfc8414_missing(self):
+        """A pure OIDC server with no RFC 8414 document still discovers successfully."""
+
+        async def fake_get(url, *_args, **_kwargs):
+            resp = MagicMock()
+            if url.endswith("/.well-known/openid-configuration"):
+                resp.status_code = 200
+                resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
+            else:
+                resp.status_code = 404
+            return resp
+
+        mock_http = AsyncMock()
+        mock_http.get.side_effect = fake_get
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)):
+            metadata = await _discover_oidc_metadata("https://auth.example.com")
+
+        assert metadata is not None
+        assert metadata["jwks_uri"] == self.JWKS_URI
+
+    def test_build_metadata_urls_rfc8414_path_insertion(self):
+        """RFC 8414 inserts the well-known segment between host and path."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import _build_metadata_urls  # pylint: disable=import-outside-toplevel
+
+        urls = _build_metadata_urls("https://example.com/issuer1")
+        assert "https://example.com/.well-known/oauth-authorization-server/issuer1" in urls
+        assert "https://example.com/issuer1/.well-known/openid-configuration" in urls
+
+    def test_build_metadata_urls_no_path(self):
+        """With no issuer path, both well-known URLs share the root host."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import _build_metadata_urls  # pylint: disable=import-outside-toplevel
+
+        urls = _build_metadata_urls("https://example.com")
+        assert urls == [
+            "https://example.com/.well-known/oauth-authorization-server",
+            "https://example.com/.well-known/openid-configuration",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_id_token_with_nonce_rejected(self):
+        """OIDC ID tokens carrying a ``nonce`` claim must not be accepted as access tokens.
+
+        An attacker who obtains an ID token via SSO could otherwise replay it
+        as an MCP bearer token when the virtual server is configured with the
+        same ``client_id`` that ID token has in ``aud``. The claim-based
+        detection catches this for every major IdP (Keycloak, Auth0, Entra,
+        Okta, Authentik) without requiring RFC 9068 ``typ`` support.
+        """
+        private_key, public_key = self._generate_rsa_keypair()
+        id_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "aud": "my-client",
+                "nonce": "abc-123",  # ← ID-token-only claim
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None  # Signature would have verified; claim check fails closed.
+
+    @pytest.mark.asyncio
+    async def test_id_token_with_at_hash_rejected(self):
+        """An ID token with ``at_hash`` (OIDC Core §2) is rejected."""
+        private_key, public_key = self._generate_rsa_keypair()
+        id_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "my-client",
+                "at_hash": "xxxx",  # ← ID-token-only claim
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_access_token_without_id_claims_accepted(self):
+        """A token lacking nonce/at_hash is still accepted (regression guard)."""
+        private_key, public_key = self._generate_rsa_keypair()
+        access_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "aud": "my-client",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(access_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is not None
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_id_token_rejected_before_jwks_client_called(self):
+        """ID-token rejection must happen *before* the JWKS signing-key lookup.
+
+        This locks the ordering invariant: a refactor that moves the
+        nonce/at_hash check after ``get_signing_key_from_jwt`` would still
+        reject the token but would have already made an outbound call to
+        the IdP's JWKS endpoint — an unnecessary attack surface and a
+        potential DoS vector. Asserting the JWKS client is never touched
+        proves the check is genuinely defensive.
+        """
+        private_key, public_key = self._generate_rsa_keypair()
+        id_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "my-client",
+                "nonce": "abc-123",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = public_key
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)),
+            patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {self.JWKS_URI: mock_jwks_client}),
+        ):
+            result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None
+        # The critical invariant: the JWKS client was never consulted.
+        assert mock_jwks_client.get_signing_key_from_jwt.called is False
+
+    @pytest.mark.asyncio
+    async def test_list_audience_any_match_accepted(self):
+        """PyJWT's list-audience semantics: a token whose ``aud`` matches any list entry passes."""
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "aud": "second-audience",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(
+                token,
+                [self.ISSUER],
+                expected_audience=["first-audience", "second-audience", "third-audience"],
+            )
+
+        assert result is not None
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_list_audience_none_match_rejected(self):
+        """A token whose ``aud`` matches none of the list entries is rejected."""
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "wrong-audience",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(
+                token,
+                [self.ISSUER],
+                expected_audience=["first-audience", "second-audience"],
+            )
+
+        assert result is None
+
+
+class TestResolveAuthorizationServers:
+    """Tests for the ``_resolve_authorization_servers`` helper."""
+
+    def test_plural_list_returned_cleaned(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        result = _resolve_authorization_servers({"authorization_servers": ["  https://a.example  ", "https://b.example"]})
+        assert result == ["https://a.example", "https://b.example"]
+
+    def test_plural_list_with_empty_strings_skipped(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        result = _resolve_authorization_servers({"authorization_servers": ["", "   ", "https://a.example"]})
+        assert result == ["https://a.example"]
+
+    def test_singular_fallback_used_when_plural_missing(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        result = _resolve_authorization_servers({"authorization_server": "  https://single.example  "})
+        assert result == ["https://single.example"]
+
+    def test_singular_fallback_used_when_plural_empty(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        result = _resolve_authorization_servers({"authorization_servers": [], "authorization_server": "https://single.example"})
+        assert result == ["https://single.example"]
+
+    def test_empty_config_returns_empty(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        assert _resolve_authorization_servers({}) == []
+        assert _resolve_authorization_servers({"authorization_servers": None, "authorization_server": None}) == []
+        assert _resolve_authorization_servers({"authorization_server": "   "}) == []
+
+
+class TestTryOAuthAccessTokenDbErrors:
+    """Tests that DB failures inside ``_try_oauth_access_token`` fail closed.
+
+    Covers the new ``SQLAlchemyError``/``Exception`` handlers around
+    ``_get_user_by_email_sync`` and ``_resolve_teams_from_db``, and the
+    singular ``authorization_server`` fallback path.
+    """
+
+    @pytest.fixture
+    def handler_and_responses(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler  # pylint: disable=import-outside-toplevel
+
+        responses: list = []
+
+        async def fake_send(msg):
+            responses.append(msg)
+
+        async def fake_receive():
+            return {}
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/srv-1/mcp",
+            "root_path": "",
+            "scheme": "https",
+            "server": ("gateway.example.com", 443),
+            "headers": [(b"host", b"gateway.example.com")],
+        }
+        return _StreamableHttpAuthHandler(scope=scope, receive=fake_receive, send=fake_send), responses
+
+    _OAUTH_TEST_ISSUER = "https://auth.example.com/application/o/test/"
+
+    @staticmethod
+    def _make_token(issuer: str) -> str:
+        """Encode a minimal JWT whose unverified ``iss`` matches the allowlist peek."""
+        # Third-Party
+        import jwt as _jwt  # pylint: disable=import-outside-toplevel
+
+        return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, "unused", algorithm="HS256")
+
+    @pytest.fixture
+    def oauth_server_row(self):
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [self._OAUTH_TEST_ISSUER], "client_id": "test-client"}
+        return server
+
+    @staticmethod
+    def _patched_get_db(server_row):
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server_row
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm)
+
+    @pytest.mark.asyncio
+    async def test_user_lookup_sqlalchemy_error_returns_failed_503(self, handler_and_responses, oauth_server_row):
+        # Third-Party
+        from sqlalchemy.exc import SQLAlchemyError  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import OAuthAuthResult  # pylint: disable=import-outside-toplevel
+
+        handler, responses = handler_and_responses
+        token = self._make_token(self._OAUTH_TEST_ISSUER)
+
+        async def fake_verify(*args, **kwargs):
+            return {"sub": "user@example.com", "email": "user@example.com"}
+
+        with (
+            self._patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.auth._get_user_by_email_sync", side_effect=SQLAlchemyError("db down")),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 503
+
+    @pytest.mark.asyncio
+    async def test_user_lookup_unexpected_error_returns_failed_401(self, handler_and_responses, oauth_server_row):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import OAuthAuthResult  # pylint: disable=import-outside-toplevel
+
+        handler, responses = handler_and_responses
+        token = self._make_token(self._OAUTH_TEST_ISSUER)
+
+        async def fake_verify(*args, **kwargs):
+            return {"sub": "user@example.com", "email": "user@example.com"}
+
+        with (
+            self._patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.auth._get_user_by_email_sync", side_effect=RuntimeError("boom")),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_teams_resolution_sqlalchemy_error_returns_failed_503(self, handler_and_responses, oauth_server_row):
+        # Third-Party
+        from sqlalchemy.exc import SQLAlchemyError  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import OAuthAuthResult  # pylint: disable=import-outside-toplevel
+
+        handler, responses = handler_and_responses
+        mock_user = MagicMock(is_active=True, is_admin=False)
+        token = self._make_token(self._OAUTH_TEST_ISSUER)
+
+        async def fake_verify(*args, **kwargs):
+            return {"sub": "user@example.com", "email": "user@example.com"}
+
+        with (
+            self._patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._resolve_teams_from_db", side_effect=SQLAlchemyError("teams unavailable")),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 503
+
+    @pytest.mark.asyncio
+    async def test_singular_authorization_server_fallback_invoked(self, handler_and_responses, monkeypatch):
+        """``oauth_config={"authorization_server": "..."}`` routes through the singular fallback."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import OAuthAuthResult  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        handler, _responses = handler_and_responses
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_server": "https://single.example/"}
+        token = self._make_token("https://single.example/")
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            # Returning None causes the helper to send a 401 and return FAILED.
+            captured["authorization_servers"] = authorization_servers
+            captured["expected_audience"] = expected_audience
+
+        with (
+            self._patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.FAILED
+        assert captured["authorization_servers"] == ["https://single.example/"]
+        # Audience enforcement: the canonical MCP resource URL (derived from
+        # ``settings.app_domain``, not the Host header) is always included.
+        # Without an explicit ``client_id``/``resource`` override, the list
+        # contains only that one entry.
+        assert captured["expected_audience"] == ["https://gateway.example.com/servers/srv-1/mcp"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the OAuth audience & routing security fix
+# ---------------------------------------------------------------------------
+
+SERVER_ID = "srv-1"
+GATEWAY_HOST = "gateway.example.com"
+EXPECTED_RESOURCE_URL = f"https://{GATEWAY_HOST}/servers/{SERVER_ID}/mcp"
+IDP_ISSUER = "https://idp.example.com/"
+INTERNAL_JWT_ISSUER = "mcpgateway"
+
+
+def _make_handler():
+    """Build a ``_StreamableHttpAuthHandler`` against a fully-populated scope.
+
+    The scope is rich enough for ``_build_server_resource_url`` to derive
+    ``EXPECTED_RESOURCE_URL``. Tests that want to exercise the fail-closed
+    "cannot derive URL" branch should use ``_make_handler_unknown_host``.
+    """
+    responses: list = []
+
+    async def fake_send(msg):
+        responses.append(msg)
+
+    async def fake_receive():
+        return {}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/servers/{SERVER_ID}/mcp",
+        "root_path": "",
+        "scheme": "https",
+        "server": (GATEWAY_HOST, 443),
+        "headers": [(b"host", GATEWAY_HOST.encode())],
+    }
+    return _StreamableHttpAuthHandler(scope=scope, receive=fake_receive, send=fake_send), responses
+
+
+def _make_handler_unknown_host():
+    """Build a handler whose scope cannot yield a public base URL.
+
+    No ``host`` header and ``server`` is ``None``, so ``_build_public_base_url``
+    returns ``""`` and ``_try_oauth_access_token`` must take the fail-closed
+    branch.
+    """
+    responses: list = []
+
+    async def fake_send(msg):
+        responses.append(msg)
+
+    async def fake_receive():
+        return {}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/servers/{SERVER_ID}/mcp",
+        "root_path": "",
+        "scheme": "https",
+        "server": None,
+        "headers": [],
+    }
+    return _StreamableHttpAuthHandler(scope=scope, receive=fake_receive, send=fake_send), responses
+
+
+def _patched_get_db(server_row):
+    db_mock = MagicMock()
+    db_mock.execute.return_value.scalar_one_or_none.return_value = server_row
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=db_mock)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm)
+
+
+def _make_idp_token(issuer: str = IDP_ISSUER) -> str:
+    """Encode a minimal JWT with the given ``iss`` claim.
+
+    Only the unverified ``iss`` peek in ``_route_idp_issued_token`` inspects
+    this token — the signing key and algorithm are irrelevant to the routing
+    decision, so we use HS256 with a throwaway key.
+    """
+    # Third-Party
+    import jwt as _jwt  # pylint: disable=import-outside-toplevel
+
+    return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, "unused-key", algorithm="HS256")
+
+
+def _response_body(responses: list) -> bytes:
+    """Concatenate the body bytes from captured ASGI http.response.* messages."""
+    return b"".join(m.get("body", b"") for m in responses if m["type"] == "http.response.body")
+
+
+@pytest.fixture
+def _pinned_app_domain(monkeypatch):
+    """Pin ``settings.app_domain`` to the expected test gateway origin.
+
+    The resource URL is derived from ``settings.app_domain`` (not from
+    ASGI scope headers) to prevent Host-header replay. Tests exercising
+    audience-binding must pin this value so the assertions against
+    ``EXPECTED_RESOURCE_URL`` are deterministic and independent of whatever
+    value the runtime config happens to load.
+    """
+    monkeypatch.setattr(settings, "app_domain", f"https://{GATEWAY_HOST}")
+
+
+class TestOAuthAudienceEnforcement:
+    """Every OAuth-enabled server must bind tokens to its canonical resource URL.
+
+    Invariant: ``_try_oauth_access_token`` MUST pass a non-empty
+    ``expected_audience`` list containing the canonical MCP resource URL
+    (per RFC 8707 / RFC 9728) to ``verify_oauth_access_token``. Explicit
+    ``resource`` / legacy ``client_id`` values extend the list; they never
+    replace the resource URL or silently disable audience validation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resource_url_is_sole_audience_when_no_override(self, _pinned_app_domain):
+        """Server with only ``authorization_servers`` must enforce the resource URL."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            # Returning implicitly (None) causes _try_oauth_access_token
+            # to send a 401 and return FAILED.
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        # Length-1 list: exactly the resource URL, nothing else. This is the
+        # core audience-binding invariant — any mutation that drops the
+        # resource URL or re-introduces a ``None`` default fails here.
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL]
+
+    @pytest.mark.asyncio
+    async def test_resource_field_extends_expected_audiences(self, _pinned_app_domain):
+        """``oauth_config.resource`` (scalar) is appended after the resource URL."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": "https://api.example.com",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL, "https://api.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_resource_field_trims_whitespace(self, _pinned_app_domain):
+        """Scalar ``resource`` entries are stripped of leading/trailing whitespace."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": "   https://api.example.com   ",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL, "https://api.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_resource_field_accepts_list_of_audiences(self, _pinned_app_domain):
+        """``oauth_config.resource`` may be a list; each entry is appended."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": ["https://api-a.example.com", "https://api-b.example.com"],
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        assert captured["expected_audience"] == [
+            EXPECTED_RESOURCE_URL,
+            "https://api-a.example.com",
+            "https://api-b.example.com",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_resource_list_filters_invalid_entries(self, _pinned_app_domain):
+        """Empty strings, whitespace, and non-string entries are dropped from ``resource`` lists."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": ["https://api-a.example.com", "", "   ", 42, None, "https://api-b.example.com"],
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [
+            EXPECTED_RESOURCE_URL,
+            "https://api-a.example.com",
+            "https://api-b.example.com",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_when_resource_url_cannot_be_derived(self, monkeypatch):
+        """If ``settings.app_domain`` is unusable, reject without verifying.
+
+        Operators MUST set ``app_domain`` to the gateway's public URL for
+        OAuth audience validation to work. If it is empty / missing the
+        handler must fail closed, not fall back to the caller-controlled
+        Host header (which would let a client forge the audience).
+        """
+        monkeypatch.setattr(settings, "app_domain", "")
+        handler, responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        verify_called = False
+
+        async def fake_verify(*_args, **_kwargs):
+            nonlocal verify_called
+            verify_called = True
+            return {"sub": "x"}
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token(), {"iss": IDP_ISSUER})
+
+        assert result is OAuthAuthResult.FAILED
+        assert verify_called is False  # Verification was short-circuited.
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+        assert b"Invalid OAuth access token" in _response_body(responses)
+
+    @pytest.mark.asyncio
+    async def test_audience_ignores_host_header(self, monkeypatch):
+        """The resource URL is anchored on ``settings.app_domain``, not the caller's Host header.
+
+        If the audience were derived from the inbound ``Host`` header, a
+        client could replay a token minted for ``https://other.example.com``
+        simply by sending ``Host: other.example.com``. Pin ``app_domain`` to
+        one value and the handler's scope Host to a *different* value — the
+        computed audience must match ``app_domain``.
+        """
+        monkeypatch.setattr(settings, "app_domain", "https://canonical.example.com")
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler  # pylint: disable=import-outside-toplevel
+
+        responses: list = []
+
+        async def fake_send(msg):
+            responses.append(msg)
+
+        async def fake_receive():
+            return {}
+
+        # Scope advertises a DIFFERENT host — if the helper trusted it, the
+        # captured audience would be ``https://attacker.example.com/...``.
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": f"/servers/{SERVER_ID}/mcp",
+            "root_path": "",
+            "scheme": "https",
+            "server": ("attacker.example.com", 443),
+            "headers": [(b"host", b"attacker.example.com")],
+        }
+        handler = _StreamableHttpAuthHandler(scope=scope, receive=fake_receive, send=fake_send)
+
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [f"https://canonical.example.com/servers/{SERVER_ID}/mcp"]
+        assert not any("attacker.example.com" in aud for aud in captured["expected_audience"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "spoofed_header",
+        [
+            (b"x-forwarded-host", b"attacker.example.com"),
+            (b"forwarded", b"host=attacker.example.com"),
+            (b"x-original-host", b"attacker.example.com"),
+        ],
+    )
+    async def test_audience_ignores_forwarded_host_headers(self, monkeypatch, spoofed_header):
+        """Forwarded-host header variants must not influence the audience either.
+
+        Today the resource URL is anchored on ``settings.app_domain`` and
+        the scope is explicitly ignored — but if a future change re-reads
+        any host-indicator header from the scope, this parametrized test
+        fails loudly for each forwarded-host variant.
+        """
+        monkeypatch.setattr(settings, "app_domain", "https://canonical.example.com")
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler  # pylint: disable=import-outside-toplevel
+
+        responses: list = []
+
+        async def fake_send(msg):
+            responses.append(msg)
+
+        async def fake_receive():
+            return {}
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": f"/servers/{SERVER_ID}/mcp",
+            "root_path": "",
+            "scheme": "https",
+            "server": ("attacker.example.com", 443),
+            "headers": [
+                (b"host", b"attacker.example.com"),
+                spoofed_header,
+            ],
+        }
+        handler = _StreamableHttpAuthHandler(scope=scope, receive=fake_receive, send=fake_send)
+
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [f"https://canonical.example.com/servers/{SERVER_ID}/mcp"]
+        assert not any("attacker.example.com" in aud for aud in captured["expected_audience"])
+
+
+class TestOAuthServerMisconfigurationRejected:
+    """Invariant: an ``oauth_enabled`` server with an empty issuer allowlist fails closed.
+
+    No IdP-issued token can be verified against an empty allowlist, so the
+    handler must reject the request with 503 (server misconfiguration) rather
+    than fall through to internal JWT verification, which would let an
+    internal ContextForge JWT reach a resource that is supposed to require
+    OAuth.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_authorization_servers_returns_failed_503(self):
+        handler, responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        # Truthy dict so we pass the `not server.oauth_config` guard, but the
+        # allowlist is empty — the misconfiguration we want to reject.
+        server.oauth_config = {"authorization_servers": []}
+
+        with _patched_get_db(server):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 503
+        assert b"OAuth authorization server not configured" in _response_body(responses)
+
+
+class TestLegacyJwtOnOauthEnabledServer:
+    """Invariant: tokens whose issuer is outside an oauth_enabled server's allowlist
+    defer to internal JWT verification instead of being rejected as IdP tokens.
+
+    A gateway-issued JWT may carry a missing ``iss`` claim or an older value
+    that no longer matches ``settings.jwt_issuer``. Such tokens are still
+    valid when ``JWT_ISSUER_VERIFICATION=false`` and must remain usable on
+    ``oauth_enabled`` virtual servers: the caller (``_route_idp_issued_token``)
+    is responsible for routing them to internal verification. The OAuth
+    path must therefore return ``NOT_APPLICABLE`` — not reject — when the
+    token's issuer is not in the server's OAuth allowlist.
+    """
+
+    def _oauth_server(self):
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+        return server
+
+    @pytest.mark.asyncio
+    async def test_token_with_unknown_issuer_yields_not_applicable(self):
+        """Token from an issuer outside the allowlist is not rejected by the OAuth path."""
+        handler, responses = _make_handler()
+        token = _make_idp_token(issuer="https://other-idp.example.com/")
+
+        verify_called = False
+
+        async def fake_verify(*_args, **_kwargs):
+            nonlocal verify_called
+            verify_called = True
+            return {"sub": "x"}
+
+        with (
+            _patched_get_db(self._oauth_server()),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.NOT_APPLICABLE
+        assert verify_called is False  # OAuth verification was never attempted.
+        assert responses == []  # No error response sent — caller decides.
+
+    @pytest.mark.asyncio
+    async def test_token_with_missing_iss_yields_not_applicable(self):
+        """Token with no ``iss`` claim is treated as a potential legacy internal JWT."""
+        # Third-Party
+        import jwt as _jwt  # pylint: disable=import-outside-toplevel
+
+        handler, responses = _make_handler()
+        token = _jwt.encode({"sub": "user@example.com"}, "unused", algorithm="HS256")
+
+        with (
+            _patched_get_db(self._oauth_server()),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=AssertionError("must not be called")),
+        ):
+            result = await handler._try_oauth_access_token(token)
+
+        assert result is OAuthAuthResult.NOT_APPLICABLE
+        assert responses == []
+
+    @pytest.mark.asyncio
+    async def test_undecodable_token_yields_not_applicable(self):
+        """A non-JWT bearer token on an oauth_enabled server defers to the internal path."""
+        handler, responses = _make_handler()
+
+        with (
+            _patched_get_db(self._oauth_server()),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=AssertionError("must not be called")),
+        ):
+            result = await handler._try_oauth_access_token("not-a-jwt")
+
+        assert result is OAuthAuthResult.NOT_APPLICABLE
+        assert responses == []
+
+    @pytest.mark.asyncio
+    async def test_route_idp_falls_through_to_internal_verify_on_oauth_server(self, monkeypatch):
+        """End-to-end: legacy JWT + oauth_enabled server + issuer check off → internal verify runs.
+
+        This is the exact regression scenario: ``_route_idp_issued_token``
+        peeks a mismatched ``iss``, routes to ``_try_oauth_access_token``,
+        which now returns ``NOT_APPLICABLE`` (not ``FAILED``) so the caller
+        falls through to internal verification instead of emitting a 401.
+        """
+        monkeypatch.setattr(settings, "jwt_issuer_verification", False)
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+
+        handler, responses = _make_handler()
+        # Legacy token with an outdated iss, not in the server's allowlist.
+        token = _make_idp_token(issuer="mcpgateway-legacy")
+
+        with _patched_get_db(self._oauth_server()):
+            result = await handler._route_idp_issued_token(token)
+
+        # ``None`` means "continue with internal verify_credentials" — the
+        # caller will validate signature + claims against the internal
+        # signing key, which is exactly the legacy path we must preserve.
+        assert result is None
+        assert responses == []  # No 401 sent yet.
+
+
+class TestRouteIdpIssuedToken:
+    """Invariant: OAuth routing is independent of ``settings.jwt_issuer_verification``.
+
+    ``_route_idp_issued_token`` dispatches based solely on whether the
+    token's unverified ``iss`` claim matches the internal issuer. When it
+    does not match, routing to the OAuth path must run regardless of the
+    ``jwt_issuer_verification`` toggle — that toggle governs how
+    ContextForge's *own* JWTs are checked, not whether externally-issued
+    tokens are eligible for OAuth validation. Legacy fall-through to
+    internal JWT verification is preserved only for non-OAuth servers when
+    issuer verification is disabled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_matching_iss_skips_oauth_routing(self, monkeypatch):
+        """A token whose ``iss`` equals ``settings.jwt_issuer`` is never routed to OAuth."""
+        handler, _responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        monkeypatch.setattr(settings, "jwt_issuer_verification", True)
+        token = _make_idp_token(issuer=INTERNAL_JWT_ISSUER)
+
+        called = False
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            nonlocal called
+            called = True
+            return OAuthAuthResult.SUCCESS
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token(token)
+
+        # ``None`` means "caller should continue with internal JWT
+        # verification"; crucially, OAuth dispatch must not fire when the
+        # issuer already matches the internal one.
+        assert result is None
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_undecodable_token_falls_through_without_routing(self, monkeypatch):
+        """A non-JWT bearer token yields ``None`` so the canonical 401 is emitted downstream."""
+        handler, responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        monkeypatch.setattr(settings, "jwt_issuer_verification", True)
+
+        called = False
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            nonlocal called
+            called = True
+            return OAuthAuthResult.SUCCESS
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token("not-a-jwt")
+
+        assert result is None
+        assert called is False
+        assert responses == []  # Downstream verify_credentials produces the 401.
+
+    @pytest.mark.asyncio
+    async def test_idp_token_routes_to_oauth_even_when_issuer_verification_disabled(self, monkeypatch):
+        """An IdP-issued token still reaches ``_try_oauth_access_token`` regardless of the toggle."""
+        handler, _responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer_verification", False)
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        called_with: dict = {}
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            called_with["token"] = tok
+            return OAuthAuthResult.SUCCESS
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token(token)
+
+        assert result is True
+        assert called_with["token"] == token
+
+    @pytest.mark.asyncio
+    async def test_non_oauth_server_falls_through_when_issuer_verification_disabled(self, monkeypatch):
+        """NOT_APPLICABLE + issuer verification disabled → ``None`` (continue to internal verify)."""
+        handler, responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer_verification", False)
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token(token)
+
+        # ``None`` means "continue with internal JWT verification" — a
+        # legacy internal token whose ``iss`` differs from
+        # ``settings.jwt_issuer`` remains acceptable when issuer
+        # verification is disabled.
+        assert result is None
+        assert responses == []  # No 401 sent yet.
+
+    @pytest.mark.asyncio
+    async def test_non_oauth_server_rejects_when_issuer_verification_enabled(self, monkeypatch):
+        """When issuer verification is on, a mismatched ``iss`` on a non-OAuth server is a 401."""
+        handler, responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer_verification", True)
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token(token)
+
+        assert result is False
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_idp_token_failed_returns_false_and_does_not_double_send(self, monkeypatch):
+        """``_try_oauth_access_token`` → ``FAILED`` must surface as ``False`` without sending a second error.
+
+        The FAILED contract is: the inner method already sent a 4xx/5xx
+        response. The router must NOT wrap it in a second 401. Locks the
+        third enum cell of the routing matrix (SUCCESS/FAILED/NOT_APPLICABLE)
+        that was previously covered only by the SUCCESS and NOT_APPLICABLE
+        tests.
+        """
+        handler, responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            # Simulate that _try_oauth_access_token already emitted a 401.
+            await self._send_error(detail="simulated oauth failure", headers={"WWW-Authenticate": "Bearer"})
+            return OAuthAuthResult.FAILED
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            result = await handler._route_idp_issued_token(token)
+
+        assert result is False
+        # Exactly one http.response.start — the router did not send a second.
+        starts = [m for m in responses if m["type"] == "http.response.start"]
+        assert len(starts) == 1
+        assert starts[0]["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_exception_from_try_oauth_increments_error_metric(self, monkeypatch):
+        """Unhandled exceptions must surface in ``oauth_verify_events_counter`` before propagating."""
+        # First-Party
+        from mcpgateway.services.metrics import oauth_verify_events_counter  # pylint: disable=import-outside-toplevel
+
+        handler, _responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            raise RuntimeError("unexpected")
+
+        before = oauth_verify_events_counter.labels(outcome="error")._value.get()  # pylint: disable=protected-access
+
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+            new=fake_try_oauth,
+        ):
+            with pytest.raises(RuntimeError, match="unexpected"):
+                await handler._route_idp_issued_token(token)
+
+        after = oauth_verify_events_counter.labels(outcome="error")._value.get()  # pylint: disable=protected-access
+        assert after == before + 1
+
+    @pytest.mark.asyncio
+    async def test_success_failed_not_applicable_metric_labels(self, monkeypatch):
+        """Each OAuthAuthResult outcome maps to its own ``oauth_verify_events_counter`` label.
+
+        A label-swap mutation (e.g. ``outcome="failed"`` on the success
+        branch) would previously ship green — no test referenced the
+        counter. This test snapshots each label value before/after
+        routing through a stubbed ``_try_oauth_access_token``.
+        """
+        # First-Party
+        from mcpgateway.services.metrics import oauth_verify_events_counter  # pylint: disable=import-outside-toplevel
+
+        handler, _responses = _make_handler()
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        token = _make_idp_token()
+
+        def snapshot(label):
+            return oauth_verify_events_counter.labels(outcome=label)._value.get()  # pylint: disable=protected-access
+
+        for outcome_enum, label in (
+            (OAuthAuthResult.SUCCESS, "success"),
+            (OAuthAuthResult.FAILED, "failed"),
+            (OAuthAuthResult.NOT_APPLICABLE, "not_applicable"),
+        ):
+            before = snapshot(label)
+
+            async def fake_try_oauth(self, tok, unverified=None, _outcome=outcome_enum):  # pylint: disable=unused-argument
+                return _outcome
+
+            with patch(
+                "mcpgateway.transports.streamablehttp_transport._StreamableHttpAuthHandler._try_oauth_access_token",
+                new=fake_try_oauth,
+            ):
+                await handler._route_idp_issued_token(token)
+
+            after = snapshot(label)
+            assert after == before + 1, f"outcome={label}: counter did not increment"
+
+    @pytest.mark.asyncio
+    async def test_non_string_iss_yields_not_applicable(self):
+        """Tokens with a non-string ``iss`` defer to internal verification.
+
+        Locks the ``isinstance(token_issuer, str)`` guard against a future
+        refactor that coerces ``str(token_issuer)`` and accidentally
+        matches ``['https://idp.example.com/']`` against its repr.
+        """
+        handler, responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        for bad_iss in (123, ["https://idp.example.com/"], {"nested": "dict"}, None):
+            with _patched_get_db(server):
+                result = await handler._try_oauth_access_token("irrelevant-token", {"iss": bad_iss})
+            assert result is OAuthAuthResult.NOT_APPLICABLE, f"iss={bad_iss!r} should yield NOT_APPLICABLE"
+        assert responses == []

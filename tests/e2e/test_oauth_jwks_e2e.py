@@ -34,17 +34,14 @@ import uuid
 import pytest
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, Playwright
+# Third-Party
+from playwright.sync_api import APIRequestContext, Playwright  # noqa: E402
 
 # First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
+from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: E402
 
 # Local
-from .mcp_test_helpers import (
-    BASE_URL,
-    skip_no_gateway,
-    TEST_PASSWORD,
-)
+from .mcp_test_helpers import BASE_URL, skip_no_gateway, TEST_PASSWORD  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +60,7 @@ KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "keycloak-dev-secre
 KEYCLOAK_ISSUER = f"{KEYCLOAK_INTERNAL_URL}/realms/{KEYCLOAK_REALM}"
 KEYCLOAK_TOKEN_URL = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 KEYCLOAK_TEST_USER = "admin@example.com"
-KEYCLOAK_TEST_PASSWORD = "changeme"
+KEYCLOAK_TEST_PASSWORD = "changeme"  # pragma: allowlist secret — e2e Keycloak fixture, not a real credential
 OAUTH_PREFIX = "oauth-jwks"
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
 
@@ -73,11 +70,19 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
 # ---------------------------------------------------------------------------
 def _keycloak_reachable() -> bool:
     try:
+        # Third-Party
         import httpx
 
         resp = httpx.get(f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/.well-known/openid-configuration", timeout=5)
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        # Surface the real reason so a missing dependency (e.g. httpx not
+        # installed in CI) or a config error is not silently hidden as
+        # "Keycloak not reachable".
+        # Standard
+        import warnings
+
+        warnings.warn(f"_keycloak_reachable probe failed: {type(exc).__name__}: {exc}", stacklevel=2)
         return False
 
 
@@ -111,18 +116,27 @@ def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> s
     JWT issuer claim matches the internal URL (keycloak:8080) that the gateway can reach
     for OIDC discovery. Falls back to the external URL if docker exec fails.
     """
+    # Standard
     import subprocess
 
     # Request token from inside the gateway container so issuer = keycloak:8080
     cmd = [
-        "docker", "compose", "exec", "-T", "gateway",
-        "curl", "-sf", "-X", "POST",
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "gateway",
+        "curl",
+        "-sf",
+        "-X",
+        "POST",
         f"{KEYCLOAK_INTERNAL_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token",
-        "-d", f"grant_type=password&client_id={KEYCLOAK_CLIENT_ID}&client_secret={KEYCLOAK_CLIENT_SECRET}"
-               f"&username={email}&password={password}&scope=openid+profile+email",
+        "-d",
+        f"grant_type=password&client_id={KEYCLOAK_CLIENT_ID}&client_secret={KEYCLOAK_CLIENT_SECRET}" f"&username={email}&password={password}&scope=openid+profile+email",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
     if result.returncode == 0 and result.stdout.strip():
+        # Standard
         import json
 
         data = json.loads(result.stdout)
@@ -131,6 +145,7 @@ def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> s
             return token
 
     # Fallback: request from host (issuer may differ)
+    # Third-Party
     import httpx
 
     resp = httpx.post(
@@ -194,6 +209,12 @@ def oauth_server(admin_api: APIRequestContext) -> Generator[dict[str, Any], None
             "oauth_enabled": True,
             "oauth_config": {
                 "authorization_servers": [KEYCLOAK_ISSUER],
+                # Keycloak's default access tokens put the client_id (and
+                # "account") in the aud claim, not the MCP resource URL.
+                # Declaring it here as an extra accepted audience lets the
+                # enforced aud check pass without requiring a custom
+                # Keycloak audience mapper for the E2E stack.
+                "client_id": KEYCLOAK_CLIENT_ID,
             },
         },
         "visibility": "public",
