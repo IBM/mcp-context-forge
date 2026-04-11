@@ -7612,6 +7612,8 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 		--update .secrets.baseline \
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
+	@echo "📊 detect-secrets findings report:"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline || true
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
