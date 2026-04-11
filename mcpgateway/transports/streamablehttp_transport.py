@@ -261,10 +261,18 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
     if isinstance(servers, list):
         cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
         if cleaned:
+            non_https = [s for s in cleaned if not s.lower().startswith("https://")]
+            if non_https:
+                logger.warning("Ignoring non-HTTPS authorization_servers (SSRF risk): %s", non_https)
+                cleaned = [s for s in cleaned if s.lower().startswith("https://")]
             return cleaned
     singular = oauth_config.get("authorization_server")
     if isinstance(singular, str) and singular.strip():
-        return [singular.strip()]
+        url = singular.strip()
+        if not url.lower().startswith("https://"):
+            logger.warning("Ignoring non-HTTPS authorization_server (SSRF risk): %s", url)
+            return []
+        return [url]
     return []
 
 

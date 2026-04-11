@@ -69,6 +69,7 @@ import jwt
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
 basic_security = HTTPBasic(auto_error=False)
@@ -1357,6 +1358,16 @@ async def _discover_oidc_metadata(issuer: str) -> Optional[dict[str, Any]]:
             probe_errors.append(f"{url}: metadata is not a JSON object")
             continue
 
+        # RFC 8414 §3.3: verify the metadata ``issuer`` matches what we
+        # expected. A compromised CDN/proxy could serve metadata for a
+        # different issuer; caching it would let an attacker control the
+        # jwks_uri for a legitimate issuer.
+        metadata_issuer = metadata.get("issuer", "")
+        if isinstance(metadata_issuer, str) and metadata_issuer.rstrip("/") != normalized:
+            probe_errors.append(f"{url}: metadata issuer {metadata_issuer!r} does not match expected {normalized!r}")
+            logger.debug("Metadata issuer mismatch at %s: got %s, expected %s", url, metadata_issuer, normalized)
+            continue
+
         _oauth_oidc_metadata_cache[normalized] = (monotonic(), metadata, _OAUTH_OIDC_METADATA_TTL)
         return metadata
 
@@ -1413,7 +1424,7 @@ async def verify_oauth_access_token(
     normalized_issuer = token_issuer.rstrip("/")
     normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
     if normalized_issuer not in normalized_allowed:
-        logger.warning("OAuth token issuer %s not in allowlist %s", normalized_issuer, normalized_allowed)
+        logger.warning("OAuth token issuer %s not in allowlist %s", sanitize_for_log(normalized_issuer), normalized_allowed)
         return None
 
     # Discover OIDC metadata and resolve JWKS URI
@@ -1423,7 +1434,20 @@ async def verify_oauth_access_token(
 
     jwks_uri = metadata.get("jwks_uri")
     if not isinstance(jwks_uri, str) or not jwks_uri.strip():
-        logger.warning("No jwks_uri in OIDC metadata for issuer %s", normalized_issuer)
+        logger.warning("No jwks_uri in OIDC metadata for issuer %s", sanitize_for_log(normalized_issuer))
+        return None
+
+    # Defense-in-depth: the jwks_uri from metadata must share the issuer's
+    # origin and use HTTPS. A compromised metadata endpoint could otherwise
+    # redirect key fetches to an attacker-controlled or internal host.
+    jwks_parts = urlsplit(jwks_uri.strip())
+    issuer_parts = urlsplit(normalized_issuer)
+    if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
+        logger.warning(
+            "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
+            sanitize_for_log(jwks_uri),
+            sanitize_for_log(normalized_issuer),
+        )
         return None
 
     # Reject OIDC ID tokens before signature verification. ID tokens are
@@ -1445,7 +1469,7 @@ async def verify_oauth_access_token(
     if id_token_markers:
         logger.warning(
             "Rejecting OIDC ID token masquerading as OAuth access token (issuer=%s, claims=%s)",
-            normalized_issuer,
+            sanitize_for_log(normalized_issuer),
             id_token_markers,
         )
         return None
@@ -1466,8 +1490,22 @@ async def verify_oauth_access_token(
         if expected_audience:
             decode_kwargs["audience"] = expected_audience
         verified = await asyncio.to_thread(jwt.decode, token, **decode_kwargs)
-        logger.debug("OAuth access token verified (issuer=%s, sub=%s)", normalized_issuer, verified.get("sub", "unknown"))
+
+        # Re-verify the issuer in the *signed* payload against the issuer
+        # we resolved JWKS keys for (defense-in-depth). PyJWT's built-in
+        # ``verify_iss`` does not normalize trailing slashes, so we do it
+        # ourselves with the same normalization applied to the allowlist.
+        verified_iss = verified.get("iss", "")
+        if not isinstance(verified_iss, str) or verified_iss.rstrip("/") != normalized_issuer:
+            logger.warning(
+                "Verified token iss %s does not match expected issuer %s",
+                sanitize_for_log(str(verified_iss)),
+                sanitize_for_log(normalized_issuer),
+            )
+            return None
+
+        logger.debug("OAuth access token verified (issuer=%s, sub=%s)", sanitize_for_log(normalized_issuer), verified.get("sub", "unknown"))
         return verified
     except jwt.PyJWTError as exc:
-        logger.warning("OAuth access token verification failed (issuer=%s): %s", normalized_issuer, exc)
+        logger.warning("OAuth access token verification failed (issuer=%s): %s", sanitize_for_log(normalized_issuer), exc)
         return None
