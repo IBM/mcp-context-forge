@@ -9,14 +9,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z" }
+exclude-newer-package = { "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.0-RC-2"
+version = "1.0.0-rc3"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -53,7 +53,7 @@ maintainers = [
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.5",
+    "cryptography>=46.0.6",
     "fastapi>=0.135.1",
     "filelock>=3.25.2",
     "gunicorn>=25.1.0",
@@ -76,6 +76,7 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
+    "requests==2.33.0", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.48",
     "sse-starlette>=3.3.3",
@@ -92,7 +93,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "a2a-sdk[http-server]",
-    "aiohttp>=3.13.3",
+    "aiohttp>=3.13.4",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -146,7 +147,7 @@ dev = [
     "ty>=0.0.1a21",
     "types-tabulate>=0.9.0.20241207",
     "url-normalize>=2.2.1",
-    "uv>=0.8.23",
+    "uv>=0.11.6",
     "websockets>=15.0.1",
     "pyasn1>=0.6.3", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     "tornado>=6.5.5",  # transitive via jupyter; CVE-2026-31958
@@ -158,7 +159,7 @@ dev = [
     "setuptools>=82.0.0",
     "debugpy>=1.8.20",
     "maturin>=1.12.6",
-    "tornado>=6.5.5",
+    "Pygments>=2.20.0",
 ]
 
 # ----------------------------------------------------------------
@@ -186,7 +187,7 @@ postgres = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.19",
+    "langchain-core>=1.2.28",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.11",

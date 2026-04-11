@@ -9,7 +9,8 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=3.1.0",
+    "cryptography>=46.0.7", # Transitive pin
+    "fastmcp>=3.2.0",
     "mcp>=1.26.0",
     "numpy>=2.4.2",
     "opencv-python-headless>=4.13.0.92",
@@ -17,6 +18,9 @@ dependencies = [
     "pyyaml>=6.0.3",
     "qrcode[pil]>=8.2",
 ]
+
+[tool.uv]
+exclude-newer-package = { "cryptography" = "2026-04-11T23:59:59Z" }
 
 [project.optional-dependencies]
 dev = [
