@@ -322,8 +322,8 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/servers | jq
 
 # Example curl
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
-     -H "Content-Type: application/json"
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
      -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":["6018ca46d32a4ac6b4c054c13a1726a2"]}}' \
      http://localhost:4444/servers | jq
 
