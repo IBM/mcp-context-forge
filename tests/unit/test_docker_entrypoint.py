@@ -30,6 +30,7 @@ export APP_ROOT="{app_root}"
 source "{ENTRYPOINT}"
 export RELOAD_PLUGIN_REQUIREMENTS_TXT=true
 export PLUGIN_REQUIREMENTS_TXT_PATH="{requirements_path or app_root / 'plugins' / 'requirements.txt'}"
+export PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS=0
 install_plugin_requirements
 """
     return subprocess.run(
@@ -81,6 +82,39 @@ exit 1
     assert result.returncode == 1
     assert attempts_file.read_text(encoding="utf-8").count("attempt") == 3
     assert "failed after 3 attempts" in result.stdout
+
+
+def test_install_plugin_requirements_rejects_invalid_retry_delay(tmp_path: Path) -> None:
+    app_root = _make_app_root(tmp_path)
+    requirements = app_root / "plugins" / "requirements.txt"
+    requirements.write_text("cpex-rate-limiter==0.0.3\n", encoding="utf-8")
+    _write_executable(
+        app_root / ".venv" / "bin" / "pip",
+        """#!/usr/bin/env bash
+exit 0
+""",
+    )
+    command = f"""
+set -euo pipefail
+export CONTEXTFORGE_TEST_ONLY_SOURCE=true
+export APP_ROOT="{app_root}"
+source "{ENTRYPOINT}"
+export RELOAD_PLUGIN_REQUIREMENTS_TXT=true
+export PLUGIN_REQUIREMENTS_TXT_PATH="{requirements}"
+export PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS="not-a-number"
+install_plugin_requirements
+"""
+
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "is not a non-negative number; falling back to 2s" in result.stdout
 
 
 def test_install_plugin_requirements_succeeds_after_retry(tmp_path: Path) -> None:

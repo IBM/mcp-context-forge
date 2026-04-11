@@ -2189,10 +2189,15 @@ class TestSensitiveLoggingRegressions:
         """Scan runtime logger calls to ensure sensitive values are not interpolated."""
         source_root = Path(__file__).resolve().parents[2] / "mcpgateway"
         violations = []
+        sensitive_needles = tuple(self.SENSITIVE_IDENTIFIERS) + ("credentials",)
 
         for file_path in source_root.rglob("*.py"):
             source = file_path.read_text(encoding="utf-8")
             if "logger." not in source:
+                continue
+            # Cheap text pre-filter: only parse files that could plausibly
+            # log a sensitive identifier. Avoids ~100 AST parses per run.
+            if not any(needle in source for needle in sensitive_needles):
                 continue
             tree = ast.parse(source, filename=str(file_path))
             for node in ast.walk(tree):

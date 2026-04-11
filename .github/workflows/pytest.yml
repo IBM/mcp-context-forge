@@ -94,7 +94,7 @@ jobs:
       - name: 🧪  Run pytest
         run: |
           uv run --extra plugins pytest -n auto \
-            --durations=5 \
+            --durations=10 \
             --ignore=tests/fuzz \
             --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \

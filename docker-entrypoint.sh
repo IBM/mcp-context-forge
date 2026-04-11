@@ -432,6 +432,11 @@ install_plugin_requirements() {
     echo "🧩 Installing ${requirement_count} plugin package requirement(s) from ${resolved_path}"
 
     local max_retries=3
+    local retry_delay="${PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS:-2}"
+    if [[ ! "${retry_delay}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "⚠️  PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS=${retry_delay} is not a non-negative number; falling back to 2s"
+        retry_delay=2
+    fi
     local attempt=1
     while (( attempt <= max_retries )); do
         if "${app_root}/.venv/bin/pip" install --no-cache-dir -r "${resolved_path}"; then
@@ -439,7 +444,7 @@ install_plugin_requirements() {
         fi
         echo "⚠️  Plugin package install attempt ${attempt}/${max_retries} failed"
         (( attempt++ ))
-        (( attempt <= max_retries )) && sleep 2
+        (( attempt <= max_retries )) && sleep "${retry_delay}"
     done
     echo "❌ Plugin package install failed after ${max_retries} attempts; refusing to start with incomplete plugin dependencies"
     return 1
