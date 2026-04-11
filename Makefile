@@ -642,8 +642,8 @@ grpc-proto:                          ## Generate gRPC stubs for external plugin 
 	@echo "🔧  Generating gRPC protocol buffer stubs..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip show grpcio-tools >/dev/null 2>&1 || \
-		uv pip install -q grpcio-tools"
+		$(UV_BIN) pip show grpcio-tools >/dev/null 2>&1 || \
+		$(UV_BIN) pip install -q grpcio-tools"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python -m grpc_tools.protoc \
 			-I mcpgateway/plugins/framework/external/grpc/proto \
@@ -757,8 +757,8 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv pip show pytest-playwright >/dev/null 2>&1 || \
-			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
+		$(UV_BIN) pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; $(UV_BIN) pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
 		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
@@ -933,7 +933,7 @@ pytest-examples:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest pytest-examples && \
+		$(UV_BIN) pip install -q pytest pytest-examples && \
 		pytest -v test_readme.py"
 
 test-curl:
@@ -3257,7 +3257,7 @@ mutmut-install:
 	@echo "📥 Installing mutmut..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q mutmut==3.3.1"
+		$(UV_BIN) pip install -q mutmut==3.3.1"
 
 mutmut-run: mutmut-install
 	@echo "🧬 Running mutation testing (sample mode - 20 mutants)..."
@@ -3413,7 +3413,7 @@ docs: docs-assets images sbom
 	@echo "📚  Generating documentation with handsdown..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q handsdown && \
+		$(UV_BIN) pip install -q handsdown && \
 		python3 -m handsdown --external https://github.com/IBM/mcp-context-forge/ \
 		         -o $(DOCS_DIR)/docs \
 		         -n app --name '$(PROJECT_NAME)' --cleanup"
@@ -3428,7 +3428,7 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q code2flow && \
+		$(UV_BIN) pip install -q code2flow && \
 		$(VENV_DIR)/bin/code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true"
 	@command -v dot >/dev/null 2>&1 || { \
 		echo "⚠️  Graphviz (dot) not installed - skipping diagram generation"; \
@@ -3436,7 +3436,7 @@ images:
 	} && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q snakefood3 && \
+		$(UV_BIN) pip install -q snakefood3 && \
 		python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
@@ -4097,7 +4097,7 @@ wily:                               ## 📈  Maintainability report
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@git stash --quiet
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q wily && \
+		$(UV_BIN) pip install -q wily && \
 		python3 -m wily build -n 10 . > /dev/null || true && \
 		python3 -m wily report . || true"
 	@git stash pop --quiet
@@ -4114,7 +4114,7 @@ depend:                             ## 📦  List dependencies
 	@echo "📦  List dependencies"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pdm && \
+		$(UV_BIN) pip install -q pdm && \
 		python3 -m pdm list --freeze"
 
 .PHONY: snakeviz
@@ -4122,7 +4122,7 @@ snakeviz:                           ## 🐍  Interactive profile visualiser
 	@echo "🐍  Interactive profile visualiser..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q snakeviz && \
+		$(UV_BIN) pip install -q snakeviz && \
 		python3 -m cProfile -o mcp.prof mcpgateway/main.py && \
 		python3 -m snakeviz mcp.prof --server"
 
@@ -4131,7 +4131,7 @@ pstats:                             ## 📊  Static call-graph image
 	@echo "📊  Static call-graph image"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q gprof2dot && \
+		$(UV_BIN) pip install -q gprof2dot && \
 		python3 -m cProfile -o mcp.pstats mcpgateway/main.py && \
 		$(VENV_DIR)/bin/gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
 		dot -Tpng -o $(DOCS_DIR)/pstats.png"
@@ -4145,7 +4145,7 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q tox tox-uv && \
+		$(UV_BIN) pip install -q tox tox-uv && \
 		python3 -m tox -p auto $(TOXARGS)"
 
 .PHONY: sbom
@@ -4262,7 +4262,7 @@ install-watchdog:						## 📦 Install watchdog for file watching
 	@echo "📦 Installing watchdog for file watching..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q watchdog"
+		$(UV_BIN) pip install -q watchdog"
 
 # Watch mode - lint on file changes
 lint-watch: install-watchdog			## 👁️ Watch for changes and auto-lint
@@ -4489,7 +4489,7 @@ lint-parallel:							## 🚀 Run linters in parallel
 	@echo "🚀 Running linters in parallel on $(TARGET)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest-xdist"
+		$(UV_BIN) pip install -q pytest-xdist"
 	@# Run fast linters in parallel
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)" & \
 	$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)" & \
@@ -4768,12 +4768,12 @@ PROJECT_BASEDIR     ?= $(strip $(PWD))
 ## ─────────── Dependencies (compose + misc) ─────────────────────────────
 sonar-deps-podman: uv
 	@echo "🔧 Installing podman-compose ..."
-	uv tool install --quiet podman-compose
+	$(UV_BIN) tool install --quiet podman-compose
 
 sonar-deps-docker: uv
 	@echo "🔧 Ensuring $(COMPOSE_CMD) is available ..."
 	@command -v $(firstword $(COMPOSE_CMD)) >/dev/null || \
-	  uv tool install --quiet docker-compose
+	  $(UV_BIN) tool install --quiet docker-compose
 
 ## ─────────── Run SonarQube server (compose) ────────────────────────────
 sonar-up-podman:
@@ -4942,7 +4942,7 @@ containerfile-update:
 
 dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
 	@echo "📦 Building Python package..."
-	@uv build
+	@$(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -4958,7 +4958,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@uv build --wheel
+	@$(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -4970,7 +4970,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 
 sdist: uv                    ## Build source distribution only
 	@echo "📦 Building source distribution..."
-	@uv build --sdist
+	@$(UV_BIN) build --sdist
 	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist uv            ## Build, run metadata & manifest checks
@@ -6677,7 +6677,7 @@ local-pypi-upload-auth:
 local-pypi-test:
 	@echo "📥  Installing from local PyPI..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
+	$(UV_BIN) pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
 	            --reinstall $(PROJECT_NAME)"
 	@echo "✅  Installed from local PyPI"
@@ -6748,7 +6748,7 @@ DEVPI_PID := /tmp/devpi-server.pid
 devpi-install:
 	@echo "📦  Installing devpi server and client..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install devpi-server devpi-client devpi-web"
+	$(UV_BIN) pip install devpi-server devpi-client devpi-web"
 	@echo "✅  DevPi installed"
 
 devpi-init: devpi-install
@@ -6855,7 +6855,7 @@ devpi-test:
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
+	$(UV_BIN) pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
 	            --reinstall mcp-contextforge-gateway"
 	@echo "✅  Installed mcp-contextforge-gateway from devpi"
@@ -7247,7 +7247,7 @@ playwright-install:
 	@echo "🎭 Installing Playwright browsers (chromium)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
+		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
 		playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium"
 	@echo "✅ Playwright chromium browser installed!"
 
@@ -7255,7 +7255,7 @@ playwright-install-all:
 	@echo "🎭 Installing all Playwright browsers..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
+		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
 		playwright install $(PLAYWRIGHT_INSTALL_FLAGS)"
 	@echo "✅ All Playwright browsers installed!"
 
@@ -7284,7 +7284,7 @@ define run_playwright_test
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	$(if $(strip $(2)),@mkdir -p $(2),)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(if $(strip $(3)),uv pip install -q $(3) &&,) \
+		$(if $(strip $(3)),$(UV_BIN) pip install -q $(3) &&,) \
 		$(if $(strip $(4)),export $(4) &&,) \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		pytest $(5) \
@@ -7468,7 +7468,7 @@ dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q dodgy && \
+		$(UV_BIN) pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
 
@@ -7476,7 +7476,7 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@echo "⬆️  pyupgrade - checking for syntax upgrade opportunities..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pyupgrade && \
+		$(UV_BIN) pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
 	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
@@ -7488,14 +7488,14 @@ prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q prospector[with_everything] && \
+		$(UV_BIN) pip install -q prospector[with_everything] && \
 		$(VENV_DIR)/bin/prospector mcpgateway || true"
 
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pip-audit && \
+		$(UV_BIN) pip install -q pip-audit && \
 		pip-audit --strict || true"
 
 
@@ -7708,12 +7708,12 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q semgrep && \
+		$(UV_BIN) pip install -q semgrep && \
 		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q dodgy && \
+		$(UV_BIN) pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
@@ -7729,11 +7729,11 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "🔧 Attempting to auto-fix security issues..."
 	@echo "➤ Upgrading Python syntax with pyupgrade..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pyupgrade && \
+		$(UV_BIN) pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip list --outdated"
+		$(UV_BIN) pip list --outdated"
 	@echo "✅ Auto-fixes applied where possible"
 	@echo "⚠️  Manual review still required for:"
 	@echo "   - Dependency updates (run 'make update')"
@@ -8119,7 +8119,7 @@ fuzz-install:                       ## 🔧 Install all fuzzing dependencies
 	@echo "🔧 Installing fuzzing dependencies..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e .[fuzz]"
+		$(UV_BIN) pip install -e .[fuzz]"
 	@echo "✅ Fuzzing tools installed"
 
 .PHONY: fuzz-hypothesis
