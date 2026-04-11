@@ -383,7 +383,7 @@ describe("runGlobalSearch visible entity filtering", () => {
       "http://localhost",
     );
     expect(requestUrl.searchParams.get("entity_types")).toBe(
-      "servers,gateways,resources,agents,users,roots",
+      "servers,gateways,resources,agents,users",
     );
   });
 
@@ -402,7 +402,6 @@ describe("runGlobalSearch visible entity filtering", () => {
       "agents",
       "teams",
       "users",
-      "roots",
     ];
 
     await runGlobalSearch("anything");

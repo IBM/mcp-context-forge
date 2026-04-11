@@ -11214,8 +11214,10 @@ async def admin_unified_search(
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
         """Execute entity search and return empty results on auth denials.
 
-        This keeps unified search resilient when one entity type is not visible
-        to the caller due to authorization boundaries.
+        Intentional silent 401/403 suppression: unified search spans entity types
+        with heterogeneous permission gates (e.g. roots require admin.system_config
+        with no admin bypass), and a single denial must not fail the whole search
+        or leak existence of restricted entities to unprivileged callers.
 
         Args:
             search_callable: Async entity search function to execute.
@@ -13273,9 +13275,9 @@ async def admin_search_roots(
     """Search roots by name or URI.
 
     Roots are held in-memory by :class:`~mcpgateway.services.root_service.RootService`,
-    so this function fetches the full list before filtering.  In typical deployments the
-    number of registered roots is small (< 100), making the in-memory scan negligible.
-    If root counts grow substantially, consider adding filtering support directly to
+    so this function fetches the full list before filtering. Registered roots are
+    typically a small set, making the in-memory scan negligible. If root counts grow
+    substantially, consider adding filtering support directly to
     :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
 
     Args:
@@ -13298,7 +13300,6 @@ async def admin_search_roots(
     limit = max(1, min(limit, settings.pagination_max_page_size))
     all_roots = await root_service.list_roots()
 
-    # Single pass: convert URI once, filter and transform together, stop at limit.
     results: list[dict[str, Any]] = []
     for r in all_roots:
         if len(results) >= limit:
