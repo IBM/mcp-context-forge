@@ -4443,6 +4443,9 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_auto_start", True)
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_backfill_hours", 1)
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_window_minutes", 0)
+        # Exercise the llmchat-enabled branch in lifespan (the lazy import
+        # and init_redis() call are skipped unless this flag is true).
+        monkeypatch.setattr(main_mod.settings, "llmchat_enabled", True)
 
         _default_manager = MagicMock()
         _default_manager.plugin_count = 2
@@ -5311,6 +5314,17 @@ def allow_permission(monkeypatch):
 
 class TestA2AEndpoints:
     """Exercise A2A endpoints in main.py."""
+
+    @pytest.fixture(autouse=True)
+    def _ensure_a2a_router(self, main_app_with_a2a_router):
+        """Guarantee ``a2a_router`` is mounted on ``main.app`` for this class.
+
+        Under xdist a worker may have imported main while A2A was
+        transiently disabled, leaving the router unmounted.
+        ``main_app_with_a2a_router`` dynamically mounts it on the live
+        app so every test in this class can hit /a2a/* deterministically.
+        """
+        return main_app_with_a2a_router
 
     @staticmethod
     def _agent_read(agent_id: str = "agent-1") -> dict:

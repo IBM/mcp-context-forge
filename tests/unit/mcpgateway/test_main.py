@@ -547,16 +547,21 @@ class TestHealthAndInfrastructure:
         assert session.invalidate_called is True
 
     def test_root_redirect(self, test_client):
-        """Test that root path behavior depends on UI configuration."""
+        """Test that root path behavior matches what was registered at main import time.
+
+        ``mcpgateway.main`` chooses between mounting a ``/`` redirect to
+        ``/admin/`` or a ``root_info`` JSON handler based on
+        ``settings.mcpgateway_ui_enabled`` at **module-import time**.
+        Other tests/fixtures may flip the setting later, so branch on the
+        actual response status rather than the current settings value.
+        """
         response = test_client.get("/", follow_redirects=False)
 
-        # Check if UI is enabled
-        if settings.mcpgateway_ui_enabled:
-            # When UI is enabled, should redirect to admin with trailing slash
-            assert response.status_code == 303
+        if response.status_code == 303:
+            # UI was enabled at import time: redirect to /admin/
             assert response.headers["location"] == f"{settings.app_root_path}/admin/"
         else:
-            # When UI is disabled, should return API info (no version/admin status)
+            # UI was disabled at import time: API info dict
             assert response.status_code == 200
             data = response.json()
             assert data["name"] == "ContextForge"

@@ -14,18 +14,18 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 import pytest
 
-# First-Party
-# Import the main FastAPI app
-from mcpgateway.main import app
+# Note: this test needs the admin API mounted on main.app. The
+# `main_app_with_admin_api` session fixture (tests/conftest.py) reloads
+# mcpgateway.main with the admin flag flipped on.
 
 
 class TestWellKnownEndpoints:
     """Test suite for well-known URI endpoints."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, main_app_with_admin_api):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)
+        return TestClient(main_app_with_admin_api)
 
     def test_robots_txt_default(self, client):
         """Test default robots.txt blocks all crawlers."""
@@ -121,9 +121,9 @@ class TestWellKnownDisabled:
     """Test well-known endpoints when disabled."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, main_app_with_admin_api):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)
+        return TestClient(main_app_with_admin_api)
 
     @patch("mcpgateway.routers.well_known.settings")
     def test_well_known_disabled_returns_404(self, mock_settings, client):
@@ -149,9 +149,9 @@ class TestSecurityTxtWithContent:
     """Test security.txt with various content configurations."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, main_app_with_admin_api):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)
+        return TestClient(main_app_with_admin_api)
 
     @patch("mcpgateway.routers.well_known.settings")
     def test_security_txt_enabled_with_empty_content(self, mock_settings, client):
@@ -201,9 +201,9 @@ class TestCustomWellKnownFiles:
     """Test custom well-known files functionality."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, main_app_with_admin_api):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)
+        return TestClient(main_app_with_admin_api)
 
     @patch("mcpgateway.routers.well_known.settings")
     def test_custom_well_known_file_known_type(self, mock_settings, client):
@@ -241,7 +241,7 @@ class TestWellKnownAdminEndpoint:
     """Test admin well-known status endpoint."""
 
     @pytest.fixture
-    def auth_client(self):
+    def auth_client(self, main_app_with_admin_api):
         """Create a test client with auth dependency override."""
         # First-Party
         from mcpgateway.config import settings
@@ -251,10 +251,10 @@ class TestWellKnownAdminEndpoint:
         original_auth_required = settings.auth_required
         settings.auth_required = False
 
-        app.dependency_overrides[require_auth] = lambda: "test_user"
-        client = TestClient(app)
+        main_app_with_admin_api.dependency_overrides[require_auth] = lambda: "test_user"
+        client = TestClient(main_app_with_admin_api)
         yield client
-        app.dependency_overrides.pop(require_auth, None)
+        main_app_with_admin_api.dependency_overrides.pop(require_auth, None)
         settings.auth_required = original_auth_required
 
     @patch("mcpgateway.routers.well_known.settings")
@@ -370,9 +370,9 @@ class TestServerRouterOAuthProtectedResource:
     """Test deprecated server-scoped OAuth Protected Resource endpoint."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, main_app_with_admin_api):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)
+        return TestClient(main_app_with_admin_api)
 
     def test_server_oauth_protected_resource_deprecated_redirects(self, client):
         """Test that deprecated server-scoped endpoint returns 301 redirect to RFC 9728 path."""

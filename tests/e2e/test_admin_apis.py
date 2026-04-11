@@ -27,12 +27,12 @@ and reproducibility.
 """
 
 # Standard
-# CRITICAL: Set environment variables BEFORE any mcpgateway imports!
-import os
-
-os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
-os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
-os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
+# Admin API + UI are enabled on demand via the `app_with_temp_db_admin`
+# fixture (tests/conftest.py), which reloads mcpgateway.main with the
+# admin router mounted. A2A stays on (default) because
+# test_admin_a2a_listing_continues_on_conversion_error exercises the
+# A2A listing endpoint.
+import os  # noqa: F401
 
 # Standard
 import logging  # noqa: E402
@@ -97,6 +97,19 @@ TEST_USER = create_mock_email_user(email="admin@example.com", full_name="Test Ad
 # -------------------------
 # Fixtures
 # -------------------------
+@pytest.fixture(scope="module", autouse=True)
+def _enable_admin_api(main_app_with_admin_api):
+    """Ensure the admin router is mounted on main.app for this whole module.
+
+    Every test in this file exercises ``/admin/...`` endpoints, so we pull
+    the session-scoped ``main_app_with_admin_api`` fixture as an autouse
+    dependency. It dynamically mounts the admin router on the existing
+    ``main.app`` without reloading the module, so other test files that
+    already imported ``app`` keep working.
+    """
+    return main_app_with_admin_api
+
+
 @pytest_asyncio.fixture
 async def client(app_with_temp_db):
     # First-Party
@@ -672,7 +685,6 @@ class TestAdminResourceAPIs:
             resource = next((r for r in resources if r.get("name") == resource_name), None)
             assert resource is not None
             assert resource.get("mimeType", resource.get("mime_type")) == mime_value
-
 
     async def test_admin_add_resource_rejects_disallowed_mime_type(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test that resources with disallowed MIME types are rejected with 415 status."""
