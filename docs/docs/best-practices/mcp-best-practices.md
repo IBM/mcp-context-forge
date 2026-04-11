@@ -44,7 +44,7 @@ Make targets are grouped by functionality. Use `make help` to see them all in yo
 
 | Target               | Description |
 |----------------------|-------------|
-| `make lint`          | Run all linters (e.g., `ruff check`, `black`, `isort`). |
+| `make lint`          | Run the full lint suite (`make ruff`, `make black`, `make isort`, `make pylint`, etc.). |
 
 #### 🐳 CONTAINER BUILD & RUN
 

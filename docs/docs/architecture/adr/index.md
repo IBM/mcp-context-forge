@@ -50,5 +50,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0045  | Authentication and Authorization Remain in Core      | Proposed | Security      | 2026-03-15 |
 | 0046  | Shared-Nothing Between Protocol Modules              | Proposed | Architecture  | 2026-03-15 |
 | 0047  | Incremental Migration Over Rewrite                   | Proposed | Architecture  | 2026-03-15 |
+| 0048  | Extract Rust-Backed Plugins First and Preserve Python Examples Separately | Accepted | Architecture | 2026-04-10 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

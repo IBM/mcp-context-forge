@@ -43,7 +43,7 @@ from mcpgateway.plugins.framework.base import HookRef, PluginRef
 from mcpgateway.plugins.framework.errors import PluginViolationError
 from mcpgateway.plugins.framework.manager import PluginExecutor
 from mcpgateway.plugins.framework.models import PluginMode
-from plugins.rate_limiter.rate_limiter import RateLimiterPlugin
+from cpex_rate_limiter.rate_limiter import RateLimiterPlugin
 
 # API Endpoints
 PROMPT_ENDPOINT = "/api/v1/prompts/"
@@ -55,7 +55,7 @@ def rate_limit_plugin_2_per_second():
     """Rate limiter plugin configured for 2 requests per second."""
     config = PluginConfig(
         name="RateLimiter",
-        kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+        kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
         config={"by_user": "2/s", "by_tenant": None, "by_tool": {}},
@@ -68,7 +68,7 @@ def rate_limit_plugin_multi_dimensional():
     """Rate limiter plugin with multi-dimensional limits."""
     config = PluginConfig(
         name="RateLimiter",
-        kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+        kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
         config={"by_user": "10/s", "by_tenant": "5/s", "by_tool": {"restricted_tool": "1/s"}},
@@ -243,7 +243,7 @@ class TestMultiDimensionalRateLimiting:
         # Configure with ONLY user limits (no tenant limit)
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch"],
             priority=100,
             config={"by_user": "10/s", "by_tenant": None, "by_tool": {}},  # No tenant limit
@@ -318,7 +318,7 @@ class TestMultiDimensionalRateLimiting:
         # Configure with different limits
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch"],
             priority=100,
             config={
@@ -424,7 +424,7 @@ class TestSlidingWindowIntegration:
     def plugin(self):
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch", "tool_pre_invoke"],
             priority=100,
             config={"by_user": "3/s", "algorithm": "sliding_window"},
@@ -513,7 +513,7 @@ class TestTokenBucketIntegration:
     def plugin(self):
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch", "tool_pre_invoke"],
             priority=100,
             config={"by_user": "3/s", "algorithm": "token_bucket"},
@@ -606,7 +606,7 @@ class TestCrossHookSharing:
     def plugin(self):
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch", "tool_pre_invoke"],
             priority=100,
             config={"by_user": "5/s"},
@@ -654,7 +654,7 @@ class TestCrossHookSharing:
         """Tenant bucket is shared across all users in the same tenant, regardless of hook."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch", "tool_pre_invoke"],
             priority=100,
             config={"by_user": "10/s", "by_tenant": "4/s"},
@@ -687,7 +687,7 @@ class TestPermissiveMode:
     def _make_plugin_and_hook(self, limit: str) -> tuple:
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             mode=PluginMode.PERMISSIVE,
@@ -737,7 +737,7 @@ class TestPermissiveMode:
         """Enforce mode raises PluginViolationError; permissive mode does not."""
         enforce_config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_user": "1/s"},
             mode=PluginMode.ENFORCE,
@@ -764,7 +764,7 @@ class TestDisabledMode:
     def _make_plugin_and_refs(self) -> tuple:
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             mode=PluginMode.DISABLED,
@@ -819,7 +819,7 @@ class TestTenantIsolation:
     def plugin(self):
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             config={"by_user": "3/s", "by_tenant": "5/s"},
@@ -907,7 +907,7 @@ class TestTenantIsolation:
         """
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             config={"by_user": "100/s", "by_tenant": "5/s"},
@@ -953,7 +953,7 @@ class TestTenantIsolation:
         """
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             config={"by_user": "100/s", "by_tenant": "5/s"},
@@ -982,7 +982,7 @@ class TestNoLimitsAndMissingContext:
         """Plugin with all dimensions None must allow every request without tracking."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={},  # no by_user, no by_tenant, no by_tool
         )
@@ -999,7 +999,7 @@ class TestNoLimitsAndMissingContext:
         """Plugin with no configured limits must not set X-RateLimit-* headers."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={},
         )
@@ -1015,7 +1015,7 @@ class TestNoLimitsAndMissingContext:
         """user=None in GlobalContext must fall back to 'anonymous' as the rate limit key."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_user": "2/s"},
         )
@@ -1038,7 +1038,7 @@ class TestNoLimitsAndMissingContext:
         """tenant_id=None in GlobalContext must skip the by_tenant check entirely — no 'default' bucket."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_tenant": "2/s"},
         )
@@ -1059,7 +1059,7 @@ class TestNoLimitsAndMissingContext:
         """With both user=None and tenant_id=None the plugin must still enforce limits."""
         config = PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_user": "2/s", "by_tenant": "10/s"},
         )
@@ -1081,7 +1081,7 @@ class TestNoLimitsAndMissingContext:
             return RateLimiterPlugin(
                 PluginConfig(
                     name="RateLimiter",
-                    kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                    kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
                     hooks=["tool_pre_invoke"],
                     config={"by_user": "2/s"},
                 )
@@ -1175,7 +1175,7 @@ def _make_redis_plugin(redis_url: str, algorithm: str = "fixed_window", limit: s
     return RateLimiterPlugin(
         PluginConfig(
             name="RateLimiter",
-            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
             config={

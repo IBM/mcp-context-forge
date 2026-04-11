@@ -33,7 +33,6 @@ mcpgateway/                 # Core FastAPI application
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
@@ -68,8 +67,9 @@ make autoflake isort black pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing Rust changes (plugins_rust/ or tools_rust/):
-make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
+# Before committing Rust changes (tools_rust/):
+# Run fmt-check, clippy -D warnings, and cargo test for Rust crates
+cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## Authentication & RBAC Overview
@@ -367,5 +367,6 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 
 - `gh` for GitHub operations
 - `make` for build/test automation
-- `uv` for virtual environment management
-- Standard tools: pytest, black, isort, ruff, pylint
+- `uv` for virtual environment management and for `uv tool run` linter invocations
+- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, `prospector`, etc. (see `pyproject.toml` `[dependency-groups]`)
+- Formatters and linters (`black`, `isort`, `ruff`, `pylint`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, `make pylint`, etc.) over calling the underlying tools directly
