@@ -7602,41 +7602,18 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-## --------------------------------------------------------------------------- ##
-##  Gitleaks (Go binary - separate installation)
-## --------------------------------------------------------------------------- ##
-gitleaks-install:                   ## 📥 Install gitleaks secret scanner
-	@echo "📥 Installing gitleaks..."
-	@if [ "$$(uname)" = "Darwin" ]; then \
-		brew install gitleaks; \
-	elif [ "$$(uname)" = "Linux" ]; then \
-		VERSION=$$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d '"' -f 4); \
-		curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/$$VERSION/gitleaks_$${VERSION#v}_linux_x64.tar.gz | tar -xz -C /tmp; \
-		sudo mv /tmp/gitleaks /usr/local/bin/; \
-		sudo chmod +x /usr/local/bin/gitleaks; \
-	else \
-		echo "❌ Unsupported OS. Download from https://github.com/gitleaks/gitleaks/releases"; \
-		exit 1; \
-	fi
-	@echo "✅  gitleaks installed successfully!"
-
-gitleaks:                           ## 🔍 Scan for secrets in git history
-	@command -v gitleaks >/dev/null 2>&1 || { \
-		echo "❌ gitleaks not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • macOS: brew install gitleaks"; \
-		echo "   • Linux: Run 'make gitleaks-install'"; \
-		echo "   • Or download from https://github.com/gitleaks/gitleaks/releases"; \
-		exit 1; \
-	}
-	@echo "🔍 Scanning for secrets with gitleaks..."
-	@gitleaks detect --source . -v || true
-	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+# Exclude pattern for detect-secrets to skip common directories and auto generated files
+DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan --update .secrets.baseline --use-all-plugins
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
+		--update .secrets.baseline \
+		--use-all-plugins \
+		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
+	@echo "📊 detect-secrets findings report:"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline || true
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
@@ -7646,8 +7623,10 @@ detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for r
 .PHONY: detect-secrets-hook
 detect-secrets-hook: uv                      ## 🔎  detect-secrets pre-commit hook equivalent
 	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited
-
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook \
+		--baseline .secrets.baseline \
+		--use-all-plugins \
+		--fail-on-unaudited
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
