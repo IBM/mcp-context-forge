@@ -2932,7 +2932,7 @@ class ToolService(BaseService):
             # Look up the tool's original_name from the DB; fall back to the prefixed name if not found
             # (e.g. when calling a tool that exists on the remote but hasn't been cached locally).
             remote_name = name
-            tool_row = db.execute(select(DbTool).where(DbTool.name == name, DbTool.gateway_id == gateway_id)).scalar_one_or_none()
+            tool_row = db.execute(select(DbTool).where(DbTool.name == name, DbTool.gateway_id == gateway_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
             if tool_row and tool_row.original_name:
                 remote_name = tool_row.original_name
             else:
@@ -3481,7 +3481,7 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()

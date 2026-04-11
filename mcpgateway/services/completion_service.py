@@ -246,7 +246,7 @@ class CompletionService:
 
         # Only consider prompts that are enabled and visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
-        stmt = select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)
+        stmt = select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)  # pylint: disable=comparison-with-callable
         stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
         stmt = stmt.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id)).limit(1)
         prompt = db.execute(stmt).scalar_one_or_none()

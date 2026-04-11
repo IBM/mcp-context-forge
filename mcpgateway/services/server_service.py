@@ -520,7 +520,7 @@ class ServerService(BaseService):
 
             # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
             conditions = [
-                DbServer.name == server_in.name,
+                DbServer.name == server_in.name,  # pylint: disable=comparison-with-callable
                 DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
                 DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
             ]
@@ -1147,13 +1147,19 @@ class ServerService(BaseService):
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))
+                    existing_server = get_for_update(
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id)
+                    )  # pylint: disable=comparison-with-callable
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
                     existing_server = get_for_update(
-                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id)
+                        db,
+                        DbServer,
+                        where=and_(
+                            DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id
+                        ),  # pylint: disable=comparison-with-callable
                     )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)

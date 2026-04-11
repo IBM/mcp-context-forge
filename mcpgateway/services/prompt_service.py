@@ -764,13 +764,17 @@ class PromptService(BaseService):
             # Check for existing server with the same name
             if visibility.lower() == "public":
                 # Check for existing public prompt with the same name and gateway_id
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()
+                existing_prompt = db.execute(
+                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)
+                ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
                 # Check for existing team prompt with the same name and gateway_id
                 existing_prompt = db.execute(
-                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id)
+                    select(DbPrompt).where(
+                        DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id
+                    )  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
@@ -1740,11 +1744,11 @@ class PromptService(BaseService):
             via _apply_access_control() to ensure multi-tenancy security.
         """
         try:
-            return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()
+            return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()  # pylint: disable=comparison-with-callable
         except MultipleResultsFound:
             # OR matched multiple rows — try name-only (MCP spec primary key)
             try:
-                return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
+                return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
             except MultipleResultsFound:
                 raise PromptError(f"Prompt name '{prompt_id}' is ambiguous across multiple scopes; use /servers/{{id}}/mcp to disambiguate.")
 
@@ -2157,17 +2161,25 @@ class PromptService(BaseService):
             if computed_name != prompt.name:
                 if visibility.lower() == "public":
                     # Lock any conflicting row so concurrent updates cannot race.
-                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id))
+                    existing_prompt = get_for_update(
+                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)
+                    )  # pylint: disable=comparison-with-callable
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id))
+                    existing_prompt = get_for_update(
+                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
+                    )  # pylint: disable=comparison-with-callable
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "private":
                     existing_prompt = get_for_update(
-                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
+                        db,
+                        DbPrompt,
+                        where=and_(
+                            DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id
+                        ),  # pylint: disable=comparison-with-callable
                     )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)

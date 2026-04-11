@@ -96,7 +96,17 @@ jobs:
             RPL-1.5,
             OSL-3.0,
             CPAL-1.0
-          allow-dependencies-licenses: "pkg:pypi/pylint-pydantic"
+
+          # To whitelist a specific dependency whose license would otherwise
+          # be denied (e.g. a transitively-pulled GPL package that has been
+          # legally reviewed and approved), add it to `allow-dependencies-licenses`
+          # as a comma-separated list of Package URLs (purl spec). Example:
+          #
+          #   allow-dependencies-licenses: "pkg:pypi/some-package, pkg:npm/another-pkg"
+          #
+          # Each entry exempts that one package from the `deny-licenses` check
+          # above while keeping the policy in force for every other dependency.
+          # See: https://github.com/actions/dependency-review-action#configuration-options
           license-check: true # (default)
           # ───────── UX tweaks ─────────
           warn-only: false # actually fail the workflow

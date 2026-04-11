@@ -33,6 +33,19 @@ concurrency:
 permissions:
   contents: read
 
+# Keep these pins in lockstep with the *_VERSION variables in the Makefile.
+# Linters are invoked via `uv tool run <tool>==<pin>` so CI and local runs
+# use identical versions regardless of the dev dependency group.
+env:
+  RUFF_VERSION: "0.15.1"
+  PYLINT_VERSION: "3.3.9"
+  PYLINT_PYDANTIC_VERSION: "0.3.5"
+  VULTURE_VERSION: "2.14"
+  INTERROGATE_VERSION: "1.7.0"
+  RADON_VERSION: "6.0.1"
+  YAMLLINT_VERSION: "1.38.0"
+  TOMLCHECK_VERSION: "0.2.3"
+
 jobs:
   # ---------------------------------------------------------------
   # Python linters - run on both mcpgateway/ and plugins/
@@ -45,20 +58,15 @@ jobs:
         target: [mcpgateway, plugins]
         tool:
           - id: ruff
-            setup: pip install ruff
-            cmd: "ruff check $TARGET"
+            cmd: "uv tool run ruff==$RUFF_VERSION check $TARGET"
           - id: vulture
-            setup: pip install vulture
-            cmd: 'vulture $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
+            cmd: 'uv tool run vulture==$VULTURE_VERSION $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
           - id: pylint
-            setup: "true"
-            cmd: "uv run pylint $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
+            cmd: "uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION pylint==$PYLINT_VERSION $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
           - id: interrogate
-            setup: pip install interrogate
-            cmd: "interrogate -vv $TARGET --fail-under 100"
+            cmd: "uv tool run interrogate==$INTERROGATE_VERSION -vv $TARGET --fail-under 100"
           - id: radon
-            setup: pip install radon
-            cmd: "radon cc $TARGET --min C --show-complexity && radon mi $TARGET --min B"
+            cmd: "uv tool run radon==$RADON_VERSION cc $TARGET --min C --show-complexity && uv tool run radon==$RADON_VERSION mi $TARGET --min B"
 
     name: "${{ matrix.tool.id }} (${{ matrix.target }})"
     runs-on: ubuntu-latest
@@ -75,18 +83,9 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
-          cache: pip
 
       - name: Set up uv
         uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-
-      - name: Install project (editable mode)
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install -e .[dev]
-
-      - name: Install tool
-        run: ${{ matrix.tool.setup }}
 
       - name: Run linter
         env:
@@ -103,8 +102,8 @@ jobs:
       matrix:
         include:
           - id: yamllint
-            setup: pip install yamllint
-            cmd: yamllint -c .yamllint .
+            setup: "true"
+            cmd: uv tool run yamllint==$YAMLLINT_VERSION -c .yamllint .
 
           - id: jsonlint
             setup: |
@@ -115,13 +114,13 @@ jobs:
                 xargs -0 -I{} jq empty "{}"
 
           - id: tomllint
-            setup: pip install tomlcheck
+            setup: "true"
             cmd: |
               find . -type f -name '*.toml' \
                 -not -path './plugin_templates/*' \
                 -not -path './mcp-servers/templates/*' \
                 -print0 |
-                xargs -0 -I{} tomlcheck "{}"
+                xargs -0 -I{} uv tool run tomlcheck==$TOMLCHECK_VERSION "{}"
 
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
@@ -139,6 +138,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
 
       - name: Install tool
         run: ${{ matrix.setup }}
