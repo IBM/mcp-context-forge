@@ -101,7 +101,6 @@ dev = [
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.7",
-    "detect-secrets @ git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976", # equates to Tag "0.13.1+ibm.64.dss"
     "diff-cover>=9.0.0",
     "dodgy>=0.2.1",
     "faker>=20.0.0",

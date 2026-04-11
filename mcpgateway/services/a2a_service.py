@@ -954,7 +954,7 @@ class A2AAgentService(BaseService):
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)
+        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)  # pylint: disable=comparison-with-callable
         agent = db.execute(query).scalar_one_or_none()
 
         if not agent:
@@ -1464,7 +1464,7 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
 
         # Lookup the agent id, then lock the row by id using get_for_update
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
+        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
         if not agent_row:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 

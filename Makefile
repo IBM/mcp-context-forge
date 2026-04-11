@@ -203,12 +203,29 @@ export UV_BIN
 # If you add a new target: use `$(VENV_DIR)/bin/<tool>` to *run* something and
 # `uv pip ...` to *install* something. Do not reintroduce `uv run`.
 #
-# Exception — linters/formatters via `uvx`: `black`, `isort`, `ruff`, and
-# `pylint` are invoked through `uvx <tool>==<pinned>` (see the pins just
-# below). This isolates the linter versions from whatever is resolved into
-# $(VENV_DIR) by the dev dependency group, so CI and local runs always use the
-# same formatter/linter version regardless of when the venv was last rebuilt.
-# These targets still depend on the `uv` target so `uvx` is guaranteed present.
+# Exception — tools invoked via `uvx`: `black`, `isort`, `ruff`, `pylint`,
+# `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`, and
+# `detect-secrets` are invoked through `uv tool run <spec>` with pinned
+# versions (see the pins just below). This isolates the tool versions from
+# whatever is resolved into $(VENV_DIR) by the dev dependency group, so CI
+# and local runs always use the same version regardless of when the venv was
+# last rebuilt. These targets still depend on the `uv` target so `uvx` is
+# guaranteed present. `detect-secrets` is special-cased to use a git-URL
+# spec because the project uses IBM's hardened fork, which is not published
+# to PyPI — see DETECT_SECRETS_SPEC below.
+#
+# Sub-exception — pylint needs project context: unlike the pure-AST tools
+# (ruff, black, isort, vulture, interrogate, radon), pylint does deep type
+# inference via astroid and relies on being able to *import* the project
+# modules and their runtime dependencies (pydantic, fastapi, …) to avoid
+# false positives like E1133 (not-an-iterable) and spurious W0246
+# (useless-parent-delegation) suppressions from pylint-pydantic that only
+# activate when the pydantic class hierarchy is resolvable. The `pylint` and
+# `images`/pyreverse targets therefore pass `--with-editable .` to `uv tool
+# run` so the project and its deps are installed into pylint's isolated
+# tool environment. This costs ~5–10s of resolve/install on a cold uvx
+# cache but restores the inference behavior that the previous
+# venv-installed pylint (via `pip install -e .[dev]`) had for free.
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
@@ -227,6 +244,11 @@ INTERROGATE_VERSION     ?= 1.7.0
 RADON_VERSION           ?= 6.0.1
 YAMLLINT_VERSION        ?= 1.38.0
 TOMLCHECK_VERSION       ?= 0.2.3
+
+# detect-secrets: pinned to IBM's hardened fork (Tag 0.13.1+ibm.64.dss).
+# Uses a git-URL + commit SHA rather than a PyPI version because the IBM
+# fork is not published to PyPI.
+DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976
 
 .PHONY: venv
 venv: uv
@@ -3418,7 +3440,7 @@ images:
 		python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@$(UV_BIN) tool run --from pylint==$(PYLINT_VERSION) pyreverse --colorized mcpgateway || true
+	@$(UV_BIN) tool run --with-editable . --from pylint==$(PYLINT_VERSION) pyreverse --colorized mcpgateway || true
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
@@ -3927,7 +3949,9 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	@$(UV_BIN) tool run --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --fail-on E --fail-under 10 $(TARGET)
+	@rcfile=".pylintrc"; \
+	 if [ -f ".pylintrc.$(TARGET)" ]; then rcfile=".pylintrc.$(TARGET)"; fi; \
+	 $(UV_BIN) tool run --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -7610,19 +7634,19 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
 
 .PHONY: detect-secrets-scan
-detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
+detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan --update .secrets.baseline --use-all-plugins
 
 .PHONY: detect-secrets-audit
-detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
+detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
 	@echo "🔎 Running detect-secrets audit..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit .secrets.baseline
 
 .PHONY: detect-secrets-hook
-detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
+detect-secrets-hook: uv                      ## 🔎  detect-secrets pre-commit hook equivalent
 	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited
 
 
 ## --------------------------------------------------------------------------- ##
