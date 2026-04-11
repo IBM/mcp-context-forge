@@ -94,7 +94,7 @@ mcpContextForge:
           conditions: []
           config:
             backend: "redis"
-            redis_url: "redis://:change-me-redis@gp-context-forge-mcp-stack-redis:6379/0"  # TODO: make release-name generic
+            redis_url: "redis://:change-me-redis@{{ .Release.Name }}-mcp-stack-redis:6379/0"
             redis_key_prefix: "rl"
             redis_fallback: true
             by_user: "30/m"

@@ -30,6 +30,9 @@
   Gated by .Values.route.enabled (default: false).
 */ -}}
 {{- if and .Values.route .Values.route.enabled }}
+{{- if and (eq (.Values.route.tls.termination | default "edge") "reencrypt") (not .Values.nginxProxy.tls.enabled) }}
+{{- fail "route.tls.termination=reencrypt requires nginxProxy.tls.enabled=true (the Route expects the backend NGINX to be serving TLS)" }}
+{{- end }}
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
