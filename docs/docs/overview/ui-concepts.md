@@ -92,6 +92,62 @@
     - Peer tools show up in your catalog with `gateway_id`.
     - Can be toggled active/inactive.
 
+### Testing Gateway Connectivity
+
+After registering a new gateway, you can use the **"Test Gateway Connectivity"** dialog to verify basic network reachability.
+
+???+ warning "⚠️ What Test Gateway Connectivity Does (and Doesn't Do)"
+
+    **What it does:**
+
+    - Sends a plain HTTP request to the upstream server to check reachability
+    - Verifies that the gateway can reach the registered URL
+    - Useful for confirming network connectivity and basic endpoint availability
+    - Default test: `GET /health` (configurable path and method)
+
+    **What it does NOT do:**
+
+    - Does **not** establish an MCP protocol session
+    - Does **not** perform MCP handshake or capability negotiation
+    - Does **not** return tool listings or MCP-specific data
+    - Does **not** work for testing SSE session establishment
+
+    **This is a basic connectivity check, not an MCP protocol test.**
+
+???+ tip "🧪 How to Test SSE Servers End-to-End"
+
+    For SSE-based MCP servers, you need to establish a session and use the session ID for subsequent requests:
+
+    **Step 1: Open SSE stream and capture session ID**
+    ```bash
+    # The session ID is returned in the first SSE event
+    curl -s -N -H "Authorization: Bearer $TOKEN" \
+      $GW_URL/servers/$SERVER_UUID/sse
+    ```
+
+    **Step 2: Use session ID to send MCP requests**
+    ```bash
+    # In a separate terminal, send tools/list request
+    curl -X POST -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' \
+      "$GW_URL/messages/?session_id=<SESSION_ID>"
+    ```
+
+    **Alternative: Test individual tools directly**
+
+    The "Test" button on individual tools in the UI invokes tools via the `/rpc` endpoint, which does not require an active SSE session.
+
+???+ info "🔍 Difference Between Test Methods"
+
+    | Test Method | Purpose | Requires Session | Tests MCP Protocol |
+    |-------------|---------|------------------|-------------------|
+    | **Test Gateway Connectivity** | Network reachability check | No | No |
+    | **SSE Stream + /messages/** | Full MCP session testing | Yes | Yes |
+    | **Tool "Test" Button** | Direct tool invocation | No | Partial |
+
+    Choose the appropriate test method based on what you need to verify.
+
 
 
 ---
