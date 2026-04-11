@@ -2636,9 +2636,16 @@ async fn authenticate_public_request_if_needed(
         client_ip: public_client_ip(&incoming_headers, peer_addr),
     };
 
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    let backend_url = state.backend_authenticate_url();
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(backend_detail_error_response(&format!("Invalid backend URL: {}", e)));
+    }
+
     let backend_response = state
         .client
-        .post(state.backend_authenticate_url())
+        .post(backend_url)
         .header(RUNTIME_HEADER, RUNTIME_NAME)
         .header(
             HeaderName::from_static(INTERNAL_RUNTIME_AUTH_HEADER),
@@ -8352,9 +8359,16 @@ async fn resolve_tools_call_plan_via_backend(
     incoming_headers: &HeaderMap,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    let backend_url = state.backend_tools_call_resolve_url();
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(ResolveToolsCallError::Fallback(format!("Invalid backend URL: {}", e)));
+    }
+
     let response = state
         .client
-        .post(state.backend_tools_call_resolve_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(incoming_headers))
         .body(body)
         .send()
@@ -13964,6 +13978,38 @@ mod unit_tests {
             )
             .await,
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn request_body_size_limit_rejects_large_payloads() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let state = AppState::new(&test_config()).expect("state");
+        let app = crate::build_router(state);
+
+        // Create a request body exceeding the 10MB limit (11MB)
+        let large_body = vec![0u8; 11 * 1024 * 1024];
+
+        let request = Request::builder()
+            .uri("/mcp")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(large_body))
+            .expect("request");
+
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("response");
+
+        // Should reject with 413 Payload Too Large
+        assert_eq!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Expected 413 Payload Too Large for >10MB request body"
         );
     }
 }

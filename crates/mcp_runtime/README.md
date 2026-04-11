@@ -267,8 +267,8 @@ The Rust MCP runtime includes comprehensive security protections to prevent Serv
 SSRF protection validates all backend HTTP requests to prevent:
 - Access to cloud metadata endpoints (AWS/GCP/Azure credentials)
 - Internal network access and port scanning
-- Localhost access (unless explicitly allowed)
-- Private network access (RFC 1918)
+- Private network access (RFC 1918, unless explicitly allowed)
+- Localhost access is allowed by default for local development
 
 **Environment Variables:**
 
@@ -277,7 +277,7 @@ SSRF protection validates all backend HTTP requests to prevent:
 | `SSRF_PROTECTION_ENABLED` | `true` | Enable/disable SSRF protection |
 | `SSRF_BLOCKED_NETWORKS` | See below | CIDR ranges always blocked |
 | `SSRF_BLOCKED_HOSTS` | See below | Hostnames always blocked |
-| `SSRF_ALLOW_LOCALHOST` | `false` | Allow localhost/127.0.0.0/8 |
+| `SSRF_ALLOW_LOCALHOST` | `true` | Allow localhost/127.0.0.0/8 |
 | `SSRF_ALLOW_PRIVATE_NETWORKS` | `false` | Allow RFC 1918 private networks |
 | `SSRF_ALLOWED_NETWORKS` | `[]` | Allowlist for specific private ranges |
 | `SSRF_DNS_FAIL_CLOSED` | `true` | Fail closed on DNS resolution errors |
@@ -296,7 +296,7 @@ SSRF protection validates all backend HTTP requests to prevent:
 
 **Examples:**
 
-Production mode (strict security, default):
+Production mode (strict security, explicit localhost blocking):
 ```bash
 SSRF_PROTECTION_ENABLED=true \
 SSRF_ALLOW_LOCALHOST=false \
@@ -304,9 +304,9 @@ SSRF_ALLOW_PRIVATE_NETWORKS=false \
 cargo run --release
 ```
 
-Development mode (allow localhost for local backend):
+Development mode (default - localhost allowed):
 ```bash
-SSRF_ALLOW_LOCALHOST=true \
+# Localhost allowed by default, no config needed
 cargo run --release -- \
   --backend-rpc-url http://localhost:4444/_internal/mcp/rpc \
   --listen-http 127.0.0.1:8787

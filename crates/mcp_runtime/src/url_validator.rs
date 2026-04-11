@@ -60,9 +60,12 @@ use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 use ipnetwork::IpNetwork;
 use regex::Regex;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use thiserror::Error;
+use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
@@ -168,6 +171,13 @@ pub struct UrlValidator {
     /// DNS resolver (async)
     resolver: Arc<TokioAsyncResolver>,
 
+    /// DNS result cache (hostname -> (IPs, expiry_time))
+    /// TTL: 5 minutes to balance performance and security (DNS rebinding attacks)
+    dns_cache: Arc<RwLock<HashMap<String, (Vec<IpAddr>, Instant)>>>,
+
+    /// DNS cache TTL
+    dns_cache_ttl: Duration,
+
     /// Precompiled regex patterns
     dangerous_url_pattern: Regex,
     dangerous_html_pattern: Regex,
@@ -183,26 +193,30 @@ impl UrlValidator {
     /// - Invalid CIDR ranges in blocked_networks or allowed_networks
     /// - DNS resolver cannot be initialized
     pub fn from_config(config: &RuntimeConfig) -> Result<Self, String> {
-        // Parse blocked networks
+        // Parse blocked networks (fail-closed: reject invalid CIDR)
         let mut blocked_networks = Vec::new();
         for network_str in &config.ssrf_blocked_networks {
             match network_str.parse::<IpNetwork>() {
                 Ok(network) => blocked_networks.push(network),
                 Err(e) => {
-                    warn!("Invalid CIDR in ssrf_blocked_networks: {} ({})", network_str, e);
-                    // Continue with other networks - don't fail config load
+                    return Err(format!(
+                        "Invalid CIDR in SSRF_BLOCKED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
                 }
             }
         }
 
-        // Parse allowed networks
+        // Parse allowed networks (fail-closed: reject invalid CIDR)
         let mut allowed_networks = Vec::new();
         for network_str in &config.ssrf_allowed_networks {
             match network_str.parse::<IpNetwork>() {
                 Ok(network) => allowed_networks.push(network),
                 Err(e) => {
-                    warn!("Invalid CIDR in ssrf_allowed_networks: {} ({})", network_str, e);
-                    // Continue with other networks - don't fail config load
+                    return Err(format!(
+                        "Invalid CIDR in SSRF_ALLOWED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
                 }
             }
         }
@@ -248,6 +262,8 @@ impl UrlValidator {
                 "wss://".to_string(),
             ],
             resolver: Arc::new(resolver),
+            dns_cache: Arc::new(RwLock::new(HashMap::new())),
+            dns_cache_ttl: Duration::from_secs(300), // 5 minutes
             dangerous_url_pattern,
             dangerous_html_pattern,
             dangerous_js_pattern,
@@ -464,28 +480,48 @@ impl UrlValidator {
         Ok(())
     }
 
-    /// Resolve a hostname to all IP addresses (A and AAAA records).
+    /// Resolve a hostname to all IP addresses (A and AAAA records) with caching.
     ///
+    /// Results are cached for 5 minutes to avoid repeated DNS lookups on hot paths.
     /// Returns an empty vector if DNS resolution fails or if the hostname is an IP address that cannot be parsed.
     async fn resolve_hostname_to_ips(&self, hostname: &str) -> Vec<IpAddr> {
-        let mut ip_addresses = Vec::new();
-
-        // Try to parse as IP address directly
+        // Try to parse as IP address directly (no caching needed)
         if let Ok(ip_addr) = hostname.parse::<IpAddr>() {
             return vec![ip_addr];
         }
 
-        // It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+        // Check cache first (read lock)
+        {
+            let cache = self.dns_cache.read().await;
+            if let Some((ips, expiry)) = cache.get(hostname) {
+                if Instant::now() < *expiry {
+                    debug!("DNS cache hit for {}: {:?}", hostname, ips);
+                    return ips.clone();
+                }
+                debug!("DNS cache entry expired for {}", hostname);
+            }
+        }
+
+        // Cache miss or expired - resolve hostname
+        let mut ip_addresses = Vec::new();
         match self.resolver.lookup_ip(hostname).await {
             Ok(lookup) => {
                 for ip in lookup.iter() {
                     ip_addresses.push(ip);
                 }
+                debug!("DNS resolved {} to {} addresses", hostname, ip_addresses.len());
             }
             Err(e) => {
                 debug!("DNS resolution failed for {}: {}", hostname, e);
                 // Return empty vec - caller will handle fail-closed/fail-open
             }
+        }
+
+        // Cache the result (even if empty for fail-open behavior)
+        {
+            let mut cache = self.dns_cache.write().await;
+            let expiry = Instant::now() + self.dns_cache_ttl;
+            cache.insert(hostname.to_string(), (ip_addresses.clone(), expiry));
         }
 
         ip_addresses

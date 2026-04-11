@@ -205,7 +205,7 @@ pub struct RuntimeConfig {
     )]
     pub ssrf_blocked_hosts: Vec<String>,
 
-    #[arg(long, env = "SSRF_ALLOW_LOCALHOST", default_value_t = false)]
+    #[arg(long, env = "SSRF_ALLOW_LOCALHOST", default_value_t = true)]
     pub ssrf_allow_localhost: bool,
 
     #[arg(long, env = "SSRF_ALLOW_PRIVATE_NETWORKS", default_value_t = false)]
