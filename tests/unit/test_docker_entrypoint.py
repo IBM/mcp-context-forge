@@ -30,6 +30,7 @@ export APP_ROOT="{app_root}"
 source "{ENTRYPOINT}"
 export RELOAD_PLUGIN_REQUIREMENTS_TXT=true
 export PLUGIN_REQUIREMENTS_TXT_PATH="{requirements_path or app_root / 'plugins' / 'requirements.txt'}"
+export PLUGIN_REQUIREMENTS_RETRY_DELAY_SECONDS=0
 install_plugin_requirements
 """
     return subprocess.run(
