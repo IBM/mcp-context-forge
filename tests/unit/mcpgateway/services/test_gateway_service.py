@@ -3978,6 +3978,12 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     assert added_gateway.prompts[0].title == "Prompt Title"
 
 
+    # Regression: verify namespacing fields are set (issue #3087)
+    federated_prompt = added_gateway.prompts[0]
+    assert federated_prompt.original_name == "Prompt"
+    assert federated_prompt.custom_name == "Prompt"
+    assert federated_prompt.display_name == "Prompt"
+
 
 @pytest.mark.asyncio
 async def test_shutdown_releases_redis_leader_success():
@@ -4753,6 +4759,12 @@ class TestUpdateOrCreatePrompts:
         gw.visibility = "public"
         result = gateway_service._update_or_create_prompts(db, [prompt], gw, "test")
         assert len(result) == 1
+
+        # Regression: verify namespacing fields are set (issue #3087)
+        created = result[0]
+        assert created.original_name == "new-prompt"
+        assert created.custom_name == "new-prompt"
+        assert created.display_name == "new-prompt"
 
     def test_existing_prompt_updated(self, gateway_service, mock_gateway):
         existing = MagicMock()
