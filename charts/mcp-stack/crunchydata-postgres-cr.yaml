@@ -1,6 +1,6 @@
-# CrunchyData PostgresCluster CR — gp-context-forge namespace
+# CrunchyData PostgresCluster CR
 # Tuned to match VM benchmark Postgres configuration
-# Apply with: oc apply -n gp-context-forge -f charts/mcp-stack/crunchydata-postgres-cr.yaml
+# Apply with: oc apply -n <namespace> -f charts/mcp-stack/crunchydata-postgres-cr.yaml
 # Requires: CrunchyData PGO operator installed from OperatorHub
 #           Substitute __POSTGRES_PV__ and __POSTGRES_REPO_PV__ with your pre-created PV names
 apiVersion: postgres-operator.crunchydata.com/v1beta1

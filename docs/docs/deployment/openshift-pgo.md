@@ -12,9 +12,7 @@ The Helm chart can deploy a standalone Postgres pod on its own, but for producti
 - **Rolling updates** — Postgres minor version upgrades and config changes are applied without downtime.
 - **Monitoring integration** — built-in Prometheus metrics exporter for Postgres and PgBouncer.
 
-If you don't need HA or automated backups (dev/test, POCs, teams without cluster-admin access to install operators), see [openshift.md](openshift.md) for the manual approach or use the chart's built-in Postgres via `values-ocp.yaml`.
-
-For the manual YAML deployment approach (without Helm or PGO), see [openshift.md](openshift.md).
+If you don't need HA or automated backups (dev/test, POCs, teams without cluster-admin access to install operators), see [openshift.md](openshift.md) for the manual deployment approach.
 
 ---
 

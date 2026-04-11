@@ -7,11 +7,13 @@
 # Only settings that differ from the chart defaults are listed here.
 #
 # Key decisions:
-#   - Single gateway replica to avoid migration advisory lock contention
-#   - HPA disabled to keep replica count stable during initial setup
-#   - PgBouncer disabled pending OpenShift SCC configuration
-#   - NGINX proxy disabled pending image availability
-#   - Ephemeral Postgres storage (NFS PV provisioning pending)
+#   - 3 gateway replicas to match the benchmarked deployment sizing
+#   - HPA disabled to keep replica count stable during benchmarking
+#   - Chart-managed Postgres disabled; uses externally managed CrunchyData PGO Postgres
+#   - Chart-managed PgBouncer disabled; connects via the PGO-provided PgBouncer endpoint
+#   - NGINX proxy enabled (UBI9 image), 3 replicas, with TLS for Route re-encrypt termination
+#   - Locust deferred until ocp-benchmark-setup so ocp-deploy doesn't waste cluster CPU on test pods
+#   - Postgres data + Redis use pre-created NFS PVs bound by name (volumeName)
 #   - SSRF private networks allowed for in-cluster MCP server registration
 #   - Explicit Docker Hub image references to avoid pull rate-limit ambiguity
 ########################################################################

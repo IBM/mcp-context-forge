@@ -2870,6 +2870,7 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 # 🔴 OCP DEPLOYMENT & BENCHMARK
 # =============================================================================
 
+# OCP_NS is used as both the namespace and the Helm release name (kept identical for simplicity)
 OCP_NS ?=
 OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
 OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
