@@ -135,13 +135,19 @@ def upgrade() -> None:
 
     # --- Backfill a2a_agent_auth from existing a2a_agents auth columns -------
     if "a2a_agent_auth" in inspector.get_table_names():
+        # Standard
+        import json
+        import uuid
+
         conn = op.get_bind()
         agents_with_auth = conn.execute(
             sa.text("SELECT id, auth_type, auth_value, auth_query_params " "FROM a2a_agents " "WHERE auth_type IS NOT NULL " "AND id NOT IN (SELECT a2a_agent_id FROM a2a_agent_auth)")
         ).fetchall()
         for agent in agents_with_auth:
-            # Standard
-            import uuid
+            # auth_query_params may be a Python dict (from a JSON column);
+            # serialize it so the untyped text bind works on all drivers.
+            raw_params = agent[3]
+            params_str = json.dumps(raw_params) if isinstance(raw_params, (dict, list)) else raw_params
 
             conn.execute(
                 sa.text(
@@ -153,7 +159,7 @@ def upgrade() -> None:
                     "agent_id": agent[0],
                     "auth_type": agent[1],
                     "auth_value": agent[2],
-                    "auth_query_params": agent[3],
+                    "auth_query_params": params_str,
                 },
             )
 

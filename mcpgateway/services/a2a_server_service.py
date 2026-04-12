@@ -39,6 +39,7 @@ def _check_server_access(server: DbServer, user_email: Optional[str], token_team
         return True
 
     if token_teams is None and user_email is None:
+        logger.debug("admin bypass: granting access to %s server %s", server.visibility, getattr(server, "name", "?"))
         return True
 
     if not user_email:
@@ -313,8 +314,11 @@ class A2AServerService:
     def _find_a2a_interface(self, db: Session, server_id: str) -> Optional[DbServerInterface]:
         """Return the first enabled ServerInterface with an A2A protocol for *server_id*.
 
-        The match is case-insensitive on the protocol field (e.g. "a2a", "A2A",
-        "a2a/v1" all qualify).
+        Matches any protocol whose lower-cased value starts with ``a2a``
+        (e.g. ``a2a``, ``a2a/v1``, ``a2a-jsonrpc``).  When a server exposes
+        multiple A2A interfaces, the first one (by DB insertion order) is
+        returned — this avoids ``MultipleResultsFound`` when both v0.3 and
+        v1 bindings exist.
 
         Args:
             db: Database session.
@@ -323,9 +327,14 @@ class A2AServerService:
         Returns:
             Matching ServerInterface ORM instance, or None.
         """
-        query = select(DbServerInterface).where(
-            DbServerInterface.server_id == server_id,
-            DbServerInterface.enabled == True,  # noqa: E712
-            func.lower(DbServerInterface.protocol).in_(["a2a", "a2a/v1", "a2a/v0.3"]),
+        query = (
+            select(DbServerInterface)
+            .where(
+                DbServerInterface.server_id == server_id,
+                DbServerInterface.enabled == True,  # noqa: E712
+                func.lower(DbServerInterface.protocol).like("a2a%"),
+            )
+            .order_by(DbServerInterface.created_at.desc())
+            .limit(1)
         )
         return db.execute(query).scalar_one_or_none()

@@ -536,7 +536,7 @@ class TestA2AAgentReadQueryParamMasking:
         from pydantic import BaseModel
 
         # The base Pydantic behavior will then be used
-        monkeypatch.setattr(A2AAgentRead, "model_validate", classmethod(lambda cls, obj, **kwargs: BaseModel.model_validate.__func__(cls, obj, **kwargs)))
+        monkeypatch.setattr(A2AAgentRead, "model_validate", classmethod(BaseModel.model_validate.__func__))
 
     def test_a2a_agent_read_masks_query_param_from_dict(self):
         """Test that A2AAgentRead masks query param value from dict input."""

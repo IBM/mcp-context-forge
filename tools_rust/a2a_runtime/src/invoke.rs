@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use url::Url;
 
+/// Maximum retry backoff to prevent runaway delays with high max_retries.
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
 /// Optional resilience context passed to [`execute_invoke`].
 ///
 /// When provided, the invoke loop checks the circuit breaker before sending
@@ -40,7 +43,7 @@ pub struct InvokeResult {
 }
 
 /// Validate that the endpoint URL uses an allowed scheme (http or https).
-fn validate_url_scheme(endpoint_url: &str) -> Result<(), InvokeError> {
+pub fn validate_url_scheme(endpoint_url: &str) -> Result<(), InvokeError> {
     let parsed = Url::parse(endpoint_url)
         .map_err(|e| InvokeError::InvalidScheme(format!("cannot parse URL: {e}")))?;
     match parsed.scheme() {
@@ -127,7 +130,8 @@ pub async fn execute_invoke(
 
     for attempt in 0..=max_retries {
         if attempt > 0 {
-            let backoff = backoff_base * 2u32.saturating_pow(attempt - 1);
+            let backoff =
+                std::cmp::min(backoff_base * 2u32.saturating_pow(attempt - 1), MAX_BACKOFF);
             warn!(
                 attempt,
                 max_retries,

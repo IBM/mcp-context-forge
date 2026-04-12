@@ -92,7 +92,10 @@ impl AgentMetrics {
 
     /// Push a latency sample into the bounded ring buffer.
     fn push_recent_latency(&self, us: u64) {
-        let mut deque = self.recent_latencies.lock().expect("latency lock poisoned");
+        let mut deque = self
+            .recent_latencies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if deque.len() >= MAX_RECENT_LATENCIES {
             deque.pop_front();
         }
@@ -104,7 +107,10 @@ impl AgentMetrics {
     /// Returns `None` when fewer than [`MIN_SAMPLES_FOR_P95`] samples have
     /// been recorded — the estimate would be unreliable.
     pub fn p95_latency_us(&self) -> Option<u64> {
-        let deque = self.recent_latencies.lock().expect("latency lock poisoned");
+        let deque = self
+            .recent_latencies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if deque.len() < MIN_SAMPLES_FOR_P95 {
             return None;
         }

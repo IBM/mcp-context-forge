@@ -112,13 +112,11 @@ const MAX_COALESCED_REQUESTS: usize = 128;
 // Coalescing
 // ---------------------------------------------------------------------------
 
-/// Drain the receiver non-blockingly, collecting consecutive `Job` messages.
+/// Drain the receiver non-blockingly, collecting consecutive `Job` messages
+/// until the combined request count reaches [`MAX_COALESCED_REQUESTS`].
 ///
-/// Jobs with matching `timeout` and a combined request count under
-/// [`MAX_COALESCED_REQUESTS`] are considered part of the same logical batch
-/// (coalesced at the request-ID level during execution).  Jobs that exceed
-/// the limit or have a different timeout are still returned — the caller
-/// processes them all.
+/// All drained jobs are returned regardless of timeout differences —
+/// deduplication happens at the request-ID level during execution.
 ///
 /// Any non-`Job` messages (i.e., `Shutdown`) are returned separately so the
 /// caller can handle them after processing the jobs.
@@ -270,7 +268,17 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
 
         join_set.spawn(async move {
             // Acquire a semaphore permit to bound concurrency.
-            let _permit = semaphore.acquire_owned().await.expect("semaphore closed");
+            let _permit = match semaphore.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    // Semaphore closed (shutdown).  Return an error for this batch.
+                    return (
+                        indices,
+                        Arc::new(Err("queue semaphore closed during shutdown".to_string())),
+                        Duration::ZERO,
+                    );
+                }
+            };
 
             let start = Instant::now();
             let scope_id = req.scope_id.as_deref().unwrap_or("default");
@@ -303,9 +311,17 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
     }
 
     while let Some(joined) = join_set.join_next().await {
-        let (indices, shared, elapsed) = joined.expect("queue worker task panicked");
-        for idx in indices {
-            results.insert(idx, (Arc::clone(&shared), elapsed));
+        match joined {
+            Ok((indices, shared, elapsed)) => {
+                for idx in indices {
+                    results.insert(idx, (Arc::clone(&shared), elapsed));
+                }
+            }
+            Err(join_err) => {
+                error!("queue worker task panicked: {join_err}");
+                // The panicked task's indices are lost; callers will get
+                // "no result from queue" when they look up their entry.
+            }
         }
     }
 
@@ -319,10 +335,17 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
                 .position(|e| e.job_idx == job_idx && e.pos_in_job == pos)
                 .expect("entry must exist for every request");
 
-            let (result, duration) = results
-                .get(&entry_idx)
-                .expect("result must exist for every entry")
-                .clone();
+            let (result, duration) = match results.get(&entry_idx) {
+                Some(r) => r.clone(),
+                None => {
+                    // A panicked task loses its results; return an error
+                    // rather than cascading the panic to the worker loop.
+                    (
+                        Arc::new(Err("internal: task result lost (worker panic)".to_string())),
+                        Duration::ZERO,
+                    )
+                }
+            };
 
             job_results.push(JobResult {
                 id: pos,

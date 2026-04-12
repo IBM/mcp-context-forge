@@ -53,7 +53,7 @@ fn default_bench_config() -> RuntimeConfig {
         cache_invalidation_channel: "mcpgw:a2a:invalidate".to_string(),
         session_enabled: false,
         session_ttl_secs: 300,
-        session_fingerprint_headers: "authorization,cookie,x-forwarded-for".to_string(),
+        session_fingerprint_headers: "authorization,cookie".to_string(),
         event_store_max_events: 1000,
         event_store_ttl_secs: 3600,
         event_flush_interval_ms: 1000,

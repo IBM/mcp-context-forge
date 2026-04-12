@@ -393,7 +393,7 @@ def prepare_a2a_invocation(
                 decrypted = decode_auth(encrypted_value)
                 auth_query_params_decrypted[str(param_key)] = str(decrypted.get(param_key, ""))
             except Exception:  # nosec B112
-                logger.debug("Failed to decrypt query param %r for A2A agent invocation", param_key, exc_info=True)
+                logger.warning("Failed to decrypt query param %r for A2A agent invocation — invocation proceeds without this credential", param_key, exc_info=True)
                 continue
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)

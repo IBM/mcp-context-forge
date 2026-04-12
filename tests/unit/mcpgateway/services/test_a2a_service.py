@@ -2689,7 +2689,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated):
-            result = service.convert_agent_to_read(agent, db=mock_db)
+            _result = service.convert_agent_to_read(agent, db=mock_db)
         service._get_team_name.assert_called_once()
 
     def test_with_metrics(self, service):
@@ -2706,7 +2706,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            result = service.convert_agent_to_read(agent, include_metrics=True)
+            _result = service.convert_agent_to_read(agent, include_metrics=True)
 
             # Verify model_validate was called with metrics included
             call_data = mock_mv.call_args[0][0]
@@ -3368,10 +3368,14 @@ class TestCancelTask:
         task.a2a_agent_id = "agent-1"
         task.state = state
         task.completed_at = None
+        task.context_id = None
+        task.latest_message = None
+        task.last_error = None
+        task.payload = None
         return task
 
     def test_cancel_active_task(self, service, mock_db):
-        """Task found in non-terminal state is set to canceled and returned as dict."""
+        """Task found in non-terminal state is set to canceled and returned as wire dict."""
         task = self._make_task("submitted")
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
@@ -3380,15 +3384,13 @@ class TestCancelTask:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        expected = {"task_id": "task-1", "state": "canceled"}
-        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
-            mock_mv.return_value.model_dump.return_value = expected
-            result = service.cancel_task(mock_db, "task-1")
+        result = service.cancel_task(mock_db, "task-1")
 
         assert task.state == "canceled"
         mock_db.commit.assert_called_once()
         mock_db.refresh.assert_called_once_with(task)
-        assert result == expected
+        assert result["id"] == "task-1"
+        assert result["status"]["state"] == "canceled"
 
     def test_cancel_already_terminal_task(self, service, mock_db):
         """Task already in terminal state is returned as-is without modification."""
@@ -3398,14 +3400,12 @@ class TestCancelTask:
         mock_query.first.return_value = task
         mock_db.query.return_value = mock_query
 
-        expected = {"task_id": "task-1", "state": "completed"}
-        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
-            mock_mv.return_value.model_dump.return_value = expected
-            result = service.cancel_task(mock_db, "task-1")
+        result = service.cancel_task(mock_db, "task-1")
 
         assert task.state == "completed"
         mock_db.commit.assert_not_called()
-        assert result == expected
+        assert result["id"] == "task-1"
+        assert result["status"]["state"] == "completed"
 
     def test_cancel_task_not_found_returns_none(self, service, mock_db):
         """Returns None when the task does not exist."""
@@ -3428,12 +3428,57 @@ class TestCancelTask:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
-            mock_mv.return_value.model_dump.return_value = {"state": "canceled"}
-            service.cancel_task(mock_db, "task-1", agent_id="agent-1")
+        service.cancel_task(mock_db, "task-1", agent_id="agent-1")
 
-        # filter called twice: once for task_id, once for agent_id
-        assert mock_query.filter.call_count == 2
+        # filter called: task_id, agent_id, and agent visibility lookup
+        assert mock_query.filter.call_count >= 2
+
+    def _setup_task_and_agent(self, mock_db, task, agent):
+        """Wire mock_db.query() to return task on first call and agent on second."""
+        mock_task_q = MagicMock()
+        mock_task_q.filter.return_value = mock_task_q
+        mock_task_q.first.return_value = task
+        mock_agent_q = MagicMock()
+        mock_agent_q.filter.return_value = mock_agent_q
+        mock_agent_q.first.return_value = agent
+        mock_db.query.side_effect = [mock_task_q, mock_agent_q]
+
+    def test_cancel_task_hidden_from_wrong_team(self, service, mock_db):
+        """Team-scoped user cannot cancel tasks on a different team's agent."""
+        task = self._make_task("submitted")
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-b"
+        agent.owner_email = "other@test.com"
+        self._setup_task_and_agent(mock_db, task, agent)
+
+        result = service.cancel_task(mock_db, "task-1", user_email="user@test.com", token_teams=["team-a"])
+        assert result is None
+
+    def test_cancel_task_admin_bypass(self, service, mock_db):
+        """Admin can cancel any task regardless of visibility."""
+        task = self._make_task("submitted")
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        self._setup_task_and_agent(mock_db, task, agent)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = service.cancel_task(mock_db, "task-1", user_email=None, token_teams=None)
+        assert result is not None
+        assert result["status"]["state"] == "canceled"
+
+    def test_cancel_task_public_only_user_denied_for_private(self, service, mock_db):
+        """Public-only user (empty teams) cannot cancel private agent tasks."""
+        task = self._make_task("submitted")
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "user@test.com"
+        self._setup_task_and_agent(mock_db, task, agent)
+
+        result = service.cancel_task(mock_db, "task-1", user_email="user@test.com", token_teams=[])
+        assert result is None
 
 
 class TestPushConfigCRUD:
@@ -3459,6 +3504,11 @@ class TestPushConfigCRUD:
 
     def test_create_push_config(self, service, mock_db):
         """create_push_config adds a record and returns a dict."""
+        # The duplicate-check query must return None so the insert path runs.
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = None
+        mock_db.query.return_value = mock_dup_query
         mock_db.add = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -3477,6 +3527,22 @@ class TestPushConfigCRUD:
         mock_db.add.assert_called_once_with(cfg_instance)
         mock_db.commit.assert_called_once()
         mock_db.refresh.assert_called_once_with(cfg_instance)
+        assert result == expected
+
+    def test_create_push_config_returns_existing_on_duplicate(self, service, mock_db):
+        """create_push_config returns the existing config when a duplicate is found."""
+        existing_cfg = MagicMock()
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+
+        expected = {"id": "cfg-existing", "task_id": "task-1"}
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = expected
+            result = service.create_push_config(mock_db, self._config_data())
+
+        mock_db.add.assert_not_called()
         assert result == expected
 
     def test_get_push_config_found(self, service, mock_db):
@@ -3704,7 +3770,13 @@ class TestPublishA2AInvalidation:
 
 
 class TestShadowModeComparison:
-    """Unit tests for the shadow mode comparison block inside invoke_agent."""
+    """Unit tests for the observe-only shadow mode block inside invoke_agent.
+
+    Shadow mode no longer dispatches a second live call to the Rust sidecar
+    (to avoid duplicate side effects on non-idempotent agents).  It only
+    logs that the runtime is available.  The Rust runtime client should
+    NOT be invoked.
+    """
 
     @pytest.fixture
     def service(self):
@@ -3733,8 +3805,8 @@ class TestShadowModeComparison:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_matching_responses(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode: Rust and Python agree → debug log, no warning."""
+    async def test_shadow_mode_does_not_invoke_rust(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode logs readiness but does NOT dispatch to Rust sidecar."""
         agent = self._make_agent()
         response_body = {"result": "ok"}
 
@@ -3748,7 +3820,7 @@ class TestShadowModeComparison:
         monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
 
         rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": response_body, "text": ""})
+        rust_runtime.invoke = AsyncMock()
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
 
         mock_ts_db = MagicMock()
@@ -3760,101 +3832,8 @@ class TestShadowModeComparison:
         result = await service.invoke_agent(mock_db, "ag", {})
 
         assert result == response_body
-        rust_runtime.invoke.assert_awaited_once()
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_status_mismatch(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode: status codes differ → Python result returned, no exception raised."""
-        agent = self._make_agent()
-        response_body = {"result": "ok"}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
-        mock_get_client.return_value = mock_client
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 500, "json": None, "text": "error"})
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-        mock_db.commit = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {})
-
-        assert result == response_body
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_payload_mismatch(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode: status matches but payloads differ → Python result returned, no exception."""
-        agent = self._make_agent()
-        py_body = {"result": "python"}
-        rust_body = {"result": "rust"}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=py_body))
-        mock_get_client.return_value = mock_client
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": rust_body, "text": ""})
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-        mock_db.commit = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {})
-
-        assert result == py_body
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_rust_invoke_exception_swallowed(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode: exception from Rust invoke is swallowed, Python result returned."""
-        agent = self._make_agent()
-        response_body = {"result": "ok"}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
-        mock_get_client.return_value = mock_client
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(side_effect=RuntimeError("Rust unavailable"))
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-        mock_db.commit = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {})
-
-        assert result == response_body
+        # Shadow mode must NOT invoke the Rust runtime (no dual-dispatch).
+        rust_runtime.invoke.assert_not_awaited()
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -3884,3 +3863,289 @@ class TestShadowModeComparison:
         assert rust_runtime.invoke.await_count == 1
         assert result == {"ok": True}
         mock_get_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Visibility and task scoping tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAgentAccessById:
+    """Unit tests for _check_agent_access_by_id (fail-closed on missing agent)."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def test_deleted_agent_returns_false(self, service, mock_db):
+        """Non-existent agent ID returns False (fail-closed)."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        assert service._check_agent_access_by_id(mock_db, "deleted-id", "user@test.com", ["team1"]) is False
+
+    def test_public_agent_returns_true(self, service, mock_db):
+        agent = MagicMock()
+        agent.visibility = "public"
+        mock_db.query.return_value.filter.return_value.first.return_value = agent
+        assert service._check_agent_access_by_id(mock_db, "agent-1", "user@test.com", ["team1"]) is True
+
+    def test_private_agent_wrong_owner_returns_false(self, service, mock_db):
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        agent.team_id = "team1"
+        mock_db.query.return_value.filter.return_value.first.return_value = agent
+        assert service._check_agent_access_by_id(mock_db, "agent-1", "user@test.com", ["team1"]) is False
+
+    def test_admin_bypass_returns_true(self, service, mock_db):
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        mock_db.query.return_value.filter.return_value.first.return_value = agent
+        assert service._check_agent_access_by_id(mock_db, "agent-1", None, None) is True
+
+
+class TestVisibleAgentIds:
+    """Unit tests for _visible_agent_ids visibility scoping SQL."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def test_admin_bypass_returns_none(self, service, mock_db):
+        """Admin context (user_email=None, token_teams=None) returns None for unrestricted access."""
+        result = service._visible_agent_ids(mock_db, user_email=None, token_teams=None)
+        assert result is None
+
+    def test_public_only_user_filters_to_public(self, service, mock_db):
+        """Empty token_teams means public-only — query runs with public visibility filter."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("id-pub",)]
+
+        result = service._visible_agent_ids(mock_db, user_email="user@test.com", token_teams=[])
+        assert result == ["id-pub"]
+        # filter should have been called: once for enabled, once for visibility
+        assert mock_query.filter.call_count >= 1
+
+    def test_team_scoped_user(self, service, mock_db):
+        """User with teams sees public + their team's agents + their private agents."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("id-1",), ("id-2",)]
+
+        result = service._visible_agent_ids(mock_db, user_email="user@test.com", token_teams=["team-a"])
+        assert result == ["id-1", "id-2"]
+
+    def test_no_user_email_returns_public_only(self, service, mock_db):
+        """No user_email with some teams still acts as public-only."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = []
+
+        result = service._visible_agent_ids(mock_db, user_email=None, token_teams=["team1"])
+        # Not admin (token_teams is not None), no user_email → is_public_only is True
+        assert result == []
+
+    def test_admin_with_email_returns_none(self, service, mock_db):
+        """Admin with email context (token_teams=None, user_email set) still gets admin bypass only when both are None."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("id-all",)]
+
+        result = service._visible_agent_ids(mock_db, user_email="admin@test.com", token_teams=None)
+        # token_teams=None but user_email set → NOT admin bypass, runs query
+        assert result == ["id-all"]
+
+
+class TestGetTask:
+    """Unit tests for get_task visibility enforcement."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def _setup_task_query(self, mock_db, task, agent=None):
+        """Wire mock_db.query() to return task on first call and agent on second."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = task
+
+        mock_agent_query = MagicMock()
+        mock_agent_query.filter.return_value = mock_agent_query
+        mock_agent_query.first.return_value = agent
+
+        mock_db.query.side_effect = [mock_query, mock_agent_query]
+
+    def test_task_not_found_returns_none(self, service, mock_db):
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        assert service.get_task(mock_db, "missing") is None
+
+    def _wire_task(self, **overrides):
+        """Return a MagicMock with the attributes _task_to_wire needs."""
+        t = MagicMock()
+        t.task_id = overrides.get("task_id", "t1")
+        t.a2a_agent_id = overrides.get("a2a_agent_id", "agent-1")
+        t.state = overrides.get("state", "completed")
+        t.context_id = overrides.get("context_id", None)
+        t.latest_message = overrides.get("latest_message", None)
+        t.last_error = overrides.get("last_error", None)
+        t.payload = overrides.get("payload", None)
+        return t
+
+    def test_task_visible_to_admin(self, service, mock_db):
+        """Admin bypass (user_email=None, token_teams=None) sees any task."""
+        task = self._wire_task()
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = service.get_task(mock_db, "t1", user_email=None, token_teams=None)
+
+        assert result["id"] == "t1"
+
+    def test_task_hidden_from_wrong_team(self, service, mock_db):
+        """Team-scoped user cannot see tasks owned by agents in a different team."""
+        task = MagicMock()
+        task.a2a_agent_id = "agent-1"
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-b"
+        agent.owner_email = "other@test.com"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=["team-a"])
+
+        assert result is None
+
+    def test_task_visible_to_correct_team(self, service, mock_db):
+        """Team-scoped user can see tasks owned by agents in their team."""
+        task = self._wire_task()
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-a"
+        agent.owner_email = "other@test.com"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=["team-a"])
+        assert result["id"] == "t1"
+
+    def test_task_visible_when_agent_deleted(self, service, mock_db):
+        """If the owning agent was deleted, the task is still returned (agent=None passes the check)."""
+        task = self._wire_task(a2a_agent_id="deleted-agent")
+        self._setup_task_query(mock_db, task, agent=None)
+
+        result = service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=["team-a"])
+        assert result["id"] == "t1"
+
+    def test_public_only_user_sees_public_agent_task(self, service, mock_db):
+        """Public-only user (empty teams) can see tasks for public agents."""
+        task = self._wire_task()
+        agent = MagicMock()
+        agent.visibility = "public"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=[])
+        assert result["id"] == "t1"
+
+    def test_public_only_user_cannot_see_private_agent_task(self, service, mock_db):
+        """Public-only user (empty teams) cannot see tasks for private agents."""
+        task = MagicMock()
+        task.a2a_agent_id = "agent-1"
+        agent = MagicMock()
+        agent.visibility = "private"
+        agent.owner_email = "user@test.com"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=[])
+
+        assert result is None
+
+
+class TestListTasks:
+    """Unit tests for list_tasks visibility scoping."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def test_admin_sees_all_tasks(self, service, mock_db):
+        """Admin bypass does not filter by agent IDs."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.offset.return_value = mock_query
+        mock_query.all.return_value = []
+
+        with patch.object(service, "_visible_agent_ids", return_value=None):
+            result = service.list_tasks(mock_db, user_email=None, token_teams=None)
+
+        assert result == []
+        # Verify .in_() was NOT called (no agent ID filter applied)
+        for call in mock_query.filter.call_args_list:
+            for arg in call.args:
+                assert "in_" not in str(arg), "Admin should not have .in_() filter"
+
+    def test_team_scoped_user_gets_filtered_tasks(self, service, mock_db):
+        """Team user only sees tasks for visible agents."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.offset.return_value = mock_query
+        task = MagicMock()
+        task.task_id = "t1"
+        task.state = "completed"
+        task.context_id = None
+        task.latest_message = None
+        task.last_error = None
+        task.payload = None
+        mock_query.all.return_value = [task]
+
+        with patch.object(service, "_visible_agent_ids", return_value=["agent-1"]):
+            result = service.list_tasks(mock_db, user_email="user@test.com", token_teams=["team-a"])
+
+        assert result == [{"id": "t1", "contextId": None, "status": {"state": "completed"}}]
+
+    def test_state_filter_applied(self, service, mock_db):
+        """State parameter adds a filter clause."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.offset.return_value = mock_query
+        mock_query.all.return_value = []
+
+        with patch.object(service, "_visible_agent_ids", return_value=None):
+            service.list_tasks(mock_db, state="completed", user_email=None, token_teams=None)
+
+        # filter called at least once for state
+        assert mock_query.filter.call_count >= 1

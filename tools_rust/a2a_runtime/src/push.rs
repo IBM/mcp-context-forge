@@ -112,12 +112,22 @@ pub async fn dispatch_webhooks(
         }
 
         let webhook_url = config.webhook_url.clone();
+
+        // Defense-in-depth: validate URL scheme before dispatching, consistent
+        // with invoke.rs.  Python validates on creation, but a corrupted DB
+        // row or race could produce a non-HTTP URL.
+        if let Err(e) = crate::invoke::validate_url_scheme(&webhook_url) {
+            warn!(webhook_url = %crate::invoke::redact_url_for_log(&webhook_url), error = %e, "skipping webhook with disallowed URL scheme");
+            continue;
+        }
+
         let auth_token = config.auth_token.clone();
         let payload = task_payload.clone();
         let client_clone = client.clone();
+        let redacted_url = crate::invoke::redact_url_for_log(&webhook_url);
 
         info!(
-            webhook_url = %webhook_url,
+            webhook_url = %redacted_url,
             task_id,
             agent_id,
             new_state,
@@ -134,7 +144,7 @@ pub async fn dispatch_webhooks(
                     warn!(
                         attempt,
                         backoff_ms = delay.as_millis() as u64,
-                        webhook_url = %webhook_url,
+                        webhook_url = %redacted_url,
                         "retrying webhook dispatch"
                     );
                     tokio::time::sleep(delay).await;
@@ -152,7 +162,7 @@ pub async fn dispatch_webhooks(
                         if (200..300).contains(&status) {
                             info!(
                                 status,
-                                webhook_url = %webhook_url,
+                                webhook_url = %redacted_url,
                                 attempt,
                                 "webhook dispatch succeeded"
                             );
@@ -161,7 +171,7 @@ pub async fn dispatch_webhooks(
                         let detail = resp.text().await.unwrap_or_default();
                         warn!(
                             status,
-                            webhook_url = %webhook_url,
+                            webhook_url = %redacted_url,
                             attempt,
                             detail = %detail,
                             "webhook returned non-2xx"
@@ -170,7 +180,7 @@ pub async fn dispatch_webhooks(
                         if (400..500).contains(&status) {
                             error!(
                                 status,
-                                webhook_url = %webhook_url,
+                                webhook_url = %redacted_url,
                                 "webhook dispatch permanently failed (4xx)"
                             );
                             return;
@@ -179,7 +189,7 @@ pub async fn dispatch_webhooks(
                     Err(e) => {
                         warn!(
                             error = %e,
-                            webhook_url = %webhook_url,
+                            webhook_url = %redacted_url,
                             attempt,
                             "webhook dispatch network error"
                         );

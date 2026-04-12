@@ -66,7 +66,7 @@ def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
     fake = types.ModuleType("fake_psutil")
     fake.virtual_memory = lambda: _MemInfo(8 * 1_073_741_824, 4 * 1_073_741_824)
     fake.swap_memory = lambda: _MemInfo(2 * 1_073_741_824, 1 * 1_073_741_824)
-    fake.cpu_freq = lambda: _CPUFreq()
+    fake.cpu_freq = _CPUFreq
     fake.cpu_percent = lambda interval=0.0: 12.3
     fake.cpu_count = lambda logical=True: 8
     fake.boot_time = lambda: 0
@@ -200,7 +200,8 @@ def test_database_version_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def execute(self, stmt):  # noqa: D401
             class _Res:
-                scalar = lambda self: "15.0"  # noqa: D401
+                def scalar(self):  # noqa: D401
+                    return "15.0"
 
             return _Res()
 
@@ -416,25 +417,6 @@ def test_login_html_rendering() -> None:
     assert 'autocomplete="username"' in html
     assert 'autocomplete="current-password"' in html
     assert '<button type="submit">Login</button>' in html
-
-
-def test_version_endpoint_redis_conditions() -> None:
-    """Test conditions that would trigger Redis health check branches."""
-    # First-Party
-
-    # Test the Redis health check conditions directly
-    # This tests the logic branches without async complexity
-    # Test 1: Redis not available
-    assert not (False and "redis" == "redis" and "redis://localhost")
-
-    # Test 2: Redis available, cache_type is redis, redis_url exists
-    assert True and "redis" == "redis" and "redis://localhost"
-
-    # Test 3: Redis available, but cache_type not redis
-    assert not (True and "memory" == "redis" and "redis://localhost")
-
-    # Test 4: Redis available, cache_type is redis, but no redis_url
-    assert not (True and "redis" == "redis" and None)
 
 
 def test_is_secret_comprehensive() -> None:

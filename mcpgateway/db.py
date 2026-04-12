@@ -1258,8 +1258,6 @@ class Permissions:
     TOOLS_EXECUTE = "tools.execute"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
-    TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
-
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
     RESOURCES_READ = "resources.read"
@@ -5066,6 +5064,7 @@ class A2ATaskEvent(Base):
     __tablename__ = "a2a_task_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=True, index=True)
     task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     event_id: Mapped[str] = mapped_column(String(36), nullable=False)
     sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)

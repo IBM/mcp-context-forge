@@ -244,7 +244,13 @@ impl EventStore {
         payload: &Value,
     ) -> Option<(String, i64)> {
         let event_id = Uuid::new_v4().to_string();
-        let payload_json = serde_json::to_string(payload).unwrap_or_default();
+        let payload_json = match serde_json::to_string(payload) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(task_id, error = %e, "failed to serialize event payload — event not stored");
+                return None;
+            }
+        };
 
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
         let events_key = format!("{KEY_PREFIX}:{task_id}:events");
@@ -270,14 +276,16 @@ impl EventStore {
             }
         };
 
-        // Send to flush channel (best-effort; drop on full channel).
-        let _ = self.flush_tx.try_send(FlushEntry {
+        // Send to flush channel (best-effort).
+        if let Err(e) = self.flush_tx.try_send(FlushEntry {
             task_id: task_id.to_owned(),
             event_id: event_id.clone(),
             sequence,
             event_type: event_type.to_owned(),
             payload: payload.clone(),
-        });
+        }) {
+            warn!(task_id, event_id = %event_id, "event flush channel full or closed — event will not be persisted to PG: {e}");
+        }
 
         Some((event_id, sequence))
     }
@@ -333,20 +341,27 @@ impl EventStore {
     }
 
     /// Return `true` if the stream is still active (agent has not finished).
+    ///
+    /// Fails open (assumes active) on Redis errors so that SSE clients
+    /// continue reconnecting rather than silently giving up.
     pub async fn is_stream_active(&self, task_id: &str) -> bool {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
-        let active: Option<String> = self
-            .storage
-            .hget(&meta_key, "stream_active")
-            .await
-            .unwrap_or(None);
+        let active: Option<String> = match self.storage.hget(&meta_key, "stream_active").await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(task_id, error = %e, "failed to check stream_active, assuming still active");
+                return true;
+            }
+        };
         active.as_deref() == Some("1")
     }
 
     /// Mark the stream as complete (agent has finished sending events).
     pub async fn mark_stream_complete(&self, task_id: &str) {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
-        let _ = self.storage.hset(&meta_key, "stream_active", "0").await;
+        if let Err(e) = self.storage.hset(&meta_key, "stream_active", "0").await {
+            warn!(task_id, error = %e, "failed to mark stream as complete in Redis");
+        }
     }
 
     #[doc(hidden)]
@@ -880,8 +895,10 @@ mod tests {
         *storage.stream_active.lock().unwrap() = Some("0".to_string());
         assert!(!store.is_stream_active("task-2").await);
 
+        // When Redis fails, is_stream_active fails open (assumes active)
+        // so SSE clients keep reconnecting rather than silently giving up.
         *storage.fail_hget.lock().unwrap() = true;
-        assert!(!store.is_stream_active("task-2").await);
+        assert!(store.is_stream_active("task-2").await);
         *storage.fail_hget.lock().unwrap() = false;
 
         store.mark_stream_complete("task-2").await;

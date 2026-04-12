@@ -53,6 +53,30 @@ fn build_http_client(config: &RuntimeConfig) -> Result<Client, reqwest::Error> {
 }
 
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
+    // Refuse to start without an auth secret — the HMAC trust header
+    // would be computed from an empty string, a publicly predictable
+    // value, making all trust validation meaningless.
+    if config.auth_secret.is_none() || config.auth_secret.as_deref() == Some("") {
+        return Err(RuntimeError::Config(
+            "A2A_RUST_AUTH_SECRET must be set to a non-empty value. \
+             Without it the sidecar's trust headers are publicly predictable."
+                .to_string(),
+        ));
+    }
+
+    // Warn if the HTTP listener is not loopback — the /health, /metrics,
+    // and /invoke endpoints have no external auth and rely on network
+    // isolation for security.
+    if let Ok(addr) = config.listen_http.parse::<std::net::SocketAddr>() {
+        if !addr.ip().is_loopback() {
+            tracing::warn!(
+                listen = %config.listen_http,
+                "A2A runtime listening on a non-loopback address — /health and /metrics \
+                 will be accessible without authentication"
+            );
+        }
+    }
+
     let client = build_http_client(&config)?;
     let config_arc = Arc::new(config.clone());
 
@@ -290,7 +314,7 @@ mod tests {
             max_response_body_bytes: 1024,
             max_retries: 0,
             retry_backoff_ms: 1,
-            auth_secret: None,
+            auth_secret: Some("test-secret".to_string()),
             backend_base_url: "http://127.0.0.1:4444".to_string(),
             max_concurrent: 1,
             max_queued: Some(4),
@@ -353,6 +377,27 @@ mod tests {
         run(test_config())
             .await
             .expect("runtime should start and shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn run_rejects_missing_auth_secret() {
+        let mut config = test_config();
+        config.auth_secret = None; // pragma: allowlist secret
+        let result = run(config).await;
+        assert!(result.is_err(), "run() should reject missing auth_secret");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("A2A_RUST_AUTH_SECRET"),
+            "error should mention the env var, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_empty_auth_secret() {
+        let mut config = test_config();
+        config.auth_secret = Some(String::new());
+        let result = run(config).await;
+        assert!(result.is_err(), "run() should reject empty auth_secret");
     }
 
     #[tokio::test]

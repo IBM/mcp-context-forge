@@ -195,6 +195,22 @@ class TestTasksCancelTrusted:
         resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "missing"})
         assert resp.status_code == 404
 
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.main.SessionLocal")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    def test_scope_context_passed_through(self, mock_cancel, mock_session_cls, mock_scope, _mock_trust, client):
+        """Verify that _get_internal_a2a_scope_context output is forwarded to cancel_task."""
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        mock_cancel.return_value = {"task_id": "t1", "state": "canceled"}
+        resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "t1"})
+        assert resp.status_code == 200
+        # Verify scope context was passed through to the service method.
+        _, kwargs = mock_cancel.call_args
+        assert kwargs.get("user_email") == "user@test.com"
+        assert kwargs.get("token_teams") == ["team-a"]
+
 
 class TestPushCreateTrusted:
     """push/create returns 200 with config, 400 when required fields missing."""
@@ -280,9 +296,12 @@ class TestEventsFlushTrusted:
     """events/flush returns 200 + count."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@test.com", None))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.flush_events")
-    def test_flushes_events(self, mock_flush, _mock_trust, client):
+    def test_flushes_events(self, mock_flush, _mock_access, _mock_scope, _mock_trust, client):
         mock_flush.return_value = 3
+        # events without task_id skip the visibility check (nothing to look up)
         resp = client.post("/_internal/a2a/events/flush", json={"events": [{"seq": 1}, {"seq": 2}, {"seq": 3}]})
         assert resp.status_code == 200
         assert resp.json()["count"] == 3
@@ -293,13 +312,37 @@ class TestEventsFlushTrusted:
         assert resp.status_code == 200
         assert resp.json()["count"] == 0
 
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team1"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_rejects_events_for_inaccessible_agents(self, mock_session_cls, _mock_scope, _mock_trust, client):
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        # Simulate a task row that maps to an agent the caller cannot access.
+        mock_task = MagicMock()
+        mock_task.a2a_agent_id = "agent-123"
+        mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+            resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
+        assert resp.status_code == 403
+        assert "access denied" in resp.json()["error"]
+
 
 class TestEventsReplayTrusted:
     """events/replay returns 200 + events array, 400 when task_id missing."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@test.com", None))
+    @patch("mcpgateway.main.SessionLocal")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.replay_events")
-    def test_replays_events(self, mock_replay, _mock_trust, client):
+    def test_replays_events(self, mock_replay, _mock_access, mock_session_cls, _mock_scope, _mock_trust, client):
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        mock_task = MagicMock()
+        mock_task.a2a_agent_id = "agent-1"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
         mock_replay.return_value = [{"seq": 1, "data": "x"}]
         resp = client.post("/_internal/a2a/events/replay", json={"task_id": "t1", "after_sequence": 0})
         assert resp.status_code == 200
@@ -309,6 +352,31 @@ class TestEventsReplayTrusted:
     def test_missing_task_id_returns_400(self, _mock_trust, client):
         resp = client.post("/_internal/a2a/events/replay", json={})
         assert resp.status_code == 400
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team1"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_rejects_replay_for_inaccessible_task(self, mock_session_cls, _mock_scope, _mock_trust, client):
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        mock_task = MagicMock()
+        mock_task.a2a_agent_id = "agent-123"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+            resp = client.post("/_internal/a2a/events/replay", json={"task_id": "t1", "after_sequence": 0})
+        assert resp.status_code == 404
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team1"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_rejects_replay_for_missing_task(self, mock_session_cls, _mock_scope, _mock_trust, client):
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        resp = client.post("/_internal/a2a/events/replay", json={"task_id": "nonexistent", "after_sequence": 0})
+        assert resp.status_code == 404
 
 
 class TestAgentResolveTrusted:

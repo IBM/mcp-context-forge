@@ -274,3 +274,119 @@ class TestA2AServerService:
         result = service.resolve_task_mapping(mock_db, "srv-1", "nonexistent-task")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _check_server_access visibility tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckServerAccess:
+    """Unit tests for _check_server_access visibility scoping.
+
+    Each branch of the visibility logic (public, admin bypass, no-user,
+    public-only token, private/owner, team) is tested explicitly.
+    """
+
+    @staticmethod
+    def _make_server(visibility="public", owner_email=None, team_id=None):
+        server = MagicMock()
+        server.visibility = visibility
+        server.owner_email = owner_email
+        server.team_id = team_id
+        return server
+
+    # -- Public visibility --------------------------------------------------
+
+    def test_public_visible_to_everyone(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="public")
+        assert _check_server_access(server, "user@test.com", ["team-a"]) is True
+        assert _check_server_access(server, None, []) is True
+        assert _check_server_access(server, None, None) is True
+
+    # -- Admin bypass -------------------------------------------------------
+
+    def test_admin_bypass_sees_private(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="private", owner_email="other@test.com")
+        assert _check_server_access(server, None, None) is True
+
+    def test_admin_bypass_sees_team(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-x")
+        assert _check_server_access(server, None, None) is True
+
+    # -- No user context (not admin) ----------------------------------------
+
+    def test_no_user_email_denied_for_private(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="private", owner_email="owner@test.com")
+        assert _check_server_access(server, None, ["team-a"]) is False
+
+    def test_no_user_email_denied_for_team(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-a")
+        assert _check_server_access(server, None, ["team-a"]) is False
+
+    # -- Public-only token (empty teams) ------------------------------------
+
+    def test_empty_teams_denied_for_private(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="private", owner_email="user@test.com")
+        assert _check_server_access(server, "user@test.com", []) is False
+
+    def test_empty_teams_denied_for_team(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-a")
+        assert _check_server_access(server, "user@test.com", []) is False
+
+    # -- Private visibility / owner match -----------------------------------
+
+    def test_private_visible_to_owner(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="private", owner_email="user@test.com")
+        assert _check_server_access(server, "user@test.com", ["team-a"]) is True
+
+    def test_private_hidden_from_non_owner(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="private", owner_email="other@test.com")
+        assert _check_server_access(server, "user@test.com", ["team-a"]) is False
+
+    # -- Team visibility ----------------------------------------------------
+
+    def test_team_visible_to_member(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-a")
+        assert _check_server_access(server, "user@test.com", ["team-a", "team-b"]) is True
+
+    def test_team_hidden_from_non_member(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-x")
+        assert _check_server_access(server, "user@test.com", ["team-a", "team-b"]) is False
+
+    def test_team_visible_with_admin_token_teams_none(self):
+        """token_teams=None with user_email set → admin-like, allows team access."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="team", team_id="team-a")
+        assert _check_server_access(server, "admin@test.com", None) is True
+
+    # -- Unknown visibility -------------------------------------------------
+
+    def test_unknown_visibility_defaults_to_deny(self):
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        server = self._make_server(visibility="unknown-value", owner_email="user@test.com")
+        assert _check_server_access(server, "user@test.com", ["team-a"]) is False

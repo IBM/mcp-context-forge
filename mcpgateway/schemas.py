@@ -5575,6 +5575,12 @@ class A2APushNotificationConfigCreate(BaseModel):
     events: Optional[List[str]] = None
     enabled: bool = True
 
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
 
 class A2APushNotificationConfigRead(BaseModel):
     """Schema for reading a push notification webhook configuration."""
@@ -5585,7 +5591,7 @@ class A2APushNotificationConfigRead(BaseModel):
     a2a_agent_id: str
     task_id: str
     webhook_url: str
-    auth_token: Optional[str] = None
+    auth_token: Optional[str] = Field(default=None, exclude=True)
     events: Optional[List[str]] = None
     enabled: bool
     created_at: datetime
@@ -5595,6 +5601,7 @@ class A2APushNotificationConfigRead(BaseModel):
 class A2ATaskEventCreate(BaseModel):
     """Schema for creating a task event log entry."""
 
+    a2a_agent_id: Optional[str] = None
     task_id: str
     event_id: str
     sequence: int
@@ -5608,6 +5615,7 @@ class A2ATaskEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    a2a_agent_id: Optional[str] = None
     task_id: str
     event_id: str
     sequence: int

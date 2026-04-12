@@ -41,8 +41,21 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     /// Return `true` if `fingerprint` matches the stored auth fingerprint.
+    ///
+    /// Uses constant-time comparison to prevent timing side-channels,
+    /// consistent with the Python side's use of `hmac.compare_digest`.
     pub fn matches_fingerprint(&self, fingerprint: &str) -> bool {
-        self.auth_fingerprint == fingerprint
+        let a = self.auth_fingerprint.as_bytes();
+        let b = fingerprint.as_bytes();
+        if a.len() != b.len() {
+            return false;
+        }
+        // Constant-time byte comparison (XOR-accumulate).
+        let mut diff: u8 = 0;
+        for (x, y) in a.iter().zip(b.iter()) {
+            diff |= x ^ y;
+        }
+        diff == 0
     }
 }
 

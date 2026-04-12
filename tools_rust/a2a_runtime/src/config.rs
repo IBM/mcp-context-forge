@@ -147,11 +147,16 @@ pub struct RuntimeConfig {
     #[arg(long, env = "A2A_RUST_SESSION_TTL_SECS", default_value_t = 300)]
     pub session_ttl_secs: u64,
 
-    /// Comma-separated header names used for auth fingerprinting.
+    /// Comma-separated header names used for session fingerprinting.
+    ///
+    /// The fingerprint binds a session to the client's identity headers.
+    /// Add `x-forwarded-for` only when a trusted reverse proxy overwrites
+    /// it — otherwise clients can spoof it or rotating proxies will
+    /// invalidate sessions on every request.
     #[arg(
         long,
         env = "A2A_RUST_SESSION_FINGERPRINT_HEADERS",
-        default_value = "authorization,cookie,x-forwarded-for"
+        default_value = "authorization,cookie"
     )]
     pub session_fingerprint_headers: String,
 
@@ -237,7 +242,7 @@ mod tests {
             cache_invalidation_channel: "mcpgw:a2a:invalidate".to_string(),
             session_enabled: true,
             session_ttl_secs: 300,
-            session_fingerprint_headers: "authorization,cookie,x-forwarded-for".to_string(),
+            session_fingerprint_headers: "authorization,cookie".to_string(),
             event_store_max_events: 1000,
             event_store_ttl_secs: 3600,
             event_flush_interval_ms: 1000,

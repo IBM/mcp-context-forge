@@ -40,16 +40,16 @@ pub enum AuthError {
 // ---------------------------------------------------------------------------
 
 /// Derive a 256-bit AES key from the raw bytes of `secret`.
-fn derive_key(secret: &str) -> [u8; 32] { // pragma: allowlist secret
-    // pragma: allowlist secret
+fn derive_key(cipher_key_seed_string: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(secret.as_bytes());
+    hasher.update(cipher_key_seed_string.as_bytes());
     hasher.finalize().into()
 }
 
 /// Build an `Aes256Gcm` cipher from a secret string.
-fn cipher_for(secret: &str) -> Aes256Gcm { // pragma: allowlist secret
-    Aes256Gcm::new(&derive_key(secret).into())
+fn cipher_for(cipher_key_seed_string: &str) -> Aes256Gcm {
+    // pragma: allowlist secret
+    Aes256Gcm::new(&derive_key(cipher_key_seed_string).into())
 }
 
 // ---------------------------------------------------------------------------

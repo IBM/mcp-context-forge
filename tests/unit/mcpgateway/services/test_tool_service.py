@@ -300,7 +300,7 @@ class TestToolServiceHelpersExtended:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(service, "_record_tool_metric_by_id") as mock_record:
             service._record_tool_metric_sync("tool-1", 1.23, True, None)
@@ -3474,7 +3474,7 @@ class TestToolService:
 
         # Start subscription in background
         subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        subscription_task = asyncio.create_task(anext(subscriber))
 
         # Give a moment for subscription to be registered
         await asyncio.sleep(0.01)
@@ -5610,7 +5610,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()

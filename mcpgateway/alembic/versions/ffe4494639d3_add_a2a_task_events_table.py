@@ -29,6 +29,7 @@ def upgrade() -> None:
     op.create_table(
         "a2a_task_events",
         sa.Column("id", sa.String(36), primary_key=True, nullable=False),
+        sa.Column("a2a_agent_id", sa.String(36), sa.ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=True),
         sa.Column("task_id", sa.String(255), nullable=False),
         sa.Column("event_id", sa.String(36), nullable=False),
         sa.Column("sequence", sa.BigInteger(), nullable=False),
@@ -38,6 +39,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_a2a_task_events_task_id", "a2a_task_events", ["task_id"])
     op.create_index("ix_a2a_task_events_task_seq", "a2a_task_events", ["task_id", "sequence"])
+    op.create_index("ix_a2a_task_events_agent_id", "a2a_task_events", ["a2a_agent_id"])
 
 
 def downgrade() -> None:

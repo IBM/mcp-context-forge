@@ -32,7 +32,7 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATaskRead
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -106,7 +106,7 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
         payload = orjson.dumps({"type": message_type, **kwargs}).decode()
         await redis.publish("mcpgw:a2a:invalidate", payload)
     except Exception as e:
-        logger.debug("Failed to publish A2A cache invalidation: %s", e)
+        logger.warning("Failed to publish A2A cache invalidation: %s", e)
 
 
 class A2AAgentError(Exception):
@@ -349,8 +349,15 @@ class A2AAgentService(BaseService):
         Used by list_tasks to scope results to agents the caller can see.
         Returns None when the caller has unrestricted (admin) access.
         Pushes visibility filtering into SQL to avoid loading all agents.
+
+        Note: admin bypass here requires BOTH token_teams=None AND
+        user_email=None.  When token_teams=None but user_email is set
+        (admin with email context), the query runs but includes all
+        team-scoped agents — this is intentionally more restrictive than
+        _check_agent_access's admin bypass to prevent list_tasks from
+        returning private agents owned by other users.
         """
-        # Admin bypass
+        # Admin bypass — only when both are unset (pure admin, no email context)
         if token_teams is None and user_email is None:
             return None
 
@@ -380,12 +387,12 @@ class A2AAgentService(BaseService):
     ) -> bool:
         """Check if the caller can access the agent identified by ``agent_id``.
 
-        Returns True when the agent does not exist (fail-open for deleted
-        agents) or when ``_check_agent_access`` allows it.
+        Returns False when the agent does not exist (fail-closed: orphaned
+        records from deleted agents are not universally accessible).
         """
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_id).first()
         if agent is None:
-            return True
+            return False
         return self._check_agent_access(agent, user_email, token_teams)
 
     async def register_agent(
@@ -443,9 +450,6 @@ class A2AAgentService(BaseService):
                 agent_data.slug = slugify(agent_data.name)
                 # Check for existing server with the same slug within the same team or public scope
                 if visibility.lower() == "public":
-                    logger.info(f"visibility.lower(): {visibility.lower()}")
-                    logger.info(f"agent_data.name: {agent_data.name}")
-                    logger.info(f"agent_data.slug: {agent_data.slug}")
                     # Check for existing public a2a agent with the same slug
                     existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public"))
                     if existing_agent:
@@ -457,25 +461,11 @@ class A2AAgentService(BaseService):
                         raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
                 auth_type = getattr(agent_data, "auth_type", None)
-                # Support multiple custom headers
                 auth_value = getattr(agent_data, "auth_value", {})
 
-                # authentication_headers: Optional[Dict[str, str]] = None
-
                 if hasattr(agent_data, "auth_headers") and agent_data.auth_headers:
-                    # Convert list of {key, value} to dict
                     header_dict = {h["key"]: h["value"] for h in agent_data.auth_headers if h.get("key")}
-                    # Keep encoded form for persistence, but pass raw headers for initialization
-                    auth_value = encode_auth(header_dict)  # Encode the dict for consistency
-                    # authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
-                # elif isinstance(auth_value, str) and auth_value:
-                #    # Decode persisted auth for initialization
-                #    decoded = decode_auth(auth_value)
-                # authentication_headers = {str(k): str(v) for k, v in decoded.items()}
-                else:
-                    # authentication_headers = None
-                    pass
-                    # auth_value = {}
+                    auth_value = encode_auth(header_dict)
 
                 oauth_config = await protect_oauth_config_for_storage(getattr(agent_data, "oauth_config", None))
 
@@ -528,9 +518,10 @@ class A2AAgentService(BaseService):
                     oauth_config=oauth_config,
                     tags=agent_data.tags,
                     passthrough_headers=getattr(agent_data, "passthrough_headers", None),
-                    # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                    team_id=getattr(agent_data, "team_id", None) or team_id,
-                    owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+                    # Team scoping fields - always use server-derived values to prevent
+                    # clients from overriding ownership via request body fields.
+                    team_id=team_id,
+                    owner_email=owner_email or created_by,
                     # Endpoint visibility parameter takes precedence over schema default
                     visibility=visibility if visibility is not None else getattr(agent_data, "visibility", "public"),
                     created_by=created_by,
@@ -1198,6 +1189,7 @@ class A2AAgentService(BaseService):
                         try:
                             existing_auth = decode_auth(existing_auth_raw)
                         except Exception:
+                            logger.warning("Failed to decrypt existing auth_value for agent %s — preserving raw value", getattr(agent, "id", "?"))
                             existing_auth = {}
                     elif isinstance(existing_auth_raw, dict):
                         existing_auth = existing_auth_raw
@@ -1727,6 +1719,43 @@ class A2AAgentService(BaseService):
                     if span and is_output_capture_enabled("a2a.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(response))
 
+                    # Persist task state so GetTask/ListTasks/CancelTask have data.
+                    # The response may contain a task object (with id/status) or a
+                    # JSON-RPC result wrapping one.
+                    try:
+                        task_data = response
+                        if isinstance(task_data, dict) and "result" in task_data:
+                            task_data = task_data["result"]
+                        if isinstance(task_data, dict):
+                            resp_task_id = task_data.get("id") or task_data.get("task_id")
+                            resp_state = None
+                            if isinstance(task_data.get("status"), dict):
+                                resp_state = task_data["status"].get("state")
+                            elif isinstance(task_data.get("state"), str):
+                                resp_state = task_data["state"]
+                            if resp_task_id and resp_state:
+                                self.upsert_task(
+                                    db,
+                                    agent_id,
+                                    str(resp_task_id),
+                                    resp_state,
+                                    context_id=task_data.get("contextId"),
+                                    latest_message=task_data.get("status", {}).get("message") if isinstance(task_data.get("status"), dict) else None,
+                                    payload={"history": task_data.get("history"), "artifacts": task_data.get("artifacts")} if task_data.get("history") or task_data.get("artifacts") else None,
+                                )
+                            else:
+                                logger.info(
+                                    "A2A response for agent '%s' lacks extractable task_id or state; task not persisted. Keys: %s",
+                                    agent_name,
+                                    list(task_data.keys()),
+                                )
+                    except Exception:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass  # nosec B110
+                        logger.warning("Failed to persist task state for agent '%s': task_id=%s", agent_name, locals().get("resp_task_id"), exc_info=True)
+
                     # Log successful A2A call
                     structured_logger.log(
                         level="INFO",
@@ -1740,53 +1769,27 @@ class A2AAgentService(BaseService):
                     )
 
                     # ═══════════════════════════════════════════════════════════════════════════
-                    # SHADOW MODE: dual-dispatch to Rust sidecar and compare responses.
-                    # Runs only when runtime_enabled=true and delegate_enabled=false (shadow mode).
-                    # Failures here are silently swallowed — the Python response is always returned.
+                    # SHADOW MODE: log that the Rust runtime is available for this agent.
+                    # Previous versions dispatched a second live invoke through the Rust
+                    # sidecar for comparison, but that creates duplicate side effects for
+                    # non-idempotent agents.  Shadow mode now only logs readiness; use
+                    # delegate mode (experimental_rust_a2a_runtime_delegate_enabled=true)
+                    # for full Rust-path execution.
                     # ═══════════════════════════════════════════════════════════════════════════
                     if settings.experimental_rust_a2a_runtime_enabled and not settings.experimental_rust_a2a_runtime_delegate_enabled:
-                        try:
-                            rust_response = await get_rust_a2a_runtime_client().invoke(
-                                prepared,
-                                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
-                            )
-                            rust_status = int(rust_response.get("status_code", 200))
-                            rust_json = rust_response.get("json")
-
-                            shadow_match = rust_status == status_code and rust_json == response_json
-                            if rust_status != status_code:
-                                logger.warning(
-                                    "A2A shadow mode mismatch for '%s': Python status=%d, Rust status=%d",
-                                    agent_name,
-                                    status_code,
-                                    rust_status,
-                                )
-                            elif rust_json != response_json:
-                                logger.info(
-                                    "A2A shadow mode response difference for '%s' (both status=%d, payloads differ)",
-                                    agent_name,
-                                    status_code,
-                                )
-                            else:
-                                logger.debug("A2A shadow mode: responses match for '%s'", agent_name)
-
-                            structured_logger.log(
-                                level="INFO",
-                                message=f"A2A shadow mode comparison: {agent_name}",
-                                component="a2a_service",
-                                user_id=user_id,
-                                user_email=user_email,
-                                correlation_id=correlation_id,
-                                metadata={
-                                    "event": "a2a_shadow_comparison",
-                                    "agent_name": agent_name,
-                                    "python_status": status_code,
-                                    "rust_status": rust_status,
-                                    "match": shadow_match,
-                                },
-                            )
-                        except Exception as shadow_err:
-                            logger.warning("A2A shadow mode Rust invoke failed for '%s': %s", agent_name, shadow_err)
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"A2A shadow mode active (observe-only): {agent_name}",
+                            component="a2a_service",
+                            user_id=user_id,
+                            user_email=user_email,
+                            correlation_id=correlation_id,
+                            metadata={
+                                "event": "a2a_shadow_active",
+                                "agent_name": agent_name,
+                                "python_status": status_code,
+                            },
+                        )
                 else:
                     # Sanitize error message to prevent URL secrets from leaking in logs
                     raw_error = f"HTTP {status_code}: {response_text}"
@@ -2034,6 +2037,65 @@ class A2AAgentService(BaseService):
         # Return masked version (like GatewayRead)
         return validated_agent.masked()
 
+    @staticmethod
+    def _task_to_wire(task: "A2ATask") -> Dict[str, Any]:
+        """Convert an A2ATask ORM row to the A2A v1 task wire format.
+
+        The wire format uses ``id`` (not ``task_id``), ``status.state``
+        (not a top-level ``state``), and optional ``history``/``artifacts``.
+        """
+        wire: Dict[str, Any] = {
+            "id": task.task_id,
+            "contextId": task.context_id,
+            "status": {"state": task.state},
+        }
+        if task.latest_message:
+            wire["status"]["message"] = task.latest_message
+        if task.last_error and task.state == "failed":
+            wire["status"]["message"] = {"role": "agent", "parts": [{"text": task.last_error}]}
+        if task.payload and isinstance(task.payload, dict):
+            if "history" in task.payload:
+                wire["history"] = task.payload["history"]
+            if "artifacts" in task.payload:
+                wire["artifacts"] = task.payload["artifacts"]
+        return wire
+
+    def upsert_task(
+        self,
+        db: Session,
+        agent_id: str,
+        task_id: str,
+        state: str,
+        *,
+        context_id: Optional[str] = None,
+        latest_message: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        last_error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a task row and return the wire-format dict.
+
+        Called after SendMessage / streaming calls to persist task state
+        so that GetTask, ListTasks, and CancelTask have data to read back.
+        """
+        task = db.query(A2ATask).filter(A2ATask.a2a_agent_id == agent_id, A2ATask.task_id == task_id).first()
+        if task is None:
+            task = A2ATask(a2a_agent_id=agent_id, task_id=task_id, state=state, context_id=context_id)
+            db.add(task)
+        task.state = state
+        if context_id is not None:
+            task.context_id = context_id
+        if latest_message is not None:
+            task.latest_message = latest_message
+        if payload is not None:
+            task.payload = payload
+        if last_error is not None:
+            task.last_error = last_error
+        if state in ("completed", "failed", "canceled"):
+            task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(task)
+        return self._task_to_wire(task)
+
     def get_task(
         self,
         db: Session,
@@ -2065,7 +2127,7 @@ class A2AAgentService(BaseService):
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
         if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
             return None
-        return A2ATaskRead.model_validate(task).model_dump(mode="json")
+        return self._task_to_wire(task)
 
     def cancel_task(
         self,
@@ -2099,12 +2161,12 @@ class A2AAgentService(BaseService):
         if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
             return None
         if task.state in ("completed", "failed", "canceled"):
-            return A2ATaskRead.model_validate(task).model_dump(mode="json")
+            return self._task_to_wire(task)
         task.state = "canceled"
         task.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(task)
-        return A2ATaskRead.model_validate(task).model_dump(mode="json")
+        return self._task_to_wire(task)
 
     def list_tasks(
         self,
@@ -2142,25 +2204,43 @@ class A2AAgentService(BaseService):
             query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
         query = query.order_by(desc(A2ATask.updated_at))
         query = query.limit(limit).offset(offset)
-        return [A2ATaskRead.model_validate(t).model_dump(mode="json") for t in query.all()]
+        return [self._task_to_wire(t) for t in query.all()]
 
     # ---------------------------------------------------------------------------
     # Push notification config CRUD
     # ---------------------------------------------------------------------------
 
     def create_push_config(self, db: Session, config_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a push notification configuration.
+        """Create a push notification configuration, or return the existing one on duplicate.
+
+        The unique constraint on (a2a_agent_id, task_id, webhook_url) prevents
+        duplicate registrations.  If the exact same config already exists (e.g.,
+        client retry after a timeout), the existing row is returned instead of
+        raising a 500.
 
         Args:
             db: Database session.
             config_data: Dict with fields for A2APushNotificationConfig.
 
         Returns:
-            Created config as a dict.
+            Created or existing config as a dict.
         """
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
         from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        # Check for existing config with the same unique key.
+        existing = (
+            db.query(A2APushNotificationConfig)
+            .filter(
+                A2APushNotificationConfig.a2a_agent_id == config_data["a2a_agent_id"],
+                A2APushNotificationConfig.task_id == config_data["task_id"],
+                A2APushNotificationConfig.webhook_url == config_data["webhook_url"],
+            )
+            .first()
+        )
+        if existing is not None:
+            return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
 
         cfg = A2APushNotificationConfig(
             a2a_agent_id=config_data["a2a_agent_id"],
@@ -2171,7 +2251,24 @@ class A2AAgentService(BaseService):
             enabled=config_data.get("enabled", True),
         )
         db.add(cfg)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            # Race: another request inserted the same config between our
+            # check and this insert.  Roll back and return the winner.
+            db.rollback()
+            existing = (
+                db.query(A2APushNotificationConfig)
+                .filter(
+                    A2APushNotificationConfig.a2a_agent_id == config_data["a2a_agent_id"],
+                    A2APushNotificationConfig.task_id == config_data["task_id"],
+                    A2APushNotificationConfig.webhook_url == config_data["webhook_url"],
+                )
+                .first()
+            )
+            if existing is not None:
+                return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
+            raise
         db.refresh(cfg)
         return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
 
@@ -2193,7 +2290,9 @@ class A2AAgentService(BaseService):
         query = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.task_id == task_id)
         if agent_id is not None:
             query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
-        cfg = query.first()
+        # Order by creation time so the result is deterministic when
+        # multiple webhooks are registered for the same task.
+        cfg = query.order_by(A2APushNotificationConfig.created_at).first()
         if cfg is None:
             return None
         return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
@@ -2256,6 +2355,7 @@ class A2AAgentService(BaseService):
         count = 0
         for event_data in events:
             event = A2ATaskEvent(
+                a2a_agent_id=event_data.get("a2a_agent_id"),
                 task_id=event_data["task_id"],
                 event_id=event_data["event_id"],
                 sequence=event_data["sequence"],
