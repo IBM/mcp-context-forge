@@ -1776,7 +1776,6 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
     assert decode_auth(exported[0]["auth_value"]) == auth_dict
 
 
-
 @pytest.mark.asyncio
 async def test_export_selected_servers_filters_deactivated_entities(export_service):
     """Test that _export_selected_servers filters out deactivated tools, prompts, resources, and agents."""
@@ -1804,13 +1803,7 @@ async def test_export_selected_servers_filters_deactivated_entities(export_servi
     mock_db.execute.return_value = mock_result
 
     # Call _export_selected_servers
-    exported = await export_service._export_selected_servers(
-        mock_db,
-        ["server-1"],
-        root_path="",
-        user_email=None,
-        token_teams=None
-    )
+    exported = await export_service._export_selected_servers(mock_db, ["server-1"], root_path="", user_email=None, token_teams=None)
 
     # Verify that only enabled entities are in the exported data
     assert len(exported) == 1, f"Expected 1 server, got {len(exported)}"

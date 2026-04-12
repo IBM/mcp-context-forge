@@ -2666,9 +2666,7 @@ class TestListServersTokenAccess:
 
         assert result == ["converted_server_with_metrics"]
         # Verify convert_server_to_read was called with include_metrics=True
-        mock_convert.assert_called_once_with(
-            mock_server, include_metrics=True
-        )
+        mock_convert.assert_called_once_with(mock_server, include_metrics=True)
 
     @pytest.mark.asyncio
     async def test_team_scoped_token(self, server_service, test_db):
@@ -3574,19 +3572,10 @@ class TestConvertServerToReadAssociatedToolIds:
         # Standard
         from types import SimpleNamespace
 
-        # Create mock tools - one enabled, one disabled
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
-        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
-
-        # Create mock resources - one enabled, one disabled
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
-        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
-
-        # Create mock prompts - one enabled, one disabled
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
-        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
-        # Create mock server with both enabled and disabled entities
         mock_server = SimpleNamespace(
             id="server-1",
             name="test_server",
@@ -3612,7 +3601,6 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            # Only enabled entities should be loaded due to the filter
             tools=[enabled_tool],
             resources=[enabled_resource],
             prompts=[enabled_prompt],
@@ -3649,20 +3637,10 @@ class TestConvertServerToReadAssociatedToolIds:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
-        # Create mock tools - one enabled, one disabled
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
-        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
-
-        # Create mock resources - one enabled, one disabled
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
-        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
-
-        # Create mock prompts - one enabled, one disabled
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
-        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
-        # Create mock server with both enabled and disabled entities
-        # Due to with_loader_criteria(), only enabled entities should be loaded
         mock_server = SimpleNamespace(
             id="server-1",
             name="test_server",
@@ -3688,7 +3666,6 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            # Only enabled entities should be loaded due to with_loader_criteria()
             tools=[enabled_tool],
             resources=[enabled_resource],
             prompts=[enabled_prompt],
@@ -3730,20 +3707,10 @@ class TestConvertServerToReadAssociatedToolIds:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
-        # Create mock tools - one enabled, one disabled
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
-        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
-
-        # Create mock resources - one enabled, one disabled
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
-        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
-
-        # Create mock prompts - one enabled, one disabled
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
-        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
-        # Create mock server with both enabled and disabled entities
-        # Due to with_loader_criteria(), only enabled entities should be loaded
         mock_server = SimpleNamespace(
             id="server-1",
             name="test_server",
@@ -3769,7 +3736,6 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            # Only enabled entities should be loaded due to with_loader_criteria()
             tools=[enabled_tool],
             resources=[enabled_resource],
             prompts=[enabled_prompt],
@@ -3791,11 +3757,7 @@ class TestConvertServerToReadAssociatedToolIds:
             test_db.execute = Mock(return_value=mock_result)
 
             # Call list_servers_for_user
-            servers = await server_service.list_servers_for_user(
-                test_db,
-                user_email="user@example.com",
-                include_inactive=False
-            )
+            servers = await server_service.list_servers_for_user(test_db, user_email="user@example.com", include_inactive=False)
 
             # Verify that only enabled entities are in the result
             assert len(servers) == 1

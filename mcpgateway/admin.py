@@ -2674,8 +2674,8 @@ async def admin_servers_partial_html(
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
+    user: dict = Depends(get_current_user_with_permissions),
+) -> Response:
     """Return paginated servers HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
