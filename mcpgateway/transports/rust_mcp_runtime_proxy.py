@@ -26,6 +26,8 @@ from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import fresh_db_session
+from mcpgateway.db import Server as DbServer
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -80,11 +82,7 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
         # SECURITY: Validate that the server_id exists in the database
         # to prevent unauthorized access via invalid server IDs.
         try:
-            # First-Party
-            from mcpgateway.db import Server as DbServer
-            from mcpgateway.db import SessionLocal
-
-            with SessionLocal() as db:
+            with fresh_db_session() as db:
                 # Simple synchronous existence check
                 exists = db.query(DbServer).filter(DbServer.id == server_id).first() is not None
                 if not exists:
