@@ -1,0 +1,63 @@
+---
+# OCP Uninstall — remove the ContextForge Helm release
+# Equivalent to: make ocp-uninstall OCP_NS=<namespace>
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/uninstall.yml -i ansible/ocp/inventory/cluster.yml
+
+- name: Uninstall ContextForge Helm release
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display uninstall summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Uninstall: ContextForge Helm release
+          ========================================
+          Namespace: {{ ocp_namespace }}
+          Release:   {{ ocp_namespace }}
+
+          This will helm uninstall the release, removing:
+            - Gateway pods (3)
+            - NGINX pods (3)
+            - Redis pod
+            - fast-time-server pods
+            - Locust pods (if enabled)
+            - Helm-managed ConfigMaps, Secrets, and PVCs
+
+          Preserved:
+            - Namespace itself
+            - PostgresCluster CR (Postgres + PgBouncer keep running)
+            - Local secrets file
+
+          Note: PVs provisioned by the dynamic nfs-client provisioner are cleaned
+          up automatically based on the StorageClass reclaim policy.
+
+          Recovery: ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/cluster.yml
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Continue? (yes/no)"
+      register: confirm
+      failed_when: confirm.user_input | lower not in ['yes', 'y']
+      when: not (skip_confirm | default(false) | bool)
+
+    - name: Uninstall Helm release
+      ansible.builtin.command:
+        cmd: "helm uninstall {{ ocp_namespace }} -n {{ ocp_namespace }}"
+      register: uninstall_result
+      changed_when: "'uninstalled' in uninstall_result.stdout"
+
+    - name: Uninstall complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Uninstall complete
+          ========================================
+          PostgresCluster and namespace preserved.
+          Recovery: ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/cluster.yml

@@ -1,0 +1,89 @@
+---
+# OCP Deploy — helm install ContextForge stack
+# Equivalent to: make ocp-deploy OCP_NS=<namespace>
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/cluster.yml
+
+- name: Deploy ContextForge on OCP
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display deploy summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Deploy: ContextForge stack
+          ========================================
+          Namespace:  {{ ocp_namespace }}
+          Values:     {{ ocp_values }}
+          Secrets:    {{ ocp_secrets }}
+
+          This will helm install:
+            - 3 gateway pods (Gunicorn, 8 workers each, Python MCP core)
+            - 3 NGINX pods (UBI9, reverse proxy)
+            - 1 Redis pod (PVC via dynamic nfs-client provisioner)
+            - 2 fast-time-server pods
+            - Connects to PGO-managed Postgres + PgBouncer
+
+          Note: Locust is not deployed at this stage (enabled later by benchmark-setup).
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Continue? (yes/no)"
+      register: confirm
+      failed_when: confirm.user_input | lower not in ['yes', 'y']
+      when: not (skip_confirm | default(false) | bool)
+
+    - name: Install ContextForge Helm chart
+      ansible.builtin.command:
+        cmd: >
+          helm install {{ ocp_namespace }} {{ ocp_chart_path }}
+          -n {{ ocp_namespace }}
+          -f {{ ocp_values }}
+          -f {{ ocp_secrets }}
+          --timeout {{ helm_timeout }}
+      register: helm_result
+      changed_when: "'STATUS: deployed' in helm_result.stdout"
+
+    - name: Report Helm install status
+      ansible.builtin.debug:
+        msg: "Helm install: deployed"
+
+    - name: Wait for gateway pods to be Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "app={{ ocp_namespace }}-mcp-stack-mcpgateway"
+        field_selectors:
+          - "status.phase=Running"
+      register: gw_pods
+      until: gw_pods.resources | length >= 1
+      retries: 30
+      delay: 10
+
+    - name: Check gateway health
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ gw_pods.resources[0].metadata.name }}"
+        command: "curl -s http://localhost:4444/health"
+      register: health_check
+
+    - name: Report gateway health
+      ansible.builtin.debug:
+        msg: "Gateway health: {{ (health_check.stdout | from_json).status }}"
+
+    - name: Deploy complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Deploy complete
+          ========================================
+          Check pods: oc get pods -n {{ ocp_namespace }}
+          Next: ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml -i ansible/ocp/inventory/cluster.yml

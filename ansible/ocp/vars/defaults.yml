@@ -1,0 +1,31 @@
+---
+# OCP deployment defaults
+# Override via inventory, vars files, or -e on the command line
+
+# Namespace (also used as Helm release name)
+ocp_namespace: gp-context-forge
+
+# Helm chart and values
+ocp_chart_path: "{{ playbook_dir }}/../../../charts/mcp-stack"
+ocp_values: "{{ ocp_chart_path }}/values-ocp-pgo.yaml"
+ocp_secrets: "{{ ocp_chart_path }}/values-ocp-pgo-secrets.yaml"
+ocp_pg_cr: "{{ ocp_chart_path }}/crunchydata-postgres-cr.yaml"
+
+# Helm install timeout
+helm_timeout: "10m"
+
+# Benchmark settings
+bench_users: 125
+bench_spawn: 30
+bench_runtime: "60s"
+
+# PostgresCluster settings
+pg_cluster_name: gp-postgres
+pg_database: postgresdb
+pg_admin_user: admin
+pg_secret_name: "{{ pg_cluster_name }}-pguser-{{ pg_admin_user }}"
+
+# Locust worker settings
+locust_workers: 3
+locust_worker_wait_timeout: 90
+locust_worker_poll_interval: 10

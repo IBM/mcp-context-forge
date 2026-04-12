@@ -2869,199 +2869,70 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 # =============================================================================
 # 🔴 OCP DEPLOYMENT & BENCHMARK
 # =============================================================================
+# Make targets wrap Ansible playbooks in ansible/ocp/playbooks/.
+# All logic lives in the playbooks — Make provides a simpler interface.
+# Requires: pip install ansible && ansible-galaxy collection install kubernetes.core
 
 # OCP_NS is used as both the namespace and the Helm release name (kept identical for simplicity)
 OCP_NS ?=
-OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
-OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
 BENCH_USERS ?= 125
 BENCH_SPAWN ?= 30
 BENCH_RUNTIME ?= 60s
-OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
+OCP_INVENTORY ?= ansible/ocp/inventory/cluster.yml
+
+define check_ansible
+@command -v ansible-playbook >/dev/null 2>&1 || \
+	(echo "ERROR: ansible-playbook not found." && \
+	 echo "Install with: pip install ansible && ansible-galaxy collection install kubernetes.core" && \
+	 exit 1)
+endef
 
 ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
-	@echo "========================================"
-	@echo "make ocp-setup: Set up namespace and CrunchyData Postgres"
-	@echo "========================================"
-	@echo "Namespace: $(OCP_NS)"
-	@echo "CR:        $(OCP_PG_CR)"
-	@echo ""
-	@echo "This will:"
-	@echo "  1. Verify the CrunchyData PGO operator is installed"
-	@echo "  2. Create the namespace if it does not exist"
-	@echo "  3. Apply the PostgresCluster CR (PVCs use dynamic nfs-client provisioning)"
-	@echo "  4. Wait for the Postgres pods to become Ready"
-	@echo ""
-	@echo "Each step is skipped if already present (idempotent)."
-	@echo ""
-	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
-	@echo ""
-	@echo "=== OCP Setup ==="
-	@echo "Checking CrunchyData PGO operator..."
-	@/bin/bash -c 'oc get csv -A 2>/dev/null | grep -qi crunchy || \
-		(echo "ERROR: CrunchyData PGO operator not installed. Install it via OperatorHub first." && exit 1)'
-	@echo "   PGO operator: installed"
-	@echo "Checking namespace $(OCP_NS)..."
-	@oc get namespace $(OCP_NS) >/dev/null 2>&1 && \
-		echo "   Namespace: already exists" || \
-		(echo "   Creating namespace $(OCP_NS)..." && oc new-project $(OCP_NS))
-	@echo "Checking PostgresCluster..."
-	@oc get pods -n $(OCP_NS) -l postgres-operator.crunchydata.com/cluster --no-headers 2>/dev/null | grep -q Running && \
-		echo "   PostgresCluster: already running" || \
-		(echo "   Applying PostgresCluster CR..." && \
-		oc apply -n $(OCP_NS) -f $(OCP_PG_CR) && \
-		echo "   Waiting for Postgres pods (this may take a few minutes)..." && \
-		oc -n $(OCP_NS) wait --for=condition=Ready pod -l postgres-operator.crunchydata.com/role=master --timeout=300s 2>/dev/null || \
-		echo "   Postgres pods still starting. Check: oc get pods -n $(OCP_NS)")
-	@echo "Granting schema privileges to DB user..."
-	@/bin/bash -c 'echo "   Waiting for Postgres master pod..."; \
-		for i in $$(seq 1 30); do \
-			PG_POD=$$(oc -n $(OCP_NS) get pods -l postgres-operator.crunchydata.com/role=master --no-headers 2>/dev/null | grep Running | head -1 | awk "{print \$$1}"); \
-			if [ -n "$$PG_POD" ]; then break; fi; \
-			sleep 10; \
-		done; \
-		if [ -n "$$PG_POD" ]; then \
-			oc -n $(OCP_NS) exec $$PG_POD -c database -- psql -U postgres -d postgresdb -c "GRANT CREATE, USAGE ON SCHEMA public TO admin;" >/dev/null 2>&1 && \
-			echo "   Schema privileges: granted (CREATE, USAGE on public)" || \
-			echo "   Schema privileges: already set"; \
-		else \
-			echo "   WARNING: could not find Postgres master pod after 5 minutes — grant schema privileges manually:"; \
-			echo "   oc -n $(OCP_NS) exec <postgres-pod> -c database -- psql -U postgres -d postgresdb -c \"GRANT CREATE, USAGE ON SCHEMA public TO admin;\""; \
-		fi'
-	@echo ""
-	@echo "=== Setup complete ==="
-	@echo "Next: create secrets file at $(OCP_SECRETS) (see values file header for required keys)"
-	@echo "Then: make ocp-deploy OCP_NS=$(OCP_NS)"
+	@/bin/bash -c 'read -p "Run ocp-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
 
 ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
-	@echo "========================================"
-	@echo "make ocp-deploy: Deploy ContextForge stack"
-	@echo "========================================"
-	@echo "Namespace:  $(OCP_NS)"
-	@echo "Values:     $(OCP_VALUES)"
-	@echo "Secrets:    $(OCP_SECRETS)"
-	@echo ""
-	@echo "This will helm install:"
-	@echo "  - 3 gateway pods (Gunicorn, 8 workers each, Python MCP core)"
-	@echo "  - 3 NGINX pods (UBI9, reverse proxy)"
-	@echo "  - 1 Redis pod (PVC via dynamic nfs-client provisioner)"
-	@echo "  - 2 fast-time-server pods"
-	@echo "  - Connects to PGO-managed Postgres + PgBouncer"
-	@echo ""
-	@echo "Note: Locust is not deployed at this stage (enabled later by ocp-benchmark-setup)."
-	@echo ""
-	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
-	@echo ""
-	helm install $(OCP_NS) charts/mcp-stack \
-		-n $(OCP_NS) \
-		-f $(OCP_VALUES) \
-		-f $(OCP_SECRETS) \
-		--timeout 10m
-	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
+	@/bin/bash -c 'read -p "Run ocp-deploy for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/deploy.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
 
 ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
+	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
-	@echo "========================================"
-	@echo "make ocp-benchmark-setup: Enable Locust for benchmarking"
-	@echo "========================================"
-	@echo "Namespace: $(OCP_NS)"
-	@echo ""
-	@echo "This will:"
-	@echo "  1. Generate a JWT token from inside the gateway pod"
-	@echo "  2. Fetch the virtual server UUID from /servers"
-	@echo "  3. Run helm upgrade with testing.locust.enabled=true and the server ID"
-	@echo "  4. Wait up to 90s for 3 Locust workers to schedule"
-	@echo "  5. If only some workers schedule due to CPU pressure, continue with"
-	@echo "     a warning explaining the impact"
-	@echo ""
-	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
-	@echo ""
-	@echo "=== Benchmark Setup ==="
-	@/bin/bash -c '\
-		echo "Fetching JWT secret and generating token..." && \
-		JWT_SECRET=$$(oc -n $(OCP_NS) get secret $(OCP_NS)-mcp-stack-gateway-secret -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d) && \
-		TOKEN=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
-			python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 5 --secret "$$JWT_SECRET" 2>/dev/null | tail -1) && \
-		echo "Fetching virtual server ID..." && \
-		SERVER_ID=$$(oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-mcpgateway -- \
-			curl -s -H "Authorization: Bearer $$TOKEN" http://localhost:4444/servers 2>/dev/null | \
-			python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])") && \
-		echo "   Server ID: $$SERVER_ID" && \
-		echo "Enabling Locust and configuring server ID..." && \
-		helm upgrade $(OCP_NS) charts/mcp-stack \
-			-n $(OCP_NS) \
-			-f $(OCP_VALUES) \
-			-f $(OCP_SECRETS) \
-			--set testing.locust.enabled=true \
-			--set testing.locust.mcpServerID=$$SERVER_ID > /dev/null && \
-		echo "   Helm upgrade complete." && \
-		echo "Waiting for Locust workers (up to 90s)..." && \
-		want=3; elapsed=0; timeout=90; interval=10; \
-		while [ $$elapsed -lt $$timeout ]; do \
-			pods=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null); \
-			running=$$(echo "$$pods" | grep -c " Running "); \
-			pending=$$(echo "$$pods" | grep -c " Pending "); \
-			echo "   $$running/$$want workers Running, $$pending Pending"; \
-			if [ "$$running" -ge "$$want" ]; then break; fi; \
-			sleep $$interval; elapsed=$$((elapsed + interval)); \
-		done; \
-		final=$$(oc -n $(OCP_NS) get pods -l app=$(OCP_NS)-mcp-stack-locust-worker --no-headers 2>/dev/null | grep -c " Running "); \
-		if [ "$$final" -lt "$$want" ]; then \
-			echo ""; \
-			echo "WARNING: only $$final of $$want Locust workers scheduled."; \
-			echo "Reason: insufficient CPU on cluster nodes (worker nodes are likely at high allocation)."; \
-			echo "Impact: benchmark will run with $$final worker(s). RPS may be slightly lower than the 3-worker baseline."; \
-		else \
-			echo "   All $$want workers ready."; \
-		fi; \
-		echo "" && \
-		echo "=== Setup complete ===" && \
-		echo "Run: make ocp-benchmark OCP_NS=$(OCP_NS)"'
+	@/bin/bash -c 'read -p "Run ocp-benchmark-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
 
 ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS; optional BENCH_USERS, BENCH_SPAWN, BENCH_RUNTIME)
+	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace> [BENCH_USERS=500 BENCH_SPAWN=50 BENCH_RUNTIME=60s]"; exit 1; fi
-	@echo "Starting MCP benchmark on OCP..."
-	@echo "   Namespace: $(OCP_NS)"
-	@echo "   Config:    $(BENCH_USERS) users, $(BENCH_SPAWN)/s spawn, $(BENCH_RUNTIME)"
-	@oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-locust -- \
-		python3 -c "import urllib.request,urllib.parse; \
-		urllib.request.urlopen(urllib.request.Request('http://localhost:8089/swarm', \
-		urllib.parse.urlencode({'user_count':$(BENCH_USERS),'spawn_rate':$(BENCH_SPAWN),'run_time':'$(BENCH_RUNTIME)', \
-		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
-	@echo "Benchmark running. Results in ~60s."
+	ansible-playbook ansible/ocp/playbooks/benchmark.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e bench_users=$(BENCH_USERS) \
+		-e bench_spawn=$(BENCH_SPAWN) \
+		-e bench_runtime=$(BENCH_RUNTIME) \
+		-e skip_confirm=true
 
 ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
-	@echo "========================================"
-	@echo "make ocp-uninstall: Uninstall ContextForge Helm release"
-	@echo "========================================"
-	@echo "Namespace: $(OCP_NS)"
-	@echo "Release:   $(OCP_NS)"
-	@echo ""
-	@echo "This will helm uninstall the release, removing:"
-	@echo "  - Gateway pods (3)"
-	@echo "  - NGINX pods (3)"
-	@echo "  - Redis pod"
-	@echo "  - fast-time-server pods"
-	@echo "  - Locust pods (if enabled)"
-	@echo "  - Helm-managed ConfigMaps, Secrets, and PVCs"
-	@echo ""
-	@echo "Preserved:"
-	@echo "  - Namespace itself"
-	@echo "  - PostgresCluster CR (Postgres + PgBouncer keep running)"
-	@echo "  - Local secrets file"
-	@echo ""
-	@echo "Note: PVs provisioned by the dynamic nfs-client provisioner are cleaned up"
-	@echo "automatically based on the StorageClass reclaim policy."
-	@echo ""
-	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) (re-installs the release)"
-	@echo ""
-	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
-	@echo ""
-	helm uninstall $(OCP_NS) -n $(OCP_NS)
-	@echo "Uninstall complete."
+	@/bin/bash -c 'read -p "Run ocp-uninstall for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/uninstall.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
 
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
