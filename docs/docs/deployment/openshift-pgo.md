@@ -79,6 +79,15 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 If you have the PGO operator already installed on your cluster, you can deploy and benchmark with a few commands. Storage is handled automatically via the `nfs-client` dynamic provisioner — no manual PV creation needed.
 
+The Make commands below wrap Ansible playbooks under the hood (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](../../../ansible/ocp/README.md) for details.
+
+**Prerequisites:**
+
+```bash
+pip install ansible
+ansible-galaxy collection install kubernetes.core
+```
+
 **1. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
 
 ```yaml
@@ -147,7 +156,13 @@ make ocp-uninstall OCP_NS=<namespace>
 
 This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres. Dynamically provisioned PVs are cleaned up automatically by the `nfs-client` provisioner based on the StorageClass reclaim policy.
 
-The destructive Make targets (`ocp-setup`, `ocp-deploy`, `ocp-benchmark-setup`, `ocp-uninstall`) all show what they will do and prompt for confirmation before running.
+Each Make target prompts for confirmation before running. The underlying Ansible playbooks can also be run directly for more control:
+
+```bash
+ansible-playbook ansible/ocp/playbooks/setup.yml -i ansible/ocp/inventory/cluster.yml
+ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/cluster.yml
+ansible-playbook ansible/ocp/playbooks/benchmark.yml -i ansible/ocp/inventory/cluster.yml -e bench_users=500
+```
 
 For step-by-step details, troubleshooting, or if the Make commands don't work as expected, see the detailed manual steps below.
 
@@ -163,7 +178,8 @@ The sections below explain each step in detail — what the Make commands do int
 
 - **OCP cluster** with `oc` CLI access (developer or admin)
 - **CrunchyData PGO operator** installed from OperatorHub
-- **Helm 3** CLI installed locally
+- **Helm** CLI installed locally
+- **Ansible** installed (`pip install ansible && ansible-galaxy collection install kubernetes.core`)
 - **`nfs-client` StorageClass** available on the cluster (dynamic NFS provisioner for Postgres and Redis PVCs)
 
 ---
