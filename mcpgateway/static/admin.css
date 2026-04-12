@@ -1,3 +1,10 @@
+/* Hide Alpine-managed elements until Alpine has processed them.
+   Prevents a brief flash of content (e.g. overflow menus) on initial load
+   and after HTMX swaps. */
+[x-cloak] {
+    display: none !important;
+}
+
 /* Tab panel base styles */
 .tab-panel {
     /* Panels handle their own internal padding */

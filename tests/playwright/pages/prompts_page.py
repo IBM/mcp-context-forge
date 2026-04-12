@@ -240,7 +240,8 @@ class PromptsPage(BasePage):
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
         prompt_row = self.prompt_rows.nth(prompt_index)
-        view_btn = prompt_row.locator('button:has-text("View")')
+        self._open_action_dropdown(prompt_row)
+        view_btn = prompt_row.locator('button[role="menuitem"]:has-text("View")')
         self.click_locator(view_btn)
         # Wait for modal to open
         self.page.wait_for_selector("#prompt-modal:not(.hidden)", state="visible", timeout=10000)
@@ -259,7 +260,8 @@ class PromptsPage(BasePage):
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
         prompt_row = self.prompt_rows.nth(prompt_index)
-        edit_btn = prompt_row.locator('button:has-text("Edit")')
+        self._open_action_dropdown(prompt_row)
+        edit_btn = prompt_row.locator('button[role="menuitem"]:has-text("Edit")')
         self.click_locator(edit_btn)
         # Wait for modal to open (prompt data is fetched via API before the modal opens)
         self.page.wait_for_selector("#prompt-edit-modal:not(.hidden)", state="visible", timeout=30000)
@@ -308,7 +310,8 @@ class PromptsPage(BasePage):
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
         prompt_row = self.prompt_rows.nth(prompt_index)
-        test_btn = prompt_row.locator('button:has-text("Test")')
+        self._open_action_dropdown(prompt_row)
+        test_btn = prompt_row.locator('button[role="menuitem"]:has-text("Test")')
         self.click_locator(test_btn)
         # Wait for modal to open
         self.page.wait_for_selector("#prompt-test-modal:not(.hidden)", state="visible", timeout=10000)
@@ -347,9 +350,9 @@ class PromptsPage(BasePage):
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
 
-        # Click delete button
         prompt_row = self.prompt_rows.nth(prompt_index)
-        delete_btn = prompt_row.locator('button:has-text("Delete")')
+        self._open_action_dropdown(prompt_row)
+        delete_btn = prompt_row.locator('button[role="menuitem"]:has-text("Delete")')
         self.click_locator(delete_btn)
 
     def wait_for_prompt_visible(self, prompt_name: str, timeout: int = 30000) -> None:

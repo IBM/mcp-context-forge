@@ -53,9 +53,7 @@ class TestPromptsTableStructure:
         prompts_page.navigate_to_prompts_tab()
         prompts_page.wait_for_prompts_table_loaded()
 
-        description = prompts_page.prompts_panel.locator(
-            "text=Prompts define reusable message templates with parameters"
-        )
+        description = prompts_page.prompts_panel.locator("text=Prompts define reusable message templates with parameters")
         expect(description).to_be_visible()
 
     def test_table_columns_present(self, prompts_page: PromptsPage):
@@ -191,9 +189,7 @@ class TestPromptsAddForm:
         tags = prompts_page.add_prompt_form.locator('[name="tags"]')
         expect(tags).to_be_visible()
 
-        help_text = prompts_page.add_prompt_form.locator(
-            "text=Enter tags separated by commas"
-        )
+        help_text = prompts_page.add_prompt_form.locator("text=Enter tags separated by commas")
         expect(help_text).to_be_visible()
 
     def test_visibility_radios_present_with_public_default(self, prompts_page: PromptsPage):
@@ -490,9 +486,7 @@ class TestPromptsEditModal:
 
         prompts_page.open_prompt_view_modal(0)
         details_text = prompts_page.prompt_details_content.text_content()
-        assert unique_text not in details_text, (
-            f"Description '{unique_text}' should not appear after Cancel"
-        )
+        assert unique_text not in details_text, f"Description '{unique_text}' should not appear after Cancel"
         prompts_page.close_prompt_modal()
 
     def test_edit_modal_has_save_button(self, prompts_page: PromptsPage):
@@ -591,9 +585,7 @@ class TestPromptsTestModal:
         prompts_page.open_prompt_test_modal(0)
 
         result_text = prompts_page.prompt_test_result.text_content().strip()
-        assert "Render Prompt" in result_text, (
-            f"Prompt test result should show placeholder on open, got: '{result_text[:100]}'"
-        )
+        assert "Render Prompt" in result_text, f"Prompt test result should show placeholder on open, got: '{result_text[:100]}'"
 
         prompts_page.close_prompt_test_modal()
 
@@ -612,29 +604,21 @@ class TestPromptsTestModal:
 
         # Open test modal for first prompt and inject fake result content
         prompts_page.open_prompt_test_modal(0)
-        first_title = prompts_page.prompt_test_modal.locator(
-            "#prompt-test-modal-title"
-        ).text_content()
-        prompts_page.page.evaluate(
-            """() => {
+        first_title = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title").text_content()
+        prompts_page.page.evaluate("""() => {
                 const el = document.getElementById('prompt-test-result');
                 if (el) el.textContent = 'STALE_PROMPT_RESULT_MARKER';
-            }"""
-        )
+            }""")
         prompts_page.close_prompt_test_modal()
 
         # Open test modal for second prompt
         prompts_page.open_prompt_test_modal(1)
 
-        second_title = prompts_page.prompt_test_modal.locator(
-            "#prompt-test-modal-title"
-        ).text_content()
+        second_title = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title").text_content()
         assert first_title != second_title, "Test modal should show different prompt"
 
         result_text = prompts_page.prompt_test_result.text_content().strip()
-        assert "STALE_PROMPT_RESULT_MARKER" not in result_text, (
-            "Prompt test result should not contain stale data from previous prompt"
-        )
+        assert "STALE_PROMPT_RESULT_MARKER" not in result_text, "Prompt test result should not contain stale data from previous prompt"
 
         prompts_page.close_prompt_test_modal()
 
@@ -670,6 +654,7 @@ class TestPromptsRowActions:
         _skip_if_no_prompts(prompts_page)
 
         first_row = prompts_page.get_prompt_row(0)
+        prompts_page.open_action_dropdown(first_row)
         test_btn = first_row.locator('button:has-text("Test")')
         expect(test_btn).to_be_visible()
 
@@ -680,6 +665,7 @@ class TestPromptsRowActions:
         _skip_if_no_prompts(prompts_page)
 
         first_row = prompts_page.get_prompt_row(0)
+        prompts_page.open_action_dropdown(first_row)
         view_btn = first_row.locator('button:has-text("View")')
         expect(view_btn).to_be_visible()
 
@@ -690,6 +676,7 @@ class TestPromptsRowActions:
         _skip_if_no_prompts(prompts_page)
 
         first_row = prompts_page.get_prompt_row(0)
+        prompts_page.open_action_dropdown(first_row)
         edit_btn = first_row.locator('button:has-text("Edit")')
         # Edit button may not be present for non-owned prompts; check attached
         if edit_btn.count() > 0:
@@ -704,6 +691,7 @@ class TestPromptsRowActions:
         _skip_if_no_prompts(prompts_page)
 
         first_row = prompts_page.get_prompt_row(0)
+        prompts_page.open_action_dropdown(first_row)
         deactivate_btn = first_row.locator('button:has-text("Deactivate")')
         activate_btn = first_row.locator('button:has-text("Activate")')
 
@@ -724,6 +712,7 @@ class TestPromptsRowActions:
         _skip_if_no_prompts(prompts_page)
 
         first_row = prompts_page.get_prompt_row(0)
+        prompts_page.open_action_dropdown(first_row)
         delete_btn = first_row.locator('button:has-text("Delete")')
 
         if delete_btn.count() > 0:
@@ -886,9 +875,7 @@ class TestPromptsPagination:
 
         # Default could be 10 or 50 depending on configuration
         value = per_page.input_value()
-        assert value in ("10", "25", "50", "100", "200", "500"), (
-            f"Unexpected default per-page value: {value}"
-        )
+        assert value in ("10", "25", "50", "100", "200", "500"), f"Unexpected default per-page value: {value}"
 
     def test_pagination_info_text(self, prompts_page: PromptsPage):
         """Test that pagination info displays item count text."""

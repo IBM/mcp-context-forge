@@ -479,6 +479,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -496,6 +499,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -517,6 +523,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -534,6 +543,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -567,6 +579,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         test_btn = first_row.locator('button:has-text("Test")')
         expect(test_btn).to_be_visible()
 
@@ -577,6 +590,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         view_btn = first_row.locator('button:has-text("View")')
         expect(view_btn).to_be_visible()
 
@@ -587,6 +601,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         edit_btn = first_row.locator('button:has-text("Edit")')
         expect(edit_btn).to_be_visible()
 
@@ -597,6 +612,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         deactivate_btn = first_row.locator('button:has-text("Deactivate")')
         activate_btn = first_row.locator('button:has-text("Activate")')
 
@@ -612,6 +628,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         delete_btn = first_row.locator('button:has-text("Delete")')
         expect(delete_btn).to_be_visible()
 

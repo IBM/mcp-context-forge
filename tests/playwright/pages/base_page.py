@@ -68,6 +68,15 @@ class BasePage:
         """Click a locator."""
         locator.click()
 
+    def open_action_dropdown(self, row: Locator) -> None:
+        """Click the three-dot trigger on a table row and wait for its ``[role=menu]`` dropdown to become visible."""
+        row.scroll_into_view_if_needed()
+        row.locator("button[aria-expanded]").click()
+        row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+
+    # Backwards-compatible alias for existing in-tree callers.
+    _open_action_dropdown = open_action_dropdown
+
     def fill_input(self, selector: str, value: str) -> None:
         """Fill input field (legacy method for backward compatibility)."""
         self.page.fill(selector, value)

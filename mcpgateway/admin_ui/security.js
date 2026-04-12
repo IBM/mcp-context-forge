@@ -30,6 +30,26 @@ export function escapeHtml(unsafe) {
 }
 
 /**
+ * Escape a value for safe interpolation inside a double-quoted CSS attribute
+ * selector (e.g. ``[data-id="${escapeAttrValue(id)}"]``). Uses ``CSS.escape``
+ * when available and falls back to escaping the structurally-significant
+ * characters (``\`` and ``"``) otherwise. ``null`` / ``undefined`` become ``""``.
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+export function escapeAttrValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const str = String(value);
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(str);
+  }
+  return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response

@@ -211,7 +211,8 @@ class ResourcesPage(BasePage):
             resource_index: Index of the resource row (default: 0 for first resource)
         """
         resource_row = self.resource_rows.nth(resource_index)
-        view_btn = resource_row.locator('button:has-text("View")')
+        self._open_action_dropdown(resource_row)
+        view_btn = resource_row.locator('button[role="menuitem"]:has-text("View")')
         self.click_locator(view_btn)
         # Wait for modal to open
         self.page.wait_for_selector("#resource-modal:not(.hidden)", state="visible", timeout=10000)
@@ -230,7 +231,8 @@ class ResourcesPage(BasePage):
             resource_index: Index of the resource row (default: 0 for first resource)
         """
         resource_row = self.resource_rows.nth(resource_index)
-        edit_btn = resource_row.locator('button:has-text("Edit")')
+        self._open_action_dropdown(resource_row)
+        edit_btn = resource_row.locator('button[role="menuitem"]:has-text("Edit")')
         self.click_locator(edit_btn)
         # Wait for modal to open
         self.page.wait_for_selector("#resource-edit-modal:not(.hidden)", state="visible", timeout=10000)
@@ -273,9 +275,9 @@ class ResourcesPage(BasePage):
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
 
-        # Click delete button
         resource_row = self.resource_rows.nth(resource_index)
-        delete_btn = resource_row.locator('button:has-text("Delete")')
+        self._open_action_dropdown(resource_row)
+        delete_btn = resource_row.locator('button[role="menuitem"]:has-text("Delete")')
         self.click_locator(delete_btn)
 
     def wait_for_resource_visible(self, resource_name: str, timeout: int = 30000) -> None:

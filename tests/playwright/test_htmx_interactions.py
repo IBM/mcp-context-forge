@@ -188,12 +188,15 @@ class TestHTMXInteractions:
         if tools_page.tool_rows.count() == 0:
             pytest.skip("No tools available to test in this UI configuration.")
 
-        # Check if the first tool has a Test button
-        test_buttons = tools_page.tool_rows.first.locator('button:has-text("Test")')
-        if test_buttons.count() == 0:
-            pytest.skip("No Test button available for tools.")
+        # Check if the first tool's overflow menu actually carries a Test menuitem.
+        # [role="menuitem"] is scoped to the Alpine overflow menu contents, so the
+        # count check works whether or not the menu is currently open.
+        test_items = tools_page.tool_rows.first.locator('[role="menuitem"]:has-text("Test")')
+        if test_items.count() == 0:
+            pytest.skip("No Test action available for tools.")
 
-        # Open test modal — testTool() fetches /admin/tools/{id} before opening
+        # Open test modal — open_tool_test_modal() opens the overflow menu
+        # internally and testTool() then fetches /admin/tools/{id}.
         try:
             tools_page.open_tool_test_modal(tool_index=0)
         except AssertionError as exc:
@@ -239,10 +242,7 @@ class TestHTMXInteractions:
         # page load).  Assert that clearing the search shows more items than the
         # zero-result filtered state.
         restored_rows = servers_page.server_items.count()
-        assert restored_rows > filtered_visible, (
-            f"Clearing search should restore items (got {restored_rows}), "
-            f"but still showing filtered count ({filtered_visible})"
-        )
+        assert restored_rows > filtered_visible, f"Clearing search should restore items (got {restored_rows}), " f"but still showing filtered count ({filtered_visible})"
 
     def test_form_validation_feedback(self, tools_page: ToolsPage):
         """Test form validation and error feedback."""
