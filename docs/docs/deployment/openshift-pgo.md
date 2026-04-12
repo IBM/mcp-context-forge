@@ -419,7 +419,7 @@ If you prefer to do it manually, it's equivalent to:
 ```bash
 SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/servers | \
-  python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
+  python3 -c "import json,sys; print(next(s for s in json.load(sys.stdin) if s['name'] == 'Fast Time Server')['id'])")
 
 helm upgrade <release> charts/mcp-stack \
   -n <namespace> \

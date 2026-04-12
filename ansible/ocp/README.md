@@ -49,7 +49,7 @@ ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/clust
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ocp_namespace` | `gp-context-forge` | Namespace and Helm release name |
+| `ocp_namespace` | `contextforge` | Namespace and Helm release name |
 | `ocp_values` | `charts/mcp-stack/values-ocp-pgo.yaml` | Helm values file |
 | `ocp_secrets` | `charts/mcp-stack/values-ocp-pgo-secrets.yaml` | Secrets override file |
 | `ocp_pg_cr` | `charts/mcp-stack/crunchydata-postgres-cr.yaml` | PostgresCluster CR |
