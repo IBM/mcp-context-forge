@@ -34,7 +34,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
-_SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[^/]+)/mcp/?$")
+_SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 # Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
 # match (e.g. empty segment: /servers//mcp). Used as a defense-in-depth guard.
 _SERVER_SCOPED_PATH_RE = re.compile(r"/servers/.*/mcp(?:/)?$")
