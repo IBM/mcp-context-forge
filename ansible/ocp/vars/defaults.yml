@@ -3,7 +3,7 @@
 # Override via inventory, vars files, or -e on the command line
 
 # Namespace (also used as Helm release name)
-ocp_namespace: gp-context-forge
+ocp_namespace: contextforge
 
 # Helm chart and values
 ocp_chart_path: "{{ playbook_dir }}/../../../charts/mcp-stack"

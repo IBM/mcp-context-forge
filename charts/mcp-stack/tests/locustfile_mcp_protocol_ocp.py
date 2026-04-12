@@ -844,8 +844,9 @@ class MCPSessionChurnUser(BaseMCPUser):
     wait_time = between(0.1, 0.3)
 
     def on_start(self):
-        # Do NOT call _ensure_initialized — each task cycle initializes fresh
-        pass
+        # Assign server target (need server_id and tool_names) but do NOT call
+        # _ensure_initialized — each task cycle initializes a fresh session
+        self._assign_target()
 
     @task(10)
     @tag("churn", "lifecycle")

@@ -83,9 +83,22 @@
           curl -s -H "Authorization: Bearer {{ jwt_token }}" http://localhost:4444/servers
       register: servers_result
 
-    - name: Extract server ID
+    - name: Parse server list
       ansible.builtin.set_fact:
-        server_id: "{{ (servers_result.stdout | from_json)[0].id }}"
+        server_list: "{{ servers_result.stdout | from_json }}"
+
+    - name: Extract server ID (filter by name, fall back to first)
+      ansible.builtin.set_fact:
+        server_id: >-
+          {{ (server_list | selectattr('name', 'equalto', 'Fast Time Server') | map(attribute='id') | list | first)
+             if (server_list | selectattr('name', 'equalto', 'Fast Time Server') | list | length > 0)
+             else server_list[0].id }}
+
+    - name: Verify server ID found
+      ansible.builtin.assert:
+        that:
+          - server_id | length > 0
+        fail_msg: "No virtual server found. Check that registration hooks ran successfully."
 
     - name: Report server ID
       ansible.builtin.debug:
