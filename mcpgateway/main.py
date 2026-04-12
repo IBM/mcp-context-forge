@@ -175,6 +175,7 @@ from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
+from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -2632,7 +2633,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = resolve_root_path(request)
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         is_protected = any(scope_path.startswith(p) for p in protected_paths)
@@ -2722,7 +2723,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = resolve_root_path(request)
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         # Allow OPTIONS requests for CORS preflight (RFC 7231)
