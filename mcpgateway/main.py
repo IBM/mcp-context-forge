@@ -9143,14 +9143,17 @@ async def handle_internal_a2a_tasks_cancel(request: Request):
         body = await request.json()
         task_id = body.get("task_id")
         agent_id = body.get("agent_id")
-        if not task_id:
-            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
 
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        task = service.cancel_task(db, task_id, agent_id=agent_id)
+        task = service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
         if task is None:
             return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
         return ORJSONResponse(status_code=200, content=task)
@@ -9180,7 +9183,10 @@ async def handle_internal_a2a_push_create(request: Request):
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
+        if not service._check_agent_access_by_id(db, body["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            return ORJSONResponse(status_code=404, content={"error": "agent not found"})
         cfg = service.create_push_config(db, body)
         return ORJSONResponse(status_code=200, content=cfg)
     except Exception:
@@ -9211,7 +9217,10 @@ async def handle_internal_a2a_push_get(request: Request):
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
+        if agent_id and not service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
         cfg = service.get_push_config(db, task_id, agent_id=agent_id)
         if cfg is None:
             return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
@@ -9242,7 +9251,10 @@ async def handle_internal_a2a_push_list(request: Request):
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
+        if agent_id and not service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            return ORJSONResponse(status_code=200, content={"configs": []})
         configs = service.list_push_configs(db, agent_id=agent_id, task_id=task_id)
         return ORJSONResponse(status_code=200, content={"configs": configs})
     except Exception:
@@ -9270,9 +9282,14 @@ async def handle_internal_a2a_push_delete(request: Request):
             return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
 
         # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
+        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        if cfg and not service._check_agent_access_by_id(db, cfg.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
         deleted = service.delete_push_config(db, config_id)
         if not deleted:
             return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
@@ -9334,9 +9351,14 @@ async def handle_internal_a2a_events_replay(request: Request):
             return ORJSONResponse(status_code=400, content={"error": "task_id required"})
 
         # First-Party
+        from mcpgateway.db import A2ATask as DbA2ATask  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
+        task_row = db.query(DbA2ATask).filter(DbA2ATask.task_id == task_id).first()
+        if task_row and not service._check_agent_access_by_id(db, task_row.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            return ORJSONResponse(status_code=404, content={"error": "task not found"})
         events = service.replay_events(db, task_id, after_sequence, limit=limit)
         return ORJSONResponse(status_code=200, content={"events": events})
     except Exception:

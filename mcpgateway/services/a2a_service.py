@@ -356,6 +356,23 @@ class A2AAgentService(BaseService):
         agents = db.query(DbA2AAgent).filter(DbA2AAgent.enabled == True).all()  # noqa: E712
         return [a.id for a in agents if self._check_agent_access(a, user_email, token_teams)]
 
+    def _check_agent_access_by_id(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check if the caller can access the agent identified by ``agent_id``.
+
+        Returns True when the agent does not exist (fail-open for deleted
+        agents) or when ``_check_agent_access`` allows it.
+        """
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_id).first()
+        if agent is None:
+            return True
+        return self._check_agent_access(agent, user_email, token_teams)
+
     async def register_agent(
         self,
         db: Session,
@@ -2035,16 +2052,25 @@ class A2AAgentService(BaseService):
             return None
         return A2ATaskRead.model_validate(task).model_dump(mode="json")
 
-    def cancel_task(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def cancel_task(
+        self,
+        db: Session,
+        task_id: str,
+        agent_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Cancel an A2A task by setting its state to 'canceled'.
 
         Args:
             db: Database session.
             task_id: The agent-side task ID.
             agent_id: Optional agent ID filter.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
 
         Returns:
-            Task data as a dict after cancellation, or None if not found.
+            Task data as a dict after cancellation, or None if not found/not visible.
             If the task is already in a terminal state (completed/failed/canceled),
             returns it as-is without modification.
         """
@@ -2053,6 +2079,9 @@ class A2AAgentService(BaseService):
             query = query.filter(A2ATask.a2a_agent_id == agent_id)
         task = query.first()
         if task is None:
+            return None
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
+        if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
             return None
         if task.state in ("completed", "failed", "canceled"):
             return A2ATaskRead.model_validate(task).model_dump(mode="json")
