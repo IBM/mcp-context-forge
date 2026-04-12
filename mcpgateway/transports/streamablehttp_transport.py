@@ -36,6 +36,7 @@ import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
+from enum import Enum
 import re
 from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
@@ -46,6 +47,7 @@ import anyio
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
+import jwt
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
@@ -69,7 +71,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.metrics import mcp_auth_cache_events_counter
+from mcpgateway.services.metrics import mcp_auth_cache_events_counter, oauth_verify_events_counter
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
@@ -78,10 +80,11 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials, verify_oauth_access_token
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -226,6 +229,53 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
+
+
+class OAuthAuthResult(Enum):
+    """Outcome of an OAuth access-token verification attempt.
+
+    Used by :meth:`_StreamableHttpAuthHandler._try_oauth_access_token` to
+    communicate whether the token was handled, rejected, or not applicable
+    without relying on a tri-state ``Optional[bool]``.
+    """
+
+    SUCCESS = "success"  # Verified; user context populated.
+    FAILED = "failed"  # Verification attempted and rejected; error already sent.
+    NOT_APPLICABLE = "not_applicable"  # Target server does not use OAuth; caller should continue.
+
+
+def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
+    """Normalise a virtual-server ``oauth_config`` into an issuer allowlist.
+
+    Accepts either the plural ``authorization_servers`` (list of URLs) or the
+    legacy singular ``authorization_server`` (single URL string). Returns an
+    empty list when neither key is present or both are empty.
+
+    Args:
+        oauth_config: The ``server.oauth_config`` dict from a virtual server.
+
+    Returns:
+        A list of allowed issuer URLs, with surrounding whitespace stripped.
+    """
+    servers = oauth_config.get("authorization_servers") or []
+    if isinstance(servers, list):
+        cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
+        if cleaned:
+            non_https = [s for s in cleaned if not s.lower().startswith("https://")]
+            if non_https:
+                logger.warning("Ignoring non-HTTPS authorization_servers (SSRF risk): %s", non_https)
+                cleaned = [s for s in cleaned if s.lower().startswith("https://")]
+            return cleaned
+    singular = oauth_config.get("authorization_server")
+    if isinstance(singular, str) and singular.strip():
+        url = singular.strip()
+        if not url.lower().startswith("https://"):
+            logger.warning("Ignoring non-HTTPS authorization_server (SSRF risk): %s", url)
+            return []
+        return [url]
+    return []
+
+
 _shared_session_registry: Optional[Any] = None
 _rust_event_store_client: Optional[httpx.AsyncClient] = None
 _rust_event_store_client_lock = asyncio.Lock()
@@ -739,8 +789,8 @@ def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> b
     return isinstance(user_context, dict) and user_context.get("is_authenticated", False) is True
 
 
-def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
-    """Construct the RFC 9728 OAuth Protected Resource Metadata URL from ASGI scope.
+def _build_public_base_url(scope: Scope) -> str:
+    """Derive the public-facing base URL (``scheme://host[/root_path]``) from an ASGI scope.
 
     Inspects ``x-forwarded-proto`` and ``host`` headers first (reverse-proxy
     scenario), then falls back to ``scope["scheme"]`` and ``scope["server"]``.
@@ -749,10 +799,10 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
 
     Args:
         scope: ASGI connection scope.
-        server_id: Virtual-server identifier.
 
     Returns:
-        Fully-qualified URL string, or ``""`` if construction fails.
+        Base URL with trailing root_path (no trailing slash), or ``""`` if
+        construction fails.
     """
     try:
         headers = Headers(scope=scope)
@@ -778,9 +828,78 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
                 return ""
 
         root_path = scope.get("root_path", "").rstrip("/")
-        return f"{proto}://{host}{root_path}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
-    except Exception:
+        return f"{proto}://{host}{root_path}"
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        # Malformed ASGI scope (missing keys, wrong types, unparseable
+        # header bytes). Log at WARNING so upstream 401s have a forensic
+        # trail — callers treat "" as a fail-closed sentinel and reject
+        # the request, but without this log operators have no visibility
+        # into *why* URL derivation failed. Include the request path and
+        # client tuple so a flood of failures can be traced to a specific
+        # route or peer.
+        scope_path = scope.get("path") if isinstance(scope, dict) else None
+        scope_client = scope.get("client") if isinstance(scope, dict) else None
+        logger.warning(
+            "Failed to derive public base URL from ASGI scope (path=%s, client=%s): %s: %s",
+            scope_path,
+            scope_client,
+            type(exc).__name__,
+            exc,
+        )
         return ""
+
+
+def _build_server_resource_url(scope: Scope, server_id: str) -> str:
+    """Construct the canonical MCP resource URL for a virtual server.
+
+    This is the URL that RFC 8707 / RFC 9728 identify as the *resource* —
+    i.e. the value clients should request tokens for and that the server
+    MUST enforce as the access-token ``aud`` claim.
+
+    .. important::
+        The base URL is derived from :data:`settings.app_domain`, **not** the
+        inbound ``Host`` / ``X-Forwarded-Host`` headers. Both are
+        caller-controlled (any client can send an arbitrary ``Host``; a
+        permissive proxy can forward one too), so trusting them here would
+        let a client bypass audience binding simply by sending the hostname
+        their token happens to name. ``settings.app_domain`` is operator-set
+        at deployment time and therefore a safe trust anchor. Operators MUST
+        set it to the gateway's public URL for OAuth audience validation to
+        be effective.
+
+    Args:
+        scope: ASGI connection scope (retained for signature compatibility
+            with related helpers; unused in the resource-URL derivation).
+        server_id: Virtual-server identifier.
+
+    Returns:
+        Fully-qualified resource URL string, or ``""`` if construction fails.
+    """
+    del scope  # intentionally ignored — see docstring
+    try:
+        raw = str(settings.app_domain).rstrip("/")
+    except (AttributeError, ValueError) as exc:
+        logger.warning("settings.app_domain is not a usable URL: %s: %s", type(exc).__name__, exc)
+        return ""
+    if not raw:
+        return ""
+    return f"{raw}/servers/{server_id}/mcp"
+
+
+def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
+    """Construct the RFC 9728 OAuth Protected Resource Metadata URL from ASGI scope.
+
+    Args:
+        scope: ASGI connection scope.
+        server_id: Virtual-server identifier.
+
+    Returns:
+        Fully-qualified URL string, or ``""`` if construction fails.
+    """
+    base = _build_public_base_url(scope)
+    if not base:
+        return ""
+    return f"{base}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
 
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
@@ -3403,8 +3522,12 @@ class _StreamableHttpAuthHandler:
         set_trace_context_from_teams([], auth_method="anonymous")
         return True  # Allow request to proceed with public-only access
 
-    async def _auth_jwt(self, *, token: str) -> bool:
+    async def _auth_jwt(self, *, token: str) -> bool:  # noqa: PLR0911
         """Verify a JWT Bearer token and populate the user context.
+
+        Routes to ContextForge-issued or IdP-issued (OAuth) verification based
+        on the token's ``iss`` claim. IdP-issued tokens are only accepted for
+        virtual servers with ``oauth_enabled=True``.
 
         Args:
             token: Bearer token value extracted from the Authorization header.
@@ -3412,6 +3535,10 @@ class _StreamableHttpAuthHandler:
         Returns:
             True if verification succeeds, False if rejected (401/403/503 sent).
         """
+        routed = await self._route_idp_issued_token(token)
+        if routed is not None:
+            return routed
+
         try:
             user_payload = await verify_credentials(token)
             # Store enriched user context with normalized teams
@@ -3671,7 +3798,7 @@ class _StreamableHttpAuthHandler:
                 team_name=trace_team_name,
             )
         except HTTPException:
-            # JWT verification failed (expired, malformed, bad signature, etc.)
+            # Internal JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         except SQLAlchemyError:
             # DB failure during team resolution or membership validation
@@ -3683,6 +3810,265 @@ class _StreamableHttpAuthHandler:
             return await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
 
         return True
+
+    async def _route_idp_issued_token(self, token: str) -> Optional[bool]:
+        """Route IdP-issued tokens to the OAuth verification path when applicable.
+
+        Peeks at the token's unverified ``iss`` claim. When the claim does not
+        match ``settings.jwt_issuer`` the token is treated as potentially
+        IdP-issued and delegated to :meth:`_try_oauth_access_token`. This
+        routing is intentionally independent of
+        ``settings.jwt_issuer_verification`` — that toggle governs how
+        ContextForge's *own* JWTs are checked and must not be allowed to
+        bypass OAuth enforcement for virtual servers with
+        ``oauth_enabled=True``.
+
+        Args:
+            token: Raw Bearer token to inspect.
+
+        Returns:
+            True on successful OAuth verification (user context populated).
+            False when an error response has already been sent. ``None`` when
+            the caller should continue with ContextForge-issued JWT
+            verification (undecodable token, internal ``iss``, or an
+            IdP-issued token on a server that does not handle it).
+        """
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+        except jwt.DecodeError:
+            # Undecodable bearer token. Flow through to verify_credentials()
+            # which will emit the canonical 401. Log at DEBUG only — auth
+            # floods would otherwise pollute WARN-level observability.
+            logger.debug("Bearer token is not a decodable JWT; deferring to internal verify_credentials")
+            return None
+
+        if unverified.get("iss", "") == settings.jwt_issuer:
+            return None
+
+        try:
+            oauth_result = await self._try_oauth_access_token(token, unverified)
+        except Exception:
+            # An unexpected error escaped _try_oauth_access_token (e.g. a
+            # bug in claims parsing or an unhandled DB error). Emit an
+            # ``error`` metric so this path is visible in dashboards —
+            # otherwise the exception propagates silently through the
+            # counter increments below — and re-raise so higher layers
+            # can convert to a 500.
+            oauth_verify_events_counter.labels(outcome="error").inc()
+            logger.exception("Unexpected error in _try_oauth_access_token")
+            raise
+
+        if oauth_result is OAuthAuthResult.SUCCESS:
+            oauth_verify_events_counter.labels(outcome="success").inc()
+            return True
+        if oauth_result is OAuthAuthResult.FAILED:
+            oauth_verify_events_counter.labels(outcome="failed").inc()
+            return False  # Error response already sent
+        # OAuthAuthResult.NOT_APPLICABLE — this handler is not responsible for
+        # the token (target server is not oauth_enabled, token's issuer is
+        # outside the allowlist, or the URL carries no server id). When
+        # internal issuer verification is enabled, an iss mismatch will be
+        # rejected by verify_credentials() anyway, so short-circuit with the
+        # canonical 401. When it is disabled, fall through so legacy internal
+        # JWTs whose iss differs from settings.jwt_issuer remain accepted.
+        oauth_verify_events_counter.labels(outcome="not_applicable").inc()
+        if settings.jwt_issuer_verification:
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+        return None
+
+    async def _try_oauth_access_token(self, token: str, unverified: Optional[Dict[str, Any]] = None) -> OAuthAuthResult:  # noqa: PLR0911
+        """Attempt OAuth access token verification for oauth_enabled virtual servers.
+
+        Invoked by :meth:`_route_idp_issued_token` when the token's ``iss``
+        claim does not match ``settings.jwt_issuer``. Checks if the target
+        server has ``oauth_enabled=True``, verifies the token against the
+        server's configured authorization servers via JWKS, and resolves the
+        user from the DB.
+
+        Args:
+            token: Raw Bearer token whose ``iss`` does not match the internal
+                issuer.
+            unverified: Already-decoded (but signature-unverified) claims for
+                ``token``. Optional — :meth:`_route_idp_issued_token` always
+                threads its own decode through to avoid a second parse, but
+                direct callers (tests) may omit it and have this method
+                decode lazily.
+
+        Returns:
+            :class:`OAuthAuthResult` — ``SUCCESS`` when verification and user
+            resolution succeeded, ``FAILED`` when an error response has
+            already been sent, ``NOT_APPLICABLE`` when the target virtual
+            server does not use OAuth *or* when this server is not the right
+            handler for the token (issuer outside the allowlist); in the
+            latter case the caller should defer to internal JWT verification.
+        """
+        if unverified is None:
+            try:
+                unverified = jwt.decode(token, options={"verify_signature": False})
+            except jwt.DecodeError:
+                return OAuthAuthResult.NOT_APPLICABLE
+
+        path = self.scope.get("path", "")
+        match = _SERVER_ID_RE.search(path)
+        if not match:
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        server_id = match.group("server_id")
+        server_id_log = sanitize_for_log(server_id)
+
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+        try:
+            async with get_db() as db:
+                server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+        except SQLAlchemyError:
+            logger.exception("DB error looking up server %s for OAuth verification", server_id_log)
+            await self._send_error(detail="Service unavailable", status_code=503)
+            return OAuthAuthResult.FAILED
+
+        if not server or not server.oauth_enabled:
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        # ``oauth_enabled=True`` + empty/missing ``oauth_config`` is a
+        # server-side misconfiguration. Returning NOT_APPLICABLE here would
+        # let the caller fall through to internal JWT verification, so an
+        # internal ContextForge JWT could reach a resource that is supposed
+        # to require OAuth. Fail closed — same semantics as the empty
+        # ``authorization_servers`` branch below.
+        if not server.oauth_config:
+            logger.error(
+                "Server %s has oauth_enabled=True but no oauth_config configured; rejecting token",
+                server_id_log,
+            )
+            await self._send_error(detail="OAuth authorization server not configured for this resource", status_code=503)
+            return OAuthAuthResult.FAILED
+
+        authorization_servers = _resolve_authorization_servers(server.oauth_config)
+        if not authorization_servers:
+            # Same class of misconfiguration: oauth_config is present but
+            # carries no issuer allowlist. Fail closed rather than fall
+            # through to internal JWT verification.
+            logger.error(
+                "Server %s has oauth_enabled=True but no authorization_servers configured; rejecting token",
+                server_id_log,
+            )
+            await self._send_error(detail="OAuth authorization server not configured for this resource", status_code=503)
+            return OAuthAuthResult.FAILED
+
+        # Check whether this server is the right handler for the token. If
+        # the issuer is not in the allowlist (including tokens with a
+        # missing/empty iss), return NOT_APPLICABLE so the caller can fall
+        # through to internal JWT verification. This preserves legacy
+        # behaviour on ``oauth_enabled`` servers for gateway-issued JWTs
+        # whose iss is missing or predates the current ``settings.jwt_issuer``
+        # value — those tokens would previously have been accepted by
+        # ``verify_credentials()`` when ``JWT_ISSUER_VERIFICATION=false``,
+        # and rejecting them here would be a regression. Tokens with a
+        # non-matching iss that are *not* legitimate internal JWTs will
+        # still fail signature verification in the internal path and be
+        # rejected there.
+        token_issuer = unverified.get("iss")
+        normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
+        if not isinstance(token_issuer, str) or token_issuer.rstrip("/") not in normalized_allowed:
+            logger.info(
+                "Token issuer %s not in allowlist for server %s; deferring to internal verify",
+                sanitize_for_log(token_issuer) if token_issuer else "<missing>",
+                server_id_log,
+            )
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        # Per RFC 8707/9728, the resource URL is the canonical audience for an
+        # access token bound to this MCP server. We MUST enforce it so that a
+        # token minted for a different API cannot authenticate here just
+        # because it was signed by an allowed issuer. Additional audiences may
+        # be declared explicitly in oauth_config (``resource``, or — for
+        # backward compat — ``client_id``) to accommodate IdPs that issue
+        # tokens with the client_id in ``aud``.
+        resource_url = _build_server_resource_url(self.scope, server_id)
+        if not resource_url:
+            # Can't build a canonical audience — fail closed rather than
+            # accept a token we cannot bind to this resource.
+            logger.warning("Unable to derive resource URL for server %s; rejecting OAuth token", server_id)
+            await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": "Bearer"})
+            return OAuthAuthResult.FAILED
+
+        expected_audiences: list[str] = [resource_url]
+        extra_audience = server.oauth_config.get("resource") or server.oauth_config.get("client_id")
+        if isinstance(extra_audience, str) and extra_audience.strip():
+            expected_audiences.append(extra_audience.strip())
+        elif isinstance(extra_audience, list):
+            expected_audiences.extend(s.strip() for s in extra_audience if isinstance(s, str) and s.strip())
+
+        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audiences)
+        if claims is None:
+            resource_metadata = _build_resource_metadata_url(self.scope, server_id)
+            www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+            await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
+            return OAuthAuthResult.FAILED
+
+        # Resolve user identity from verified claims
+        user_email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+        if not user_email or not isinstance(user_email, str) or "@" not in user_email:
+            await self._send_error(detail="OAuth token missing valid email claim")
+            return OAuthAuthResult.FAILED
+
+        user_email = user_email.strip().lower()
+
+        # Look up user in ContextForge DB — user must already exist (no auto-creation)
+        # First-Party
+        from mcpgateway.auth import _get_user_by_email_sync, _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+        try:
+            user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+        except SQLAlchemyError:
+            logger.exception("DB error looking up user %s during OAuth access-token verification", user_email)
+            await self._send_error(detail="Service unavailable", status_code=503)
+            return OAuthAuthResult.FAILED
+        except Exception:
+            logger.exception("Unexpected error looking up user %s during OAuth access-token verification", user_email)
+            await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
+            return OAuthAuthResult.FAILED
+
+        if user_record is None:
+            await self._send_error(detail="User not registered in ContextForge. Please log in via SSO first.")
+            return OAuthAuthResult.FAILED
+        if not user_record.is_active:
+            await self._send_error(detail="Account disabled")
+            return OAuthAuthResult.FAILED
+
+        # Resolve teams from DB (same path as session tokens)
+        is_admin = bool(user_record.is_admin)
+        try:
+            final_teams = None if is_admin else await _resolve_teams_from_db(user_email, user_record)
+        except SQLAlchemyError:
+            logger.exception("DB error resolving teams for user %s during OAuth access-token verification", user_email)
+            await self._send_error(detail="Service unavailable", status_code=503)
+            return OAuthAuthResult.FAILED
+        except Exception:
+            logger.exception("Unexpected error resolving teams for user %s during OAuth access-token verification", user_email)
+            await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
+            return OAuthAuthResult.FAILED
+
+        # token_use="session" aligns with downstream RBAC gates (main.py, rbac.py,
+        # token_scoping.py) that treat DB-resolved teams as the session semantic.
+        # auth_method distinguishes the origin for audit/logging.
+        user_context_var.set(
+            {
+                "email": user_email,
+                "teams": final_teams,
+                "is_authenticated": True,
+                "is_admin": is_admin,
+                "permission_is_admin": is_admin,
+                "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
+                "auth_method": "oauth_access_token",
+            }
+        )
+        _oauth_checked_var.set(True)
+        return OAuthAuthResult.SUCCESS
 
 
 async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
