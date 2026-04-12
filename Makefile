@@ -2874,6 +2874,9 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 OCP_NS ?=
 OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
 OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
+BENCH_USERS ?= 125
+BENCH_SPAWN ?= 30
+BENCH_RUNTIME ?= 60s
 OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
 
 ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
@@ -3017,15 +3020,15 @@ ocp-benchmark-setup:                         ## Enable Locust and configure serv
 		echo "=== Setup complete ===" && \
 		echo "Run: make ocp-benchmark OCP_NS=$(OCP_NS)"'
 
-ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace>"; exit 1; fi
+ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS; optional BENCH_USERS, BENCH_SPAWN, BENCH_RUNTIME)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace> [BENCH_USERS=500 BENCH_SPAWN=50 BENCH_RUNTIME=60s]"; exit 1; fi
 	@echo "Starting MCP benchmark on OCP..."
 	@echo "   Namespace: $(OCP_NS)"
-	@echo "   Config:    125 users, 30/s spawn, 60s"
+	@echo "   Config:    $(BENCH_USERS) users, $(BENCH_SPAWN)/s spawn, $(BENCH_RUNTIME)"
 	@oc -n $(OCP_NS) exec deploy/$(OCP_NS)-mcp-stack-locust -- \
 		python3 -c "import urllib.request,urllib.parse; \
 		urllib.request.urlopen(urllib.request.Request('http://localhost:8089/swarm', \
-		urllib.parse.urlencode({'user_count':125,'spawn_rate':30,'run_time':'60s', \
+		urllib.parse.urlencode({'user_count':$(BENCH_USERS),'spawn_rate':$(BENCH_SPAWN),'run_time':'$(BENCH_RUNTIME)', \
 		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
 	@echo "Benchmark running. Results in ~60s."
 
