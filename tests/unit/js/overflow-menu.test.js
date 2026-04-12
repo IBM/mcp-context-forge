@@ -4,7 +4,10 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
-import { overflowMenu } from "../../../mcpgateway/admin_ui/components/overflow-menu.js";
+import {
+  overflowMenu,
+  _resetCurrentlyOpenForTests,
+} from "../../../mcpgateway/admin_ui/components/overflow-menu.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +42,8 @@ function createMenuItems(count) {
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  document.body.innerHTML = "";
+  document.body.replaceChildren();
+  _resetCurrentlyOpenForTests();
 });
 
 afterEach(() => {
@@ -519,6 +523,41 @@ describe("Integration: Menu positioning with viewport boundaries", () => {
     expect(component.menuLeft).toBe(840);
   });
 
+  test("caps height and enables internal scroll when menu is taller than viewport", () => {
+    // Menu height 900 exceeds viewport 768; cannot flip upward either.
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 400, left: 50, top: 380, right: 70 }, 900);
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    menu.style.top = "404px";
+    menu.style.left = "50px";
+
+    component.openMenu();
+
+    // Pinned to top padding and capped at viewport minus 2*padding (752).
+    expect(component.menuTop).toBe(8);
+    expect(menu.style.maxHeight).toBe("752px");
+    expect(menu.style.overflowY).toBe("auto");
+  });
+
+  test("clears stale max-height/overflowY from a previous open", () => {
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 100, left: 50, top: 80, right: 70 }, 200);
+
+    // Simulate leftover inline styles from a prior tall-menu open.
+    menu.style.maxHeight = "400px";
+    menu.style.overflowY = "auto";
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    component.openMenu();
+
+    // Fits below trigger; the stale caps should be cleared.
+    expect(menu.style.maxHeight).toBe("");
+    expect(menu.style.overflowY).toBe("");
+  });
+
   test("menu remains actionable after viewport clamping", () => {
     const { trigger, menu, item } = createMenuWithTrigger({ bottom: 700, left: 900, top: 680, right: 920 }, 200);
     const focusSpy = vi.spyOn(item, "focus");
@@ -534,5 +573,150 @@ describe("Integration: Menu positioning with viewport boundaries", () => {
     // Menu should be positioned and first item focused
     expect(component.menuOpen).toBe(true);
     expect(focusSpy).toHaveBeenCalled();
+  });
+});
+
+// ─── Ref guards ───────────────────────────────────────────────────────────────
+
+describe("Ref guards", () => {
+  test("openMenu warns and returns when $refs.trigger is missing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const component = makeComponent();
+    component.$refs = {};
+
+    component.openMenu();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/trigger/));
+    expect(component.menuOpen).toBe(false);
+  });
+
+  test("openMenu warns when $refs.menu is missing after trigger click", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const trigger = document.createElement("button");
+    trigger.getBoundingClientRect = vi.fn(() => ({ bottom: 100, left: 50, top: 80 }));
+
+    const component = makeComponent();
+    component.$refs = { trigger };
+
+    component.openMenu();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/menu/));
+    expect(component.menuOpen).toBe(true); // still flipped open before $nextTick
+  });
+
+  test("navigate warns and returns when $refs.menu is missing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const component = makeComponent();
+    component.$refs = {};
+
+    expect(() => component.navigate(1)).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/menu/));
+  });
+
+  test("navigate is a no-op when menu has no menuitems", () => {
+    const menu = document.createElement("div");
+    document.body.appendChild(menu);
+
+    const component = makeComponent();
+    component.$refs = { menu };
+
+    expect(() => component.navigate(1)).not.toThrow();
+  });
+});
+
+// ─── destroy hook ─────────────────────────────────────────────────────────────
+
+describe("destroy", () => {
+  test("clears main container scroll-lock when destroyed while menu is open", () => {
+    const main = document.createElement("main");
+    main.setAttribute("data-scroll-container", "");
+    main.style.overflow = "hidden";
+    document.body.appendChild(main);
+
+    const component = makeComponent();
+    component.init();
+    component.menuOpen = true;
+
+    component.destroy();
+
+    expect(main.style.overflow).toBe("");
+  });
+
+  test("clears wrapper scroll-lock when destroyed while menu is open", () => {
+    const wrapper = document.createElement("div");
+    wrapper.id = "destroy-wrapper";
+    wrapper.style.overflow = "hidden";
+    document.body.appendChild(wrapper);
+
+    const component = makeComponent("destroy-wrapper");
+    component.init();
+    component.menuOpen = true;
+
+    component.destroy();
+
+    expect(wrapper.style.overflow).toBe("");
+  });
+
+  test("does not touch scroll-lock when destroyed while menu is closed", () => {
+    const main = document.createElement("main");
+    main.setAttribute("data-scroll-container", "");
+    main.style.overflow = "auto";
+    document.body.appendChild(main);
+
+    const component = makeComponent();
+    component.init();
+    component.menuOpen = false;
+
+    component.destroy();
+
+    expect(main.style.overflow).toBe("auto");
+  });
+});
+
+// ─── Multi-menu coordination ──────────────────────────────────────────────────
+
+describe("Multi-menu coordination", () => {
+  function makeOpenableComponent() {
+    const { menu } = createMenuItems(1);
+    const trigger = document.createElement("button");
+    trigger.getBoundingClientRect = vi.fn(() => ({ bottom: 100, left: 50, top: 80 }));
+    const component = makeComponent();
+    component.init();
+    component.$refs = { trigger, menu };
+    return component;
+  }
+
+  test("opening a new menu closes the previously open peer", () => {
+    const componentA = makeOpenableComponent();
+    const componentB = makeOpenableComponent();
+
+    componentA.openMenu();
+    expect(componentA.menuOpen).toBe(true);
+
+    componentB.openMenu();
+    expect(componentA.menuOpen).toBe(false);
+    expect(componentB.menuOpen).toBe(true);
+  });
+
+  test("reopening the same instance is a no-op on the peer slot", () => {
+    const componentA = makeOpenableComponent();
+
+    componentA.openMenu();
+    expect(componentA.menuOpen).toBe(true);
+
+    componentA.openMenu();
+    expect(componentA.menuOpen).toBe(true);
+  });
+
+  test("destroying the currently-open menu releases the peer slot", () => {
+    const componentA = makeOpenableComponent();
+    const componentB = makeOpenableComponent();
+
+    componentA.openMenu();
+    componentA.destroy();
+
+    // Opening a fresh instance should not attempt to close the destroyed one.
+    expect(() => componentB.openMenu()).not.toThrow();
+    expect(componentB.menuOpen).toBe(true);
   });
 });

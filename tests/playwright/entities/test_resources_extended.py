@@ -579,6 +579,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         test_btn = first_row.locator('button:has-text("Test")')
         expect(test_btn).to_be_visible()
 
@@ -589,6 +590,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         view_btn = first_row.locator('button:has-text("View")')
         expect(view_btn).to_be_visible()
 
@@ -599,6 +601,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         edit_btn = first_row.locator('button:has-text("Edit")')
         expect(edit_btn).to_be_visible()
 
@@ -609,6 +612,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         deactivate_btn = first_row.locator('button:has-text("Deactivate")')
         activate_btn = first_row.locator('button:has-text("Activate")')
 
@@ -624,6 +628,7 @@ class TestResourcesRowActions:
         _skip_if_no_resources(resources_page)
 
         first_row = resources_page.get_resource_row(0)
+        resources_page.open_action_dropdown(first_row)
         delete_btn = first_row.locator('button:has-text("Delete")')
         expect(delete_btn).to_be_visible()
 

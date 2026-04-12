@@ -842,6 +842,6 @@ import {
   // Alpine Components
   // ===================================================================
   document.addEventListener('alpine:init', () => {
-    Alpine.data('overflowMenu', (wrapperId = null) => overflowMenu());
+    Alpine.data('overflowMenu', (wrapperId = null) => overflowMenu(wrapperId));
   });
 })(window.Admin);

@@ -46,6 +46,7 @@ vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   updateAuthHeadersJSON: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeAttrValue: vi.fn((s) => (s != null ? String(s) : "")),
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
   safeSetInnerHTML: vi.fn((el, html) => {
     if (el) el.innerHTML = html;
