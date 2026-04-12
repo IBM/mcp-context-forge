@@ -55,7 +55,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -2674,8 +2674,8 @@ async def admin_servers_partial_html(
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
+    user: dict = Depends(get_current_user_with_permissions),
+) -> Response:
     """Return paginated servers HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -2717,11 +2717,16 @@ async def admin_servers_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query with eager loading to avoid N+1 queries
+    # Filter out deactivated tools, resources, prompts, and agents at query level
     query = select(DbServer).options(
         selectinload(DbServer.tools),
+        with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
         selectinload(DbServer.resources),
+        with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
         selectinload(DbServer.prompts),
+        with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
         selectinload(DbServer.a2a_agents),
+        with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
         joinedload(DbServer.email_team),
     )
 
