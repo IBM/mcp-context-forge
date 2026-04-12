@@ -7,17 +7,19 @@ Unit tests for OpenAPI service.
 """
 
 # Standard
+from contextlib import asynccontextmanager
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import orjson
 import pytest
 
 # First-Party
 from mcpgateway.services.openapi_service import (
-    extract_all_schemas_from_openapi,
+    _MAX_SPEC_BYTES,
     extract_schemas_from_openapi,
-    fetch_and_extract_all_schemas,
     fetch_and_extract_schemas,
     fetch_openapi_spec,
 )
@@ -79,18 +81,8 @@ class TestExtractSchemasFromOpenAPI:
             "paths": {
                 "/calculate": {
                     "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {"schema": {"$ref": "#/components/schemas/CalculateRequest"}}
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"$ref": "#/components/schemas/CalculateResponse"}}
-                                }
-                            }
-                        },
+                        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CalculateRequest"}}}},
+                        "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CalculateResponse"}}}}},
                     }
                 }
             },
@@ -122,16 +114,8 @@ class TestExtractSchemasFromOpenAPI:
             "paths": {
                 "/create": {
                     "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}
-                        },
-                        "responses": {
-                            "201": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}
-                                }
-                            }
-                        },
+                        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}},
+                        "responses": {"201": {"content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}}}},
                     }
                 }
             }
@@ -145,21 +129,7 @@ class TestExtractSchemasFromOpenAPI:
 
     def test_extract_no_request_body(self):
         """Test extraction when there's no request body (GET request)."""
-        spec = {
-            "paths": {
-                "/status": {
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        spec = {"paths": {"/status": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}}}}}}}}
 
         input_schema, output_schema = extract_schemas_from_openapi(spec, "/status", "get")
 
@@ -173,9 +143,7 @@ class TestExtractSchemasFromOpenAPI:
             "paths": {
                 "/delete": {
                     "delete": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}}
-                        },
+                        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}}},
                         "responses": {"204": {"description": "No content"}},
                     }
                 }
@@ -203,19 +171,7 @@ class TestExtractSchemasFromOpenAPI:
 
     def test_method_case_insensitive(self):
         """Test that method matching is case-insensitive."""
-        spec = {
-            "paths": {
-                "/test": {
-                    "post": {
-                        "responses": {
-                            "200": {
-                                "content": {"application/json": {"schema": {"type": "object"}}}
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        spec = {"paths": {"/test": {"post": {"responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}}}}}
 
         # Should work with uppercase
         input_schema, output_schema = extract_schemas_from_openapi(spec, "/test", "POST")
@@ -231,9 +187,7 @@ class TestExtractSchemasFromOpenAPI:
             "paths": {
                 "/test": {
                     "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/NonExistent"}}}
-                        },
+                        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/NonExistent"}}}},
                         "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}},
                     }
                 }
@@ -247,6 +201,73 @@ class TestExtractSchemasFromOpenAPI:
         assert input_schema is None
         assert output_schema is not None
 
+    def test_missing_ref_logs_warning(self, caplog):
+        """Unresolved $ref logs a warning with the ref path and schema name."""
+        spec = {
+            "paths": {
+                "/test": {
+                    "post": {
+                        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Missing"}}}},
+                        "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}},
+                    }
+                }
+            },
+            "components": {"schemas": {}},
+        }
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.openapi_service"):
+            extract_schemas_from_openapi(spec, "/test", "post")
+
+        assert any("Unresolved $ref" in msg and "Missing" in msg for msg in caplog.messages)
+
+    def test_unsupported_ref_format_returns_none_and_logs(self, caplog):
+        """External or malformed $ref returns None and logs a warning."""
+        spec = {
+            "paths": {
+                "/test": {
+                    "post": {
+                        "requestBody": {"content": {"application/json": {"schema": {"$ref": "https://external.com/schemas/Foo"}}}},
+                        "responses": {"200": {"content": {"application/json": {"schema": {"$ref": "SomeGarbage"}}}}},
+                    }
+                }
+            },
+            "components": {"schemas": {"Foo": {"type": "object"}}},
+        }
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.openapi_service"):
+            input_schema, output_schema = extract_schemas_from_openapi(spec, "/test", "post")
+
+        assert input_schema is None
+        assert output_schema is None
+        assert any("Unsupported $ref format" in msg for msg in caplog.messages)
+
+
+@asynccontextmanager
+async def _mock_isolated_client(body: bytes, headers: Optional[dict] = None, raise_for_status: Optional[Exception] = None):
+    """Async context manager mimicking ``get_isolated_http_client`` with canned responses."""
+
+    async def _aiter_bytes(chunk_size=8192):
+        for i in range(0, len(body), chunk_size):
+            yield body[i : i + chunk_size]
+
+    mock_response = MagicMock()
+    mock_response.headers = headers or {}
+    if raise_for_status:
+        mock_response.raise_for_status.side_effect = raise_for_status
+    else:
+        mock_response.raise_for_status = MagicMock()
+    mock_response.aiter_bytes = _aiter_bytes
+    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_response.__aexit__ = AsyncMock(return_value=None)
+
+    mock_client = AsyncMock()
+    mock_client.stream = MagicMock(return_value=mock_response)
+    yield mock_client
+
+
+_PATCH_CLIENT = "mcpgateway.services.openapi_service.get_isolated_http_client"
+_PATCH_VALIDATE = "mcpgateway.services.openapi_service.SecurityValidator.validate_url"
+
 
 class TestFetchOpenAPISpec:
     """Tests for fetch_openapi_spec function."""
@@ -256,46 +277,25 @@ class TestFetchOpenAPISpec:
         """Test successful fetch of OpenAPI spec."""
         mock_spec = {"openapi": "3.0.0", "paths": {}}
 
-        with patch("mcpgateway.services.openapi_service.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = mock_spec
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps(mock_spec))):
+            with patch(_PATCH_VALIDATE):
                 result = await fetch_openapi_spec("http://example.com/openapi.json")
 
-            assert result == mock_spec
-            mock_client.get.assert_called_once_with("http://example.com/openapi.json")
+        assert result == mock_spec
 
     @pytest.mark.asyncio
     async def test_fetch_with_ssrf_validation(self):
         """Test that SSRF validation is called when enabled."""
-        mock_spec = {"openapi": "3.0.0"}
-
-        with patch("mcpgateway.services.openapi_service.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = mock_spec
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url") as mock_validate_url:
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps({"openapi": "3.0.0"}))):
+            with patch(_PATCH_VALIDATE) as mock_validate_url:
                 await fetch_openapi_spec("http://example.com/openapi.json")
 
-            mock_validate_url.assert_called_once()
+        mock_validate_url.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_fetch_url_validation_failure(self):
         """Test that URL validation errors are propagated."""
-        with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url") as mock_validate:
+        with patch(_PATCH_VALIDATE) as mock_validate:
             mock_validate.side_effect = ValueError("Invalid URL")
 
             with pytest.raises(ValueError, match="Invalid URL"):
@@ -304,41 +304,56 @@ class TestFetchOpenAPISpec:
     @pytest.mark.asyncio
     async def test_fetch_http_error(self):
         """Test handling of HTTP errors."""
-        with patch("mcpgateway.services.openapi_service.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                "404 Not Found", request=MagicMock(), response=MagicMock()
-            )
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=MagicMock())
 
-            with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"", raise_for_status=error)):
+            with patch(_PATCH_VALIDATE):
                 with pytest.raises(httpx.HTTPStatusError):
                     await fetch_openapi_spec("http://example.com/openapi.json")
 
     @pytest.mark.asyncio
     async def test_fetch_timeout(self):
-        """Test custom timeout is passed to client."""
-        mock_spec = {"openapi": "3.0.0"}
-
-        with patch("mcpgateway.services.openapi_service.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = mock_spec
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
+        """Test custom timeout is passed to get_isolated_http_client."""
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps({"openapi": "3.0.0"}))) as mock_get_client:
+            with patch(_PATCH_VALIDATE):
                 await fetch_openapi_spec("http://example.com/openapi.json", timeout=5.0)
 
-            # Verify timeout was passed to AsyncClient
-            mock_client_class.assert_called_once_with(timeout=5.0)
+        mock_get_client.assert_called_once_with(timeout=5.0, follow_redirects=False)
+
+    @pytest.mark.asyncio
+    async def test_rejects_response_with_content_length_exceeding_limit(self):
+        """Content-Length header exceeding _MAX_SPEC_BYTES raises ValueError."""
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"", headers={"content-length": str(_MAX_SPEC_BYTES + 1)})):
+            with patch(_PATCH_VALIDATE):
+                with pytest.raises(ValueError, match="too large"):
+                    await fetch_openapi_spec("http://example.com/openapi.json")
+
+    @pytest.mark.asyncio
+    async def test_rejects_response_body_exceeding_limit(self):
+        """Response body exceeding _MAX_SPEC_BYTES raises ValueError during streaming."""
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"x" * (_MAX_SPEC_BYTES + 1))):
+            with patch(_PATCH_VALIDATE):
+                with pytest.raises(ValueError, match="too large"):
+                    await fetch_openapi_spec("http://example.com/openapi.json")
+
+    @pytest.mark.asyncio
+    async def test_malformed_content_length_falls_through_to_body_check(self):
+        """Malformed Content-Length header doesn't crash — falls through to streamed check."""
+        mock_spec = {"openapi": "3.0.0"}
+
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps(mock_spec), headers={"content-length": "not-a-number"})):
+            with patch(_PATCH_VALIDATE):
+                result = await fetch_openapi_spec("http://example.com/openapi.json")
+
+        assert result == mock_spec
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_response_raises_valueerror(self):
+        """Non-JSON response body (e.g. HTML) raises ValueError with clear message."""
+        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"<html>Not Found</html>")):
+            with patch(_PATCH_VALIDATE):
+                with pytest.raises(ValueError, match="not valid JSON"):
+                    await fetch_openapi_spec("http://example.com/openapi.json")
 
 
 class TestFetchAndExtractSchemas:
@@ -351,16 +366,8 @@ class TestFetchAndExtractSchemas:
             "paths": {
                 "/calculate": {
                     "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"x": {"type": "number"}}}}}
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "object", "properties": {"result": {"type": "number"}}}}
-                                }
-                            }
-                        },
+                        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"x": {"type": "number"}}}}}},
+                        "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {"result": {"type": "number"}}}}}}},
                     }
                 }
             }
@@ -369,9 +376,7 @@ class TestFetchAndExtractSchemas:
         with patch("mcpgateway.services.openapi_service.fetch_openapi_spec") as mock_fetch:
             mock_fetch.return_value = mock_spec
 
-            input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
-                base_url="http://localhost:8100", path="/calculate", method="POST"
-            )
+            input_schema, output_schema, spec_url = await fetch_and_extract_schemas(base_url="http://localhost:8100", path="/calculate", method="POST")
 
         assert input_schema is not None
         assert "x" in input_schema["properties"]
@@ -382,15 +387,7 @@ class TestFetchAndExtractSchemas:
     @pytest.mark.asyncio
     async def test_fetch_and_extract_with_custom_openapi_url(self):
         """Test using custom OpenAPI URL instead of base_url."""
-        mock_spec = {
-            "paths": {
-                "/test": {
-                    "get": {
-                        "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}
-                    }
-                }
-            }
-        }
+        mock_spec = {"paths": {"/test": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}}}}}
 
         with patch("mcpgateway.services.openapi_service.fetch_openapi_spec") as mock_fetch:
             mock_fetch.return_value = mock_spec
@@ -433,257 +430,4 @@ class TestFetchAndExtractSchemas:
             )
 
         # Verify timeout was passed
-        mock_fetch.assert_called_once_with("http://localhost:8100/openapi.json", timeout=5.0)
-
-
-
-
-
-class TestExtractAllSchemasFromOpenAPI:
-    """Tests for extract_all_schemas_from_openapi function."""
-
-    def test_extract_all_schemas_multiple_paths(self):
-        """Test extraction of schemas from multiple paths and methods."""
-        spec = {
-            "paths": {
-                "/calculate": {
-                    "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CalcRequest"}}}
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CalcResponse"}}}
-                            }
-                        },
-                    }
-                },
-                "/status": {
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}
-                                }
-                            }
-                        }
-                    }
-                },
-                "/users": {
-                    "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}}
-                        },
-                        "responses": {"201": {"content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}
-                    },
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}}
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {
-                    "CalcRequest": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}},
-                    "CalcResponse": {"type": "object", "properties": {"sum": {"type": "number"}}},
-                    "User": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}
-                }
-            }
-        }
-
-        result = extract_all_schemas_from_openapi(spec)
-
-        # Check /calculate POST
-        assert "/calculate" in result
-        assert "post" in result["/calculate"]
-        assert result["/calculate"]["post"]["input_schema"]["properties"]["x"]["type"] == "number"
-        assert result["/calculate"]["post"]["output_schema"]["properties"]["sum"]["type"] == "number"
-
-        # Check /status GET
-        assert "/status" in result
-        assert "get" in result["/status"]
-        assert result["/status"]["get"]["input_schema"] is None
-        assert result["/status"]["get"]["output_schema"]["properties"]["status"]["type"] == "string"
-
-        # Check /users POST
-        assert "/users" in result
-        assert "post" in result["/users"]
-        assert result["/users"]["post"]["input_schema"]["properties"]["name"]["type"] == "string"
-        assert result["/users"]["post"]["output_schema"]["properties"]["id"]["type"] == "string"
-
-        # Check /users GET
-        assert "get" in result["/users"]
-        assert result["/users"]["get"]["input_schema"] is None
-        assert result["/users"]["get"]["output_schema"]["type"] == "array"
-
-    def test_extract_all_schemas_empty_spec(self):
-        """Test extraction from empty spec."""
-        spec = {"paths": {}}
-        result = extract_all_schemas_from_openapi(spec)
-        assert result == {}
-
-    def test_extract_all_schemas_no_schemas(self):
-        """Test extraction when paths have no schemas."""
-        spec = {
-            "paths": {
-                "/health": {
-                    "get": {
-                        "responses": {"204": {"description": "No content"}}
-                    }
-                }
-            }
-        }
-        result = extract_all_schemas_from_openapi(spec)
-        # Should not include paths with no schemas
-        assert result == {}
-
-    def test_extract_all_schemas_mixed_inline_and_refs(self):
-        """Test extraction with mix of inline schemas and $refs."""
-        spec = {
-            "paths": {
-                "/mixed": {
-                    "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"inline": {"type": "string"}}}}}
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Response"}}}
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {
-                    "Response": {"type": "object", "properties": {"result": {"type": "boolean"}}}
-                }
-            }
-        }
-
-        result = extract_all_schemas_from_openapi(spec)
-
-        assert "/mixed" in result
-        assert "post" in result["/mixed"]
-        assert result["/mixed"]["post"]["input_schema"]["properties"]["inline"]["type"] == "string"
-        assert result["/mixed"]["post"]["output_schema"]["properties"]["result"]["type"] == "boolean"
-
-    def test_extract_all_schemas_all_http_methods(self):
-        """Test extraction for all HTTP methods."""
-        spec = {
-            "paths": {
-                "/resource": {
-                    "get": {"responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}},
-                    "post": {"requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}, "responses": {"201": {}}},
-                    "put": {"requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}, "responses": {"200": {}}},
-                    "patch": {"requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}, "responses": {"200": {}}},
-                    "delete": {"responses": {"204": {}}},
-                }
-            }
-        }
-
-        result = extract_all_schemas_from_openapi(spec)
-
-        assert "/resource" in result
-        assert "get" in result["/resource"]
-        assert "post" in result["/resource"]
-        assert "put" in result["/resource"]
-        assert "patch" in result["/resource"]
-        # delete should not be included as it has no schemas
-        assert "delete" not in result["/resource"]
-
-
-class TestFetchAndExtractAllSchemas:
-    """Tests for fetch_and_extract_all_schemas function."""
-
-    @pytest.mark.asyncio
-    async def test_fetch_and_extract_all_success(self):
-        """Test successful fetch and extraction of all schemas."""
-        mock_spec = {
-            "paths": {
-                "/calculate": {
-                    "post": {
-                        "requestBody": {
-                            "content": {"application/json": {"schema": {"type": "object", "properties": {"x": {"type": "number"}}}}}
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {"schema": {"type": "object", "properties": {"result": {"type": "number"}}}}
-                                }
-                            }
-                        },
-                    }
-                },
-                "/status": {
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {"application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        with patch("mcpgateway.services.openapi_service.fetch_openapi_spec") as mock_fetch:
-            mock_fetch.return_value = mock_spec
-
-            all_schemas, spec_url = await fetch_and_extract_all_schemas(base_url="http://localhost:8100")
-
-        assert "/calculate" in all_schemas
-        assert "post" in all_schemas["/calculate"]
-        assert "x" in all_schemas["/calculate"]["post"]["input_schema"]["properties"]
-        assert "result" in all_schemas["/calculate"]["post"]["output_schema"]["properties"]
-
-        assert "/status" in all_schemas
-        assert "get" in all_schemas["/status"]
-        assert all_schemas["/status"]["get"]["input_schema"] is None
-        assert "ok" in all_schemas["/status"]["get"]["output_schema"]["properties"]
-
-        assert spec_url == "http://localhost:8100/openapi.json"
-
-    @pytest.mark.asyncio
-    async def test_fetch_and_extract_all_with_custom_url(self):
-        """Test using custom OpenAPI URL."""
-        mock_spec = {
-            "paths": {
-                "/test": {
-                    "get": {
-                        "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}
-                    }
-                }
-            }
-        }
-
-        with patch("mcpgateway.services.openapi_service.fetch_openapi_spec") as mock_fetch:
-            mock_fetch.return_value = mock_spec
-
-            all_schemas, spec_url = await fetch_and_extract_all_schemas(
-                base_url="http://localhost:8100",
-                openapi_url="http://custom.com/spec.json"
-            )
-
-        assert spec_url == "http://custom.com/spec.json"
-        mock_fetch.assert_called_once_with("http://custom.com/spec.json", timeout=10.0)
-
-    @pytest.mark.asyncio
-    async def test_fetch_and_extract_all_custom_timeout(self):
-        """Test custom timeout is passed through."""
-        mock_spec = {"paths": {"/test": {"get": {"responses": {"200": {}}}}}}
-
-        with patch("mcpgateway.services.openapi_service.fetch_openapi_spec") as mock_fetch:
-            mock_fetch.return_value = mock_spec
-
-            await fetch_and_extract_all_schemas(
-                base_url="http://localhost:8100",
-                timeout=5.0
-            )
-
         mock_fetch.assert_called_once_with("http://localhost:8100/openapi.json", timeout=5.0)

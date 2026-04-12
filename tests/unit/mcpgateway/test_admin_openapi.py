@@ -3,37 +3,55 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-Tests for admin OpenAPI endpoints to improve coverage.
+Tests for the generate_schemas_from_openapi admin endpoint.
+
+These tests verify the endpoint's own logic: input validation, URL parsing,
+and exception-to-HTTP-status mapping.  The underlying service layer
+(fetch_and_extract_schemas) is mocked — its logic is tested separately in
+test_openapi_service.py.
 """
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import Request
 import httpx
 import orjson
 import pytest
-from fastapi import Request
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import generate_schemas_from_openapi
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _mock_request(body) -> MagicMock:
+    """Return a mock FastAPI Request compatible with ``_read_request_json``."""
+    raw = orjson.dumps(body) if isinstance(body, dict) else body
+    req = MagicMock(spec=Request)
+    req.body = AsyncMock(return_value=raw)
+    # _read_request_json falls back to request.json() for empty bodies
+    req.json = AsyncMock(return_value=body if isinstance(body, dict) else {})
+    return req
+
+
+_USER = {"email": "test@example.com"}
+
+
+# ---------------------------------------------------------------------------
+# Happy-path tests
+# ---------------------------------------------------------------------------
 
 
 class TestGenerateSchemasFromOpenAPI:
     """Tests for generate_schemas_from_openapi endpoint."""
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_success(self):
-        """Test successful schema generation."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/calculate",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
+    async def test_success(self):
+        """Successful schema generation returns 200 with both schemas."""
         input_schema = {"type": "object", "properties": {"x": {"type": "number"}}}
         output_schema = {"type": "object", "properties": {"result": {"type": "number"}}}
 
@@ -41,338 +59,228 @@ class TestGenerateSchemasFromOpenAPI:
             mock_fetch.return_value = (input_schema, output_schema, "http://example.com/openapi.json")
 
             response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
+                request=_mock_request({"url": "http://example.com/calculate", "request_type": "POST"}),
+                _user=_USER,
             )
 
-            assert response.status_code == 200
-            content = orjson.loads(response.body)
-            assert content["success"] is True
-            assert content["input_schema"] == input_schema
-            assert content["output_schema"] == output_schema
-            assert content["spec_url"] == "http://example.com/openapi.json"
-            assert "Schemas generated successfully" in content["message"]
+        assert response.status_code == 200
+        content = orjson.loads(response.body)
+        assert content["success"] is True
+        assert content["input_schema"] == input_schema
+        assert content["output_schema"] == output_schema
+        assert content["spec_url"] == "http://example.com/openapi.json"
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_with_openapi_url(self):
-        """Test schema generation with custom openapi_url."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "openapi_url": "http://example.com/custom-spec.json",
-            "request_type": "GET"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        input_schema = None
-        output_schema = {"type": "object"}
-
+    async def test_with_openapi_url(self):
+        """Custom openapi_url is forwarded to the service."""
         with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.return_value = (input_schema, output_schema, "http://example.com/custom-spec.json")
+            mock_fetch.return_value = (None, {"type": "object"}, "http://example.com/custom-spec.json")
 
             response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
+                request=_mock_request({"url": "http://example.com/api", "openapi_url": "http://example.com/custom-spec.json", "request_type": "GET"}),
+                _user=_USER,
             )
 
-            assert response.status_code == 200
-            content = orjson.loads(response.body)
-            assert content["success"] is True
+        assert response.status_code == 200
+        assert mock_fetch.call_args[1]["openapi_url"] == "http://example.com/custom-spec.json"
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_missing_url_and_openapi_url(self):
-        """Test error when both url and openapi_url are missing."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
+    async def test_default_request_type_is_get(self):
+        """request_type defaults to GET when omitted."""
+        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
+            mock_fetch.return_value = (None, {"type": "object"}, "http://example.com/openapi.json")
 
-        response = await generate_schemas_from_openapi(
-            request=mock_request,
-            _db=mock_db,
-            _user=mock_user
-        )
+            response = await generate_schemas_from_openapi(
+                request=_mock_request({"url": "http://example.com/status"}),
+                _user=_USER,
+            )
+
+        assert response.status_code == 200
+        assert mock_fetch.call_args[1]["method"] == "GET"
+
+    @pytest.mark.asyncio
+    async def test_url_parsing(self):
+        """URL is correctly split into base_url and path for the service call."""
+        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
+            mock_fetch.return_value = ({"type": "object"}, {"type": "object"}, "https://api.example.com:8443/openapi.json")
+
+            response = await generate_schemas_from_openapi(
+                request=_mock_request({"url": "https://api.example.com:8443/v1/calculate", "request_type": "POST"}),
+                _user=_USER,
+            )
+
+        assert response.status_code == 200
+        call_args = mock_fetch.call_args[1]
+        assert call_args["base_url"] == "https://api.example.com:8443"
+        assert call_args["path"] == "/v1/calculate"
+        assert call_args["method"] == "POST"
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSchemasInputValidation:
+    """Tests for request-level validation in the endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"request_type": "POST"}, id="missing-url"),
+            pytest.param({"url": "", "openapi_url": "http://x.com/spec.json", "request_type": "POST"}, id="empty-url"),
+            pytest.param({"openapi_url": "http://x.com/spec.json", "request_type": "GET"}, id="openapi-url-without-url"),
+        ],
+    )
+    async def test_missing_or_empty_url_returns_400(self, body):
+        """url is required; its absence yields 400."""
+        response = await generate_schemas_from_openapi(request=_mock_request(body), _user=_USER)
 
         assert response.status_code == 400
         content = orjson.loads(response.body)
         assert content["success"] is False
-        assert "Either 'url' or 'openapi_url' is required" in content["message"]
+        assert "'url' is required" in content["message"]
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_empty_url_and_openapi_url(self):
-        """Test error when both url and openapi_url are empty strings."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "",
-            "openapi_url": "",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        response = await generate_schemas_from_openapi(
-            request=mock_request,
-            _db=mock_db,
-            _user=mock_user
-        )
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(b"[1, 2, 3]", id="json-array"),
+            pytest.param(b"42", id="json-scalar"),
+            pytest.param(b'"hello"', id="json-string"),
+        ],
+    )
+    async def test_non_object_json_returns_400(self, body):
+        """JSON body that is not an object yields 400."""
+        response = await generate_schemas_from_openapi(request=_mock_request(body), _user=_USER)
 
         assert response.status_code == 400
         content = orjson.loads(response.body)
         assert content["success"] is False
-        assert "Either 'url' or 'openapi_url' is required" in content["message"]
+        assert "JSON object" in content["message"]
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_security_validation_failed(self):
-        """Test security validation failure."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://192.168.1.1/api",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
+    async def test_invalid_json_returns_400(self):
+        """Malformed JSON body yields 400."""
+        response = await generate_schemas_from_openapi(request=_mock_request(b"invalid json {"), _user=_USER)
 
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = ValueError("SSRF protection: private IP detected")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 400
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-            assert "Security validation failed" in content["message"]
-            assert "SSRF protection" in content["message"]
+        assert response.status_code == 400
+        content = orjson.loads(response.body)
+        assert "Invalid JSON" in content["message"]
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_path_not_found(self):
-        """Test error when path not found in spec."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/nonexistent",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = KeyError("Path '/nonexistent' not found in OpenAPI spec")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 404
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-            assert "Path '/nonexistent' not found" in content["message"]
-
-    @pytest.mark.asyncio
-    async def test_generate_schemas_method_not_found(self):
-        """Test error when method not found for path."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/api",
-            "request_type": "DELETE"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = KeyError("Method 'delete' not found for path '/api'")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 404
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-
-    @pytest.mark.asyncio
-    async def test_generate_schemas_http_error(self):
-        """Test HTTP error handling."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/api",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = httpx.ConnectError("Connection refused")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 404
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-            assert "Failed to fetch OpenAPI spec" in content["message"]
-
-    @pytest.mark.asyncio
-    async def test_generate_schemas_http_timeout(self):
-        """Test HTTP timeout error."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://slow-server.com/api",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = httpx.TimeoutException("Request timeout")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 404
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-            assert "Failed to fetch OpenAPI spec" in content["message"]
-
-    @pytest.mark.asyncio
-    async def test_generate_schemas_generic_exception_in_fetch(self):
-        """Test generic exception handling during fetch."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/api",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.side_effect = Exception("Unexpected error during fetch")
-
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
-            )
-
-            assert response.status_code == 500
-            content = orjson.loads(response.body)
-            assert content["success"] is False
-            assert "Error:" in content["message"]
-
-    @pytest.mark.asyncio
-    async def test_generate_schemas_invalid_json(self):
-        """Test invalid JSON in request body."""
-        mock_request = MagicMock(spec=Request)
-        # Create a proper orjson.JSONDecodeError by catching one
-        try:
-            orjson.loads(b"invalid json {")
-        except orjson.JSONDecodeError as e:
-            json_error = e
-
-        mock_request.json = AsyncMock(side_effect=json_error)
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        response = await generate_schemas_from_openapi(
-            request=mock_request,
-            _db=mock_db,
-            _user=mock_user
-        )
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"url": 123, "request_type": "POST"}, id="url-is-int"),
+            pytest.param({"url": "http://example.com/api", "request_type": ["POST"]}, id="request_type-is-list"),
+            pytest.param({"url": "http://example.com/api", "openapi_url": 42}, id="openapi_url-is-int"),
+        ],
+    )
+    async def test_non_string_fields_return_400(self, body):
+        """Non-string values for url/request_type/openapi_url yield 400."""
+        response = await generate_schemas_from_openapi(request=_mock_request(body), _user=_USER)
 
         assert response.status_code == 400
         content = orjson.loads(response.body)
         assert content["success"] is False
-        assert "Invalid JSON in request body" in content["message"]
+        assert "must be strings" in content["message"]
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_outer_exception(self):
-        """Test outer exception handling."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(side_effect=Exception("Request processing error"))
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param("just-a-path", id="no-scheme-no-host"),
+            pytest.param("/calculate", id="path-only"),
+            pytest.param("ftp://example.com/api", id="unsupported-scheme"),
+        ],
+    )
+    async def test_invalid_url_returns_400(self, url):
+        """URLs that fail SecurityValidator.validate_url yield 400."""
+        response = await generate_schemas_from_openapi(request=_mock_request({"url": url, "request_type": "GET"}), _user=_USER)
 
-        response = await generate_schemas_from_openapi(
-            request=mock_request,
-            _db=mock_db,
-            _user=mock_user
-        )
-
-        assert response.status_code == 500
+        assert response.status_code == 400
         content = orjson.loads(response.body)
         assert content["success"] is False
-        assert "Error:" in content["message"]
+
+
+# ---------------------------------------------------------------------------
+# Exception → HTTP status mapping
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSchemasErrorMapping:
+    """Each service-layer exception type maps to the correct HTTP status."""
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_default_request_type(self):
-        """Test default request_type is GET when not provided."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "http://example.com/status"
-            # request_type not provided
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
-
-        input_schema = None
-        output_schema = {"type": "object"}
-
+    @pytest.mark.parametrize(
+        "exception,expected_status,expected_fragment",
+        [
+            pytest.param(ValueError("SSRF blocked"), 400, "Security validation failed", id="ValueError-400"),
+            pytest.param(KeyError("Path '/x' not found"), 404, "Path '/x' not found", id="KeyError-404"),
+            pytest.param(
+                httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=403)),
+                502,
+                "OpenAPI spec server returned HTTP 403",
+                id="HTTPStatusError-502",
+            ),
+            pytest.param(httpx.ConnectError("refused"), 502, "Failed to fetch OpenAPI spec from the provided URL", id="ConnectError-502"),
+            pytest.param(httpx.TimeoutException("timeout"), 502, "Failed to fetch OpenAPI spec from the provided URL", id="Timeout-502"),
+            pytest.param(Exception("unexpected"), 500, "An unexpected error occurred", id="Exception-500"),
+        ],
+    )
+    async def test_exception_to_status(self, exception, expected_status, expected_fragment):
+        """Service exceptions are converted to the correct HTTP status and message."""
         with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.return_value = (input_schema, output_schema, "http://example.com/openapi.json")
+            mock_fetch.side_effect = exception
 
             response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
+                request=_mock_request({"url": "http://example.com/api", "request_type": "POST"}),
+                _user=_USER,
             )
 
-            assert response.status_code == 200
-            # Verify GET was used as default
-            call_args = mock_fetch.call_args
-            assert call_args[1]["method"] == "GET"
+        assert response.status_code == expected_status
+        content = orjson.loads(response.body)
+        assert content["success"] is False
+        assert expected_fragment in content["message"]
 
     @pytest.mark.asyncio
-    async def test_generate_schemas_url_parsing(self):
-        """Test URL parsing extracts base_url and path correctly."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.json = AsyncMock(return_value={
-            "url": "https://api.example.com:8443/v1/calculate",
-            "request_type": "POST"
-        })
-        mock_db = MagicMock(spec=Session)
-        mock_user = {"email": "test@example.com"}
+    async def test_request_body_failure_returns_400(self):
+        """If _read_request_json fails, the endpoint returns 400."""
+        req = MagicMock(spec=Request)
+        req.body = AsyncMock(side_effect=Exception("boom"))
 
-        input_schema = {"type": "object"}
-        output_schema = {"type": "object"}
+        response = await generate_schemas_from_openapi(request=req, _user=_USER)
 
-        with patch("mcpgateway.admin.fetch_and_extract_schemas") as mock_fetch:
-            mock_fetch.return_value = (input_schema, output_schema, "https://api.example.com:8443/openapi.json")
+        assert response.status_code == 400
+        content = orjson.loads(response.body)
+        assert "Invalid JSON" in content["message"]
 
-            response = await generate_schemas_from_openapi(
-                request=mock_request,
-                _db=mock_db,
-                _user=mock_user
+
+# ---------------------------------------------------------------------------
+# Deny-path regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSchemasPermissionDenial:
+    """Verify the endpoint rejects callers without tools.create permission."""
+
+    @pytest.mark.asyncio
+    async def test_denies_without_tools_create_permission(self, monkeypatch):
+        """Users with only tools.read (not tools.create) are rejected with 403."""
+        # Third-Party
+        from fastapi import HTTPException
+
+        deny_service = MagicMock()
+        deny_service.check_permission = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: deny_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: deny_service)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_schemas_from_openapi(
+                request=_mock_request({"url": "http://example.com/api", "request_type": "GET"}),
+                _user={"email": "viewer@example.com"},
             )
 
-            assert response.status_code == 200
-            # Verify correct base_url and path were extracted
-            call_args = mock_fetch.call_args
-            assert call_args[1]["base_url"] == "https://api.example.com:8443"
-            assert call_args[1]["path"] == "/v1/calculate"
-            assert call_args[1]["method"] == "POST"
+        assert exc_info.value.status_code == 403

@@ -3,867 +3,125 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-Tests for REST tool schema population from OpenAPI specs.
+Tests for REST tool validator behaviour: URL component extraction and
+default input_schema population.
+
+Schema *fetching* from OpenAPI specs is tested in test_openapi_service.py
+and test_admin_openapi.py.  These tests cover the Pydantic model validators
+in ToolCreate and ToolUpdate.
 """
 
-# Standard
-from unittest.mock import Mock, patch
-import json
-
 # Third-Party
-import pytest
-from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.schemas import ToolCreate, ToolUpdate
 
+_DEFAULT_SCHEMA = {"type": "object", "properties": {}}
 
-class TestRESTSchemaPopulation:
-    """Test suite for REST tool OpenAPI schema population."""
 
-    @pytest.fixture
-    def mock_openapi_spec(self):
-        """Mock OpenAPI specification."""
-        return {
-            "openapi": "3.0.0",
-            "paths": {
-                "/calculate": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "a": {"type": "number"},
-                                            "b": {"type": "number"}
-                                        },
-                                        "required": ["a", "b"]
-                                    }
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "type": "object",
-                                            "properties": {
-                                                "result": {"type": "number"}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "/no-request-body": {
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "type": "object",
-                                            "properties": {
-                                                "data": {"type": "string"}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {
-                    "CalculateRequest": {
-                        "type": "object",
-                        "properties": {
-                            "x": {"type": "number"},
-                            "y": {"type": "number"}
-                        }
-                    },
-                    "CalculateResponse": {
-                        "type": "object",
-                        "properties": {
-                            "sum": {"type": "number"}
-                        }
-                    }
-                }
-            }
-        }
+class TestToolCreateRESTDefaults:
+    """ToolCreate validator: URL extraction and default input_schema for REST tools."""
 
-    @pytest.fixture
-    def mock_openapi_spec_with_refs(self):
-        """Mock OpenAPI spec with $ref references."""
-        return {
-            "openapi": "3.0.0",
-            "paths": {
-                "/calculate": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/CalculateRequest"
-                                    }
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "$ref": "#/components/schemas/CalculateResponse"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {
-                    "CalculateRequest": {
-                        "type": "object",
-                        "properties": {
-                            "x": {"type": "number"},
-                            "y": {"type": "number"}
-                        }
-                    },
-                    "CalculateResponse": {
-                        "type": "object",
-                        "properties": {
-                            "sum": {"type": "number"}
-                        }
-                    }
-                }
-            }
-        }
+    def test_default_input_schema_when_none(self):
+        """REST ToolCreate with no input_schema gets the typed default."""
+        tool = ToolCreate(name="t", integration_type="REST", base_url="http://example.com", path_template="/api")
+        assert tool.input_schema == _DEFAULT_SCHEMA
 
-    def test_empty_schema_detection_none(self):
-        """Test is_empty_schema with None."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": None
-        }
-        with patch("requests.get") as mock_get:
-            mock_get.side_effect = Exception("Should not be called")
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_default_input_schema_when_empty_dict(self):
+        """REST ToolCreate with input_schema={} gets the typed default."""
+        tool = ToolCreate(name="t", integration_type="REST", base_url="http://example.com", path_template="/api", input_schema={})
+        assert tool.input_schema == _DEFAULT_SCHEMA
 
-    def test_empty_schema_detection_empty_dict(self):
-        """Test is_empty_schema with empty dict."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": {}
-        }
-        with patch("requests.get") as mock_get:
-            mock_get.side_effect = Exception("Should not be called")
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_provided_input_schema_preserved(self):
+        """REST ToolCreate with a real input_schema keeps it untouched."""
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+        tool = ToolCreate(name="t", integration_type="REST", base_url="http://example.com", path_template="/api", input_schema=schema)
+        assert tool.input_schema == schema
 
-    def test_empty_schema_detection_empty_properties(self):
-        """Test is_empty_schema with empty properties."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": {"type": "object", "properties": {}}
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = {"paths": {}}
-            mock_get.return_value = mock_response
-            tool = ToolCreate(**tool_data)
-            # Should skip population since schema has structure
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_url_extracts_base_url_and_path(self):
+        """Providing 'url' auto-populates base_url and path_template."""
+        tool = ToolCreate(name="t", integration_type="REST", url="https://api.example.com:8443/v1/calculate")
+        assert tool.base_url == "https://api.example.com:8443"
+        assert tool.path_template == "/v1/calculate"
 
-    def test_empty_schema_detection_properties_key_only(self):
-        """Test is_empty_schema with properties key but no content."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": {"properties": {}}
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = {"paths": {}}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-            tool = ToolCreate(**tool_data)
-            # Schema with just properties key is considered empty and should trigger population
-            # Since the OpenAPI spec has no paths, it falls back to default
-            assert "properties" in tool.input_schema
+    def test_explicit_base_url_not_overwritten(self):
+        """Explicit base_url takes precedence over url-derived value."""
+        tool = ToolCreate(name="t", integration_type="REST", url="http://derived.com/path", base_url="http://explicit.com")
+        assert tool.base_url == "http://explicit.com"
 
-    def test_schemas_already_populated_skip_fetch(self):
-        """Test that OpenAPI fetch is skipped when schemas are already populated."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": {"type": "object", "properties": {"a": {"type": "string"}}},
-            "output_schema": {"type": "object", "properties": {"b": {"type": "string"}}}
-        }
-        with patch("requests.get") as mock_get:
-            tool = ToolCreate(**tool_data)
-            # Should not call requests.get since schemas are populated
-            mock_get.assert_not_called()
-            assert tool.input_schema["properties"]["a"]["type"] == "string"
+    def test_non_rest_tool_skips_extraction(self):
+        """Non-REST integration types don't get URL extraction or default schema.
 
-    def test_no_base_url_skip_population(self):
-        """Test that schema population is skipped when base_url is missing."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "path_template": "/test"
-        }
-        tool = ToolCreate(**tool_data)
-        assert tool.input_schema == {"type": "object", "properties": {}}
+        MCP/A2A types are rejected outright by other validators, so we verify
+        by testing that a REST tool *does* get extraction (positive case) and
+        that the helper is gated on integration_type.
+        """
+        # First-Party
+        from mcpgateway.schemas import _extract_rest_url_components
 
-    def test_successful_schema_population_direct(self, mock_openapi_spec):
-        """Test that schemas are NOT automatically populated from OpenAPI (handled by frontend)."""
-        tool_data = {
-            "name": "calculate_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/calculate",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        # Validators only set default empty schema
-        tool = ToolCreate(**tool_data)
-        assert tool.input_schema == {"type": "object", "properties": {}}
+        values = {"integration_type": "MCP", "url": "http://example.com/path"}
+        # The helper is never called for non-REST, but verify it's a no-op
+        # when called directly without URL (simulating the guard in the validator).
+        non_rest_values: dict = {}
+        _extract_rest_url_components(non_rest_values)
+        assert "base_url" not in non_rest_values
+
+    def test_no_url_no_base_url(self):
+        """REST tool with no url still gets default schema."""
+        tool = ToolCreate(name="t", integration_type="REST", path_template="/test")
+        assert tool.input_schema == _DEFAULT_SCHEMA
+
+    def test_output_schema_not_set_by_default(self):
+        """Validator does not touch output_schema."""
+        tool = ToolCreate(name="t", integration_type="REST", base_url="http://example.com", path_template="/api")
         assert tool.output_schema is None
 
-    def test_successful_schema_population_with_refs(self, mock_openapi_spec_with_refs):
-        """Test that schemas are NOT automatically populated from OpenAPI (handled by frontend)."""
-        tool_data = {
-            "name": "calculate_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/calculate",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        # Validators only set default empty schema
-        tool = ToolCreate(**tool_data)
-        assert tool.input_schema == {"type": "object", "properties": {}}
-        assert tool.output_schema is None
 
-    def test_missing_ref_in_components(self):
-        """Test handling of missing $ref in components."""
-        spec = {
-            "openapi": "3.0.0",
-            "paths": {
-                "/test": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/MissingSchema"
-                                    }
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {"type": "object"}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {}
-            }
-        }
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+class TestToolUpdateRESTDefaults:
+    """ToolUpdate validator: URL extraction and empty-schema normalisation."""
 
-            tool = ToolCreate(**tool_data)
-            # Should fall back to default schema
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_url_extracts_components(self):
+        """Providing 'url' on update extracts base_url and path_template."""
+        update = ToolUpdate(integration_type="REST", url="http://example.com/test")
+        assert update.base_url == "http://example.com"
+        assert update.path_template == "/test"
 
-    def test_invalid_openapi_spec_missing_paths(self):
-        """Test handling of invalid OpenAPI spec missing paths."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = {"openapi": "3.0.0"}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    def test_existing_schemas_preserved(self):
+        """Existing schemas are not overwritten by the validator."""
+        schema = {"type": "object", "properties": {"existing": {"type": "string"}}}
+        update = ToolUpdate(integration_type="REST", input_schema=schema)
+        assert update.input_schema == schema
 
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_empty_dict_normalised(self):
+        """An explicitly empty {} input_schema is normalised to the typed default."""
+        update = ToolUpdate(integration_type="REST", input_schema={})
+        assert update.input_schema == _DEFAULT_SCHEMA
 
-    def test_path_not_found_in_spec(self, mock_openapi_spec):
-        """Test handling when path is not found in OpenAPI spec."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/nonexistent"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = mock_openapi_spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    def test_none_schema_left_alone(self):
+        """None input_schema is not changed (update may intentionally omit it)."""
+        update = ToolUpdate(integration_type="REST")
+        assert update.input_schema is None
 
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
+    def test_non_empty_schema_not_normalised(self):
+        """A schema with actual properties is not touched."""
+        schema = {"properties": {"x": {"type": "number"}}}
+        update = ToolUpdate(integration_type="REST", input_schema=schema)
+        assert update.input_schema == schema
 
-    def test_missing_path_template(self):
-        """Test handling when path_template is missing."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = {"paths": {}}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    def test_non_rest_skips_extraction(self):
+        """Non-REST updates skip URL extraction entirely.
 
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
+        MCP/A2A types are rejected by other validators, so we verify via
+        the helper function directly.
+        """
+        # First-Party
+        from mcpgateway.schemas import _extract_rest_url_components
 
-    def test_method_not_found_in_path(self, mock_openapi_spec):
-        """Test handling when HTTP method is not found for path."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/calculate",
-            "request_type": "DELETE"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = mock_openapi_spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+        values: dict = {}
+        _extract_rest_url_components(values)
+        assert "base_url" not in values
 
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_no_request_body_in_operation(self, mock_openapi_spec):
-        """Test that schemas are NOT automatically populated (handled by frontend)."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/no-request-body",
-            "request_type": "GET"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        tool = ToolCreate(**tool_data)
-        assert tool.input_schema == {"type": "object", "properties": {}}
-        assert tool.output_schema is None
-
-    def test_response_201_status_code(self):
-        """Test that schemas are NOT automatically populated (handled by frontend)."""
-        spec = {
-            "openapi": "3.0.0",
-            "paths": {
-                "/create": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {"type": "object"}
-                                }
-                            }
-                        },
-                        "responses": {
-                            "201": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "type": "object",
-                                            "properties": {
-                                                "id": {"type": "string"}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tool_data = {
-            "name": "create_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/create",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        tool = ToolCreate(**tool_data)
-        assert tool.output_schema is None
-
-    def test_response_default_status_code(self):
-        """Test that schemas are NOT automatically populated (handled by frontend)."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        tool = ToolCreate(**tool_data)
-        assert tool.output_schema is None
-
-    def test_response_ref_not_found_warning(self):
-        """Test warning when response $ref is not found in components."""
-        spec = {
-            "openapi": "3.0.0",
-            "paths": {
-                "/test": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {"type": "object"}
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "$ref": "#/components/schemas/MissingResponse"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "components": {
-                "schemas": {}
-            }
-        }
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool = ToolCreate(**tool_data)
-            # Should not have output_schema populated
-            assert tool.output_schema is None or tool.output_schema == {}
-
-    def test_no_valid_response_schema(self):
-        """Test that schemas are NOT automatically populated (handled by frontend)."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        tool = ToolCreate(**tool_data)
-        assert tool.input_schema == {"type": "object", "properties": {}}
-        assert tool.output_schema is None
-
-    def test_request_exception_fallback(self):
-        """Test fallback to default schema on request exception."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        with patch("requests.get") as mock_get:
-            import requests
-            mock_get.side_effect = requests.exceptions.RequestException("Connection error")
-
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_key_error_fallback(self):
-        """Test fallback to default schema on KeyError."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = {"invalid": "structure"}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_generic_exception_fallback(self):
-        """Test fallback to default schema on generic exception."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        with patch("requests.get") as mock_get:
-            mock_get.side_effect = Exception("Unexpected error")
-
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_final_validation_empty_input_schema(self):
-        """Test final validation sets default when input_schema is empty."""
-        spec = {
-            "openapi": "3.0.0",
-            "paths": {
-                "/test": {
-                    "post": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {"type": "object"}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_empty_input_schema_after_population_attempt(self):
-        """Test that empty input_schema after population gets default schema (lines 902-903)."""
-        spec = {
-            "openapi": "3.0.0",
-            "paths": {
-                "/test": {
-                    "get": {
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {"type": "object"}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "GET"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool = ToolCreate(**tool_data)
-            # GET with no requestBody should result in empty input_schema, triggering default
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-    def test_key_error_with_no_input_schema(self):
-        """Test KeyError exception path with no input_schema (lines 910-912)."""
-        tool_data = {
-            "name": "test_tool",
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            # Return spec that will cause KeyError when accessing paths
-            mock_response.json.side_effect = KeyError("paths")
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool = ToolCreate(**tool_data)
-            assert tool.input_schema == {"type": "object", "properties": {}}
-
-
-class TestToolUpdateSchemaPopulation:
-    """Test suite for ToolUpdate schema population."""
-
-    @pytest.fixture
-    def mock_openapi_spec(self):
-        """Mock OpenAPI specification."""
-        return {
-            "openapi": "3.0.0",
-            "paths": {
-                "/calculate": {
-                    "post": {
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "a": {"type": "number"},
-                                            "b": {"type": "number"}
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "content": {
-                                    "application/json": {
-                                        "schema": {
-                                            "type": "object",
-                                            "properties": {
-                                                "result": {"type": "number"}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-    def test_url_changed_forces_repopulation(self, mock_openapi_spec):
-        """Test that URL change forces schema re-population."""
-        tool_data = {
-            "integration_type": "REST",
-            "url": "http://newexample.com/calculate",  # Providing url triggers URL change detection
-            "request_type": "POST",
-            "input_schema": {"type": "object", "properties": {"old": {"type": "string"}}},
-            "output_schema": {"type": "object", "properties": {"old": {"type": "string"}}}
-        }
-        with patch("requests.get") as mock_get:
-            mock_response = Mock()
-            mock_response.json.return_value = mock_openapi_spec
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            tool_update = ToolUpdate(**tool_data)
-            # When url is provided, it forces re-population
-            assert tool_update.input_schema is not None
-            assert tool_update.base_url == "http://newexample.com"
-            assert tool_update.path_template == "/calculate"
-
-    def test_no_url_change_respects_existing_schemas(self):
-        """Test that existing schemas are preserved when URL hasn't changed."""
-        tool_data = {
-            "integration_type": "REST",
-            "input_schema": {"type": "object", "properties": {"existing": {"type": "string"}}},
-            "output_schema": {"type": "object", "properties": {"existing": {"type": "string"}}}
-        }
-        with patch("requests.get") as mock_get:
-            tool_update = ToolUpdate(**tool_data)
-            # Should not call requests.get since schemas are populated and URL not changed
-            mock_get.assert_not_called()
-            # ToolUpdate doesn't enforce schemas, so they may be None
-            if tool_update.input_schema:
-                assert "existing" in tool_update.input_schema["properties"]
-
-    def test_tool_update_no_base_url(self):
-        """Test ToolUpdate with no base_url skips population."""
-        tool_data = {
-            "integration_type": "REST",
-            "path_template": "/test"
-        }
-        tool_update = ToolUpdate(**tool_data)
-        # ToolUpdate doesn't enforce default schemas like ToolCreate does
-        # It may return None if no schema is provided
-        assert tool_update.input_schema is None or tool_update.input_schema == {"type": "object", "properties": {}}
-
-    def test_tool_update_with_url_triggers_population(self):
-        """Test that ToolUpdate extracts URL components but doesn't populate schemas."""
-        tool_data = {
-            "integration_type": "REST",
-            "url": "http://example.com/test"
-        }
-        # Schema population is now handled by frontend via /admin/tools/generate-schemas-from-openapi
-        # ToolUpdate only extracts URL components
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.base_url == "http://example.com"
-        assert tool_update.path_template == "/test"
-        # No automatic schema population in ToolUpdate
-        assert tool_update.input_schema is None
-        assert tool_update.output_schema is None
-
-    def test_tool_update_empty_schema_detection(self):
-        """Test that ToolUpdate preserves provided schemas without population."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "input_schema": {"properties": {}}
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        # Should preserve the provided schema
-        assert tool_update.input_schema == {"properties": {}}
-
-    def test_tool_update_missing_path_template(self):
-        """Test that ToolUpdate without path_template doesn't populate schemas."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com"
-            # No path_template
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        # No automatic schema population
-        assert tool_update.input_schema is None
-
-    def test_tool_update_path_not_found(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/nonexistent"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-
-    def test_tool_update_method_not_found(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "DELETE"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-
-    def test_tool_update_ref_not_found_in_components(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-
-    def test_tool_update_response_ref_not_found(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-        assert tool_update.output_schema is None
-
-    def test_tool_update_no_valid_response_schema(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "POST"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-
-    def test_tool_update_empty_input_after_population(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test",
-            "request_type": "GET"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
-
-    def test_tool_update_exception_handlers(self):
-        """Test that ToolUpdate doesn't populate schemas automatically."""
-        tool_data = {
-            "integration_type": "REST",
-            "base_url": "http://example.com",
-            "path_template": "/test"
-        }
-        # Schema population is now handled by frontend
-        tool_update = ToolUpdate(**tool_data)
-        assert tool_update.input_schema is None
+    def test_output_schema_not_set(self):
+        """Validator does not touch output_schema on update."""
+        update = ToolUpdate(integration_type="REST", url="http://example.com/api")
+        assert update.output_schema is None

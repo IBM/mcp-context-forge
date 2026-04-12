@@ -427,6 +427,43 @@ class AuthenticationValues(BaseModelWithConfigDict):
     authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
+# Minimal valid JSON Schema used as the default input_schema for REST tools.
+_DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
+
+
+def _extract_rest_url_components(values: dict) -> dict:
+    """Extract ``base_url`` and ``path_template`` from ``url`` for REST integration tools.
+
+    Shared logic used by both :class:`ToolCreate` and :class:`ToolUpdate` model
+    validators so the URL-parsing behaviour stays consistent across create and
+    update paths.
+
+    Args:
+        values: The raw model input dict (mutated in-place).
+
+    Returns:
+        The same *values* dict, potentially with ``base_url`` and
+        ``path_template`` populated.
+    """
+    url = values.get("url")
+    if not url:
+        return values
+
+    parsed = urlparse(str(url))
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    path_template = parsed.path
+
+    if path_template:
+        path_template = "/" + path_template.lstrip("/")
+
+    if not values.get("base_url"):
+        values["base_url"] = base_url
+    if not values.get("path_template"):
+        values["path_template"] = path_template
+
+    return values
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -458,7 +495,7 @@ class ToolCreate(BaseModel):
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
+    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: dict(_DEFAULT_INPUT_SCHEMA), description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
@@ -868,11 +905,7 @@ class ToolCreate(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        For integration_type 'REST': Extract 'base_url' and 'path_template' from 'url' if provided.
-
-        Note: Schema population from OpenAPI specs should be handled by the service layer
-        or frontend to avoid SSRF vulnerabilities and blocking I/O in Pydantic validators.
+        """For REST tools: extract URL components and ensure a default input_schema.
 
         Args:
             values (dict): The input values to process.
@@ -880,36 +913,13 @@ class ToolCreate(BaseModel):
         Returns:
             dict: The updated values with base_url and path_template extracted from url.
         """
-        integration_type = values.get("integration_type")
-        if integration_type != "REST":
+        if values.get("integration_type") != "REST":
             return values
 
-        # Extract base_url and path_template from url if provided
-        url = values.get("url")
-        logger.debug(f"extract_base_url_and_path_template: url={url}, integration_type={integration_type}")
-        if url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            logger.debug(f"Extracted base_url={base_url}, path_template={path_template}")
+        _extract_rest_url_components(values)
 
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-                logger.debug(f"Set base_url to {base_url}")
-            if not values.get("path_template"):
-                values["path_template"] = path_template
-                logger.debug(f"Set path_template to {path_template}")
-        else:
-            logger.debug("No url field provided, cannot extract base_url and path_template")
-
-        # Ensure we have at least a minimal input_schema for REST tools
         if not values.get("input_schema"):
-            values["input_schema"] = {"type": "object", "properties": {}}
-            logger.debug("Set default empty input_schema")
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
 
         return values
 
@@ -1286,11 +1296,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     @model_validator(mode="before")
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        For integration_type 'REST': Extract 'base_url' and 'path_template' from 'url' if provided.
-
-        Note: Schema population is handled by the frontend via /admin/fetch-openapi-spec endpoint
-        to avoid SSRF vulnerabilities and blocking I/O in Pydantic validators.
+        """For REST tools: extract URL components and normalise empty input_schema.
 
         Args:
             values (dict): The input values to process.
@@ -1298,31 +1304,17 @@ class ToolUpdate(BaseModelWithConfigDict):
         Returns:
             dict: The updated values with base_url and path_template extracted from url.
         """
-        integration_type = values.get("integration_type")
-        if integration_type != "REST":
+        if values.get("integration_type") != "REST":
             return values
 
-        # Extract base_url and path_template from url if provided
-        url = values.get("url")
-        if url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
+        _extract_rest_url_components(values)
 
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
-
-        # Set default empty input_schema for REST tools if it's an empty dict
-        # This ensures consistency with ToolCreate behavior
+        # Normalise explicitly-empty input_schema to the typed default.
+        # None is left alone (partial update semantics — omitted fields
+        # should not overwrite existing values in the database).
         input_schema = values.get("input_schema")
         if input_schema is not None and isinstance(input_schema, dict) and not input_schema:
-            values["input_schema"] = {"type": "object", "properties": {}}
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
 
         return values
 

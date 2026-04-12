@@ -11774,10 +11774,12 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/generate-schemas-from-openapi")
+# tools.create — this endpoint makes outbound HTTP requests to user-supplied
+# URLs to fetch OpenAPI specs.  tools.read would let viewers probe internal
+# services; tools.create scopes it to users who can already register tools.
 @require_permission("tools.create", allow_admin_bypass=False)
 async def generate_schemas_from_openapi(
     request: Request,
-    _db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
@@ -11793,85 +11795,100 @@ async def generate_schemas_from_openapi(
 
     Returns:
         JSONResponse with generated schemas or error message.
-
-    Examples:
-        >>> callable(generate_schemas_from_openapi)
-        True
     """
     try:
-        body = await request.json()
-        tool_url = body.get("url", "")
-        request_type = body.get("request_type", "GET")
-        openapi_url = body.get("openapi_url", "")
-
-        if not tool_url and not openapi_url:
-            return ORJSONResponse(
-                content={"message": "Either 'url' or 'openapi_url' is required", "success": False},
-                status_code=400,
-            )
-
-        # Determine base URL and path
-        parsed = urllib.parse.urlparse(tool_url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        tool_path = parsed.path
-
-        # Use the service to fetch and extract schemas with SSRF protection
-        try:
-            input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
-                base_url=base_url,
-                path=tool_path,
-                method=request_type,
-                openapi_url=openapi_url,
-                timeout=10.0,
-            )
-        except ValueError as e:
-            # Security validation failed
-            return ORJSONResponse(
-                content={"message": f"Security validation failed: {str(e)}", "success": False},
-                status_code=400,
-            )
-        except KeyError as e:
-            # Path or method not found in spec
-            return ORJSONResponse(
-                content={"message": str(e), "success": False},
-                status_code=404,
-            )
-        except httpx.HTTPError as e:
-            # HTTP request failed
-            return ORJSONResponse(
-                content={"message": f"Failed to fetch OpenAPI spec: {str(e)}", "success": False},
-                status_code=404,
-            )
-        except Exception as e:
-            # Other errors
-            LOGGER.error(f"Error fetching OpenAPI spec: {str(e)}", exc_info=True)
-            return ORJSONResponse(
-                content={"message": f"Error: {str(e)}", "success": False},
-                status_code=500,
-            )
-
-        return ORJSONResponse(
-            content={
-                "message": "Schemas generated successfully from OpenAPI spec",
-                "success": True,
-                "input_schema": input_schema,
-                "output_schema": output_schema,
-                "spec_url": spec_url,
-            },
-            status_code=200,
-        )
-
-    except orjson.JSONDecodeError:
+        body = await _read_request_json(request)
+    except Exception:
         return ORJSONResponse(
             content={"message": "Invalid JSON in request body", "success": False},
             status_code=400,
         )
-    except Exception as ex:
-        LOGGER.error(f"Error generating schemas from OpenAPI: {str(ex)}", exc_info=True)
+
+    if not isinstance(body, dict):
         return ORJSONResponse(
-            content={"message": f"Error: {str(ex)}", "success": False},
+            content={"message": "Request body must be a JSON object", "success": False},
+            status_code=400,
+        )
+
+    tool_url = body.get("url", "")
+    request_type = body.get("request_type", "GET")
+    openapi_url = body.get("openapi_url", "")
+
+    if not isinstance(tool_url, str) or not isinstance(request_type, str) or not isinstance(openapi_url, str):
+        return ORJSONResponse(
+            content={"message": "'url', 'request_type', and 'openapi_url' must be strings", "success": False},
+            status_code=400,
+        )
+
+    tool_url = tool_url.strip()
+    request_type = request_type.strip()
+    openapi_url = openapi_url.strip()
+
+    if not tool_url:
+        return ORJSONResponse(
+            content={"message": "'url' is required to identify the API path and base URL", "success": False},
+            status_code=400,
+        )
+
+    try:
+        SecurityValidator.validate_url(tool_url, "Tool URL")
+    except ValueError as e:
+        return ORJSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=400,
+        )
+
+    parsed = urllib.parse.urlparse(tool_url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    tool_path = parsed.path
+
+    try:
+        input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
+            base_url=base_url,
+            path=tool_path,
+            method=request_type,
+            openapi_url=openapi_url,
+            timeout=10.0,
+        )
+    except ValueError as e:
+        return ORJSONResponse(
+            content={"message": f"Security validation failed: {str(e)}", "success": False},
+            status_code=400,
+        )
+    except KeyError as e:
+        return ORJSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=404,
+        )
+    except httpx.HTTPStatusError as e:
+        LOGGER.warning("OpenAPI spec server returned HTTP %s", e.response.status_code, exc_info=True)
+        return ORJSONResponse(
+            content={"message": f"OpenAPI spec server returned HTTP {e.response.status_code}", "success": False},
+            status_code=502,
+        )
+    except httpx.HTTPError:
+        LOGGER.warning("Failed to fetch OpenAPI spec", exc_info=True)
+        return ORJSONResponse(
+            content={"message": "Failed to fetch OpenAPI spec from the provided URL", "success": False},
+            status_code=502,
+        )
+    except Exception:
+        LOGGER.error("Error fetching OpenAPI spec", exc_info=True)
+        return ORJSONResponse(
+            content={"message": "An unexpected error occurred while processing the OpenAPI spec", "success": False},
             status_code=500,
         )
+
+    return ORJSONResponse(
+        content={
+            "message": "Schemas generated successfully from OpenAPI spec",
+            "success": True,
+            "input_schema": input_schema,
+            "output_schema": output_schema,
+            "spec_url": spec_url,
+        },
+        status_code=200,
+    )
 
 
 @admin_router.post("/tools/{tool_id}/delete")
