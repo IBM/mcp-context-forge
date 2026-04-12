@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn redact_url_strips_query_and_userinfo() {
         let redacted = redact_url_for_log(
-            "https://user:pass@api.example.com/invoke?api_key=secret&q=hello#frag",  // pragma: allowlist secret
+            "https://user:pass@api.example.com/invoke?api_key=secret&q=hello#frag", // pragma: allowlist secret
         );
         assert!(!redacted.contains("secret"));
         assert!(!redacted.contains("pass"));

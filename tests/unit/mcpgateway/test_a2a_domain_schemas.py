@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """Tests for A2A v1 domain schemas."""
 
+# Standard
 from datetime import datetime, timezone
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.schemas import (
     A2ATaskCreate,
     A2ATaskRead,
@@ -83,9 +86,7 @@ class TestA2ATaskUpdate:
 
 class TestServerInterfaceCreate:
     def test_minimal_fields(self):
-        iface = ServerInterfaceCreate(
-            server_id="srv-1", protocol="a2a-jsonrpc", binding="https://example.com/"
-        )
+        iface = ServerInterfaceCreate(server_id="srv-1", protocol="a2a-jsonrpc", binding="https://example.com/")
         assert iface.enabled is True
         assert iface.config is None
 

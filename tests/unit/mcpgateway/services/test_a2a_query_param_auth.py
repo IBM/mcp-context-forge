@@ -79,8 +79,7 @@ def _bypass_a2aagentread_validation(monkeypatch):
 @pytest.fixture(autouse=True)
 def mock_all_settings():
     """Mock settings in schemas, a2a_service, and config modules."""
-    with patch("mcpgateway.schemas.settings") as schema_settings, \
-         patch("mcpgateway.services.a2a_service.settings") as svc_settings:
+    with patch("mcpgateway.schemas.settings") as schema_settings, patch("mcpgateway.services.a2a_service.settings") as svc_settings:
         # Configure schema settings
         schema_settings.insecure_allow_queryparam_auth = True
         schema_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
@@ -97,8 +96,7 @@ def mock_all_settings():
 @pytest.fixture(autouse=True)
 def mock_cache_invalidation():
     """Mock cache invalidation to avoid side effects."""
-    with patch("mcpgateway.services.a2a_service.a2a_stats_cache") as mock_stats, \
-         patch("mcpgateway.services.a2a_service._get_registry_cache") as mock_registry:
+    with patch("mcpgateway.services.a2a_service.a2a_stats_cache") as mock_stats, patch("mcpgateway.services.a2a_service._get_registry_cache") as mock_registry:
         mock_stats.invalidate = MagicMock()
         mock_cache = AsyncMock()
         mock_registry.return_value = mock_cache
@@ -141,6 +139,7 @@ class TestA2AQueryParamAuthRegistration:
         monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
         # Mock tool_service.create_tool_from_a2a_agent using the singleton
+        # First-Party
         from mcpgateway.services.tool_service import tool_service
 
         with patch.object(tool_service, "create_tool_from_a2a_agent", new=AsyncMock(return_value=None)):
@@ -191,6 +190,7 @@ class TestA2AQueryParamAuthRegistration:
         monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
         # Mock tool_service.create_tool_from_a2a_agent using the singleton
+        # First-Party
         from mcpgateway.services.tool_service import tool_service
 
         with patch.object(tool_service, "create_tool_from_a2a_agent", new=AsyncMock(return_value=None)):
@@ -246,6 +246,7 @@ class TestA2AQueryParamAuthUpdate:
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
             # Mock tool_service.update_tool_from_a2a_agent using the singleton
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -292,6 +293,7 @@ class TestA2AQueryParamAuthUpdate:
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
             # Mock tool_service.update_tool_from_a2a_agent using the singleton
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -330,6 +332,7 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -365,6 +368,7 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -400,6 +404,7 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -438,6 +443,7 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
+            # First-Party
             from mcpgateway.services.tool_service import tool_service
 
             with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
@@ -526,6 +532,7 @@ class TestA2AAgentReadQueryParamMasking:
     def _restore_a2aagentread_validation(self, monkeypatch):
         """Restore original A2AAgentRead.model_validate for masking tests."""
         # Restore the original model_validate by getting it from BaseModel
+        # Third-Party
         from pydantic import BaseModel
 
         # The base Pydantic behavior will then be used

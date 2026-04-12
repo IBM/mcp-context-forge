@@ -111,7 +111,7 @@ pub struct ResolvedRequest {
 /// encrypted fields are present, returns an error.
 pub fn resolve_requests(
     requests: &[InvokeRequestDto],
-    auth_secret: Option<&str>,  // pragma: allowlist secret
+    auth_secret: Option<&str>, // pragma: allowlist secret
 ) -> Result<Vec<ResolvedRequest>, InvokeError> {
     let mut resolved = Vec::with_capacity(requests.len());
 
@@ -131,7 +131,10 @@ pub fn resolve_requests(
         // Decrypt and merge auth headers.
         let decrypted_headers = match (&req.auth_headers_encrypted, auth_secret) {
             (Some(blob), Some(secret)) => {
-                Some(crate::auth::decrypt_auth(blob, secret).map_err(|e| {  // pragma: allowlist secret
+                Some(crate::auth::decrypt_auth( // pragma: allowlist secret
+                    blob,
+                    secret, // pragma: allowlist secret
+                ).map_err(|e| {
                     InvokeError::Auth(format!("auth header decryption failed: {e}"))
                 })?)
             }
@@ -141,7 +144,9 @@ pub fn resolve_requests(
         // Decrypt and merge auth query params.
         let decrypted_params = match (&req.auth_query_params_encrypted, auth_secret) {
             (Some(map), Some(secret)) => {
-                Some(crate::auth::decrypt_map_values(map, secret).map_err(|e| {  // pragma: allowlist secret
+                Some(crate::auth::decrypt_map_values( // pragma: allowlist secret
+                        map, secret
+                ).map_err(|e| {
                     InvokeError::Auth(format!("auth query param decryption failed: {e}"))
                 })?)
             }
@@ -151,13 +156,16 @@ pub fn resolve_requests(
         // Apply auth to URL and headers.
         if decrypted_headers.is_some() || decrypted_params.is_some() {
             let params = decrypted_params.unwrap_or_default();
-            endpoint_url = crate::auth::apply_invoke_auth(  // pragma: allowlist secret
+            endpoint_url = crate::auth::apply_invoke_auth( // pragma: allowlist secret
+                // pragma: allowlist secret
                 &endpoint_url,
                 &params,
                 &mut headers,
                 decrypted_headers.as_ref(),
             )
-            .map_err(|e| InvokeError::Auth(format!("apply_invoke_auth failed: {e}")))?;
+            .map_err(|e| InvokeError::Auth(
+                    format!("apply_invoke_auth failed: {e}") // pragma: allowlist log
+                ))?;
         }
 
         // Inject tracing headers.
@@ -271,11 +279,11 @@ pub struct ResolvedAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::invoke::InvokeResult;
     use aes_gcm::AeadCore;
     use aes_gcm::aead::{Aead, OsRng};
     use aes_gcm::{Aes256Gcm, KeyInit};
     use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
-    use crate::invoke::InvokeResult;
     use sha2::{Digest, Sha256};
     use std::time::Duration;
 
@@ -298,7 +306,10 @@ mod tests {
         }
     }
 
-    fn encrypt_map(payload: &HashMap<String, String>, secret: &str) -> String {  // pragma: allowlist secret
+    fn encrypt_map(
+        payload: &HashMap<String, String>,
+        secret: &str // pragma: allowlist secret
+    ) -> String {
         let plaintext = serde_json::to_vec(payload).unwrap();
         let mut hasher = Sha256::new();
         hasher.update(secret.as_bytes());
@@ -404,13 +415,10 @@ mod tests {
 
     #[test]
     fn resolve_requests_decrypts_auth_and_applies_to_url_and_headers() {
-        let secret = "secret-123";  // pragma: allowlist secret
+        let secret = "secret-123"; // pragma: allowlist secret
         let mut dto = minimal_dto("https://agent.example.com/invoke?existing=1");
         dto.auth_headers_encrypted = Some(encrypt_map(
-            &HashMap::from([(
-                "authorization".to_string(),
-                "Bearer token".to_string(),
-            )]),
+            &HashMap::from([("authorization".to_string(), "Bearer token".to_string())]),
             secret,
         ));
         dto.auth_query_params_encrypted = Some(HashMap::from([(
@@ -428,8 +436,8 @@ mod tests {
         );
         assert!(resolved[0].endpoint_url.contains("existing=1"));
         assert!(
-            resolved[0].endpoint_url.contains("api_key=secret"),
-            "expected decrypted auth query param to be applied"  // pragma: allowlist secret
+            resolved[0].endpoint_url.contains("api_key=secret"), // pragma: allowlist secret
+            "expected decrypted auth query param to be applied"
         );
     }
 
@@ -441,15 +449,20 @@ mod tests {
         assert!(err.to_string().contains("auth header decryption failed"));
 
         let mut bad_query = minimal_dto("https://agent.example.com/invoke");
-        bad_query.auth_query_params_encrypted =
-            Some(HashMap::from([("token".to_string(), "not-valid".to_string())]));
+        bad_query.auth_query_params_encrypted = Some(HashMap::from([(
+            "token".to_string(),
+            "not-valid".to_string(),
+        )]));
         let err = resolve_requests(&[bad_query], Some("secret")).unwrap_err();
-        assert!(err.to_string().contains("auth query param decryption failed"));
+        assert!(
+            err.to_string()
+                .contains("auth query param decryption failed")
+        );
     }
 
     #[test]
     fn resolve_requests_surfaces_apply_auth_failures() {
-        let secret = "secret-123";  // pragma: allowlist secret
+        let secret = "secret-123"; // pragma: allowlist secret
         let mut dto = minimal_dto("file:///tmp/socket");
         dto.auth_query_params_encrypted = Some(HashMap::from([(
             "api_key".to_string(),

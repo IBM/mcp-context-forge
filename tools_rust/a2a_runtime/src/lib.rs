@@ -269,7 +269,11 @@ mod tests {
     use std::fs;
 
     fn temp_socket_path(prefix: &str) -> PathBuf {
-        PathBuf::from(format!("/tmp/{}-{}.sock", prefix, &uuid::Uuid::new_v4().simple().to_string()[..8]))
+        PathBuf::from(format!(
+            "/tmp/{}-{}.sock",
+            prefix,
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ))
     }
 
     fn test_config() -> RuntimeConfig {
@@ -335,7 +339,10 @@ mod tests {
             .await
             .expect("uds server should exit cleanly");
 
-        assert!(path.exists(), "unix listener path should be recreated by bind");
+        assert!(
+            path.exists(),
+            "unix listener path should be recreated by bind"
+        );
         let _ = fs::remove_file(path);
     }
 

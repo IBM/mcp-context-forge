@@ -11,10 +11,10 @@ import pytest
 # First-Party
 from mcpgateway.services.a2a_protocol import PreparedA2AInvocation
 from mcpgateway.services.rust_a2a_runtime import (
-    RustA2ARuntimeClient,
-    RustA2ARuntimeError,
     _build_runtime_invoke_url,
     get_rust_a2a_runtime_client,
+    RustA2ARuntimeClient,
+    RustA2ARuntimeError,
 )
 
 

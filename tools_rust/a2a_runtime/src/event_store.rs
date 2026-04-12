@@ -15,8 +15,8 @@
 //! persistence.
 
 use crate::cache::RedisPool;
-use async_trait::async_trait;
 use crate::trust;
+use async_trait::async_trait;
 use redis::AsyncCommands;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -92,6 +92,7 @@ pub struct StoredEvent {
 
 /// Redis-backed ring-buffer store for SSE streaming events.
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 trait EventStoreStorage: Send + Sync {
     async fn store_event(
         &self,
@@ -288,7 +289,11 @@ impl EventStore {
         let messages_key = format!("{KEY_PREFIX}:{task_id}:messages");
 
         // Scores are integer sequences; range is exclusive lower bound.
-        let entries: Vec<(String, f64)> = match self.storage.replay_entries(&events_key, after_sequence).await {
+        let entries: Vec<(String, f64)> = match self
+            .storage
+            .replay_entries(&events_key, after_sequence)
+            .await
+        {
             Ok(e) => e,
             Err(e) => {
                 warn!(task_id, "failed to replay events from Redis: {e}");
@@ -300,14 +305,18 @@ impl EventStore {
             return vec![];
         }
 
-        let event_ids: Vec<String> = entries.iter().map(|(event_id, _)| event_id.clone()).collect();
-        let payloads: Vec<Option<String>> = match self.storage.payloads(&messages_key, &event_ids).await {
-            Ok(payloads) => payloads,
-            Err(e) => {
-                warn!(task_id, "failed to fetch replay payloads from Redis: {e}");
-                return vec![];
-            }
-        };
+        let event_ids: Vec<String> = entries
+            .iter()
+            .map(|(event_id, _)| event_id.clone())
+            .collect();
+        let payloads: Vec<Option<String>> =
+            match self.storage.payloads(&messages_key, &event_ids).await {
+                Ok(payloads) => payloads,
+                Err(e) => {
+                    warn!(task_id, "failed to fetch replay payloads from Redis: {e}");
+                    return vec![];
+                }
+            };
 
         let mut result = Vec::with_capacity(entries.len());
         for ((event_id, score), payload) in entries.into_iter().zip(payloads.into_iter()) {
@@ -326,7 +335,11 @@ impl EventStore {
     /// Return `true` if the stream is still active (agent has not finished).
     pub async fn is_stream_active(&self, task_id: &str) -> bool {
         let meta_key = format!("{KEY_PREFIX}:{task_id}:meta");
-        let active: Option<String> = self.storage.hget(&meta_key, "stream_active").await.unwrap_or(None);
+        let active: Option<String> = self
+            .storage
+            .hget(&meta_key, "stream_active")
+            .await
+            .unwrap_or(None);
         active.as_deref() == Some("1")
     }
 
@@ -465,7 +478,7 @@ pub fn spawn_flush_task(
 async fn flush_batch(
     client: &Client,
     backend_base_url: &str,
-    auth_secret: &str,  // pragma: allowlist secret
+    auth_secret: &str, // pragma: allowlist secret
     buffer: &mut Vec<FlushEntry>,
 ) {
     let url = format!(
@@ -682,13 +695,7 @@ mod tests {
             payload: serde_json::json!({"status": "working"}),
         }];
 
-        flush_batch(
-            &client,
-            &mock_server.uri(),
-            "secret",
-            &mut buffer,
-        )
-        .await;
+        flush_batch(&client, &mock_server.uri(), "secret", &mut buffer).await;
 
         assert!(buffer.is_empty(), "flush should drain the buffered entries");
         mock_server.verify().await;
@@ -830,7 +837,11 @@ mod tests {
         assert_eq!(flushed.task_id, "task-1");
 
         let replayed = store.replay_after("task-1", 0).await;
-        assert_eq!(replayed.len(), 2, "ring buffer should retain only max_events");
+        assert_eq!(
+            replayed.len(),
+            2,
+            "ring buffer should retain only max_events"
+        );
         assert_eq!(replayed[0].sequence, 2);
         assert_eq!(replayed[1].sequence, 3);
         assert_eq!(replayed[0].event_type, "unknown");
@@ -840,13 +851,20 @@ mod tests {
     async fn event_store_handles_storage_failures_and_stream_state() {
         let storage = Arc::new(FakeEventStoreStorage::default());
         let (flush_tx, _flush_rx) = mpsc::channel(1);
-        let store = EventStore::new_with_storage(storage.clone() as Arc<dyn EventStoreStorage>, 10, 60, flush_tx);
+        let store = EventStore::new_with_storage(
+            storage.clone() as Arc<dyn EventStoreStorage>,
+            10,
+            60,
+            flush_tx,
+        );
 
         *storage.fail_store.lock().unwrap() = true;
-        assert!(store
-            .store_event("task-2", "status", &serde_json::json!({"n": 1}))
-            .await
-            .is_none());
+        assert!(
+            store
+                .store_event("task-2", "status", &serde_json::json!({"n": 1}))
+                .await
+                .is_none()
+        );
         *storage.fail_store.lock().unwrap() = false;
 
         *storage.fail_replay.lock().unwrap() = true;
@@ -867,10 +885,7 @@ mod tests {
         *storage.fail_hget.lock().unwrap() = false;
 
         store.mark_stream_complete("task-2").await;
-        assert_eq!(
-            storage.stream_active.lock().unwrap().as_deref(),
-            Some("0")
-        );
+        assert_eq!(storage.stream_active.lock().unwrap().as_deref(), Some("0"));
 
         *storage.fail_hset.lock().unwrap() = true;
         store.mark_stream_complete("task-2").await;

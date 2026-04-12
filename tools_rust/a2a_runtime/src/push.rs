@@ -47,7 +47,7 @@ fn should_dispatch(config: &PushConfig, new_state: &str) -> bool {
 pub async fn dispatch_webhooks(
     client: &Client,
     backend_base_url: &str,
-    auth_secret: &str,  // pragma: allowlist secret
+    auth_secret: &str, // pragma: allowlist secret
     task_id: &str,
     agent_id: &str,
     new_state: &str,

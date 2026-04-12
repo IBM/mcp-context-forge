@@ -321,7 +321,13 @@ mod tests {
             if *self.fail_del.lock().unwrap() {
                 return Err("del failed".to_string());
             }
-            Ok(self.values.lock().unwrap().remove(key).map(|_| 1).unwrap_or(0))
+            Ok(self
+                .values
+                .lock()
+                .unwrap()
+                .remove(key)
+                .map(|_| 1)
+                .unwrap_or(0))
         }
     }
 
@@ -416,7 +422,10 @@ mod tests {
             .await
             .expect("session should be created");
 
-        let record = manager.lookup(&session_id).await.expect("session should exist");
+        let record = manager
+            .lookup(&session_id)
+            .await
+            .expect("session should exist");
         assert_eq!(record.auth_context, auth_context);
         assert_eq!(record.auth_fingerprint, "fingerprint-1");
         assert!(!record.worker_id.is_empty());
@@ -471,11 +480,13 @@ mod tests {
         *storage.fail_expire.lock().unwrap() = false;
 
         manager.invalidate("session-1").await;
-        assert!(!storage
-            .values
-            .lock()
-            .unwrap()
-            .contains_key(&redis_key("session-1")));
+        assert!(
+            !storage
+                .values
+                .lock()
+                .unwrap()
+                .contains_key(&redis_key("session-1"))
+        );
 
         *storage.fail_del.lock().unwrap() = true;
         manager.invalidate("session-2").await;

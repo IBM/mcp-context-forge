@@ -7,18 +7,19 @@ of legacy-compatibility assertions.
 """
 
 # Standard
-import socket
 from contextlib import closing
+import socket
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
 # Third-Party
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 
+# First-Party
 # ContextForge imports
 from mcpgateway.services.a2a_service import A2AAgentService
 from mcpgateway.services.tool_service import ToolService
@@ -386,6 +387,7 @@ class TestTransactionHandling:
 
     @pytest.mark.asyncio
     async def test_agent_committed_before_tool_creation(self, mock_db, a2a_service):
+        # Standard
         import inspect
 
         source = inspect.getsource(a2a_service.register_agent)

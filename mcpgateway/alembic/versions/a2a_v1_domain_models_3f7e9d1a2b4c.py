@@ -1,7 +1,7 @@
 """Add A2A v1 domain models: tasks, server interfaces, agent auth
 
 Revision ID: 3f7e9d1a2b4c
-Revises: 225bde88217e
+Revises: c2d3e4f5a6b7
 Create Date: 2026-04-01
 
 Creates tables for A2A task persistence (a2a_tasks), server-to-agent

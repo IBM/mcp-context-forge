@@ -9030,14 +9030,16 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        card = service.get_agent_card(db, agent_name)
-        if card is not None:
-            # Re-read the agent for scoped access enforcement before returning its card.
-            from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
 
-            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
-            if agent is None or not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
-                card = None
+        # Check agent visibility before building the card to avoid loading
+        # sensitive relationship data for agents the caller cannot see.
+        # First-Party
+        from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
+        card = None
+        if agent is not None and service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+            card = service.get_agent_card(db, agent_name)
         if card is None:
             # First-Party
             from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
@@ -9069,14 +9071,17 @@ async def handle_internal_a2a_tasks_get(request: Request):
         body = await request.json()
         task_id = body.get("task_id")
         agent_id = body.get("agent_id")
-        if not task_id:
-            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
 
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        task = service.get_task(db, task_id, agent_id=agent_id)
+        task = service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
         if task is None:
             return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
         return ORJSONResponse(status_code=200, content=task)
@@ -9102,14 +9107,19 @@ async def handle_internal_a2a_tasks_list(request: Request):
         body = await request.json()
         agent_id = body.get("agent_id")
         state = body.get("state")
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+        if state is not None and not isinstance(state, str):
+            return ORJSONResponse(status_code=400, content={"error": "state must be a string"})
         limit = min(int(body.get("limit", 100)), 1000)
         offset = max(int(body.get("offset", 0)), 0)
 
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset)
+        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset, user_email=user_email, token_teams=token_teams)
         return ORJSONResponse(status_code=200, content={"tasks": tasks})
     except Exception:
         try:

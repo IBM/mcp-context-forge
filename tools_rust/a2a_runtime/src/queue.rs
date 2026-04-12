@@ -391,15 +391,18 @@ pub fn init_queue(max_concurrent: usize, max_queued: Option<usize>, state: Arc<W
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     // Build channel and sender variant based on bounding preference.
-    let (sender, receiver): (QueueSender, mpsc::Receiver<QueueMessage>) =
-        if let Some(capacity) = max_queued {
-            let (tx, rx) = mpsc::channel(capacity);
-            (QueueSender::Bounded(tx), rx)
-        } else {
-            let (btx, brx) = mpsc::channel::<QueueMessage>(4096);
-            warn!("A2A queue running without an explicit bound; falling back to default cap of 4096 messages");
-            (QueueSender::Bounded(btx), brx)
-        };
+    let (sender, receiver): (QueueSender, mpsc::Receiver<QueueMessage>) = if let Some(capacity) =
+        max_queued
+    {
+        let (tx, rx) = mpsc::channel(capacity);
+        (QueueSender::Bounded(tx), rx)
+    } else {
+        let (btx, brx) = mpsc::channel::<QueueMessage>(4096);
+        warn!(
+            "A2A queue running without an explicit bound; falling back to default cap of 4096 messages"
+        );
+        (QueueSender::Bounded(btx), brx)
+    };
 
     SENDER
         .set(sender)
@@ -732,12 +735,7 @@ mod tests {
     async fn worker_loop_returns_when_channel_is_closed() {
         let (tx, rx) = mpsc::channel(1);
         drop(tx);
-        worker_loop(
-            rx,
-            &Arc::new(Semaphore::new(1)),
-            &test_worker_state(),
-        )
-        .await;
+        worker_loop(rx, &Arc::new(Semaphore::new(1)), &test_worker_state()).await;
     }
 
     #[tokio::test]
@@ -753,12 +751,7 @@ mod tests {
         .unwrap();
         drop(tx);
 
-        worker_loop(
-            rx,
-            &Arc::new(Semaphore::new(1)),
-            &test_worker_state(),
-        )
-        .await;
+        worker_loop(rx, &Arc::new(Semaphore::new(1)), &test_worker_state()).await;
 
         ack_rx.await.unwrap();
     }

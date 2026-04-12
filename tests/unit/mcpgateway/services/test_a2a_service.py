@@ -336,6 +336,7 @@ class TestA2AAgentService:
 
     async def test_update_agent_team_id_rejects_non_owner(self, service, mock_db, sample_db_agent):
         """Reassigning an agent to a team where user is not owner must raise."""
+        # First-Party
         from mcpgateway.services.a2a_service import _validate_a2a_team_assignment
 
         mock_query = MagicMock()
@@ -435,6 +436,7 @@ class TestA2AAgentService:
                 )
                 await service.update_agent(mock_db, sample_db_agent.id, update_data)
 
+        # First-Party
         from mcpgateway.utils.services_auth import decode_auth
 
         persisted = decode_auth(sample_db_agent.auth_value)
@@ -460,6 +462,7 @@ class TestA2AAgentService:
                 )
                 await service.update_agent(mock_db, sample_db_agent.id, update_data)
 
+        # First-Party
         from mcpgateway.utils.services_auth import decode_auth
 
         persisted = decode_auth(sample_db_agent.auth_value)
@@ -3666,6 +3669,7 @@ class TestPublishA2AInvalidation:
         # get_redis_client is imported locally inside the function, so patch at its source.
         mock_get_redis = AsyncMock(return_value=mock_redis)
         with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            # First-Party
             from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
 
             await _publish_a2a_invalidation("agent_updated", agent_id="a1")
@@ -3680,6 +3684,7 @@ class TestPublishA2AInvalidation:
         """No exception is raised when Redis client returns None."""
         mock_get_redis = AsyncMock(return_value=None)
         with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            # First-Party
             from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
 
             # Must not raise
@@ -3692,6 +3697,7 @@ class TestPublishA2AInvalidation:
 
         mock_get_redis = AsyncMock(return_value=mock_redis)
         with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            # First-Party
             from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
 
             await _publish_a2a_invalidation("agent_created", agent_id="a2")

@@ -84,9 +84,12 @@ class RustA2ARuntimeClient:
         if response.status_code != 200:
             detail = response.text
             is_upstream_timeout = response.status_code == 504
-            logger.error("Experimental Rust A2A runtime request failed with HTTP %s: %s", response.status_code, detail)
+            # Truncate detail to avoid leaking auth blobs that may appear
+            # in Rust sidecar error responses.
+            safe_detail = (detail[:500] + "...") if len(detail) > 500 else detail
+            logger.error("Experimental Rust A2A runtime request failed with HTTP %s: %s", response.status_code, safe_detail)
             raise RustA2ARuntimeError(
-                f"Experimental Rust A2A runtime failed with HTTP {response.status_code}: {detail}",
+                f"Experimental Rust A2A runtime failed with HTTP {response.status_code}: {safe_detail}",
                 is_timeout=is_upstream_timeout,
             )
 

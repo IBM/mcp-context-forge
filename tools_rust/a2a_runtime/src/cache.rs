@@ -165,7 +165,8 @@ where
         l2_ttl_secs: u64,
         l2_key_prefix: impl Into<String>,
     ) -> Self {
-        let storage = redis.map(|redis| Arc::new(RedisCacheStorage { redis }) as Arc<dyn CacheStorage>);
+        let storage =
+            redis.map(|redis| Arc::new(RedisCacheStorage { redis }) as Arc<dyn CacheStorage>);
         Self::new_with_storage(l1_ttl, l1_max_entries, storage, l2_ttl_secs, l2_key_prefix)
     }
 
@@ -394,10 +395,7 @@ impl CacheSubscriber {
     }
 }
 
-fn handle_invalidation_payload(
-    payload: &str,
-    agent_cache_evict: &Arc<dyn Fn(&str) + Send + Sync>,
-) {
+fn handle_invalidation_payload(payload: &str, agent_cache_evict: &Arc<dyn Fn(&str) + Send + Sync>) {
     match serde_json::from_str::<InvalidationMessage>(payload) {
         Ok(InvalidationMessage::Agent { name }) => {
             debug!(agent = %name, "cache subscriber: evicting agent");

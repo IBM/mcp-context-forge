@@ -5,7 +5,8 @@ use std::process::Command;
 
 #[test]
 fn binary_starts_and_exits_cleanly_for_http_listener() {
-    let output = Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime"))
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime")) // pragma: allowlist secret
         .arg("--listen-http")
         .arg("127.0.0.1:0")
         .arg("--exit-after-startup-ms")
@@ -26,8 +27,8 @@ fn binary_starts_and_exits_cleanly_for_http_listener() {
 
 #[test]
 fn binary_exits_non_zero_for_invalid_http_listener() {
-    // pragma: allowlist secret
-    let output = Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime"))
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime")) // pragma: allowlist secret
         .arg("--listen-http")
         .arg("not-an-addr")
         .output()

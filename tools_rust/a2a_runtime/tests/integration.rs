@@ -16,10 +16,10 @@ use contextforge_a2a_runtime::config::RuntimeConfig;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
+use test_helpers::*;
 use tower::ServiceExt;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use test_helpers::*;
 
 /// Build a test-ready Axum app with the given config.
 fn test_app(config: RuntimeConfig) -> axum::Router {
@@ -348,7 +348,7 @@ async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
     // deny_unknown_fields deserialization rejects.  This validates that
     // unexpected auth-related fields do not silently pass through.
     let mut config = default_test_config();
-    config.auth_secret = None;   // pragma: allowlist secret
+    config.auth_secret = None; // pragma: allowlist secret
     let app = test_app(config);
 
     let (status, body) = post_json(
@@ -627,12 +627,8 @@ async fn test_a2a_invoke_full_trust_chain() {
     config.auth_secret = Some("test-secret".to_string());
     let app = test_app(config);
 
-    let (status, body) = post_json(
-        app,
-        "/a2a/test-agent/invoke",
-        send_message_json(1, "hello"),
-    )
-    .await;
+    let (status, body) =
+        post_json(app, "/a2a/test-agent/invoke", send_message_json(1, "hello")).await;
 
     assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
     assert_eq!(body["status_code"], 200);
@@ -2297,13 +2293,10 @@ async fn test_streaming_method_forwards_sse_stream() {
 
     Mock::given(method("POST"))
         .and(path(agent_path))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(
-                    "id: evt-1\nevent: status\ndata: {\"status\":\"working\"}\n\n",
-                    "text/event-stream",
-                ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "id: evt-1\nevent: status\ndata: {\"status\":\"working\"}\n\n",
+            "text/event-stream",
+        ))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -2338,12 +2331,13 @@ async fn test_streaming_method_forwards_sse_stream() {
         Some("text/event-stream")
     );
 
-    let body = String::from_utf8_lossy(
-        &response.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .to_string();
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .to_string();
     assert!(body.contains("id: evt-1"), "expected SSE id, body: {body}");
-    assert!(body.contains("event: status"), "expected SSE event, body: {body}");
+    assert!(
+        body.contains("event: status"),
+        "expected SSE event, body: {body}"
+    );
     assert!(
         body.contains("data: {\"status\":\"working\"}"),
         "expected SSE data, body: {body}"
@@ -2720,10 +2714,7 @@ async fn test_streaming_method_handles_agent_timeout() {
     // Mock agent delays 10 s — well past the 500 ms runtime timeout
     Mock::given(method("POST"))
         .and(path(agent_path))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_delay(std::time::Duration::from_secs(10)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(10)))
         .mount(&mock_server)
         .await;
 
@@ -2980,8 +2971,7 @@ async fn test_streaming_method_with_last_event_id_without_redis() {
         .header("content-type", "application/json")
         .header("last-event-id", "evt-001")
         .body(Body::from(
-            serde_json::to_vec(&streaming_message_json(1, "hello", "ROLE_USER"))
-            .unwrap(),
+            serde_json::to_vec(&streaming_message_json(1, "hello", "ROLE_USER")).unwrap(),
         ))
         .unwrap();
 
@@ -3013,23 +3003,25 @@ async fn test_streaming_method_replays_from_store_when_last_event_id_present() {
     let mut config = default_test_config();
     config.backend_base_url = mock_server.uri();
     config.auth_secret = Some("test-secret".to_string());
-    let event_store = Arc::new(contextforge_a2a_runtime::event_store::EventStore::seeded_for_test(
-        vec![
-            contextforge_a2a_runtime::event_store::StoredEvent {
-                event_id: "evt-1".to_string(),
-                sequence: 1,
-                event_type: "unknown".to_string(),
-                payload: r#"{"status":"queued"}"#.to_string(),
-            },
-            contextforge_a2a_runtime::event_store::StoredEvent {
-                event_id: "evt-2".to_string(),
-                sequence: 2,
-                event_type: "unknown".to_string(),
-                payload: r#"{"status":"working"}"#.to_string(),
-            },
-        ],
-        false,
-    ));
+    let event_store = Arc::new(
+        contextforge_a2a_runtime::event_store::EventStore::seeded_for_test(
+            vec![
+                contextforge_a2a_runtime::event_store::StoredEvent {
+                    event_id: "evt-1".to_string(),
+                    sequence: 1,
+                    event_type: "unknown".to_string(),
+                    payload: r#"{"status":"queued"}"#.to_string(),
+                },
+                contextforge_a2a_runtime::event_store::StoredEvent {
+                    event_id: "evt-2".to_string(),
+                    sequence: 2,
+                    event_type: "unknown".to_string(),
+                    payload: r#"{"status":"working"}"#.to_string(),
+                },
+            ],
+            false,
+        ),
+    );
     let app = contextforge_a2a_runtime::test_support::build_app_with_event_store(
         config,
         Some(event_store),
@@ -3061,14 +3053,24 @@ async fn test_streaming_method_replays_from_store_when_last_event_id_present() {
         Some("text/event-stream")
     );
 
-    let body = String::from_utf8_lossy(
-        &response.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .to_string();
-    assert!(body.contains("id: evt-1:1"), "expected first replayed event, body: {body}");
-    assert!(body.contains("id: evt-2:2"), "expected second replayed event, body: {body}");
-    assert!(body.contains("data: {\"status\":\"queued\"}"), "expected queued payload, body: {body}");
-    assert!(body.contains("data: {\"status\":\"working\"}"), "expected working payload, body: {body}");
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .to_string();
+    assert!(
+        body.contains("id: evt-1:1"),
+        "expected first replayed event, body: {body}"
+    );
+    assert!(
+        body.contains("id: evt-2:2"),
+        "expected second replayed event, body: {body}"
+    );
+    assert!(
+        body.contains("data: {\"status\":\"queued\"}"),
+        "expected queued payload, body: {body}"
+    );
+    assert!(
+        body.contains("data: {\"status\":\"working\"}"),
+        "expected working payload, body: {body}"
+    );
 
     mock_server.verify().await;
 }

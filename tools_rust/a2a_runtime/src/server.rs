@@ -228,17 +228,41 @@ fn normalize_task_proxy_params(action: &str, body: &Value) -> Value {
     params
 }
 
+/// Build a scope-aware cache key from agent name and auth context.
+///
+/// The auth context's `teams` field determines visibility: `null` means
+/// admin bypass (unrestricted), an array scopes to those teams, and a
+/// missing key means public-only.  Including a stable representation of
+/// the teams in the cache key prevents cross-tenant cache poisoning.
+fn scoped_cache_key(agent_name: &str, auth_context: &Value) -> String {
+    let scope_suffix = match auth_context.get("teams") {
+        Some(Value::Null) => "admin".to_string(),
+        Some(Value::Array(teams)) => {
+            let mut sorted: Vec<&str> = teams.iter().filter_map(|t| t.as_str()).collect();
+            sorted.sort_unstable();
+            sorted.join(",")
+        }
+        _ => "public".to_string(),
+    };
+    format!("{agent_name}:{scope_suffix}")
+}
+
 /// Resolve an agent by name, using the tiered cache when possible.
 ///
 /// On cache miss the Python `/_internal/a2a/agents/{name}/resolve` endpoint
 /// is called (L3).  Successful responses are written to both L1 and L2.
+///
+/// Cache keys include a hash of the caller's team scope to prevent
+/// cross-tenant cache poisoning.
 async fn resolve_agent(
     state: &AppState,
     agent_name: &str,
     auth_context: &Value,
 ) -> Result<ResolvedAgent, (StatusCode, String)> {
+    let cache_key = scoped_cache_key(agent_name, auth_context);
+
     // Check tiered cache (L1 → L2).
-    if let Some(agent) = state.agent_cache.get(agent_name).await {
+    if let Some(agent) = state.agent_cache.get(&cache_key).await {
         return Ok(agent);
     }
 
@@ -284,8 +308,8 @@ async fn resolve_agent(
         )
     })?;
 
-    // Populate L1 + L2.
-    state.agent_cache.set(agent_name, agent.clone()).await;
+    // Populate L1 + L2 with scope-aware key.
+    state.agent_cache.set(&cache_key, agent.clone()).await;
 
     Ok(agent)
 }
@@ -951,7 +975,7 @@ async fn handle_streaming_method(
         .unwrap_or("")
         .to_lowercase();
 
-if content_type.contains(CONTENT_TYPE_SSE) {
+    if content_type.contains(CONTENT_TYPE_SSE) {
         // Agent supports streaming — forward as SSE.
         let task_id = extract_task_id(body);
         info!(
@@ -1011,19 +1035,13 @@ fn extract_task_id(body: &Value) -> String {
 /// extracted from the body when needed.
 fn parse_last_event_id(header: &str, body: &Value) -> Option<(String, i64)> {
     // Try parsing as "{task_id}:{sequence}" format
-    match header.rfind(':') {
-        Some(pos) => {
-            let task_id_part = &header[..pos];
-            let sequence_part = &header[pos + 1..];
+    if let Some(pos) = header.rfind(':') {
+        let task_id_part = &header[..pos];
+        let sequence_part = &header[pos + 1..];
 
-            match (task_id_part.is_empty(), sequence_part.parse::<i64>()) {
-                // Non-empty task_id with valid sequence
-                (false, Ok(seq)) => return Some((task_id_part.to_string(), seq)),
-                // Empty task_id or invalid sequence — fall through to next attempt
-                _ => {}
-            }
+        if let (false, Ok(seq)) = (task_id_part.is_empty(), sequence_part.parse::<i64>()) {
+            return Some((task_id_part.to_string(), seq));
         }
-        None => {}
     }
 
     // Try parsing entire header as a numeric sequence, extract task_id from body
@@ -1151,7 +1169,7 @@ async fn proxy_to_backend(
     for (name, value) in &response_headers {
         builder = builder.header(name, value);
     }
-builder
+    builder
         .body(axum::body::Body::from(response_body))
         .map_err(|e| {
             (
@@ -1169,10 +1187,10 @@ mod tests {
     use crate::cache::TieredCache;
     use axum::body::to_bytes;
     use axum::response::IntoResponse;
+    use serde_json::json;
     use std::time::Duration;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use serde_json::json;
 
     fn test_state(backend_base_url: String) -> AppState {
         let config = Arc::new(RuntimeConfig {
@@ -1226,7 +1244,13 @@ mod tests {
             metrics,
             worker_state,
             redis_pool: None,
-            agent_cache: Arc::new(TieredCache::new(Duration::from_secs(60), Some(8), None, 60, "agent")),
+            agent_cache: Arc::new(TieredCache::new(
+                Duration::from_secs(60),
+                Some(8),
+                None,
+                60,
+                "agent",
+            )),
             session_manager: None,
             event_store: None,
         }
@@ -1277,7 +1301,8 @@ mod tests {
 
     #[test]
     fn normalize_task_proxy_params_preserves_existing_internal_fields() {
-        let body = json!({"params": {"id": "public-id", "task_id": "internal-id", "state": "done"}});
+        let body =
+            json!({"params": {"id": "public-id", "task_id": "internal-id", "state": "done"}});
         assert_eq!(
             normalize_task_proxy_params("get", &body),
             json!({"id": "public-id", "task_id": "internal-id", "state": "done"})
@@ -1421,14 +1446,9 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_GATEWAY);
 
-        let err = proxy_agent_card(
-            &state,
-            "agent",
-            &json!({"id": 1}),
-            &json!({"sub": "user"}),
-        )
-        .await
-        .unwrap_err();
+        let err = proxy_agent_card(&state, "agent", &json!({"id": 1}), &json!({"sub": "user"}))
+            .await
+            .unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_GATEWAY);
     }
 
@@ -1527,8 +1547,17 @@ mod tests {
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("id: evt-1:1"), "expected first replayed id, body: {text}");
-        assert!(text.contains("data: {\"status\":\"queued\"}"), "expected first payload, body: {text}");
-        assert!(text.contains("id: evt-2:2"), "expected second replayed id, body: {text}");
+        assert!(
+            text.contains("id: evt-1:1"),
+            "expected first replayed id, body: {text}"
+        );
+        assert!(
+            text.contains("data: {\"status\":\"queued\"}"),
+            "expected first payload, body: {text}"
+        );
+        assert!(
+            text.contains("id: evt-2:2"),
+            "expected second replayed id, body: {text}"
+        );
     }
 }

@@ -338,6 +338,24 @@ class A2AAgentService(BaseService):
 
         return False
 
+    def _visible_agent_ids(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Optional[List[str]]:
+        """Return IDs of agents visible to the caller, or None for admin bypass.
+
+        Used by list_tasks to scope results to agents the caller can see.
+        Returns None when the caller has unrestricted (admin) access.
+        """
+        # Admin bypass
+        if token_teams is None and user_email is None:
+            return None
+
+        agents = db.query(DbA2AAgent).filter(DbA2AAgent.enabled == True).all()  # noqa: E712
+        return [a.id for a in agents if self._check_agent_access(a, user_email, token_teams)]
+
     async def register_agent(
         self,
         db: Session,
@@ -1984,22 +2002,36 @@ class A2AAgentService(BaseService):
         # Return masked version (like GatewayRead)
         return validated_agent.masked()
 
-    def get_task(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_task(
+        self,
+        db: Session,
+        task_id: str,
+        agent_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve an A2A task by its task_id.
 
         Args:
             db: Database session.
             task_id: The agent-side task ID.
             agent_id: Optional agent ID filter.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
+                None = admin bypass, [] = public-only.
 
         Returns:
-            Task data as a dict, or None if not found.
+            Task data as a dict, or None if not found or not visible.
         """
         query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
         if agent_id is not None:
             query = query.filter(A2ATask.a2a_agent_id == agent_id)
         task = query.first()
         if task is None:
+            return None
+        # Enforce agent visibility on the owning agent.
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
+        if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
             return None
         return A2ATaskRead.model_validate(task).model_dump(mode="json")
 
@@ -2030,7 +2062,16 @@ class A2AAgentService(BaseService):
         db.refresh(task)
         return A2ATaskRead.model_validate(task).model_dump(mode="json")
 
-    def list_tasks(self, db: Session, agent_id: Optional[str] = None, state: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_tasks(
+        self,
+        db: Session,
+        agent_id: Optional[str] = None,
+        state: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """List A2A tasks with optional filtering.
 
         Args:
@@ -2039,15 +2080,22 @@ class A2AAgentService(BaseService):
             state: Optional task state filter.
             limit: Maximum number of results.
             offset: Pagination offset.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
+                None = admin bypass, [] = public-only.
 
         Returns:
-            List of task data dicts.
+            List of task data dicts visible to the caller.
         """
         query = db.query(A2ATask)
         if agent_id is not None:
             query = query.filter(A2ATask.a2a_agent_id == agent_id)
         if state is not None:
             query = query.filter(A2ATask.state == state)
+        # Filter to tasks owned by agents the caller can see.
+        visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
+        if visible_agent_ids is not None:
+            query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
         query = query.order_by(desc(A2ATask.updated_at))
         query = query.limit(limit).offset(offset)
         return [A2ATaskRead.model_validate(t).model_dump(mode="json") for t in query.all()]

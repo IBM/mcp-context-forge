@@ -91,6 +91,8 @@ class A2AServerService:
         Args:
             db: Database session.
             server_name: Name of the virtual server.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
 
         Returns:
             AgentCard dict, or None if the server does not exist, is disabled,
@@ -161,6 +163,8 @@ class A2AServerService:
         Args:
             db: Database session.
             server_name: Name of the virtual server.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
 
         Returns:
             ResolvedAgent dict, or None.
@@ -322,6 +326,6 @@ class A2AServerService:
         query = select(DbServerInterface).where(
             DbServerInterface.server_id == server_id,
             DbServerInterface.enabled == True,  # noqa: E712
-            func.lower(DbServerInterface.protocol).contains("a2a"),
+            func.lower(DbServerInterface.protocol).in_(["a2a", "a2a/v1", "a2a/v0.3"]),
         )
         return db.execute(query).scalar_one_or_none()
