@@ -1,8 +1,8 @@
 # CrunchyData PostgresCluster CR
 # Tuned to match VM benchmark Postgres configuration
 # Apply with: oc apply -n <namespace> -f charts/mcp-stack/crunchydata-postgres-cr.yaml
-# Requires: CrunchyData PGO operator installed from OperatorHub
-#           Substitute __POSTGRES_PV__ and __POSTGRES_REPO_PV__ with your pre-created PV names
+# Requires: CrunchyData PGO operator installed
+#           nfs-client StorageClass available (dynamic provisioner)
 apiVersion: postgres-operator.crunchydata.com/v1beta1
 kind: PostgresCluster
 metadata:
@@ -20,12 +20,12 @@ spec:
           cpu: "2"
           memory: 4Gi
       dataVolumeClaimSpec:
+        storageClassName: nfs-client
         accessModes:
           - ReadWriteOnce
         resources:
           requests:
             storage: 2Gi
-        volumeName: __POSTGRES_PV__
   patroni:
     dynamicConfiguration:
       postgresql:
@@ -49,12 +49,12 @@ spec:
         - name: repo1
           volume:
             volumeClaimSpec:
+              storageClassName: nfs-client
               accessModes:
                 - ReadWriteOnce
               resources:
                 requests:
                   storage: 2Gi
-              volumeName: __POSTGRES_REPO_PV__
   proxy:
     pgBouncer:
       replicas: 1

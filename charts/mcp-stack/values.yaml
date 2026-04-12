@@ -993,6 +993,9 @@ mcpContextForge:
 ########################################################################
 migration:
   enabled: true                             # Set to false to skip migrations
+  hookPhase: "post-install,pre-upgrade"     # Helm hook phase. Use "pre-install,pre-upgrade" when Postgres is externally managed and already running.
+  hostKey: ""                               # Secret key for migration DB host. Empty = use postgres.external.hostKey. Set to "host" to bypass PgBouncer.
+  portKey: ""                               # Secret key for migration DB port. Empty = use postgres.external.portKey. Set to "port" to bypass PgBouncer.
 
   # Job configuration
   restartPolicy: Never                      # Job should not restart on failure

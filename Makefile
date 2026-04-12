@@ -2875,86 +2875,19 @@ OCP_NS ?=
 OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
 OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
 OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
-POSTGRES_PV ?=
-POSTGRES_REPO_PV ?=
-REDIS_PV ?=
 
-ocp-verify-pv:                               ## Verify Postgres + Redis PVs are ready (requires POSTGRES_PV, POSTGRES_REPO_PV, REDIS_PV)
-	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ] || [ -z "$(REDIS_PV)" ]; then \
-		echo "Usage: make ocp-verify-pv POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv> REDIS_PV=<redis-pv>"; exit 1; fi
-	@echo "=== Verifying PVs ==="
-	@/bin/bash -c '\
-		fail=0; \
-		for pv in $(POSTGRES_PV) $(POSTGRES_REPO_PV) $(REDIS_PV); do \
-			echo "Checking PV: $$pv"; \
-			if ! oc get pv $$pv >/dev/null 2>&1; then \
-				echo "  ERROR: PV $$pv does not exist"; fail=1; continue; \
-			fi; \
-			status=$$(oc get pv $$pv -o jsonpath="{.status.phase}"); \
-			if [ "$$status" = "Released" ]; then \
-				echo "  status: Released (stale claimRef from previous deployment) — auto-clearing..."; \
-				oc patch pv $$pv -p "{\"spec\":{\"claimRef\": null}}" >/dev/null; \
-				sleep 2; \
-				status=$$(oc get pv $$pv -o jsonpath="{.status.phase}"); \
-				if [ "$$status" = "Available" ]; then \
-					echo "  status: Available (auto-fixed)"; \
-				else \
-					echo "  ERROR: auto-fix failed, status is now $$status"; \
-					fail=1; \
-				fi; \
-			elif [ "$$status" != "Available" ]; then \
-				echo "  ERROR: status is $$status (expected Available)"; \
-				fail=1; \
-			else \
-				echo "  status: Available"; \
-			fi; \
-			modes=$$(oc get pv $$pv -o jsonpath="{.spec.accessModes}"); \
-			if ! echo "$$modes" | grep -q "ReadWriteOnce"; then \
-				echo "  ERROR: accessModes $$modes does not include ReadWriteOnce"; fail=1; \
-			else \
-				echo "  accessModes: $$modes"; \
-			fi; \
-			capacity=$$(oc get pv $$pv -o jsonpath="{.spec.capacity.storage}"); \
-			echo "  capacity: $$capacity"; \
-			sc=$$(oc get pv $$pv -o jsonpath="{.spec.storageClassName}"); \
-			if [ "$$sc" != "nfs-client" ]; then \
-				echo "  ERROR: storageClassName is \"$$sc\" (expected nfs-client)"; \
-				echo "         Fix: oc patch pv $$pv -p '\''{\"spec\":{\"storageClassName\":\"nfs-client\"}}'\''"; \
-				fail=1; \
-			else \
-				echo "  storageClassName: nfs-client"; \
-			fi; \
-		done; \
-		if [ $$fail -eq 0 ]; then \
-			echo ""; \
-			echo "=== All PVs ready ==="; \
-			echo "Next: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=$(POSTGRES_PV) POSTGRES_REPO_PV=$(POSTGRES_REPO_PV)"; \
-			echo "Then: make ocp-deploy OCP_NS=<namespace> REDIS_PV=$(REDIS_PV)"; \
-		else \
-			echo ""; \
-			echo "=== PV verification failed ==="; \
-			exit 1; \
-		fi'
-
-ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS, POSTGRES_PV, POSTGRES_REPO_PV)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; exit 1; fi
-	@if [ -z "$(POSTGRES_PV)" ] || [ -z "$(POSTGRES_REPO_PV)" ]; then \
-		echo "ERROR: POSTGRES_PV and POSTGRES_REPO_PV are required."; \
-		echo "Usage: make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<data-pv> POSTGRES_REPO_PV=<repo-pv>"; \
-		echo "Run 'make ocp-verify-pv' first to validate your PVs."; \
-		exit 1; fi
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-setup: Set up namespace and CrunchyData Postgres"
 	@echo "========================================"
-	@echo "Namespace:        $(OCP_NS)"
-	@echo "Postgres PV:      $(POSTGRES_PV)"
-	@echo "Postgres Repo PV: $(POSTGRES_REPO_PV)"
-	@echo "CR template:      $(OCP_PG_CR)"
+	@echo "Namespace: $(OCP_NS)"
+	@echo "CR:        $(OCP_PG_CR)"
 	@echo ""
 	@echo "This will:"
 	@echo "  1. Verify the CrunchyData PGO operator is installed"
 	@echo "  2. Create the namespace if it does not exist"
-	@echo "  3. Apply the PostgresCluster CR (with PV names substituted)"
+	@echo "  3. Apply the PostgresCluster CR (PVCs use dynamic nfs-client provisioning)"
 	@echo "  4. Wait for the Postgres pods to become Ready"
 	@echo ""
 	@echo "Each step is skipped if already present (idempotent)."
@@ -2973,36 +2906,44 @@ ocp-setup:                                   ## Set up OCP namespace and Crunchy
 	@echo "Checking PostgresCluster..."
 	@oc get pods -n $(OCP_NS) -l postgres-operator.crunchydata.com/cluster --no-headers 2>/dev/null | grep -q Running && \
 		echo "   PostgresCluster: already running" || \
-		(echo "   Applying PostgresCluster CR with PVs $(POSTGRES_PV) / $(POSTGRES_REPO_PV)..." && \
-		sed -e 's|__POSTGRES_PV__|$(POSTGRES_PV)|g' -e 's|__POSTGRES_REPO_PV__|$(POSTGRES_REPO_PV)|g' $(OCP_PG_CR) | \
-		oc apply -n $(OCP_NS) -f - && \
+		(echo "   Applying PostgresCluster CR..." && \
+		oc apply -n $(OCP_NS) -f $(OCP_PG_CR) && \
 		echo "   Waiting for Postgres pods (this may take a few minutes)..." && \
 		oc -n $(OCP_NS) wait --for=condition=Ready pod -l postgres-operator.crunchydata.com/role=master --timeout=300s 2>/dev/null || \
 		echo "   Postgres pods still starting. Check: oc get pods -n $(OCP_NS)")
+	@echo "Granting schema privileges to DB user..."
+	@/bin/bash -c 'echo "   Waiting for Postgres master pod..."; \
+		for i in $$(seq 1 30); do \
+			PG_POD=$$(oc -n $(OCP_NS) get pods -l postgres-operator.crunchydata.com/role=master --no-headers 2>/dev/null | grep Running | head -1 | awk "{print \$$1}"); \
+			if [ -n "$$PG_POD" ]; then break; fi; \
+			sleep 10; \
+		done; \
+		if [ -n "$$PG_POD" ]; then \
+			oc -n $(OCP_NS) exec $$PG_POD -c database -- psql -U postgres -d postgresdb -c "GRANT CREATE, USAGE ON SCHEMA public TO admin;" >/dev/null 2>&1 && \
+			echo "   Schema privileges: granted (CREATE, USAGE on public)" || \
+			echo "   Schema privileges: already set"; \
+		else \
+			echo "   WARNING: could not find Postgres master pod after 5 minutes — grant schema privileges manually:"; \
+			echo "   oc -n $(OCP_NS) exec <postgres-pod> -c database -- psql -U postgres -d postgresdb -c \"GRANT CREATE, USAGE ON SCHEMA public TO admin;\""; \
+		fi'
 	@echo ""
 	@echo "=== Setup complete ==="
 	@echo "Next: create secrets file at $(OCP_SECRETS) (see values file header for required keys)"
 	@echo "Then: make ocp-deploy OCP_NS=$(OCP_NS)"
 
-ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS, REDIS_PV)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace> REDIS_PV=<redis-pv>"; exit 1; fi
-	@if [ -z "$(REDIS_PV)" ]; then \
-		echo "ERROR: REDIS_PV is required."; \
-		echo "Usage: make ocp-deploy OCP_NS=<namespace> REDIS_PV=<redis-pv>"; \
-		echo "Run 'make ocp-verify-pv' first to validate your PVs."; \
-		exit 1; fi
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-deploy: Deploy ContextForge stack"
 	@echo "========================================"
 	@echo "Namespace:  $(OCP_NS)"
 	@echo "Values:     $(OCP_VALUES)"
 	@echo "Secrets:    $(OCP_SECRETS)"
-	@echo "Redis PV:   $(REDIS_PV)"
 	@echo ""
 	@echo "This will helm install:"
 	@echo "  - 3 gateway pods (Gunicorn, 8 workers each, Python MCP core)"
 	@echo "  - 3 NGINX pods (UBI9, reverse proxy)"
-	@echo "  - 1 Redis pod (PVC pinned to $(REDIS_PV))"
+	@echo "  - 1 Redis pod (PVC via dynamic nfs-client provisioner)"
 	@echo "  - 2 fast-time-server pods"
 	@echo "  - Connects to PGO-managed Postgres + PgBouncer"
 	@echo ""
@@ -3014,27 +2955,20 @@ ocp-deploy:                                  ## Deploy ContextForge on OCP (requ
 		-n $(OCP_NS) \
 		-f $(OCP_VALUES) \
 		-f $(OCP_SECRETS) \
-		--set redis.persistence.volumeName=$(REDIS_PV) \
 		--timeout 10m
 	@echo "Deploy complete. Check pods: oc get pods -n $(OCP_NS)"
 
-ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS, REDIS_PV)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<redis-pv>"; exit 1; fi
-	@if [ -z "$(REDIS_PV)" ]; then \
-		echo "ERROR: REDIS_PV is required (same value used in ocp-deploy) to preserve the Redis PVC volumeName binding."; \
-		echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<redis-pv>"; \
-		exit 1; fi
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-benchmark-setup: Enable Locust for benchmarking"
 	@echo "========================================"
 	@echo "Namespace: $(OCP_NS)"
-	@echo "Redis PV:  $(REDIS_PV)"
 	@echo ""
 	@echo "This will:"
 	@echo "  1. Generate a JWT token from inside the gateway pod"
 	@echo "  2. Fetch the virtual server UUID from /servers"
 	@echo "  3. Run helm upgrade with testing.locust.enabled=true and the server ID"
-	@echo "     (Redis volumeName is preserved so the PVC binding stays intact)"
 	@echo "  4. Wait up to 90s for 3 Locust workers to schedule"
 	@echo "  5. If only some workers schedule due to CPU pressure, continue with"
 	@echo "     a warning explaining the impact"
@@ -3057,7 +2991,6 @@ ocp-benchmark-setup:                         ## Enable Locust and configure serv
 			-n $(OCP_NS) \
 			-f $(OCP_VALUES) \
 			-f $(OCP_SECRETS) \
-			--set redis.persistence.volumeName=$(REDIS_PV) \
 			--set testing.locust.enabled=true \
 			--set testing.locust.mcpServerID=$$SERVER_ID > /dev/null && \
 		echo "   Helm upgrade complete." && \
@@ -3096,14 +3029,13 @@ ocp-benchmark:                               ## Run MCP benchmark on OCP (requir
 		'host':'http://$(OCP_NS)-mcp-stack-nginx'}).encode(), method='POST'))"
 	@echo "Benchmark running. Results in ~60s."
 
-ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS; optional REDIS_PV)
-	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace> [REDIS_PV=<redis-pv>]"; exit 1; fi
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
 	@echo "========================================"
 	@echo "make ocp-uninstall: Uninstall ContextForge Helm release"
 	@echo "========================================"
 	@echo "Namespace: $(OCP_NS)"
 	@echo "Release:   $(OCP_NS)"
-	@if [ -n "$(REDIS_PV)" ]; then echo "Redis PV:  $(REDIS_PV) (claimRef will be auto-cleared)"; fi
 	@echo ""
 	@echo "This will helm uninstall the release, removing:"
 	@echo "  - Gateway pods (3)"
@@ -3111,24 +3043,21 @@ ocp-uninstall:                               ## Uninstall the ContextForge Helm 
 	@echo "  - Redis pod"
 	@echo "  - fast-time-server pods"
 	@echo "  - Locust pods (if enabled)"
-	@echo "  - Helm-managed ConfigMaps and Secrets"
+	@echo "  - Helm-managed ConfigMaps, Secrets, and PVCs"
 	@echo ""
 	@echo "Preserved:"
 	@echo "  - Namespace itself"
 	@echo "  - PostgresCluster CR (Postgres + PgBouncer keep running)"
-	@echo "  - PV data (PVs remain Bound to the PostgresCluster; Redis PV goes Released and is auto-cleared if REDIS_PV is provided)"
 	@echo "  - Local secrets file"
 	@echo ""
-	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) REDIS_PV=... (re-installs the release)"
+	@echo "Note: PVs provisioned by the dynamic nfs-client provisioner are cleaned up"
+	@echo "automatically based on the StorageClass reclaim policy."
+	@echo ""
+	@echo "Recovery: make ocp-deploy OCP_NS=$(OCP_NS) (re-installs the release)"
 	@echo ""
 	@/bin/bash -c 'read -p "Continue? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
 	@echo ""
 	helm uninstall $(OCP_NS) -n $(OCP_NS)
-	@if [ -n "$(REDIS_PV)" ]; then \
-		sleep 3; \
-		echo "Clearing Redis PV claimRef to keep it Available for the next deploy..."; \
-		oc patch pv $(REDIS_PV) -p '{"spec":{"claimRef": null}}' 2>&1; \
-	fi
 	@echo "Uninstall complete."
 
 # =============================================================================

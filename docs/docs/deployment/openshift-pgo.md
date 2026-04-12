@@ -77,82 +77,9 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 ## Quick Start
 
-If you have the PGO operator already installed on your cluster, you can deploy and benchmark with a few commands.
+If you have the PGO operator already installed on your cluster, you can deploy and benchmark with a few commands. Storage is handled automatically via the `nfs-client` dynamic provisioner — no manual PV creation needed.
 
-**1. Create three PersistentVolumes** (Postgres data, pgBackRest repo, Redis):
-
-For production deployments you need three persistent volumes — one for the Postgres database, one for backups, and one for Redis. Pick names that are unique to your namespace so they don't collide with other users on the cluster.
-
-| PV | Purpose | Capacity |
-|----|---------|---------|
-| `<your-ns>-postgres-pv` | Postgres database files (users, tools, servers, sessions) | 2Gi |
-| `<your-ns>-postgres-repo-pv` | pgBackRest backups + WAL archives | 2Gi |
-| `<your-ns>-redis-pv` | Auth cache, session pool, registry cache, rate limiter counters, MCP session affinity | 1Gi |
-
-Each PV must have:
-- `accessModes: [ReadWriteOnce]`
-- `storageClassName: nfs-client` (or whichever storage class your cluster uses)
-- `persistentVolumeReclaimPolicy: Retain` (don't lose data if the PVC is deleted)
-
-Why all three matter in production: losing the Postgres data PV means losing the database. Losing the repo PV means losing point-in-time recovery. Losing Redis persistence means every restart wipes auth tokens, active sessions, and rate limit windows — users get logged out, requests fail, in-flight MCP sessions break.
-
-Example PV YAML (NFS-backed):
-
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: <your-ns>-postgres-pv
-spec:
-  capacity:
-    storage: 2Gi
-  accessModes: [ReadWriteOnce]
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: nfs-client
-  nfs:
-    path: /data/nfsx/<your-ns>-postgres
-    server: <nfs-server-ip>
----
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: <your-ns>-postgres-repo-pv
-spec:
-  capacity:
-    storage: 2Gi
-  accessModes: [ReadWriteOnce]
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: nfs-client
-  nfs:
-    path: /data/nfsx/<your-ns>-postgres-repo
-    server: <nfs-server-ip>
----
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: <your-ns>-redis-pv
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes: [ReadWriteOnce]
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: nfs-client
-  nfs:
-    path: /data/nfsx/<your-ns>-redis
-    server: <nfs-server-ip>
-```
-
-Apply with `oc apply -f <file>.yaml`.
-
-**2. Verify your PVs are ready:**
-
-```bash
-make ocp-verify-pv POSTGRES_PV=<your-ns>-postgres-pv POSTGRES_REPO_PV=<your-ns>-postgres-repo-pv REDIS_PV=<your-ns>-redis-pv
-```
-
-This checks all three PVs exist, are `Available` (not Bound or Released), have `ReadWriteOnce`, the right storage class, and prints exact `oc patch` commands to fix any issues.
-
-**3. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
+**1. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
 
 ```yaml
 mcpContextForge:
@@ -169,38 +96,38 @@ testing:
       secret: "<same as JWT_SECRET_KEY above>"
 ```
 
-**4. Set up namespace and Postgres:**
+**2. Set up namespace and Postgres:**
 
 ```bash
-make ocp-setup OCP_NS=<namespace> POSTGRES_PV=<your-ns>-postgres-pv POSTGRES_REPO_PV=<your-ns>-postgres-repo-pv
+make ocp-setup OCP_NS=<namespace>
 ```
 
-This checks the PGO operator is installed, creates the namespace if needed, substitutes your PV names into the PostgresCluster CR template, and applies it. Safe to run multiple times.
+This checks the PGO operator is installed, creates the namespace if needed, applies the PostgresCluster CR (PVCs use dynamic `nfs-client` provisioning), waits for Postgres to be Ready, and grants the required schema privileges. Safe to run multiple times.
 
-**5. Deploy the full stack:**
+**3. Deploy the full stack:**
 
 ```bash
-make ocp-deploy OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
+make ocp-deploy OCP_NS=<namespace>
 ```
 
-This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis, and connects to the PGO-managed Postgres. Locust is **not** deployed at this stage to save cluster resources — it is enabled on demand by `ocp-benchmark-setup`.
+This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis (PVC dynamically provisioned), and connects to the PGO-managed Postgres. Database migration runs as a `pre-install` hook directly to Postgres (bypasses PgBouncer for advisory lock safety). Locust is **not** deployed at this stage to save cluster resources — it is enabled on demand by `ocp-benchmark-setup`.
 
-**6. Run the MCP benchmark:**
+**4. Run the MCP benchmark:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
+make ocp-benchmark-setup OCP_NS=<namespace>
 make ocp-benchmark OCP_NS=<namespace>
 ```
 
-`ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. `REDIS_PV` is required here too so the Redis PVC's `volumeName` binding is preserved during the `helm upgrade`. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
+`ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning. `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
 
 **To uninstall and start over:**
 
 ```bash
-make ocp-uninstall OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
+make ocp-uninstall OCP_NS=<namespace>
 ```
 
-This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres. Passing `REDIS_PV` is optional — when provided, the target auto-clears the Redis PV `claimRef` after uninstall so the PV goes straight back to `Available` and the next deploy works without any manual `oc patch`. `ocp-verify-pv` also auto-fixes a `Released` Redis PV as a safety net, so both paths are covered.
+This runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` to redeploy quickly without re-creating Postgres. Dynamically provisioned PVs are cleaned up automatically by the `nfs-client` provisioner based on the StorageClass reclaim policy.
 
 The destructive Make targets (`ocp-setup`, `ocp-deploy`, `ocp-benchmark-setup`, `ocp-uninstall`) all show what they will do and prompt for confirmation before running.
 
@@ -219,8 +146,7 @@ The sections below explain each step in detail — what the Make commands do int
 - **OCP cluster** with `oc` CLI access (developer or admin)
 - **CrunchyData PGO operator** installed from OperatorHub
 - **Helm 3** CLI installed locally
-- **Persistent storage** for PostgreSQL (dynamic StorageClass or manually provisioned PV)
-- Redis persistence is optional. If no PV is available, set in your values file: `redis.persistence.enabled: false`
+- **`nfs-client` StorageClass** available on the cluster (dynamic NFS provisioner for Postgres and Redis PVCs)
 
 ---
 
@@ -322,7 +248,7 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
 
 ## Step 5: Deploy with Helm
 
-A single `helm install` deploys the full stack — gateway pods acquire an advisory lock internally to serialize migration, so no two-step install is needed.
+A single `helm install` deploys the full stack. Database migration runs as a `pre-install` hook directly to Postgres (bypassing PgBouncer), so the schema is ready before gateway pods start.
 
 ```bash
 helm install contextforge charts/mcp-stack \
@@ -444,13 +370,13 @@ When enabled, Locust is configured with:
 **1. Enable Locust and configure the server ID:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace> REDIS_PV=<your-ns>-redis-pv
+make ocp-benchmark-setup OCP_NS=<namespace>
 ```
 
 This is the recommended path. The target:
 - Fetches a JWT token from inside the gateway pod
 - Calls `/servers` to get the virtual server UUID created by the registration hooks
-- Runs `helm upgrade` with `--set testing.locust.enabled=true --set testing.locust.mcpServerID=<uuid> --set redis.persistence.volumeName=<redis-pv>` (the Redis volumeName must be re-passed so Helm doesn't try to remove it from the PVC spec on upgrade — PVCs have an immutable volumeName, so dropping it would break the binding)
+- Runs `helm upgrade` with `--set testing.locust.enabled=true --set testing.locust.mcpServerID=<uuid>`
 - Waits up to 90s for the 3 Locust workers to schedule, polling every 10s
 - If only some workers schedule due to CPU pressure, prints a warning explaining the impact and continues
 
@@ -465,7 +391,6 @@ helm upgrade <release> charts/mcp-stack \
   -n <namespace> \
   -f charts/mcp-stack/values-ocp-pgo.yaml \
   -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
-  --set redis.persistence.volumeName=<your-ns>-redis-pv \
   --set testing.locust.enabled=true \
   --set testing.locust.mcpServerID=$SERVER_ID
 ```
@@ -491,11 +416,7 @@ Plugins in enforce: RateLimiterPlugin (10,000/m), OutputLengthGuardPlugin (15K c
 
 ## Enabling Plugins
 
-By default, `pluginConfig.enabled: false` in the values file. To enable plugins:
-
-1. Set `pluginConfig.enabled: true` in `values-ocp-pgo.yaml`
-2. Redeploy (uninstall + two-step install)
-3. Plugins load from the plugin config in the values file
+By default, `pluginConfig.enabled: true` in the OCP values file. The plugins are configured in the plugin config section of `values-ocp-pgo.yaml`.
 
 The following plugins are included:
 
@@ -519,7 +440,7 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 |-------|----------|
 | Gateway pods stuck at 0/1 Running | Check `oc logs` for DB connectivity. Verify PGO Postgres and PgBouncer pods are Running. |
 | Gateway pod Pending | Insufficient CPU on worker nodes. Check `oc describe pod` for scheduling errors. Free resources from other namespaces or reduce CPU requests. |
-| Redis PVC stuck in Pending | No dynamic PV provisioner. Set `redis.persistence.enabled: false` in values, or provision a PV manually. |
+| Redis PVC stuck in Pending | Check the `nfs-client` StorageClass exists (`oc get sc nfs-client`). If the dynamic provisioner isn't installed, see your cluster admin. |
 | Locust workers not connecting | Locust is off by default in the OCP values file. Run `make ocp-benchmark-setup` to enable it (sets `testing.locust.enabled=true`). If still failing, check DNS resolution to `<release>-mcp-stack-locust` — ZeroMQ ports 5557/5558 are included in the Locust Service template. |
 | Only some Locust workers scheduled | Cluster CPU is at high allocation. The benchmark setup target waits 90s and continues with whatever workers are available. RPS may be slightly lower than the 3-worker baseline. Free CPU on worker nodes if you want all 3. |
 | `helm upgrade` fails with field conflicts | Manual `oc` patches create field manager conflicts. Use `helm uninstall` + `helm install` instead. |
@@ -537,6 +458,8 @@ The `values-ocp-pgo.yaml` file includes these OCP-specific settings:
 |---------|-------|-----|
 | `mcpContextForge.image.pullPolicy` | `Always` | Ensure latest image is pulled |
 | `mcpContextForge.hpa.enabled` | `false` | Prevent HPA from fighting manual scaling during benchmarking |
+| `migration.hookPhase` | `pre-install,pre-upgrade` | Migration runs before gateway pods start (Postgres already exists via PGO) |
+| `migration.hostKey` | `host` | Migration connects directly to Postgres, bypassing PgBouncer for advisory lock safety |
 | `postgres.external.enabled` | `true` | Connect to CrunchyData PGO instead of Helm-managed Postgres |
 | `pgbouncer.enabled` | `false` | CrunchyData provides its own PgBouncer |
 | `nginxProxy.enabled` | `true` | NGINX proxy layer for load balancing |

@@ -13,7 +13,7 @@
 #   - Chart-managed PgBouncer disabled; connects via the PGO-provided PgBouncer endpoint
 #   - NGINX proxy enabled (UBI9 image), 3 replicas, with TLS for Route re-encrypt termination
 #   - Locust deferred until ocp-benchmark-setup so ocp-deploy doesn't waste cluster CPU on test pods
-#   - Postgres data + Redis use pre-created NFS PVs bound by name (volumeName)
+#   - Postgres data + Redis use dynamic NFS provisioning (storageClassName: nfs-client)
 #   - SSRF private networks allowed for in-cluster MCP server registration
 #   - Explicit Docker Hub image references to avoid pull rate-limit ambiguity
 ########################################################################
@@ -282,6 +282,14 @@ mcpContextForge:
     PLATFORM_ADMIN_PASSWORD: "changeme"  # pragma: allowlist secret
     REQUIRE_STRONG_SECRETS: "false"        # set true in secrets override file
 
+# --- Migration ---
+# Run migration as pre-install hook (Postgres already exists via PGO operator).
+# Connect directly to Postgres (bypass PgBouncer) so advisory locks work correctly.
+migration:
+  hookPhase: "pre-install,pre-upgrade"
+  hostKey: "host"
+  portKey: "port"
+
 # --- Postgres ---
 # Using CrunchyData PGO operator — internal Postgres and PgBouncer disabled
 postgres:
@@ -314,6 +322,7 @@ redis:
       memory: 1Gi
   persistence:
     enabled: true
+    storageClassName: nfs-client
     size: 1Gi
     accessModes: [ReadWriteOnce]
 
