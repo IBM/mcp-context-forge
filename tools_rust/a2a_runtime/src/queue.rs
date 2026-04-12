@@ -65,7 +65,7 @@ pub struct WorkerState {
 
 /// A batch of requests plus a channel to return results.
 struct Job {
-    requests: Vec<ResolvedRequest>,
+    requests: Vec<Arc<ResolvedRequest>>,
     timeout: Duration,
     result_tx: oneshot::Sender<Vec<JobResult>>,
 }
@@ -224,7 +224,7 @@ async fn worker_loop(
 struct RequestEntry {
     job_idx: usize,
     pos_in_job: usize,
-    request: ResolvedRequest,
+    request: Arc<ResolvedRequest>,
 }
 
 /// Execute a batch of jobs, deduplicating requests by `request_id`.
@@ -436,7 +436,7 @@ pub fn try_submit_batch(
     let (result_tx, result_rx) = oneshot::channel();
 
     let job = Job {
-        requests,
+        requests: requests.into_iter().map(Arc::new).collect(),
         timeout,
         result_tx,
     };
@@ -630,7 +630,7 @@ mod tests {
         let (tx_b, rx_b) = oneshot::channel();
         let job_a = Job {
             requests: vec![
-                ResolvedRequest {
+                Arc::new(ResolvedRequest {
                     id: 0,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -642,8 +642,8 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: Some("dedupe-me".to_string()),
                     correlation_id: None,
-                },
-                ResolvedRequest {
+                }),
+                Arc::new(ResolvedRequest {
                     id: 1,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -655,13 +655,13 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: None,
                     correlation_id: None,
-                },
+                }),
             ],
             timeout: Duration::from_secs(1),
             result_tx: tx_a,
         };
         let job_b = Job {
-            requests: vec![ResolvedRequest {
+            requests: vec![Arc::new(ResolvedRequest {
                 id: 0,
                 endpoint_url: format!("{}/invoke", mock_server.uri()),
                 headers: HashMap::new(),
@@ -673,7 +673,7 @@ mod tests {
                 scope_id: Some("scope-1".to_string()),
                 request_id: Some("dedupe-me".to_string()),
                 correlation_id: None,
-            }],
+            })],
             timeout: Duration::from_secs(1),
             result_tx: tx_b,
         };
@@ -768,7 +768,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let (result_tx, result_rx) = oneshot::channel();
         tx.send(QueueMessage::Job(Job {
-            requests: vec![ResolvedRequest {
+            requests: vec![Arc::new(ResolvedRequest {
                 id: 0,
                 endpoint_url: format!("{}/invoke", mock_server.uri()),
                 headers: HashMap::new(),
@@ -780,7 +780,7 @@ mod tests {
                 scope_id: Some("scope-1".to_string()),
                 request_id: None,
                 correlation_id: None,
-            }],
+            })],
             timeout: Duration::from_secs(1),
             result_tx,
         }))
@@ -822,7 +822,7 @@ mod tests {
 
         execute_job_batch(
             vec![Job {
-                requests: vec![ResolvedRequest {
+                requests: vec![Arc::new(ResolvedRequest {
                     id: 0,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -834,7 +834,7 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: None,
                     correlation_id: None,
-                }],
+                })],
                 timeout: Duration::from_secs(1),
                 result_tx: tx,
             }],

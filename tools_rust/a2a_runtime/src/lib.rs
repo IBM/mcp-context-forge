@@ -150,6 +150,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
         agent_cache,
         session_manager,
         event_store: event_store_arc,
+        resolve_inflight: Arc::new(dashmap::DashMap::new()),
     };
 
     let app = server::router(state);
@@ -256,6 +257,7 @@ pub mod test_support {
             agent_cache,
             session_manager: None,
             event_store,
+            resolve_inflight: Arc::new(dashmap::DashMap::new()),
         };
 
         server::router(state)

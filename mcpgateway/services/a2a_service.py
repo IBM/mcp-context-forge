@@ -348,13 +348,28 @@ class A2AAgentService(BaseService):
 
         Used by list_tasks to scope results to agents the caller can see.
         Returns None when the caller has unrestricted (admin) access.
+        Pushes visibility filtering into SQL to avoid loading all agents.
         """
         # Admin bypass
         if token_teams is None and user_email is None:
             return None
 
-        agents = db.query(DbA2AAgent).filter(DbA2AAgent.enabled == True).all()  # noqa: E712
-        return [a.id for a in agents if self._check_agent_access(a, user_email, token_teams)]
+        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled == True)  # noqa: E712
+
+        # Build visibility predicate matching _check_agent_access rules.
+        visibility_filters = [DbA2AAgent.visibility == "public"]
+
+        is_public_only = not user_email or (token_teams is not None and len(token_teams) == 0)
+        if not is_public_only:
+            if token_teams is not None and len(token_teams) > 0:
+                visibility_filters.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(token_teams)))
+            elif token_teams is None:
+                # token_teams is None with user_email set → admin with email context
+                visibility_filters.append(DbA2AAgent.visibility == "team")
+            visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
+
+        query = query.filter(or_(*visibility_filters))
+        return [row[0] for row in query.all()]
 
     def _check_agent_access_by_id(
         self,

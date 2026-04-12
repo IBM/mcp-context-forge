@@ -16,16 +16,21 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use dashmap::DashMap;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
 use tracing::{info, warn};
 
 const RUNTIME_NAME: &str = "contextforge-a2a-runtime";
 const CONTENT_TYPE_SSE: &str = "text/event-stream";
+
+/// In-flight resolve map: cache_key → watch receiver broadcasting the result.
+type ResolveInflight = DashMap<String, watch::Receiver<Option<Result<ResolvedAgent, String>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -43,6 +48,10 @@ pub struct AppState {
     pub(crate) agent_cache: Arc<crate::cache::TieredCache<ResolvedAgent>>,
     pub(crate) session_manager: Option<Arc<crate::session::SessionManager>>,
     pub(crate) event_store: Option<Arc<crate::event_store::EventStore>>,
+    /// In-flight resolve requests keyed by scoped cache key.  Prevents
+    /// thundering-herd on cache miss — the first caller resolves from
+    /// Python and all concurrent waiters receive the same result.
+    pub(crate) resolve_inflight: Arc<ResolveInflight>,
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +262,9 @@ fn scoped_cache_key(agent_name: &str, auth_context: &Value) -> String {
 /// is called (L3).  Successful responses are written to both L1 and L2.
 ///
 /// Cache keys include a hash of the caller's team scope to prevent
-/// cross-tenant cache poisoning.
+/// cross-tenant cache poisoning.  Concurrent requests for the same cache
+/// key are deduplicated — only the first caller hits Python, the rest
+/// wait for the same result (single-flight pattern).
 async fn resolve_agent(
     state: &AppState,
     agent_name: &str,
@@ -266,7 +277,39 @@ async fn resolve_agent(
         return Ok(agent);
     }
 
-    // L1+L2 miss — call Python resolve endpoint (L3).
+    // Check if another request is already resolving this key.
+    if let Some(entry) = state.resolve_inflight.get(&cache_key) {
+        let mut rx = entry.clone();
+        drop(entry); // release DashMap read lock
+        // Wait for the leader to publish the result.
+        while rx.changed().await.is_ok() {
+            if let Some(result) = rx.borrow().as_ref() {
+                return result.clone().map_err(|e| (StatusCode::BAD_GATEWAY, e));
+            }
+        }
+        // Sender dropped without publishing — fall through and resolve ourselves.
+    }
+
+    // We are the leader: insert a watch channel so followers wait on us.
+    let (tx, rx) = watch::channel(None);
+    state.resolve_inflight.insert(cache_key.clone(), rx);
+
+    let result = resolve_agent_from_python(state, agent_name, auth_context, &cache_key).await;
+
+    // Publish result to waiters and remove the inflight entry.
+    let _ = tx.send(Some(result.clone().map_err(|(_status, msg)| msg)));
+    state.resolve_inflight.remove(&cache_key);
+
+    result
+}
+
+/// Perform the actual Python resolve call (L3 backend).
+async fn resolve_agent_from_python(
+    state: &AppState,
+    agent_name: &str,
+    auth_context: &Value,
+    cache_key: &str,
+) -> Result<ResolvedAgent, (StatusCode, String)> {
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
     let url = format!(
         "{}/_internal/a2a/agents/{}/resolve",
@@ -309,7 +352,7 @@ async fn resolve_agent(
     })?;
 
     // Populate L1 + L2 with scope-aware key.
-    state.agent_cache.set(&cache_key, agent.clone()).await;
+    state.agent_cache.set(cache_key, agent.clone()).await;
 
     Ok(agent)
 }
@@ -1253,6 +1296,7 @@ mod tests {
             )),
             session_manager: None,
             event_store: None,
+            resolve_inflight: Arc::new(DashMap::new()),
         }
     }
 
