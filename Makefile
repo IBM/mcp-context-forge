@@ -2975,6 +2975,19 @@ define check_ansible
 	 exit 1)
 endef
 
+ocp-install-operator:                        ## Install CrunchyData PGO operator (one-time, cluster-wide, requires OCP_CLUSTER)
+	$(check_ansible)
+	@if [ -z "$(OCP_CLUSTER)" ]; then echo "Usage: make ocp-install-operator OCP_CLUSTER=<api-url>"; echo "Example: make ocp-install-operator OCP_CLUSTER=https://api.my-cluster.example.com:6443"; exit 1; fi
+	@CURRENT=$$(oc whoami --show-server 2>/dev/null) || (echo "ERROR: Not logged in. Run: oc login $(OCP_CLUSTER)" && exit 1); \
+		if [ "$$CURRENT" != "$(OCP_CLUSTER)" ]; then \
+			echo "ERROR: Currently logged into $$CURRENT but OCP_CLUSTER=$(OCP_CLUSTER)"; \
+			echo "Run: oc login $(OCP_CLUSTER)"; exit 1; \
+		fi
+	@/bin/bash -c 'read -p "Install CrunchyData PGO operator on $(OCP_CLUSTER)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/install-operator.yml \
+		-i $(OCP_INVENTORY) \
+		-e skip_confirm=true
+
 ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
 	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
