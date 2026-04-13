@@ -10,6 +10,7 @@ Unit tests for observability middleware.
 import base64
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
@@ -285,7 +286,6 @@ async def test_get_db_creates_own_session_when_no_middleware_session():
 
 def test_get_safe_token_claims_from_request_no_auth():
     """When no Authorization header, returns None."""
-    from types import SimpleNamespace
     request = MagicMock(spec=Request)
     request.headers = {}
     request.state = SimpleNamespace()
@@ -305,7 +305,6 @@ def test_get_safe_token_claims_from_request_prefers_state():
 
 def test_get_safe_token_claims_from_request_bearer_valid():
     """When Bearer token has valid payload, returns safe claims."""
-    from types import SimpleNamespace
     payload = {"sub": "user-123", "iss": "https://auth.example.com", "iat": 1700000000, "exp": 1700086400}
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     header_b64 = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip("=")
@@ -326,7 +325,6 @@ def test_get_safe_token_claims_from_request_bearer_valid():
 
 def test_get_safe_token_claims_from_request_bearer_invalid_returns_none():
     """When Bearer token is malformed, returns None."""
-    from types import SimpleNamespace
     request = MagicMock(spec=Request)
     request.headers = {"Authorization": "Bearer not.three.parts"}
     request.state = SimpleNamespace()

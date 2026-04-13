@@ -62,6 +62,12 @@ def _get_safe_token_claims_from_request(request: Request) -> Optional[Dict[str, 
     Prefers request.state.token_claims if set by auth middleware; otherwise
     decodes the Bearer token payload (without verification; request is already authenticated).
     Only returns standard claims that are typically safe to store: sub, iss, aud, iat, exp, nbf, jti.
+
+    Args:
+        request: The incoming Starlette request (Authorization header or request.state.token_claims).
+
+    Returns:
+        Dict of safe claims (token.sub, token.iss, etc.) or None if no token/claims present.
     """
     # Prefer claims already set by auth middleware
     if hasattr(request.state, "token_claims") and isinstance(getattr(request.state, "token_claims"), dict):
