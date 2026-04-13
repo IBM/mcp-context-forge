@@ -2437,7 +2437,7 @@ server_a2a_association = Table(
     "server_a2a_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("a2a_agent_id", String(512), ForeignKey("a2a_agents.id"), primary_key=True),
+    Column("a2a_agent_id", String(36), ForeignKey("a2a_agents.id"), primary_key=True),
 )
 
 
@@ -2578,7 +2578,7 @@ class A2AAgentMetric(Base):
     __tablename__ = "a2a_agent_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    a2a_agent_id: Mapped[str] = mapped_column(String(512), ForeignKey("a2a_agents.id"), nullable=False, index=True)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2727,7 +2727,7 @@ class A2AAgentMetricsHourly(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(512), ForeignKey("a2a_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="SET NULL"), nullable=True, index=True)
     agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
     hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     interaction_type: Mapped[str] = mapped_column(String(50), nullable=False, default="invoke")
@@ -4760,7 +4760,7 @@ class A2AAgent(Base):
 
     __tablename__ = "a2a_agents"
 
-    id: Mapped[str] = mapped_column(String(512), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
 
     # UAID (Universal Agent ID) fields for HCS-14 support
     uaid: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, comment="Full UAID string for UAID-based agents")

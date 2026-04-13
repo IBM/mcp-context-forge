@@ -519,7 +519,6 @@ class A2AAgentService(BaseService):
                         auth_value = None
 
                 # Generate UAID if requested
-                agent_id: Optional[str] = None
                 uaid_metadata: Dict[str, Optional[str]] = {}
 
                 if getattr(agent_data, "generate_uaid", False):
@@ -536,8 +535,7 @@ class A2AAgentService(BaseService):
                             skills=getattr(agent_data, "uaid_skills", None) or [],
                         )
 
-                        # Use UAID as primary ID
-                        agent_id = uaid
+                        # Store UAID in separate field, keep UUID for id (optimal indexing and URL routing)
                         uaid_metadata = {
                             "uaid": uaid,
                             "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
@@ -546,14 +544,11 @@ class A2AAgentService(BaseService):
                         }
                         logger.info(f"Generated UAID for agent {agent_data.name}: {uaid}")
                     except Exception as uaid_error:
-                        logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID.")
-                        # Fall back to UUID on error
-                        agent_id = None
+                        logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID only.")
                         uaid_metadata = {}
 
-                # Create new agent
+                # Create new agent (id will be auto-generated as UUID)
                 new_agent = DbA2AAgent(
-                    id=agent_id,  # Will use UUID default if None
                     name=agent_data.name,
                     **uaid_metadata,  # Add UAID fields if generated
                     description=agent_data.description,

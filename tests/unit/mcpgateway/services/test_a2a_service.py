@@ -4953,11 +4953,12 @@ class TestUAIDGenerationCoverage:
         with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
             await service.register_agent(mock_db, agent_data)
 
-        # Verify UAID was generated
+        # Verify UAID was generated and stored in separate field
         assert captured_agent is not None
-        assert captured_agent.id is not None
-        assert captured_agent.id.startswith("uaid:aid:")
-        assert captured_agent.uaid == captured_agent.id
+        # Note: id will be None here because SQLAlchemy defaults aren't evaluated until persist
+        # In real usage, the UUID is generated on db.add() + db.flush()
+        assert captured_agent.uaid is not None
+        assert captured_agent.uaid.startswith("uaid:aid:")
         assert captured_agent.uaid_registry == "context-forge"
         assert captured_agent.uaid_proto == "a2a"
         assert captured_agent.uaid_native_id == "https://uaid-agent.example.com"
