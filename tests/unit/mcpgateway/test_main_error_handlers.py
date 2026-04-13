@@ -960,6 +960,35 @@ class TestInternalMcpPluginExceptions:
             assert content["error"]["code"] == -32000
             assert content["id"] == 4
 
+    def test_call_plugin_error_returns_jsonrpc_format(self, test_client, mock_internal_auth):
+        """Tools/call endpoint returns proper JSON-RPC format for PluginError."""
+        # First-Party
+        from mcpgateway.plugins.framework.errors import PluginError
+        from mcpgateway.plugins.framework.models import PluginErrorModel
+
+        error = PluginErrorModel(
+            message="Plugin crashed",
+            plugin_name="test_plugin",
+            code="CRASH",
+            mcp_error_code=-32603,
+        )
+
+        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
+            mock_invoke.side_effect = PluginError(error=error)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 5},
+            )
+
+            content = response.json()
+
+            # Verify JSON-RPC format (returns dict, not ORJSONResponse)
+            assert content["jsonrpc"] == "2.0"
+            assert "error" in content
+            assert content["error"]["code"] == -32603
+            assert content["id"] == 5
+
     def test_resolve_preserves_request_id(self, test_client, mock_internal_auth):
         """Resolve endpoint preserves request ID from incoming JSON-RPC request."""
         # First-Party
