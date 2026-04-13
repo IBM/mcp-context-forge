@@ -10,6 +10,7 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 import base64
+import json
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 import logging
@@ -2290,8 +2291,7 @@ class TestToolService:
             data = call_kwargs.kwargs.get("data")
             assert data["scalar"] == "42"
             assert data["nothing"] == ""
-            import json as _json
-            assert _json.loads(data["nested"]) == {"key": "val"}
+            assert json.loads(data["nested"]) == {"key": "val"}
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_decrypts_encrypted_custom_headers(self, tool_service, mock_tool, mock_global_config_obj, test_db):
