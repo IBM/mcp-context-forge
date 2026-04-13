@@ -2344,13 +2344,14 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
-                    logger.info(
-                        "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
+                    # CWE-532: log only the meta_data key names (never the values which may carry PII/tokens)
+                    logger.debug(
+                        "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta keys: %s",
                         resource_uri,
                         server_id,
                         gateway.id,
                         GATEWAY_ID_HEADER,
-                        meta_data,
+                        sorted(meta_data.keys()) if meta_data else None,
                     )
 
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)

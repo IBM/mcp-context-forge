@@ -24,6 +24,7 @@ Examples:
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
+import json
 import mimetypes
 import os
 import re
@@ -110,6 +111,59 @@ logger = logging_service.get_logger(__name__)
 structured_logger = get_structured_logger("resource_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
+# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
+_META_MAX_KEYS: int = 16
+_META_MAX_DEPTH: int = 2
+_META_MAX_BYTES: int = 4096
+
+
+def _validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    Args:
+        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
+
+    Raises:
+        ValueError: if any limit is exceeded.
+    """
+    if not meta_data:
+        return
+    if len(meta_data) > _META_MAX_KEYS:
+        raise ValueError(f"meta_data exceeds maximum key count ({_META_MAX_KEYS}): got {len(meta_data)}")
+    for v in meta_data.values():
+        if isinstance(v, dict) and any(isinstance(vv, dict) for vv in v.values()):
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({_META_MAX_DEPTH})")
+    try:
+        size = len(json.dumps(meta_data, default=str))
+        if size > _META_MAX_BYTES:
+            raise ValueError(f"meta_data exceeds maximum size ({_META_MAX_BYTES} bytes): got {size}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"meta_data is not serializable: {exc}") from exc
+
+
+def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
+    """Build a ReadResource ClientRequest that carries _meta (CWE-20, CWE-284).
+
+    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
+    key written into the dict so the subsequent ``model_validate`` call
+    resolves it correctly regardless of ``populate_by_name`` settings.
+
+    ``send_request`` is used instead of ``session.read_resource()`` because the
+    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
+    updated if the SDK later adds that capability.
+
+    Args:
+        uri: The resource URI.
+        meta_data: Validated metadata dict to inject as ``_meta``.
+
+    Returns:
+        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+    """
+    _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
+    _rp_dict["_meta"] = meta_data
+    return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
 
 
 class ResourceError(Exception):
@@ -1919,11 +1973,8 @@ class ResourceService(BaseService):
                                         gateway_id=gateway_id,
                                     ) as pooled:
                                         if meta_data:
-                                            _rp = ReadResourceRequestParams(uri=uri)
-                                            _rp_dict = _rp.model_dump()
-                                            _rp_dict["_meta"] = meta_data
                                             resource_response = await pooled.session.send_request(
-                                                types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                _build_read_resource_request(uri, meta_data),
                                                 types.ReadResourceResult,
                                             )
                                         else:
@@ -1938,11 +1989,8 @@ class ResourceService(BaseService):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
                                             if meta_data:
-                                                _rp = ReadResourceRequestParams(uri=uri)
-                                                _rp_dict = _rp.model_dump()
-                                                _rp_dict["_meta"] = meta_data
                                                 resource_response = await session.send_request(
-                                                    types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                    _build_read_resource_request(uri, meta_data),
                                                     types.ReadResourceResult,
                                                 )
                                             else:
@@ -2016,11 +2064,8 @@ class ResourceService(BaseService):
                                         gateway_id=gateway_id,
                                     ) as pooled:
                                         if meta_data:
-                                            _rp = ReadResourceRequestParams(uri=uri)
-                                            _rp_dict = _rp.model_dump()
-                                            _rp_dict["_meta"] = meta_data
                                             resource_response = await pooled.session.send_request(
-                                                types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                _build_read_resource_request(uri, meta_data),
                                                 types.ReadResourceResult,
                                             )
                                         else:
@@ -2036,11 +2081,8 @@ class ResourceService(BaseService):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
                                             if meta_data:
-                                                _rp = ReadResourceRequestParams(uri=uri)
-                                                _rp_dict = _rp.model_dump()
-                                                _rp_dict["_meta"] = meta_data
                                                 resource_response = await session.send_request(
-                                                    types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                    _build_read_resource_request(uri, meta_data),
                                                     types.ReadResourceResult,
                                                 )
                                             else:
@@ -2171,6 +2213,8 @@ class ResourceService(BaseService):
         resource_db = None
         server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
+        # CWE-400: Validate meta_data limits before any further processing
+        _validate_meta_data(meta_data)
         content = None
         uri = resource_uri or "unknown"
         if resource_id:

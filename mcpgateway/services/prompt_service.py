@@ -128,6 +128,60 @@ structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
+# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
+# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
+_META_MAX_KEYS: int = 16
+_META_MAX_DEPTH: int = 2
+_META_MAX_BYTES: int = 4096
+
+
+def _validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    Args:
+        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
+
+    Raises:
+        ValueError: if any limit is exceeded.
+    """
+    if not meta_data:
+        return
+    if len(meta_data) > _META_MAX_KEYS:
+        raise ValueError(f"meta_data exceeds maximum key count ({_META_MAX_KEYS}): got {len(meta_data)}")
+    for v in meta_data.values():
+        if isinstance(v, dict) and any(isinstance(vv, dict) for vv in v.values()):
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({_META_MAX_DEPTH})")
+    try:
+        size = len(orjson.dumps(meta_data))
+        if size > _META_MAX_BYTES:
+            raise ValueError(f"meta_data exceeds maximum size ({_META_MAX_BYTES} bytes): got {size}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"meta_data is not serializable: {exc}") from exc
+
+
+def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Dict[str, Any]) -> "types.ClientRequest":
+    """Build a GetPrompt ClientRequest that carries _meta (CWE-20, CWE-284).
+
+    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
+    key written into the dict so the subsequent ``model_validate`` call
+    resolves it correctly regardless of ``populate_by_name`` settings.
+
+    ``send_request`` is used instead of ``session.get_prompt()`` because the
+    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
+    updated if the SDK later adds that capability.
+
+    Args:
+        name: The prompt name.
+        arguments: Optional prompt arguments.
+        meta_data: Validated metadata dict to inject as ``_meta``.
+
+    Returns:
+        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+    """
+    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
+    _gp_dict["_meta"] = meta_data
+    return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
+
 
 class PromptError(Exception):
     """Base class for prompt-related errors."""
@@ -341,6 +395,8 @@ class PromptService(BaseService):
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
         pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
         prompt_arguments = arguments or None
+        # CWE-400: Validate meta_data limits before forwarding to upstream
+        _validate_meta_data(meta_data)
 
         try:
             if settings.mcp_session_pool_enabled:
@@ -357,11 +413,8 @@ class PromptService(BaseService):
                         gateway_id=gateway_id,
                     ) as pooled:
                         if meta_data:
-                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
-                            _gp_dict = _gp.model_dump()
-                            _gp_dict["_meta"] = meta_data
                             remote_result = await pooled.session.send_request(
-                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
                                 types.GetPromptResult,
                             )
                         else:
@@ -379,11 +432,8 @@ class PromptService(BaseService):
                     async with ClientSession(*streams) as session:
                         await session.initialize()
                         if meta_data:
-                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
-                            _gp_dict = _gp.model_dump()
-                            _gp_dict["_meta"] = meta_data
                             remote_result = await session.send_request(
-                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
                                 types.GetPromptResult,
                             )
                         else:
@@ -393,11 +443,8 @@ class PromptService(BaseService):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         if meta_data:
-                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
-                            _gp_dict = _gp.model_dump()
-                            _gp_dict["_meta"] = meta_data
                             remote_result = await session.send_request(
-                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
                                 types.GetPromptResult,
                             )
                         else:
