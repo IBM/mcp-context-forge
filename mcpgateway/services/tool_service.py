@@ -4916,6 +4916,19 @@ class ToolService(BaseService):
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
+
+                    # Detect body encoding from the final Content-Type header (after auth/plugin/mapping modifications).
+                    # Supports application/x-www-form-urlencoded and multipart/form-data in addition to the default JSON.
+                    _ct_base = next((v for k, v in headers.items() if k.lower() == "content-type"), "").lower().split(";")[0].strip()
+
+                    def _to_str(v: Any) -> str:
+                        """Coerce a payload value to string for form/multipart encoding."""
+                        if v is None:
+                            return ""
+                        if isinstance(v, (dict, list)):
+                            return orjson.dumps(v).decode()
+                        return str(v)
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
                         try:
@@ -4937,6 +4950,14 @@ class ToolService(BaseService):
 
                                 payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "application/x-www-form-urlencoded":
+                                form_payload = {k: _to_str(v) for k, v in payload.items()}
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter
+                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, _to_str(v)) for k, v in payload.items()}
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, files=files_payload, headers=headers_mp), timeout=effective_timeout)
                             else:
                                 # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
                                 if has_query_mapping or has_header_mapping:

@@ -2190,6 +2190,110 @@ class TestToolService:
             assert call_kwargs["error_message"] is None
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_post_form_urlencoded(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST tool with Content-Type: application/x-www-form-urlencoded should use data= encoding."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "form response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "form response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            # Should use data= (form-urlencoded), not json=
+            call_kwargs = tool_service._http_client.request.call_args
+            assert call_kwargs.kwargs.get("data") == {"param": "value"}
+            assert "json" not in call_kwargs.kwargs
+            assert result.content[0].text == '{\n  "result": "form response"\n}'
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_post_multipart(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST tool with Content-Type: multipart/form-data should use files= encoding and strip Content-Type header."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {"Content-Type": "multipart/form-data", "X-Custom": "custom-value"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "multipart response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "multipart response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            call_kwargs = tool_service._http_client.request.call_args
+            # Should use files= (multipart), not json=
+            assert call_kwargs.kwargs.get("files") == {"param": (None, "value")}
+            assert "json" not in call_kwargs.kwargs
+            # Content-Type must be stripped so httpx can set it with the correct boundary
+            sent_headers = call_kwargs.kwargs.get("headers", {})
+            assert "Content-Type" not in sent_headers
+            assert "content-type" not in {k.lower() for k in sent_headers}
+            # Other headers should still be present
+            assert sent_headers.get("X-Custom") == "custom-value"
+            assert result.content[0].text == '{\n  "result": "multipart response"\n}'
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_post_form_nested_values(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Form-encoded payload should stringify scalars and JSON-encode nested dicts/lists; None becomes empty string."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"ok": True})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"ok": True}),
+        ):
+            args = {"nested": {"key": "val"}, "scalar": 42, "nothing": None}
+            await tool_service.invoke_tool(test_db, "test_tool", args, request_headers=None)
+
+            call_kwargs = tool_service._http_client.request.call_args
+            data = call_kwargs.kwargs.get("data")
+            assert data["scalar"] == "42"
+            assert data["nothing"] == ""
+            import json as _json
+            assert _json.loads(data["nested"]) == {"key": "val"}
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_decrypts_encrypted_custom_headers(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """REST invocation should send decrypted values for encrypted custom headers."""
         mock_tool.integration_type = "REST"
