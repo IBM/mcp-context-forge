@@ -391,7 +391,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             config=dict(_OLG),
-                            binding_reference_id="wxo-bind-001",
+                            binding_reference_id="test-bind-001",
                         )
                     ]
                 )
@@ -399,10 +399,10 @@ class TestUpsertBindings:
         )
         results = service.upsert_bindings(db_session, request, caller_email="admin@example.com")
 
-        assert results[0].binding_reference_id == "wxo-bind-001"
+        assert results[0].binding_reference_id == "test-bind-001"
 
         row = db_session.query(ToolPluginBinding).one()
-        assert row.binding_reference_id == "wxo-bind-001"
+        assert row.binding_reference_id == "test-bind-001"
 
     def test_ownership_transfer_logs_warning(self, service, db_session, caplog):
         """Upserting the same (team, tool, plugin) triple with a different binding_reference_id
@@ -415,7 +415,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             config=dict(_OLG),
-                            binding_reference_id="wxo-bind-old",
+                            binding_reference_id="test-bind-old",
                         )
                     ]
                 )
@@ -431,7 +431,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             config=dict(_OLG),
-                            binding_reference_id="wxo-bind-new",
+                            binding_reference_id="test-bind-new",
                         )
                     ]
                 )
@@ -441,7 +441,7 @@ class TestUpsertBindings:
             results = service.upsert_bindings(db_session, r2, caller_email="admin@example.com")
 
         # New reference wins
-        assert results[0].binding_reference_id == "wxo-bind-new"
+        assert results[0].binding_reference_id == "test-bind-new"
         # Warning was emitted
         assert any("ownership transfer" in record.message for record in caplog.records)
 
@@ -887,9 +887,9 @@ class TestPluginPolicyItemValidation:
             tool_names=["tool_x"],
             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
             config=dict(_OLG),
-            binding_reference_id="wxo-bind-001",
+            binding_reference_id="test-bind-001",
         )
-        assert item.binding_reference_id == "wxo-bind-001"
+        assert item.binding_reference_id == "test-bind-001"
 
     def test_binding_reference_id_defaults_to_none(self):
         """binding_reference_id is None when not specified."""

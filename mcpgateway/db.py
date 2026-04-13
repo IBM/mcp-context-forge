@@ -6578,7 +6578,7 @@ class ToolPluginBinding(Base):
         mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
         priority (int): Execution priority — lower numbers run first.
         config (dict): Plugin-specific JSON configuration blob.
-        binding_reference_id (str): Optional external reference ID (e.g. WXO binding ID) for bulk delete and stale-tool pruning.
+        binding_reference_id (str): Optional external reference ID for bulk delete and stale-tool pruning.
         created_at (datetime): Row creation timestamp (UTC).
         created_by (str): Email of the user who created the binding.
         updated_at (datetime): Last update timestamp (UTC).
