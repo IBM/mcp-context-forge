@@ -183,6 +183,31 @@ def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], me
     return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
 
 
+async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]]) -> Any:
+    """Dispatch a get_prompt call, injecting ``_meta`` when meta_data is provided.
+
+    Eliminates the repeated ``if meta_data: send_request … else: get_prompt``
+    pattern across every transport/pool branch in this module.
+
+    Args:
+        session: An active MCP :class:`ClientSession`.
+        name: The prompt name.
+        arguments: Optional prompt-rendering arguments.
+        meta_data: Optional validated metadata dict. When ``None`` the standard
+            SDK helper is used; when non-empty the low-level ``send_request``
+            path is taken to carry ``_meta``.
+
+    Returns:
+        The raw MCP result object (caller extracts ``.messages``).
+    """
+    if meta_data:
+        return await session.send_request(
+            _build_get_prompt_request(name, arguments, meta_data),
+            types.GetPromptResult,
+        )
+    return await session.get_prompt(name, arguments=arguments)
+
+
 class PromptError(Exception):
     """Base class for prompt-related errors."""
 
@@ -412,13 +437,7 @@ class PromptService(BaseService):
                         user_identity=pool_user_identity,
                         gateway_id=gateway_id,
                     ) as pooled:
-                        if meta_data:
-                            remote_result = await pooled.session.send_request(
-                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
-                                types.GetPromptResult,
-                            )
-                        else:
-                            remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
+                        remote_result = await _get_prompt_with_meta(pooled.session, remote_name, prompt_arguments, meta_data)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -431,24 +450,12 @@ class PromptService(BaseService):
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
                     async with ClientSession(*streams) as session:
                         await session.initialize()
-                        if meta_data:
-                            remote_result = await session.send_request(
-                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
-                                types.GetPromptResult,
-                            )
-                        else:
-                            remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
             else:
                 async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        if meta_data:
-                            remote_result = await session.send_request(
-                                _build_get_prompt_request(remote_name, prompt_arguments, meta_data),
-                                types.GetPromptResult,
-                            )
-                        else:
-                            remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
 
             return PromptResult(
                 messages=[

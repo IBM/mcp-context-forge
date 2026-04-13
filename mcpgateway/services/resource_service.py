@@ -166,6 +166,30 @@ def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.
     return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
 
 
+async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
+    """Dispatch a read_resource call, injecting ``_meta`` when meta_data is provided.
+
+    Eliminates the repeated ``if meta_data: send_request … else: read_resource``
+    pattern across every transport/pool branch in this module.
+
+    Args:
+        session: An active MCP :class:`ClientSession`.
+        uri: The resource URI to read.
+        meta_data: Optional validated metadata dict. When ``None`` the standard
+            SDK helper is used; when non-empty the low-level ``send_request``
+            path is taken to carry ``_meta``.
+
+    Returns:
+        The raw MCP result object (caller extracts ``.contents``).
+    """
+    if meta_data:
+        return await session.send_request(
+            _build_read_resource_request(uri, meta_data),
+            types.ReadResourceResult,
+        )
+    return await session.read_resource(uri=uri)
+
+
 class ResourceError(Exception):
     """Base class for resource-related errors."""
 
@@ -1972,13 +1996,7 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        if meta_data:
-                                            resource_response = await pooled.session.send_request(
-                                                _build_read_resource_request(uri, meta_data),
-                                                types.ReadResourceResult,
-                                            )
-                                        else:
-                                            resource_response = await pooled.session.read_resource(uri=uri)
+                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -1988,13 +2006,7 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            if meta_data:
-                                                resource_response = await session.send_request(
-                                                    _build_read_resource_request(uri, meta_data),
-                                                    types.ReadResourceResult,
-                                                )
-                                            else:
-                                                resource_response = await session.read_resource(uri=uri)
+                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2063,13 +2075,7 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        if meta_data:
-                                            resource_response = await pooled.session.send_request(
-                                                _build_read_resource_request(uri, meta_data),
-                                                types.ReadResourceResult,
-                                            )
-                                        else:
-                                            resource_response = await pooled.session.read_resource(uri=uri)
+                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -2080,13 +2086,7 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            if meta_data:
-                                                resource_response = await session.send_request(
-                                                    _build_read_resource_request(uri, meta_data),
-                                                    types.ReadResourceResult,
-                                                )
-                                            else:
-                                                resource_response = await session.read_resource(uri=uri)
+                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2389,16 +2389,7 @@ class ResourceService(BaseService):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
 
-                                    if meta_data:
-                                        _rp = ReadResourceRequestParams(uri=uri)
-                                        _rp_dict = _rp.model_dump()
-                                        _rp_dict["_meta"] = meta_data
-                                        result = await session.send_request(
-                                            types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
-                                            types.ReadResourceResult,
-                                        )
-                                    else:
-                                        result = await session.read_resource(uri=uri)
+                                    result = await _read_resource_with_meta(session, uri, meta_data)
 
                                     # Convert MCP result to MCP-compliant content models
                                     # result.contents is a list of TextResourceContents or BlobResourceContents
