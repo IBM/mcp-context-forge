@@ -8165,7 +8165,12 @@ class PluginPolicyItem(BaseModel):
     config: Dict[str, Any] = Field(
         ..., description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config."
     )
-    binding_reference_id: Optional[str] = Field(None, max_length=255, description="Optional external reference ID for correlating this binding with an upstream system")
+    binding_reference_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+        description="Optional external reference ID for correlating this binding with an upstream system",
+    )
 
     @model_validator(mode="after")
     def validate_config_for_plugin(self) -> "PluginPolicyItem":
