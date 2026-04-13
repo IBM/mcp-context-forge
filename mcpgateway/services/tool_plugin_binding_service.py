@@ -35,9 +35,9 @@ def get_bindings_for_tool(
     """Return deduplicated plugin bindings for a (team_id, tool_name) pair.
 
     Includes wildcard ``"*"`` bindings alongside exact-match bindings.
-    For duplicate plugin_ids, the most recently updated binding wins
-    (last-write-wins) so a specific tool_name entry overrides a ``"*"`` entry
-    when both exist for the same plugin.
+    For duplicate plugin_ids, an exact ``tool_name`` binding always takes
+    precedence over a ``"*"`` wildcard binding, regardless of insertion or
+    update order (specificity-wins semantics).
 
     Args:
         db: SQLAlchemy session.
@@ -53,15 +53,20 @@ def get_bindings_for_tool(
             ToolPluginBinding.team_id == team_id,
             ToolPluginBinding.tool_name.in_([tool_name, "*"]),
         )
-        .order_by(ToolPluginBinding.updated_at.asc())
         .all()
     )
-    # Last-write-wins: iterate ascending updated_at so exact matches (later)
-    # overwrite wildcard matches (earlier) for the same plugin_id.
-    seen: dict[str, ToolPluginBinding] = {}
+    # Specificity-wins: wildcard ("*") is the fallback; an exact tool_name
+    # binding always overrides the wildcard for the same plugin_id, regardless
+    # of insertion/update order.
+    wildcard: dict[str, ToolPluginBinding] = {}
+    specific: dict[str, ToolPluginBinding] = {}
     for binding in rows:
-        seen[binding.plugin_id] = binding
-    return list(seen.values())
+        if binding.tool_name == "*":
+            wildcard[binding.plugin_id] = binding
+        else:
+            specific[binding.plugin_id] = binding
+    # Merge: start with wildcards, let specific bindings overwrite
+    return list({**wildcard, **specific}.values())
 
 
 class ToolPluginBindingService:
@@ -164,6 +169,25 @@ class ToolPluginBindingService:
                     existing = existing_map.get((team_id, tool_name, policy.plugin_id.value))
 
                     if existing:
+                        # Warn if binding_reference_id ownership is changing — this means two
+                        # different external references are claiming the same (team, tool, plugin)
+                        # triple.  The new reference_id wins (last-caller-wins), but the old
+                        # caller's DELETE by reference will now be a no-op.
+                        if (
+                            existing.binding_reference_id
+                            and policy.binding_reference_id
+                            and existing.binding_reference_id != policy.binding_reference_id
+                        ):
+                            logger.warning(
+                                "binding_reference_id ownership transfer: "
+                                "team=%s tool=%s plugin=%s old_ref=%s new_ref=%s — "
+                                "DELETE by old_ref will now be a no-op",
+                                team_id,
+                                tool_name,
+                                policy.plugin_id.value,
+                                existing.binding_reference_id,
+                                policy.binding_reference_id,
+                            )
                         # Upsert — update mutable fields only
                         existing.mode = policy.mode.value
                         existing.priority = policy.priority
