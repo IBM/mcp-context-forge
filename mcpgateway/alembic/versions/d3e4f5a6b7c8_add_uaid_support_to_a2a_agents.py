@@ -11,6 +11,10 @@ self-describing agent identifiers.
 
 Changes:
 - Extend a2a_agents.id column: String(36) → String(512) for UAID format
+- Extend a2a_agent_id foreign key columns: String(36) → String(512) in:
+  - server_a2a_association.a2a_agent_id
+  - a2a_agent_metrics.a2a_agent_id
+  - a2a_agent_metrics_hourly.a2a_agent_id
 - Add uaid (String(512), nullable): Full UAID string
 - Add uaid_registry (String(255), nullable): Registry name from UAID
 - Add uaid_proto (String(50), nullable): Protocol from UAID (a2a, mcp, rest, grpc)
@@ -69,9 +73,36 @@ def upgrade() -> None:
         if ("VARCHAR" in id_type_str or "STRING" in id_type_str) and "36" in id_type_str:
             need_id_resize = True
 
+    # Check foreign key columns in referencing tables
+    fk_tables_to_update = []
+
+    # Check server_a2a_association
+    if inspector.has_table("server_a2a_association"):
+        assoc_cols = {col["name"]: col for col in inspector.get_columns("server_a2a_association")}
+        if "a2a_agent_id" in assoc_cols:
+            col_type_str = str(assoc_cols["a2a_agent_id"].get("type", "")).upper()
+            if ("VARCHAR" in col_type_str or "STRING" in col_type_str) and "36" in col_type_str:
+                fk_tables_to_update.append("server_a2a_association")
+
+    # Check a2a_agent_metrics
+    if inspector.has_table("a2a_agent_metrics"):
+        metrics_cols = {col["name"]: col for col in inspector.get_columns("a2a_agent_metrics")}
+        if "a2a_agent_id" in metrics_cols:
+            col_type_str = str(metrics_cols["a2a_agent_id"].get("type", "")).upper()
+            if ("VARCHAR" in col_type_str or "STRING" in col_type_str) and "36" in col_type_str:
+                fk_tables_to_update.append("a2a_agent_metrics")
+
+    # Check a2a_agent_metrics_hourly
+    if inspector.has_table("a2a_agent_metrics_hourly"):
+        hourly_cols = {col["name"]: col for col in inspector.get_columns("a2a_agent_metrics_hourly")}
+        if "a2a_agent_id" in hourly_cols:
+            col_type_str = str(hourly_cols["a2a_agent_id"].get("type", "")).upper()
+            if ("VARCHAR" in col_type_str or "STRING" in col_type_str) and "36" in col_type_str:
+                fk_tables_to_update.append("a2a_agent_metrics_hourly")
+
     # Nothing to do if everything is already migrated
-    if not (need_id_resize or need_uaid or need_uaid_registry or need_uaid_proto or need_uaid_native_id):
-        print("UAID columns already exist and id column is correct size. Skipping migration.")
+    if not (need_id_resize or need_uaid or need_uaid_registry or need_uaid_proto or need_uaid_native_id or fk_tables_to_update):
+        print("UAID columns already exist and all id/foreign key columns are correct size. Skipping migration.")
         return
 
     print(f"Applying UAID migration for {dialect_name} database...")
@@ -84,7 +115,7 @@ def upgrade() -> None:
             # Extend id column to accommodate UAID format
             if need_id_resize:
                 batch_op.alter_column("id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
-                print("  - Extended id column from VARCHAR(36) to VARCHAR(512)")
+                print("  - Extended a2a_agents.id column from VARCHAR(36) to VARCHAR(512)")
 
             # Add UAID metadata columns
             if need_uaid:
@@ -99,11 +130,27 @@ def upgrade() -> None:
             if need_uaid_native_id:
                 batch_op.add_column(sa.Column("uaid_native_id", sa.String(767), nullable=True))
                 print("  - Added uaid_native_id column (VARCHAR(767), nullable)")
+
+        # Update foreign key columns in referencing tables
+        if "server_a2a_association" in fk_tables_to_update:
+            with op.batch_alter_table("server_a2a_association", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
+                print("  - Extended server_a2a_association.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
+
+        if "a2a_agent_metrics" in fk_tables_to_update:
+            with op.batch_alter_table("a2a_agent_metrics", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
+                print("  - Extended a2a_agent_metrics.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
+
+        if "a2a_agent_metrics_hourly" in fk_tables_to_update:
+            with op.batch_alter_table("a2a_agent_metrics_hourly", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=True)
+                print("  - Extended a2a_agent_metrics_hourly.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
     else:
         # PostgreSQL: Use direct operations (more efficient than batch mode)
         if need_id_resize:
             op.alter_column("a2a_agents", "id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
-            print("  - Extended id column from VARCHAR(36) to VARCHAR(512)")
+            print("  - Extended a2a_agents.id column from VARCHAR(36) to VARCHAR(512)")
 
         # Add UAID metadata columns
         if need_uaid:
@@ -119,7 +166,21 @@ def upgrade() -> None:
             op.add_column("a2a_agents", sa.Column("uaid_native_id", sa.String(767), nullable=True))
             print("  - Added uaid_native_id column (VARCHAR(767), nullable)")
 
-    print("✅ UAID support added to a2a_agents table.")
+        # Update foreign key columns in referencing tables
+        # PostgreSQL allows altering columns with foreign keys in place
+        if "server_a2a_association" in fk_tables_to_update:
+            op.alter_column("server_a2a_association", "a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
+            print("  - Extended server_a2a_association.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
+
+        if "a2a_agent_metrics" in fk_tables_to_update:
+            op.alter_column("a2a_agent_metrics", "a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=False)
+            print("  - Extended a2a_agent_metrics.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
+
+        if "a2a_agent_metrics_hourly" in fk_tables_to_update:
+            op.alter_column("a2a_agent_metrics_hourly", "a2a_agent_id", type_=sa.String(512), existing_type=sa.String(36), existing_nullable=True)
+            print("  - Extended a2a_agent_metrics_hourly.a2a_agent_id from VARCHAR(36) to VARCHAR(512)")
+
+    print("✅ UAID support added to a2a_agents table and all foreign key references updated.")
 
 
 def downgrade() -> None:
@@ -150,6 +211,23 @@ def downgrade() -> None:
 
     # SQLite requires batch mode for all ALTER TABLE operations
     if dialect_name == "sqlite":
+        # First, shrink foreign key columns in referencing tables
+        if inspector.has_table("a2a_agent_metrics_hourly"):
+            with op.batch_alter_table("a2a_agent_metrics_hourly", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=True)
+                print("  - ⚠️  Shrunk a2a_agent_metrics_hourly.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        if inspector.has_table("a2a_agent_metrics"):
+            with op.batch_alter_table("a2a_agent_metrics", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
+                print("  - ⚠️  Shrunk a2a_agent_metrics.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        if inspector.has_table("server_a2a_association"):
+            with op.batch_alter_table("server_a2a_association", schema=None) as batch_op:
+                batch_op.alter_column("a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
+                print("  - ⚠️  Shrunk server_a2a_association.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        # Then update the primary table
         with op.batch_alter_table("a2a_agents", schema=None) as batch_op:
             # Remove UAID columns if they exist (reverse order)
             if "uaid_native_id" in columns:
@@ -169,9 +247,23 @@ def downgrade() -> None:
             # WARNING: This will truncate any UAID-based agent IDs!
             if "id" in columns:
                 batch_op.alter_column("id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
-                print("  - ⚠️  Shrunk id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
+                print("  - ⚠️  Shrunk a2a_agents.id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
     else:
         # PostgreSQL: Use direct operations
+        # First, shrink foreign key columns in referencing tables
+        if inspector.has_table("a2a_agent_metrics_hourly"):
+            op.alter_column("a2a_agent_metrics_hourly", "a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=True)
+            print("  - ⚠️  Shrunk a2a_agent_metrics_hourly.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        if inspector.has_table("a2a_agent_metrics"):
+            op.alter_column("a2a_agent_metrics", "a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
+            print("  - ⚠️  Shrunk a2a_agent_metrics.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        if inspector.has_table("server_a2a_association"):
+            op.alter_column("server_a2a_association", "a2a_agent_id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
+            print("  - ⚠️  Shrunk server_a2a_association.a2a_agent_id from VARCHAR(512) to VARCHAR(36)")
+
+        # Then update the primary table
         # Remove UAID columns if they exist (reverse order)
         if "uaid_native_id" in columns:
             op.drop_column("a2a_agents", "uaid_native_id")
@@ -190,6 +282,6 @@ def downgrade() -> None:
         # WARNING: This will truncate any UAID-based agent IDs!
         if "id" in columns:
             op.alter_column("a2a_agents", "id", type_=sa.String(36), existing_type=sa.String(512), existing_nullable=False)
-            print("  - ⚠️  Shrunk id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
+            print("  - ⚠️  Shrunk a2a_agents.id column from VARCHAR(512) to VARCHAR(36) (data may be truncated!)")
 
-    print("✅ UAID support removed from a2a_agents table.")
+    print("✅ UAID support removed from a2a_agents table and all foreign key references reverted.")
