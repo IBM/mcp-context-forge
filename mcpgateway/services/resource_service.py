@@ -35,9 +35,10 @@ import uuid
 
 # Third-Party
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -1521,7 +1522,7 @@ class ResourceService(BaseService):
         resource_uri: str,
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
-        meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
+        meta_data: Optional[Dict[str, Any]] = None,  # Forwarded as _meta in upstream MCP requests
         resource_obj: Optional[Any] = None,
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
@@ -1869,8 +1870,8 @@ class ResourceService(BaseService):
                             ``None`` instead of raising.
 
                             Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
+                                When meta_data is provided, the request is built using send_request
+                                with _meta injected into ReadResourceRequestParams.
 
                             Args:
                                 server_url (str):
@@ -1917,8 +1918,16 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                        resource_response = await pooled.session.read_resource(uri=uri)
+                                        if meta_data:
+                                            _rp = ReadResourceRequestParams(uri=uri)
+                                            _rp_dict = _rp.model_dump()
+                                            _rp_dict["_meta"] = meta_data
+                                            resource_response = await pooled.session.send_request(
+                                                types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                types.ReadResourceResult,
+                                            )
+                                        else:
+                                            resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -1928,8 +1937,16 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                            resource_response = await session.read_resource(uri=uri)
+                                            if meta_data:
+                                                _rp = ReadResourceRequestParams(uri=uri)
+                                                _rp_dict = _rp.model_dump()
+                                                _rp_dict["_meta"] = meta_data
+                                                resource_response = await session.send_request(
+                                                    types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                    types.ReadResourceResult,
+                                                )
+                                            else:
+                                                resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -1951,8 +1968,8 @@ class ResourceService(BaseService):
                             of propagating the exception.
 
                             Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
+                                When meta_data is provided, the request is built using send_request
+                                with _meta injected into ReadResourceRequestParams.
 
                             Args:
                                 server_url (str):
@@ -1998,8 +2015,16 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                        resource_response = await pooled.session.read_resource(uri=uri)
+                                        if meta_data:
+                                            _rp = ReadResourceRequestParams(uri=uri)
+                                            _rp_dict = _rp.model_dump()
+                                            _rp_dict["_meta"] = meta_data
+                                            resource_response = await pooled.session.send_request(
+                                                types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                types.ReadResourceResult,
+                                            )
+                                        else:
+                                            resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -2010,8 +2035,16 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                            resource_response = await session.read_resource(uri=uri)
+                                            if meta_data:
+                                                _rp = ReadResourceRequestParams(uri=uri)
+                                                _rp_dict = _rp.model_dump()
+                                                _rp_dict["_meta"] = meta_data
+                                                resource_response = await session.send_request(
+                                                    types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                                    types.ReadResourceResult,
+                                                )
+                                            else:
+                                                resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2025,10 +2058,8 @@ class ResourceService(BaseService):
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         if span and resource_text is not None and is_output_capture_enabled("invoke.resource"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
@@ -2314,8 +2345,16 @@ class ResourceService(BaseService):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
 
-                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
-                                    result = await session.read_resource(uri=uri)
+                                    if meta_data:
+                                        _rp = ReadResourceRequestParams(uri=uri)
+                                        _rp_dict = _rp.model_dump()
+                                        _rp_dict["_meta"] = meta_data
+                                        result = await session.send_request(
+                                            types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))),
+                                            types.ReadResourceResult,
+                                        )
+                                    else:
+                                        result = await session.read_resource(uri=uri)
 
                                     # Convert MCP result to MCP-compliant content models
                                     # result.contents is a list of TextResourceContents or BlobResourceContents

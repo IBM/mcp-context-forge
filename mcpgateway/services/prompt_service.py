@@ -25,9 +25,10 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape, Template
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -301,7 +302,7 @@ class PromptService(BaseService):
         """
         return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
 
-    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str]) -> PromptResult:
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
         Args:
@@ -355,7 +356,16 @@ class PromptService(BaseService):
                         user_identity=pool_user_identity,
                         gateway_id=gateway_id,
                     ) as pooled:
-                        remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
+                        if meta_data:
+                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
+                            _gp_dict = _gp.model_dump()
+                            _gp_dict["_meta"] = meta_data
+                            remote_result = await pooled.session.send_request(
+                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                types.GetPromptResult,
+                            )
+                        else:
+                            remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -368,12 +378,30 @@ class PromptService(BaseService):
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
                     async with ClientSession(*streams) as session:
                         await session.initialize()
-                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        if meta_data:
+                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
+                            _gp_dict = _gp.model_dump()
+                            _gp_dict["_meta"] = meta_data
+                            remote_result = await session.send_request(
+                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                types.GetPromptResult,
+                            )
+                        else:
+                            remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
             else:
                 async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        if meta_data:
+                            _gp = GetPromptRequestParams(name=remote_name, arguments=prompt_arguments)
+                            _gp_dict = _gp.model_dump()
+                            _gp_dict["_meta"] = meta_data
+                            remote_result = await session.send_request(
+                                types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))),
+                                types.GetPromptResult,
+                            )
+                        else:
+                            remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
 
             return PromptResult(
                 messages=[
@@ -1786,7 +1814,7 @@ class PromptService(BaseService):
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
-            _meta_data: Optional metadata for prompt retrieval (not used currently).
+            _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
 
         Returns:
             Prompt result with rendered messages
@@ -1947,7 +1975,7 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user)
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user, meta_data=_meta_data)
                 elif not arguments:
                     result = PromptResult(
                         messages=[

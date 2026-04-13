@@ -2344,23 +2344,16 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
-                    # Get _meta from request context if available
-                    meta = None
-                    try:
-                        request_ctx = mcp_app.request_context
-                        meta = request_ctx.meta
-                        logger.info(
-                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
-                            resource_uri,
-                            server_id,
-                            gateway.id,
-                            GATEWAY_ID_HEADER,
-                            meta,
-                        )
-                    except (LookupError, AttributeError) as e:
-                        logger.debug("No request context available for _meta extraction: %s", e)
+                    logger.info(
+                        "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
+                        resource_uri,
+                        server_id,
+                        gateway.id,
+                        GATEWAY_ID_HEADER,
+                        meta_data,
+                    )
 
-                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
                         first_content = contents[0]
