@@ -24,10 +24,12 @@ Examples:
 """
 
 # Standard
+import base64
+import json
 import logging
 import time
 import traceback
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 # Third-Party
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -39,11 +41,56 @@ from mcpgateway.config import settings
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
+from mcpgateway.services.observability_service import (
+    current_token_claims,
+    current_trace_id,
+    ObservabilityService,
+    parse_traceparent,
+)
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.trace_redaction import sanitize_trace_text
 
 logger = logging.getLogger(__name__)
+
+# Standard JWT claims that are safe to store (no secrets)
+_SAFE_TOKEN_CLAIMS = ("sub", "iss", "aud", "iat", "exp", "nbf", "jti")
+
+
+def _get_safe_token_claims_from_request(request: Request) -> Optional[Dict[str, Any]]:
+    """Extract safe JWT claims from the request for observability.
+
+    Prefers request.state.token_claims if set by auth middleware; otherwise
+    decodes the Bearer token payload (without verification; request is already authenticated).
+    Only returns standard claims that are typically safe to store: sub, iss, aud, iat, exp, nbf, jti.
+    """
+    # Prefer claims already set by auth middleware
+    if hasattr(request.state, "token_claims") and isinstance(getattr(request.state, "token_claims"), dict):
+        raw = getattr(request.state, "token_claims")
+        return {k: raw[k] for k in _SAFE_TOKEN_CLAIMS if k in raw and raw[k] is not None}
+
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return None
+
+    token = auth[7:].strip()
+    if not token:
+        return None
+
+    try:
+        # JWT format: header.payload.signature; we only decode payload (no verification)
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_b64 = parts[1]
+        # Add padding if needed for base64url
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        return {k: payload[k] for k in _SAFE_TOKEN_CLAIMS if k in payload and payload[k] is not None}
+    except Exception:  # pylint: disable=broad-except
+        return None
 
 
 def sanitize_header_for_storage(value: Optional[str], max_length: int = 500) -> str:
@@ -139,6 +186,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
             user_email = request.state.user.email
 
+        # Extract safe token claims only when enabled (observability_store_token_claims).
+        # Stored in trace/span attributes only; not in user_email column.
+        token_claims = (
+            _get_safe_token_claims_from_request(request)
+            if getattr(settings, "observability_store_token_claims", False)
+            else None
+        )
+
         # Extract W3C Trace Context from headers (for distributed tracing)
         external_trace_id = None
         external_parent_span_id = None
@@ -172,13 +227,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     "service.name": "mcp-gateway",
                     "service.version": getattr(settings, "version", "unknown"),
                 },
+                token_claims=token_claims,
             )
 
             # Store trace_id in request state for use in route handlers
             request.state.trace_id = trace_id
 
-            # Set trace_id in context variable for access throughout async call stack
+            # Set trace_id and token claims in context for use in spans (e.g. tool invocations)
             current_trace_id.set(trace_id)
+            if token_claims:
+                current_token_claims.set(token_claims)
             # Bridge: also set the framework's ContextVar so the plugin executor sees it
             plugins_trace_id.set(trace_id)
 
@@ -278,3 +336,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # Re-raise the original exception
             raise
+
+        finally:
+            try:
+                current_token_claims.set(None)
+            except LookupError:
+                pass
