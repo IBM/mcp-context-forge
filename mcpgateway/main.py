@@ -75,7 +75,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.admin import admin_router, set_logging_service
+from mcpgateway.admin import admin_router, app_spa_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
@@ -12655,7 +12655,6 @@ if ADMIN_API_ENABLED:
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
-    app.include_router(app_spa_router)  # Admin UI routes imported from app_spa.py
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
