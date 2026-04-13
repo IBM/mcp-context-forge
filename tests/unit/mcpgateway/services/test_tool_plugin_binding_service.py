@@ -14,6 +14,7 @@ Tests cover:
 """
 
 # Standard
+import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -406,8 +407,6 @@ class TestUpsertBindings:
     def test_ownership_transfer_logs_warning(self, service, db_session, caplog):
         """Upserting the same (team, tool, plugin) triple with a different binding_reference_id
         logs a WARNING and the new reference_id wins."""
-        import logging
-
         r1 = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
@@ -1405,8 +1404,8 @@ class TestListBindingsByReference:
         assert results[0].binding_reference_id == "ref-filter-001"
         assert results[0].team_id == "team-a"
 
-    def test_binding_reference_id_takes_precedence_over_team_id(self, service, db_session):
-        """When both team_id and binding_reference_id are provided, reference ID wins."""
+    def test_binding_reference_id_takes_precedence_over_team_id(self, service, db_session, caplog):
+        """When both team_id and binding_reference_id are provided, reference ID wins and a warning is logged."""
         r = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
@@ -1424,10 +1423,18 @@ class TestListBindingsByReference:
         service.upsert_bindings(db_session, r, caller_email="admin@example.com")
 
         # Supply team_id="team-b" (which has no bindings) but binding_reference_id
-        # for team-a's binding — reference ID takes precedence.
-        results = service.list_bindings(db_session, team_id="team-b", binding_reference_id="unique-ref")
+        # for team-a's binding — reference ID takes precedence and a warning is emitted.
+        with caplog.at_level(logging.WARNING):
+            results = service.list_bindings(db_session, team_id="team-b", binding_reference_id="unique-ref")
         assert len(results) == 1
         assert results[0].team_id == "team-a"
+        expected_warning = (
+            "Both team_id='team-b' and binding_reference_id='unique-ref' supplied to list_bindings; "
+            "team_id will be ignored. Omit team_id when filtering by binding_reference_id."
+        )
+        assert expected_warning in caplog.messages, (
+            f"Expected warning not found. Got: {caplog.messages}"
+        )
 
     def test_filter_by_reference_id_no_match_returns_empty(self, service, db_session):
         """list_bindings with a non-existent binding_reference_id returns an empty list."""

@@ -282,6 +282,13 @@ class ToolPluginBindingService:
         """
         query = db.query(ToolPluginBinding)
         if binding_reference_id:
+            if team_id:
+                logger.warning(
+                    "Both team_id=%r and binding_reference_id=%r supplied to list_bindings; "
+                    "team_id will be ignored. Omit team_id when filtering by binding_reference_id.",
+                    team_id,
+                    binding_reference_id,
+                )
             query = query.filter(ToolPluginBinding.binding_reference_id == binding_reference_id)
         elif team_id:
             query = query.filter(ToolPluginBinding.team_id == team_id)
