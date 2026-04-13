@@ -312,7 +312,7 @@ redis:
   enabled: true
   image:
     repository: docker.io/library/redis
-    tag: 7-alpine
+    tag: "7"
   resources:
     limits:
       cpu: "2"

@@ -88,7 +88,17 @@ pip install ansible
 ansible-galaxy collection install kubernetes.core
 ```
 
-**1. Create a secrets file** at `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` (gitignored):
+**1. Create a Docker Hub pull secret** in your namespace (required to pull `redis:7` without hitting anonymous rate limits):
+
+```bash
+oc create secret docker-registry dockerhub-pull \
+  --docker-server=docker.io \
+  --docker-username=<your-dockerhub-username> \
+  --docker-password=<your-dockerhub-password-or-token> \
+  -n <namespace>
+```
+
+**2. Create a secrets file** at `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` (gitignored):
 
 ```yaml
 mcpContextForge:
@@ -105,7 +115,7 @@ testing:
       secret: "<same as JWT_SECRET_KEY above>"
 ```
 
-**2. Set up namespace and Postgres:**
+**3. Set up namespace and Postgres:**
 
 ```bash
 make ocp-setup OCP_NS=<namespace>
@@ -113,7 +123,7 @@ make ocp-setup OCP_NS=<namespace>
 
 This checks the PGO operator is installed, creates the namespace if needed, applies the PostgresCluster CR (PVCs use dynamic `nfs-client` provisioning), waits for Postgres to be Ready, and grants the required schema privileges. Safe to run multiple times.
 
-**3. Deploy the full stack:**
+**4. Deploy the full stack:**
 
 ```bash
 make ocp-deploy OCP_NS=<namespace>
