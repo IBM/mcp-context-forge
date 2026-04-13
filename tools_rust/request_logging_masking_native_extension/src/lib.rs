@@ -4,10 +4,77 @@ use pyo3::types::{PyAny, PyBytes, PyDict, PyList, PyString};
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::*;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 
 const MASKED_VALUE: &str = "******";
 const NESTED_TOO_DEEP: &str = "<nested too deep>";
+const KEY_CACHE_CAPACITY: usize = 4096;
+
+thread_local! {
+    static KEY_SENSITIVITY_CACHE: RefCell<KeySensitivityCache> =
+        RefCell::new(KeySensitivityCache::with_capacity(KEY_CACHE_CAPACITY));
+}
+
+struct KeySensitivityCache {
+    entries: HashMap<String, bool>,
+    insertion_order: VecDeque<String>,
+    capacity: usize,
+}
+
+impl KeySensitivityCache {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::with_capacity(capacity),
+            insertion_order: VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    fn get_or_compute(&mut self, key: &str) -> bool {
+        if let Some(result) = self.entries.get(key).copied() {
+            self.touch(key);
+            return result;
+        }
+
+        let result = is_sensitive_key(key);
+        self.insert(key, result);
+        result
+    }
+
+    fn insert(&mut self, key: &str, value: bool) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if self.entries.contains_key(key) {
+            self.entries.insert(key.to_owned(), value);
+            self.touch(key);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(oldest_key) = self.insertion_order.pop_front() {
+                self.entries.remove(&oldest_key);
+            }
+        }
+
+        let owned_key = key.to_owned();
+        self.insertion_order.push_back(owned_key.clone());
+        self.entries.insert(owned_key, value);
+    }
+
+    fn touch(&mut self, key: &str) {
+        if let Some(position) = self
+            .insertion_order
+            .iter()
+            .position(|existing| existing == key)
+        {
+            self.insertion_order.remove(position);
+            self.insertion_order.push_back(key.to_owned());
+        }
+    }
+}
 
 fn normalize_key_for_masking(key: &str) -> String {
     let mut normalized = String::with_capacity(key.len() + 4);
@@ -119,13 +186,13 @@ fn is_sensitive_key(key: &str) -> bool {
     false
 }
 
-fn is_sensitive_key_cached(key: &str, cache: &mut HashMap<String, bool>) -> bool {
-    if let Some(result) = cache.get(key) {
+fn is_sensitive_key_cached(key: &str, request_cache: &mut HashMap<String, bool>) -> bool {
+    if let Some(result) = request_cache.get(key) {
         return *result;
     }
 
-    let result = is_sensitive_key(key);
-    cache.insert(key.to_owned(), result);
+    let result = KEY_SENSITIVITY_CACHE.with(|cache| cache.borrow_mut().get_or_compute(key));
+    request_cache.insert(key.to_owned(), result);
     result
 }
 
@@ -206,7 +273,11 @@ fn mask_sensitive_data_inner(
     Ok(data.clone().unbind())
 }
 
-fn mask_json_value_inner(value: Value, max_depth: i32, key_cache: &mut HashMap<String, bool>) -> Value {
+fn mask_json_value_inner(
+    value: Value,
+    max_depth: i32,
+    key_cache: &mut HashMap<String, bool>,
+) -> Value {
     if max_depth <= 0 {
         return Value::String(NESTED_TOO_DEEP.to_owned());
     }
@@ -259,7 +330,8 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
             continue;
         }
 
-        if key_string.as_ref().eq_ignore_ascii_case("cookie") && value.is_instance_of::<PyString>() {
+        if key_string.as_ref().eq_ignore_ascii_case("cookie") && value.is_instance_of::<PyString>()
+        {
             let cookie_value = value.cast::<PyString>()?.to_str()?;
             masked.set_item(key, mask_cookie_header(cookie_value))?;
             continue;
@@ -278,10 +350,12 @@ fn mask_sensitive_json_bytes(
     payload: Vec<u8>,
     max_depth: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    let parsed: Value = serde_json::from_slice(&payload).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let parsed: Value =
+        serde_json::from_slice(&payload).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let mut key_cache = HashMap::with_capacity(16);
     let masked = mask_json_value_inner(parsed, max_depth.unwrap_or(10), &mut key_cache);
-    let serialized = serde_json::to_vec(&masked).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let serialized =
+        serde_json::to_vec(&masked).map_err(|err| PyValueError::new_err(err.to_string()))?;
     Ok(PyBytes::new(py, &serialized).into_any().unbind())
 }
 
@@ -297,13 +371,18 @@ define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod tests {
-    use super::{mask_cookie_header, mask_json_value_inner, normalize_key_for_masking};
+    use super::{
+        mask_cookie_header, mask_json_value_inner, normalize_key_for_masking, KeySensitivityCache,
+    };
     use serde_json::json;
     use std::collections::HashMap;
 
     #[test]
     fn normalize_key_trims_trailing_separators_without_extra_allocation_artifacts() {
-        assert_eq!(normalize_key_for_masking("__ClientSecret__"), "client_secret");
+        assert_eq!(
+            normalize_key_for_masking("__ClientSecret__"),
+            "client_secret"
+        );
         assert_eq!(normalize_key_for_masking("auth-token---"), "auth_token");
     }
 
@@ -329,5 +408,19 @@ mod tests {
             masked,
             json!({"password": "******", "nested": {"authToken": "******", "count": 3}}) // pragma: allowlist secret
         );
+    }
+
+    #[test]
+    fn key_sensitivity_cache_evicts_least_recently_used_entry_when_capacity_is_reached() {
+        let mut cache = KeySensitivityCache::with_capacity(2);
+
+        assert!(cache.get_or_compute("password"));
+        assert!(cache.get_or_compute("authToken"));
+        assert!(cache.get_or_compute("password"));
+        assert!(!cache.get_or_compute("safeField"));
+
+        assert!(cache.entries.contains_key("password"));
+        assert!(!cache.entries.contains_key("authToken"));
+        assert!(cache.entries.contains_key("safeField"));
     }
 }
