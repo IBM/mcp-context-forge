@@ -4232,10 +4232,10 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path parameter substitution (using local variable)
+                    # Handle URL path and query parameter substitution (using local variable)
                     final_url = tool_url
                     if "{" in tool_url and "}" in tool_url:
-                        # Extract path parameters from URL template and arguments
+                        # Extract ALL parameters (path and query) from URL template
                         url_params = re.findall(r"\{(\w+)\}", tool_url)
                         url_substitutions = {}
 
@@ -4246,7 +4246,7 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL ---
+                    # --- Extract query params from URL (after substitution) ---
                     parsed = urlparse(final_url)
                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
@@ -4260,9 +4260,6 @@ class ToolService(BaseService):
                         for qk, qv in payload.items():
                             if isinstance(qv, (dict, list)):
                                 raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
-                    else:
-                        # No query mapping — merge URL query params into the payload (query params override on collision)
-                        payload.update(query_params)
 
                     # Headers are mapped from the original arguments (not the path-param-reduced payload)
                     # to preserve all available data for header injection.
@@ -4280,8 +4277,15 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
+                                # For GET: merge extracted URL query params into payload; everything sent as query string
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
+                                # For POST/PUT/PATCH/DELETE: merge query params into the JSON body
+                                # (preserves backward compatibility with existing tool configurations)
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
