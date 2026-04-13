@@ -901,6 +901,16 @@ class TestPluginPolicyItemValidation:
         )
         assert item.binding_reference_id is None
 
+    def test_binding_reference_id_max_length(self):
+        """binding_reference_id longer than 255 characters is rejected (matches DB column limit)."""
+        with pytest.raises(ValidationError):
+            PluginPolicyItem(
+                tool_names=["tool_x"],
+                plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                config=dict(_OLG),
+                binding_reference_id="a" * 256,
+            )
+
     def test_invalid_plugin_id_rejected(self):
         """An unrecognised plugin_id string is rejected by the PluginId enum."""
         with pytest.raises(ValidationError, match=r"(?s)plugin_id.*Input should be"):
@@ -1122,3 +1132,307 @@ class TestGetBindingsForTool:
         """Bindings for a different team are not returned."""
         results = get_bindings_for_tool(self._db, "team-b", "tool_x")
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Stale-tool pruning tests
+# ---------------------------------------------------------------------------
+
+
+class TestStalePruning:
+    """Tests for the stale-tool pruning logic in upsert_bindings.
+
+    When an upsert includes a binding_reference_id, any existing binding
+    that shares the same (binding_reference_id, plugin_id) pair but whose
+    tool_name is absent from the incoming list is automatically deleted.
+    """
+
+    def test_stale_tools_pruned_when_binding_reference_id_present(self, service, db_session):
+        """Tools removed from the incoming list are deleted when binding_reference_id is set."""
+        # Initial upsert: bind ref-001 to tool_a, tool_b, tool_c
+        r1 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a", "tool_b", "tool_c"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-001",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r1, caller_email="admin@example.com")
+        assert db_session.query(ToolPluginBinding).count() == 3
+
+        # Second upsert: ref-001 now only covers tool_a and tool_b — tool_c is stale
+        r2 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a", "tool_b"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-001",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r2, caller_email="admin@example.com")
+
+        remaining = db_session.query(ToolPluginBinding).all()
+        assert len(remaining) == 2
+        tool_names = {b.tool_name for b in remaining}
+        assert tool_names == {"tool_a", "tool_b"}
+
+    def test_tools_in_incoming_list_are_preserved(self, service, db_session):
+        """Tools that are still in the incoming list are NOT pruned."""
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a", "tool_b"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-002",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        # Upsert again with the same list — nothing should be pruned
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        assert db_session.query(ToolPluginBinding).count() == 2
+
+    def test_no_pruning_when_binding_reference_id_is_none(self, service, db_session):
+        """Bindings without a binding_reference_id are never pruned by subsequent upserts."""
+        r1 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a", "tool_b"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            # intentionally no binding_reference_id
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r1, caller_email="admin@example.com")
+
+        # Second upsert — same plugin, no reference ID, reduced tool list
+        r2 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r2, caller_email="admin@example.com")
+
+        # tool_b must NOT be pruned because no binding_reference_id was supplied
+        assert db_session.query(ToolPluginBinding).count() == 2
+
+    def test_pruning_only_affects_matching_ref_and_plugin(self, service, db_session):
+        """Pruning is scoped to (binding_reference_id, plugin_id) — other refs/plugins are untouched."""
+        # ref-A binds OLG to tool_a and tool_b
+        r_a = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a", "tool_b"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-A",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r_a, caller_email="admin@example.com")
+
+        # ref-B binds RL to tool_c
+        r_b = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_c"],
+                            plugin_id=PluginId.RATE_LIMITER,
+                            config=dict(_RL),
+                            binding_reference_id="ref-B",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r_b, caller_email="admin@example.com")
+
+        assert db_session.query(ToolPluginBinding).count() == 3
+
+        # Update ref-A/OLG to only cover tool_a — tool_b should be pruned
+        r_a_updated = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_a"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-A",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r_a_updated, caller_email="admin@example.com")
+
+        remaining = db_session.query(ToolPluginBinding).all()
+        assert len(remaining) == 2
+        tool_names = {b.tool_name for b in remaining}
+        # tool_b pruned; tool_a (ref-A/OLG) and tool_c (ref-B/RL) survive
+        assert tool_names == {"tool_a", "tool_c"}
+
+    def test_multiple_reference_ids_pruned_independently(self, service, db_session):
+        """A single upsert containing multiple reference IDs prunes each independently."""
+        # Seed: ref-X owns tool_1, tool_2; ref-Y owns tool_3, tool_4
+        seed = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_1", "tool_2"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-X",
+                        ),
+                        PluginPolicyItem(
+                            tool_names=["tool_3", "tool_4"],
+                            plugin_id=PluginId.RATE_LIMITER,
+                            config=dict(_RL),
+                            binding_reference_id="ref-Y",
+                        ),
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, seed, caller_email="admin@example.com")
+        assert db_session.query(ToolPluginBinding).count() == 4
+
+        # Update: ref-X shrinks to tool_1 only; ref-Y shrinks to tool_3 only
+        update = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_1"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-X",
+                        ),
+                        PluginPolicyItem(
+                            tool_names=["tool_3"],
+                            plugin_id=PluginId.RATE_LIMITER,
+                            config=dict(_RL),
+                            binding_reference_id="ref-Y",
+                        ),
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, update, caller_email="admin@example.com")
+
+        remaining = db_session.query(ToolPluginBinding).all()
+        assert len(remaining) == 2
+        assert {b.tool_name for b in remaining} == {"tool_1", "tool_3"}
+
+
+# ---------------------------------------------------------------------------
+# list_bindings — binding_reference_id filter tests
+# ---------------------------------------------------------------------------
+
+
+class TestListBindingsByReference:
+    """Tests for list_bindings filtering by binding_reference_id."""
+
+    def test_filter_by_binding_reference_id(self, service, db_session):
+        """list_bindings with binding_reference_id returns only matching bindings."""
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-filter-001",
+                        )
+                    ]
+                ),
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_y"],
+                            plugin_id=PluginId.RATE_LIMITER,
+                            config=dict(_RL),
+                            binding_reference_id="ref-filter-002",
+                        )
+                    ]
+                ),
+            }
+        )
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        results = service.list_bindings(db_session, binding_reference_id="ref-filter-001")
+        assert len(results) == 1
+        assert results[0].binding_reference_id == "ref-filter-001"
+        assert results[0].team_id == "team-a"
+
+    def test_binding_reference_id_takes_precedence_over_team_id(self, service, db_session):
+        """When both team_id and binding_reference_id are provided, reference ID wins."""
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="unique-ref",
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        # Supply team_id="team-b" (which has no bindings) but binding_reference_id
+        # for team-a's binding — reference ID takes precedence.
+        results = service.list_bindings(db_session, team_id="team-b", binding_reference_id="unique-ref")
+        assert len(results) == 1
+        assert results[0].team_id == "team-a"
+
+    def test_filter_by_reference_id_no_match_returns_empty(self, service, db_session):
+        """list_bindings with a non-existent binding_reference_id returns an empty list."""
+        results = service.list_bindings(db_session, binding_reference_id="does-not-exist")
+        assert results == []
+
+
+

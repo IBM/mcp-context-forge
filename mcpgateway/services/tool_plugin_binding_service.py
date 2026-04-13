@@ -127,8 +127,8 @@ class ToolPluginBindingService:
         any existing binding that shares the same ``binding_reference_id`` and
         ``plugin_id`` but whose ``tool_name`` is *not* in the incoming
         ``tool_names`` list is deleted.  This keeps the stored state in sync
-        when an external system (e.g. WXO) sends a full replacement list of
-        tools on an UPDATE event.
+        when an external system sends a full replacement list of
+        tools on an update event.
 
         **Config replacement policy**: ``config`` is always fully replaced on
         update — it is NOT merged with the stored value.  To preserve existing
@@ -264,21 +264,27 @@ class ToolPluginBindingService:
         team_id: Optional[str] = None,
         binding_reference_id: Optional[str] = None,
     ) -> List[ToolPluginBindingResponse]:
-        """Return all bindings, optionally filtered by team and/or binding_reference_id.
+        """Return all bindings, optionally filtered by team or binding_reference_id.
+
+        When ``binding_reference_id`` is provided it takes precedence and
+        ``team_id`` is ignored — a reference ID is globally unique so scoping
+        by team is redundant and would produce confusing results.
 
         Args:
             db: SQLAlchemy session.
-            team_id: If provided, return only bindings for this team.
-            binding_reference_id: If provided, return only bindings with this reference ID.
+            team_id: If provided (and ``binding_reference_id`` is not), return
+                only bindings for this team.
+            binding_reference_id: If provided, return only bindings with this
+                reference ID (``team_id`` is ignored).
 
         Returns:
             List[ToolPluginBindingResponse]: Matching bindings.
         """
         query = db.query(ToolPluginBinding)
-        if team_id:
-            query = query.filter(ToolPluginBinding.team_id == team_id)
         if binding_reference_id:
             query = query.filter(ToolPluginBinding.binding_reference_id == binding_reference_id)
+        elif team_id:
+            query = query.filter(ToolPluginBinding.team_id == team_id)
         bindings = query.order_by(ToolPluginBinding.team_id, ToolPluginBinding.priority).all()
         return [self._to_response(b) for b in bindings]
 
@@ -318,10 +324,9 @@ class ToolPluginBindingService:
     ) -> List[ToolPluginBindingResponse]:
         """Delete all bindings tagged with a given external reference ID.
 
-        Intended for use by external systems (e.g. WXO sidecar) that need to
-        remove all ContextForge bindings associated with one of their own
-        binding objects on a BINDING_DELETED event, without knowing the
-        internal ContextForge UUIDs.
+        Intended for use by external systems that need to
+        remove all bindings associated with one of their own reference objects
+        without knowing the internal ContextForge UUIDs.
 
         Args:
             db: SQLAlchemy session.
