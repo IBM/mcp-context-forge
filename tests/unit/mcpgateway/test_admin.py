@@ -1586,7 +1586,7 @@ class TestAdminToolRoutes:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.headers == {}
-        assert tool_update.input_schema == {}
+        assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
@@ -12057,6 +12057,7 @@ async def test_admin_unified_search_empty_query_and_tags_returns_empty(mock_db, 
 @pytest.mark.asyncio
 async def test_admin_search_roots_returns_matching_by_name(allow_permission, monkeypatch):
     """admin_search_roots returns roots whose name contains the query."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     root_tmp = Root(uri="file:///tmp", name="tmp")
@@ -12073,6 +12074,7 @@ async def test_admin_search_roots_returns_matching_by_name(allow_permission, mon
 @pytest.mark.asyncio
 async def test_admin_search_roots_matches_by_uri(allow_permission, monkeypatch):
     """admin_search_roots returns roots whose URI contains the query."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     root = Root(uri="file:///project/data", name="data")
@@ -12087,6 +12089,7 @@ async def test_admin_search_roots_matches_by_uri(allow_permission, monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_search_roots_empty_query_returns_all(allow_permission, monkeypatch):
     """admin_search_roots with empty query returns all roots."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     roots = [Root(uri="file:///tmp", name="tmp"), Root(uri="file:///home", name="home")]
@@ -12100,6 +12103,7 @@ async def test_admin_search_roots_empty_query_returns_all(allow_permission, monk
 @pytest.mark.asyncio
 async def test_admin_search_roots_no_match_returns_empty(allow_permission, monkeypatch):
     """admin_search_roots returns empty list when no roots match the query."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     roots = [Root(uri="file:///tmp", name="tmp")]
@@ -12114,6 +12118,7 @@ async def test_admin_search_roots_no_match_returns_empty(allow_permission, monke
 @pytest.mark.asyncio
 async def test_admin_search_roots_respects_limit(allow_permission, monkeypatch):
     """admin_search_roots respects the limit parameter."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     roots = [Root(uri=f"file:///dir{i}", name=f"dir{i}") for i in range(10)]
@@ -12127,6 +12132,7 @@ async def test_admin_search_roots_respects_limit(allow_permission, monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_search_roots_case_insensitive(allow_permission, monkeypatch):
     """admin_search_roots performs case-insensitive matching on both name and URI."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     root = Root(uri="file:///TMP", name="MyRoot")
@@ -12142,6 +12148,7 @@ async def test_admin_search_roots_case_insensitive(allow_permission, monkeypatch
 @pytest.mark.asyncio
 async def test_admin_search_roots_null_name_falls_back_to_uri(allow_permission, monkeypatch):
     """admin_search_roots returns the URI as name when root.name is None."""
+    # First-Party
     from mcpgateway.common.models import Root
 
     root = Root(uri="file:///tmp")
@@ -12249,6 +12256,7 @@ async def test_admin_unified_search_roots_swallows_http_exception(monkeypatch, m
 
 @pytest.mark.asyncio
 async def test_admin_search_roots_denies_without_system_config_permission(monkeypatch, mock_db):
+    # First-Party
     from mcpgateway.common.models import Root
 
     monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[Root(uri="file:///tmp", name="tmp")])))
@@ -12320,6 +12328,7 @@ async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_
 @pytest.mark.parametrize("raw_limit", [0, -5, 1_000_000])
 async def test_admin_search_roots_clamps_out_of_range_limit(raw_limit, allow_permission, monkeypatch):
     """Defense-in-depth clamp: direct Python callers bypass FastAPI ge/le validation."""
+    # First-Party
     from mcpgateway.common.models import Root
     from mcpgateway.config import settings
 

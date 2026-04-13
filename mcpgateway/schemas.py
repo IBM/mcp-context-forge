@@ -427,6 +427,43 @@ class AuthenticationValues(BaseModelWithConfigDict):
     authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
+# Minimal valid JSON Schema used as the default input_schema for REST tools.
+_DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
+
+
+def _extract_rest_url_components(values: dict) -> dict:
+    """Extract ``base_url`` and ``path_template`` from ``url`` for REST integration tools.
+
+    Shared logic used by both :class:`ToolCreate` and :class:`ToolUpdate` model
+    validators so the URL-parsing behaviour stays consistent across create and
+    update paths.
+
+    Args:
+        values: The raw model input dict (mutated in-place).
+
+    Returns:
+        The same *values* dict, potentially with ``base_url`` and
+        ``path_template`` populated.
+    """
+    url = values.get("url")
+    if not url:
+        return values
+
+    parsed = urlparse(str(url))
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    path_template = parsed.path
+
+    if path_template:
+        path_template = "/" + path_template.lstrip("/")
+
+    if not values.get("base_url"):
+        values["base_url"] = base_url
+    if not values.get("path_template"):
+        values["path_template"] = path_template
+
+    return values
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -458,7 +495,7 @@ class ToolCreate(BaseModel):
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
+    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: dict(_DEFAULT_INPUT_SCHEMA), description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
@@ -868,33 +905,22 @@ class ToolCreate(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        Only for integration_type 'REST':
-        If 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
+        """For REST tools: extract URL components and ensure a default input_schema.
 
         Args:
             values (dict): The input values to process.
 
         Returns:
-            dict: The updated values with base_url and path_template if applicable.
+            dict: The updated values with base_url and path_template extracted from url.
         """
-        integration_type = values.get("integration_type")
-        if integration_type != "REST":
-            # Only process for REST, skip for others
+        if values.get("integration_type") != "REST":
             return values
-        url = values.get("url")
-        if url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
+
+        _extract_rest_url_components(values)
+
+        if not values.get("input_schema"):
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
+
         return values
 
     @field_validator("base_url")
@@ -1267,6 +1293,31 @@ class ToolUpdate(BaseModelWithConfigDict):
                     values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """For REST tools: extract URL components and normalise empty input_schema.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template extracted from url.
+        """
+        if values.get("integration_type") != "REST":
+            return values
+
+        _extract_rest_url_components(values)
+
+        # Normalise explicitly-empty input_schema to the typed default.
+        # None is left alone (partial update semantics — omitted fields
+        # should not overwrite existing values in the database).
+        input_schema = values.get("input_schema")
+        if input_schema is not None and isinstance(input_schema, dict) and not input_schema:
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
+
+        return values
+
     @field_validator("displayName")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
@@ -1319,34 +1370,6 @@ class ToolUpdate(BaseModelWithConfigDict):
             raise ValueError("Cannot update tools to MCP integration type. MCP tools are managed by the gateway service.")
         if integration_type == "A2A":
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
-        return values
-
-    @model_validator(mode="before")
-    @classmethod
-    def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        If 'integration_type' is 'REST' and 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
-
-        Args:
-            values (dict): The input values to process.
-
-        Returns:
-            dict: The updated values with base_url and path_template if applicable.
-        """
-        integration_type = values.get("integration_type")
-        url = values.get("url")
-        if integration_type == "REST" and url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
         return values
 
     @field_validator("base_url")
