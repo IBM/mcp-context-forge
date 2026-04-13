@@ -1,12 +1,12 @@
 # Ansible Deployment Playbooks
 
-Ansible playbooks for deploying and benchmarking ContextForge across different platforms.
+[Experimental] Ansible playbooks for deploying and benchmarking ContextForge across different platforms.
 
 ## Available Platforms
 
 | Platform | Path | Description |
 |----------|------|-------------|
-| [OpenShift (OCP)](ocp/) | `ansible/ocp/` | Deploy with CrunchyData PGO, dynamic NFS provisioning, MCP benchmark |
+| [OpenShift (OCP)](ocp/) | `ansible/ocp/` | [Experimental] Deploy with CrunchyData PGO, dynamic NFS provisioning, MCP benchmark |
 
 ## Getting Started
 
