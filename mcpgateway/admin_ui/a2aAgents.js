@@ -620,7 +620,7 @@ export const editA2AAgent = async function (agentId) {
       }
     }
 
-    // Handle UAID fields
+    // Handle UAID fields (UAID is immutable - read-only in edit mode)
     const generateUAIDCheckbox = safeGetElement("a2a-generate-uaid-edit");
     const uaidRegistryField = safeGetElement("a2a-uaid-registry-edit");
     const uaidProtocolField = safeGetElement("a2a-uaid-protocol-edit");
@@ -629,15 +629,38 @@ export const editA2AAgent = async function (agentId) {
       // Check if this is a UAID agent (has uaid field populated)
       const isUAIDAgent = !!agent.uaid;
       generateUAIDCheckbox.checked = isUAIDAgent;
+
+      // UAID is immutable - disable checkbox if agent already has UAID
+      if (isUAIDAgent) {
+        generateUAIDCheckbox.disabled = true;
+        generateUAIDCheckbox.title = "UAID is immutable and cannot be changed";
+      }
+
       toggleUAIDFields("a2a-edit", isUAIDAgent);
     }
 
-    if (uaidRegistryField && agent.uaidRegistry) {
-      uaidRegistryField.value = agent.uaidRegistry;
+    if (uaidRegistryField) {
+      if (agent.uaidRegistry) {
+        uaidRegistryField.value = agent.uaidRegistry;
+      }
+      // Make read-only if agent has UAID (immutable)
+      if (agent.uaid) {
+        uaidRegistryField.readOnly = true;
+        uaidRegistryField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+        uaidRegistryField.title = "UAID is immutable and cannot be changed";
+      }
     }
 
-    if (uaidProtocolField && agent.uaidProto) {
-      uaidProtocolField.value = agent.uaidProto;
+    if (uaidProtocolField) {
+      if (agent.uaidProto) {
+        uaidProtocolField.value = agent.uaidProto;
+      }
+      // Make disabled if agent has UAID (immutable)
+      if (agent.uaid) {
+        uaidProtocolField.disabled = true;
+        uaidProtocolField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+        uaidProtocolField.title = "UAID is immutable and cannot be changed";
+      }
     }
 
     openModal("a2a-edit-modal");

@@ -15506,6 +15506,11 @@ async def admin_add_a2a_agent(
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
+        # Extract UAID fields from form
+        generate_uaid = form.get("generate_uaid") == "true"  # Checkbox sends "true" string
+        uaid_registry = str(form.get("uaid_registry", "context-forge"))
+        uaid_protocol = str(form.get("uaid_protocol", "a2a"))
+
         agent_data = A2AAgentCreate(
             name=form["name"],
             description=form.get("description"),
@@ -15527,6 +15532,10 @@ async def admin_add_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             passthrough_headers=passthrough_headers,
+            # UAID fields for cross-gateway routing
+            generate_uaid=generate_uaid,
+            uaid_registry=uaid_registry if generate_uaid else None,
+            uaid_protocol=uaid_protocol if generate_uaid else None,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -15753,6 +15762,9 @@ async def admin_edit_a2a_agent(
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
+
+        # UAID is immutable once generated - edit form doesn't support UAID generation/modification
+        # to maintain cross-gateway routing stability
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
