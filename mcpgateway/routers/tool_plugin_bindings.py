@@ -19,7 +19,7 @@ Endpoints:
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -172,15 +172,15 @@ async def list_tool_plugin_bindings_for_team(
 @router.delete("/", response_model=ToolPluginBindingListResponse, status_code=status.HTTP_200_OK)
 @require_permission("tools.manage_plugins")
 async def delete_tool_plugin_bindings_by_reference(
-    binding_reference_id: str,
+    binding_reference_id: str = Query(..., min_length=1, description="External reference ID whose bindings to delete"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> ToolPluginBindingListResponse:
     """Delete all bindings associated with an external reference ID.
 
-    Intended for use by external systems (e.g. a WXO sidecar) that need to
-    remove all ContextForge bindings tied to one of their own binding objects
-    on a BINDING_DELETED event, without knowing the internal ContextForge UUIDs.
+    Intended for use by external systems that need to remove all ContextForge
+    bindings tied to one of their own reference objects without knowing the
+    internal ContextForge UUIDs.
 
     Returns the deleted records (empty list if none matched — not an error).
 
