@@ -122,6 +122,16 @@ class TestParseUaid:
         with pytest.raises(ValueError, match="'registry' parameter required for aid method"):
             parse_uaid("uaid:aid:9BjK3mP7xQv;uid=0;proto=a2a;nativeId=agent.example.com")
 
+    def test_parse_uaid_no_semicolons(self):
+        """Test parsing UAID with no semicolons (no parameters)."""
+        with pytest.raises(ValueError, match="Invalid UAID format: expected hash/did and parameters"):
+            parse_uaid("uaid:aid:9BjK3mP7xQv")
+
+    def test_parse_uaid_invalid_parameter_format(self):
+        """Test parsing UAID with parameter not in key=value format."""
+        with pytest.raises(ValueError, match="Invalid UAID parameter: expected 'key=value' format"):
+            parse_uaid("uaid:aid:9BjK3mP7xQv;uid=0;invalidparam;proto=a2a;nativeId=agent.example.com")
+
 
 class TestExtractRoutingInfo:
     """Test routing information extraction."""

@@ -4896,3 +4896,285 @@ class TestListTasks:
 
         # filter called at least once for state
         assert mock_query.filter.call_count >= 1
+
+
+class TestUAIDGenerationCoverage:
+    """Test UAID generation during agent registration."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance."""
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        db = MagicMock(spec=Session)
+        db.execute.return_value.scalar_one_or_none.return_value = None  # No existing agent
+        db.commit = MagicMock()
+        db.refresh = MagicMock()
+        db.add = MagicMock()
+        return db
+
+    async def test_register_agent_with_uaid_generation(self, service, mock_db, monkeypatch):
+        """Test agent registration with UAID generation enabled."""
+        # Standard
+        from unittest.mock import patch
+
+        # Capture the agent that gets added
+        captured_agent = None
+
+        def _capture_add(obj):
+            nonlocal captured_agent
+            if isinstance(obj, DbA2AAgent):
+                captured_agent = obj
+
+        mock_db.add = MagicMock(side_effect=_capture_add)
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        # Create agent with UAID generation enabled
+        agent_data = A2AAgentCreate(
+            name="UAID Test Agent",
+            description="Test agent with UAID",
+            endpoint_url="https://uaid-agent.example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+            generate_uaid=True,
+            uaid_registry="context-forge",
+            uaid_protocol="a2a",
+            version="1.0.0",
+            uaid_skills=[0, 17],
+        )
+
+        # First-Party
+        import mcpgateway.schemas
+
+        with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
+            await service.register_agent(mock_db, agent_data)
+
+        # Verify UAID was generated
+        assert captured_agent is not None
+        assert captured_agent.id is not None
+        assert captured_agent.id.startswith("uaid:aid:")
+        assert captured_agent.uaid == captured_agent.id
+        assert captured_agent.uaid_registry == "context-forge"
+        assert captured_agent.uaid_proto == "a2a"
+        assert captured_agent.uaid_native_id == "https://uaid-agent.example.com"
+
+    async def test_register_agent_uaid_generation_failure(self, service, mock_db, monkeypatch):
+        """Test agent registration falls back when UAID generation fails."""
+        # Standard
+        from unittest.mock import patch
+
+        # Mock generate_uaid to raise an exception
+        def mock_generate_uaid(*args, **kwargs):
+            raise ValueError("UAID generation failed")
+
+        monkeypatch.setattr("mcpgateway.utils.uaid.generate_uaid", mock_generate_uaid)
+
+        # Capture the agent that gets added
+        captured_agent = None
+
+        def _capture_add(obj):
+            nonlocal captured_agent
+            if isinstance(obj, DbA2AAgent):
+                captured_agent = obj
+
+        mock_db.add = MagicMock(side_effect=_capture_add)
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        # Create agent with UAID generation enabled
+        agent_data = A2AAgentCreate(
+            name="Fallback Test Agent",
+            description="Test agent with UAID fallback",
+            endpoint_url="https://fallback-agent.example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+            generate_uaid=True,
+        )
+
+        # First-Party
+        import mcpgateway.schemas
+
+        with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
+            await service.register_agent(mock_db, agent_data)
+
+        # Verify fallback to UUID (id should be None, letting SQLAlchemy generate UUID)
+        assert captured_agent is not None
+        assert captured_agent.id is None  # Falls back to UUID generation
+
+
+class TestCrossGatewayRoutingCoverage:
+    """Test cross-gateway routing for UAID agents."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance."""
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        db = MagicMock(spec=Session)
+        # Mock execute to return None (agent not found locally)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db.execute.return_value = result
+        return db
+
+    async def test_invoke_agent_triggers_cross_gateway_routing(self, service, mock_db, monkeypatch):
+        """Test invoke_agent with UAID not found locally triggers cross-gateway routing."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock HTTP client to return success
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "cross-gateway success"}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        # Call invoke_agent with UAID (will trigger cross-gateway routing)
+        result = await service.invoke_agent(
+            db=mock_db,
+            agent_name="dummy",  # Will be overridden by agent_id
+            parameters={"test": "data"},
+            interaction_type="request",
+            agent_id=uaid,
+        )
+
+        # Verify cross-gateway routing was called
+        assert result == {"result": "cross-gateway success"}
+        assert mock_client.post.called
+        call_args = mock_client.post.call_args
+        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+
+    async def test_invoke_remote_agent_success(self, service, monkeypatch):
+        """Test _invoke_remote_agent with successful response."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock HTTP client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+
+        assert result == {"result": "success"}
+
+    async def test_invoke_remote_agent_with_mcp_protocol(self, service, monkeypatch):
+        """Test _invoke_remote_agent with MCP protocol."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=mcp;nativeId=mcp.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "mcp success"}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+
+        assert result == {"result": "mcp success"}
+        # Verify MCP endpoint was used
+        call_args = mock_client.post.call_args
+        assert "https://mcp.example.com/mcp/tools/call" in str(call_args)
+
+    async def test_invoke_remote_agent_http_error(self, service, monkeypatch):
+        """Test _invoke_remote_agent with HTTP error."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*HTTP 500"):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
+
+    async def test_invoke_remote_agent_domain_allowlist_check(self, service, monkeypatch):
+        """Test _invoke_remote_agent domain allowlist enforcement."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=blocked.example.com"
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["allowed.com"])
+
+        with pytest.raises(A2AAgentError, match="not allowed.*UAID_ALLOWED_DOMAINS"):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
+
+    async def test_invoke_remote_agent_invalid_uaid(self, service):
+        """Test _invoke_remote_agent with invalid UAID."""
+        with pytest.raises(A2AAgentError, match="Invalid UAID"):
+            await service._invoke_remote_agent(
+                uaid="invalid-uaid",
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
+
+    async def test_invoke_remote_agent_network_error(self, service, monkeypatch):
+        """Test _invoke_remote_agent with network error."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=Exception("Network error"))
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*Network error"):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
+
+
