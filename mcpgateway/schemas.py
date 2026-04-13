@@ -4889,6 +4889,12 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
+    # UAID (Universal Agent ID) generation fields - allow adding UAID to agents that don't have one
+    generate_uaid: Optional[bool] = Field(default=False, description="Generate UAID if agent doesn't already have one (UAID is immutable once set)")
+    uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
+    uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
+    version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:

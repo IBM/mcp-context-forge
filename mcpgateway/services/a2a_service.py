@@ -1347,6 +1347,31 @@ class A2AAgentService(BaseService):
                     agent.auth_type = "query_param"
                     agent.auth_value = None  # Query param auth doesn't use auth_value
 
+            # Generate UAID if requested and agent doesn't already have one (UAID is immutable)
+            if getattr(agent_data, "generate_uaid", False) and not agent.uaid:
+                # First-Party
+                from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                try:
+                    uaid = generate_uaid(
+                        registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
+                        name=agent.name,  # Use current agent name
+                        version=getattr(agent_data, "version", None) or "1.0.0",
+                        protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
+                        native_id=agent.endpoint_url,  # Use current endpoint_url
+                        skills=[],  # Empty skills list for now
+                    )
+
+                    # Populate UAID fields (immutable once set)
+                    agent.uaid = uaid
+                    agent.uaid_registry = getattr(agent_data, "uaid_registry", None) or "context-forge"
+                    agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
+                    agent.uaid_native_id = agent.endpoint_url
+
+                    logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid}")
+                except Exception as uaid_error:
+                    logger.warning(f"Failed to generate UAID for agent {agent.name}: {uaid_error}. Continuing without UAID.")
+
             # Update metadata
             if modified_by:
                 agent.modified_by = modified_by

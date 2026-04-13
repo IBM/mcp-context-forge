@@ -620,46 +620,64 @@ export const editA2AAgent = async function (agentId) {
       }
     }
 
-    // Handle UAID fields (UAID is immutable - read-only in edit mode)
+    // Handle UAID fields
+    // - If agent has UAID: show as read-only (UAID is immutable)
+    // - If agent has no UAID: allow user to generate one
     const generateUAIDCheckbox = safeGetElement("a2a-generate-uaid-edit");
     const uaidRegistryField = safeGetElement("a2a-uaid-registry-edit");
     const uaidProtocolField = safeGetElement("a2a-uaid-protocol-edit");
 
-    if (generateUAIDCheckbox) {
-      // Check if this is a UAID agent (has uaid field populated)
-      const isUAIDAgent = !!agent.uaid;
-      generateUAIDCheckbox.checked = isUAIDAgent;
+    const hasUAID = !!agent.uaid;
 
-      // UAID is immutable - disable checkbox if agent already has UAID
-      if (isUAIDAgent) {
+    if (generateUAIDCheckbox) {
+      generateUAIDCheckbox.checked = hasUAID;
+
+      if (hasUAID) {
+        // Agent already has UAID - make checkbox disabled (UAID is immutable)
         generateUAIDCheckbox.disabled = true;
-        generateUAIDCheckbox.title = "UAID is immutable and cannot be changed";
+        generateUAIDCheckbox.title = "UAID is immutable and cannot be changed once generated";
+      } else {
+        // Agent has no UAID - allow user to check the box to generate one
+        generateUAIDCheckbox.disabled = false;
+        generateUAIDCheckbox.title = "Generate UAID for cross-gateway routing (can only be set once)";
       }
 
-      toggleUAIDFields("a2a-edit", isUAIDAgent);
+      toggleUAIDFields("a2a-edit", hasUAID);
     }
 
     if (uaidRegistryField) {
-      if (agent.uaidRegistry) {
-        uaidRegistryField.value = agent.uaidRegistry;
-      }
-      // Make read-only if agent has UAID (immutable)
-      if (agent.uaid) {
+      // Clear any previous styling
+      uaidRegistryField.classList.remove('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+      uaidRegistryField.readOnly = false;
+
+      if (hasUAID) {
+        // Agent has UAID - make field read-only and populate
+        uaidRegistryField.value = agent.uaidRegistry || "";
         uaidRegistryField.readOnly = true;
         uaidRegistryField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
         uaidRegistryField.title = "UAID is immutable and cannot be changed";
+      } else {
+        // Agent has no UAID - allow editing
+        uaidRegistryField.value = "context-forge";
+        uaidRegistryField.title = "Registry identifier for UAID generation";
       }
     }
 
     if (uaidProtocolField) {
-      if (agent.uaidProto) {
-        uaidProtocolField.value = agent.uaidProto;
-      }
-      // Make disabled if agent has UAID (immutable)
-      if (agent.uaid) {
+      // Clear any previous styling
+      uaidProtocolField.classList.remove('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+      uaidProtocolField.disabled = false;
+
+      if (hasUAID) {
+        // Agent has UAID - make field disabled and populate
+        uaidProtocolField.value = agent.uaidProto || "";
         uaidProtocolField.disabled = true;
         uaidProtocolField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
         uaidProtocolField.title = "UAID is immutable and cannot be changed";
+      } else {
+        // Agent has no UAID - allow selection
+        uaidProtocolField.value = "a2a";
+        uaidProtocolField.title = "Protocol for UAID generation";
       }
     }
 
