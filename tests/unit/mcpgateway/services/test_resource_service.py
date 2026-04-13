@@ -7236,7 +7236,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
-        """meta_data is accepted but not forwarded to session.read_resource (SDK doesn't support _meta)."""
+        """meta_data is forwarded to the upstream via send_request (SDK read_resource lacks _meta support)."""
         # Standard
         from contextlib import asynccontextmanager
 
@@ -7250,6 +7250,8 @@ class TestReadResourceDirectProxy:
         result_mock.contents = [first_content]
 
         client_session_cm, session_mock = self._make_session_mock(result_mock)
+        # send_request is used instead of read_resource when meta_data is provided
+        session_mock.send_request = AsyncMock(return_value=result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
@@ -7275,10 +7277,9 @@ class TestReadResourceDirectProxy:
                 meta_data=meta,
             )
 
-        # MCP SDK read_resource() only accepts uri; _meta is not forwarded
-        session_mock.read_resource.assert_awaited_once_with(
-            uri="http://example.com/dp-resource",
-        )
+        # _meta is forwarded via send_request; read_resource is not called when meta_data is set
+        session_mock.send_request.assert_awaited_once()
+        session_mock.read_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
