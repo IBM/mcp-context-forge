@@ -828,8 +828,8 @@ toml = [
 
 [[package]]
 name = "cpex"
-version = "0.1.0.dev10"
-source = { git = "https://github.com/contextforge-org/contextforge-plugins-framework.git?rev=feat%2Fcf_sync#e561c08052b9cfe8c5d0cfeda9a0eb740257e07e" }
+version = "0.1.0.dev11"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx", extra = ["http2"] },
@@ -841,6 +841,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/4c/c462d23f98b7b388dd6642d71702f5f47d120c0df471a22add22ad99fe69/cpex-0.1.0.dev11.tar.gz", hash = "sha256:c7c30650fd49fdae7ec67f46c1d57486db090ae79ec39a6ed2f8ed990b78f6e5", size = 754645, upload-time = "2026-04-13T21:02:26.901Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/5e/d051f25b6bb2241f61f710ef0a127cbdd4b8ca2612d8b777d4164347e1f6/cpex-0.1.0.dev11-py3-none-any.whl", hash = "sha256:c34d23f16191744e98415cdf850d981e377399a2d802abda565c276f217ae380", size = 167516, upload-time = "2026-04-13T21:02:25.687Z" },
 ]
 
 [[package]]
@@ -2941,7 +2945,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
     { name = "atheris", marker = "extra == 'fuzz-atheris'", specifier = ">=3.0.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", git = "https://github.com/contextforge-org/contextforge-plugins-framework.git?rev=feat%2Fcf_sync" },
+    { name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "filelock", specifier = ">=3.25.2" },

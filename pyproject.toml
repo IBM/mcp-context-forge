@@ -81,7 +81,7 @@ dependencies = [
     "sse-starlette>=3.3.3",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "cpex @ git+https://github.com/contextforge-org/contextforge-plugins-framework.git@feat/cf_sync",
+    "cpex>=0.1.0.dev11,<0.2.0",
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
