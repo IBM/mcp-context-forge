@@ -21,6 +21,13 @@ import {
 import { llmModelComboboxSelect } from "./llmModels.js";
 import { closeModal } from "./modals.js";
 import { initializeRealTimeMonitoring } from "./monitoring.js";
+import {
+  closeAddRuleModal,
+  deleteRule,
+  openAddRuleModal,
+  runPolicyTest,
+  submitAddRule,
+} from "./policy.js";
 import { ensureAddStoreListeners } from "./servers.js";
 import { initializeTagFiltering, updateAvailableTags } from "./tags.js";
 import {
@@ -662,6 +669,62 @@ import {
   });
 
   // ===================================================================
+  // Policy Page setup
+  // ===================================================================
+
+  // Policy Engine button delegation
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest("[onclick]");
+    if (!btn) return;
+    const fn = btn.getAttribute("onclick");
+    if (fn && fn.includes("openAddRuleModal")) {
+      e.preventDefault();
+      openAddRuleModal();
+    }
+    if (fn && fn.includes("closeAddRuleModal")) {
+      e.preventDefault();
+      closeAddRuleModal();
+    }
+    if (fn && fn.includes("submitAddRule")) {
+      e.preventDefault();
+      submitAddRule();
+    }
+    if (fn && fn.includes("runPolicyTest")) {
+      e.preventDefault();
+      runPolicyTest();
+    }
+    if (fn && fn.includes("deleteRule")) {
+      e.preventDefault();
+      const match = fn.match(/deleteRule\('(.+?)'\)/);
+      if (match) deleteRule(match[1]);
+    }
+  });
+
+  // Policy Engine event delegation
+  document.addEventListener("click", function (e) {
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    const action = el.getAttribute("data-action");
+    if (action === "open-add-rule") openAddRuleModal();
+    if (action === "close-add-rule") closeAddRuleModal();
+    if (action === "submit-add-rule") submitAddRule();
+    if (action === "run-policy-test") runPolicyTest();
+    if (action === "delete-rule") deleteRule(el.getAttribute("data-rule-id"));
+  });
+
+  // Policy Engine event delegation
+  document.addEventListener("click", function (e) {
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    const action = el.getAttribute("data-action");
+    if (action === "open-add-rule") openAddRuleModal();
+    if (action === "close-add-rule") closeAddRuleModal();
+    if (action === "submit-add-rule") submitAddRule();
+    if (action === "run-policy-test") runPolicyTest();
+    if (action === "delete-rule") deleteRule(el.getAttribute("data-rule-id"));
+  });
+
+  // ===================================================================
   // GLOBAL ERROR HANDLERS
   // ===================================================================
 
@@ -841,7 +904,9 @@ import {
   // ===================================================================
   // Alpine Components
   // ===================================================================
-  document.addEventListener('alpine:init', () => {
-    Alpine.data('overflowMenu', (wrapperId = null) => overflowMenu(wrapperId));
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("overflowMenu", (wrapperId = null) =>
+      overflowMenu(wrapperId)
+    );
   });
 })(window.Admin);

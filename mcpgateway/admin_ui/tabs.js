@@ -662,6 +662,44 @@ export const showTab = function (tabName) {
           }
         }
 
+        if (tabName === "policy") {
+          const policyPanel = safeGetElement("policy-panel");
+          if (policyPanel && policyPanel.innerHTML.trim() === "") {
+            const rootPath = window.ROOT_PATH || "";
+            fetchWithTimeout(
+              `${rootPath}/admin/policy/partial`,
+              {
+                method: "GET",
+                credentials: "same-origin", // pragma: allowlist secret
+                headers: { Accept: "text/html" },
+              },
+              5000
+            )
+              .then((response) => {
+                if (!response.ok) {
+                  throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.text();
+              })
+              .then((html) => {
+                policyPanel.innerHTML = html;
+                policyPanel.querySelectorAll("script").forEach((s) => {
+                  const n = document.createElement("script");
+                  n.textContent = s.textContent;
+                  document.body.appendChild(n);
+                });
+              })
+              .catch((error) => {
+                console.error("Error loading policy partial:", error);
+                policyPanel.innerHTML = `
+                                    <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                                        <strong class="font-bold">Error loading policy engine:</strong>
+                                        <span class="block sm:inline">${escapeHtml(error.message)}</span>
+                                    </div>`;
+              });
+          }
+        }
+
         if (tabName === "version-info") {
           const versionPanel = safeGetElement("version-info-panel");
           if (versionPanel && versionPanel.innerHTML.trim() === "") {
