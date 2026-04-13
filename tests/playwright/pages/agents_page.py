@@ -121,6 +121,33 @@ class AgentsPage(BasePage):
         """UAID protocol select field."""
         return self.add_agent_form.locator("#a2a-uaid-protocol")
 
+    # ==================== Edit Modal UAID Fields ====================
+
+    @property
+    def edit_modal(self) -> Locator:
+        """Edit agent modal."""
+        return self.page.locator("#a2a-edit-modal")
+
+    @property
+    def edit_generate_uaid_checkbox(self) -> Locator:
+        """Generate UAID checkbox in edit form."""
+        return self.edit_modal.locator("#a2a-generate-uaid-edit")
+
+    @property
+    def edit_uaid_fields_container(self) -> Locator:
+        """UAID fields container in edit form."""
+        return self.edit_modal.locator("#uaid-fields-a2a-edit")
+
+    @property
+    def edit_uaid_registry_input(self) -> Locator:
+        """UAID registry name input field in edit form."""
+        return self.edit_modal.locator("#a2a-uaid-registry-edit")
+
+    @property
+    def edit_uaid_protocol_select(self) -> Locator:
+        """UAID protocol select field in edit form."""
+        return self.edit_modal.locator("#a2a-uaid-protocol-edit")
+
     # ==================== Submit Button ====================
 
     @property

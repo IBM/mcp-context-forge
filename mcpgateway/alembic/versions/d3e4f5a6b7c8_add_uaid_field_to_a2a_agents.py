@@ -26,7 +26,6 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
 revision: str = "d3e4f5a6b7c8"
 down_revision: Union[str, Sequence[str], None] = "c2d3e4f5a6b7"
@@ -51,33 +50,21 @@ def upgrade() -> None:
 
     # Add uaid column if it doesn't exist
     if "uaid" not in existing_columns:
-        op.add_column(
-            "a2a_agents",
-            sa.Column("uaid", sa.String(512), nullable=True, comment="Full UAID string for UAID-based agents")
-        )
+        op.add_column("a2a_agents", sa.Column("uaid", sa.String(512), nullable=True, comment="Full UAID string for UAID-based agents"))
         # Create unique index on uaid
         op.create_index("ix_a2a_agents_uaid", "a2a_agents", ["uaid"], unique=True)
 
     # Add uaid_registry column if it doesn't exist
     if "uaid_registry" not in existing_columns:
-        op.add_column(
-            "a2a_agents",
-            sa.Column("uaid_registry", sa.String(255), nullable=True, comment="Registry name extracted from UAID")
-        )
+        op.add_column("a2a_agents", sa.Column("uaid_registry", sa.String(255), nullable=True, comment="Registry name extracted from UAID"))
 
     # Add uaid_proto column if it doesn't exist
     if "uaid_proto" not in existing_columns:
-        op.add_column(
-            "a2a_agents",
-            sa.Column("uaid_proto", sa.String(50), nullable=True, comment="Protocol from UAID (a2a, mcp, rest, grpc)")
-        )
+        op.add_column("a2a_agents", sa.Column("uaid_proto", sa.String(50), nullable=True, comment="Protocol from UAID (a2a, mcp, rest, grpc)"))
 
     # Add uaid_native_id column if it doesn't exist
     if "uaid_native_id" not in existing_columns:
-        op.add_column(
-            "a2a_agents",
-            sa.Column("uaid_native_id", sa.String(767), nullable=True, comment="Native endpoint URL for cross-gateway routing")
-        )
+        op.add_column("a2a_agents", sa.Column("uaid_native_id", sa.String(767), nullable=True, comment="Native endpoint URL for cross-gateway routing"))
 
 
 def downgrade() -> None:
