@@ -8779,8 +8779,15 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main._execute_rpc_tools_call", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call(request)
+            result = await handle_internal_mcp_tools_call(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert result["jsonrpc"] == "2.0"
+            assert "error" in result
+            assert result["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in result["error"]["message"]
+            assert result["id"] is not None  # Generated ID
+            # Verify close() was called twice (once succeeded, once failed but ignored)
+            assert mock_db.close.call_count == 2
 
     async def test_handle_internal_mcp_tools_call_resolve_rejects_parse_error_invalid_method_missing_name_and_tool_error(self):
         base_headers = {
@@ -8881,8 +8888,17 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call_resolve(request)
+            response = await handle_internal_mcp_tools_call_resolve(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert response.status_code == 500  # PluginError defaults to 500
+            content = json.loads(response.body)
+            assert content["jsonrpc"] == "2.0"
+            assert "error" in content
+            assert content["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in content["error"]["message"]
+            assert content["id"] == "plugin-err"  # ID from request
+            # Verify close() was called (and failure was ignored)
+            assert mock_db.close.call_count == 1
 
     async def test_server_scoped_authz_missing_server_scope_and_jsonrpc_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})

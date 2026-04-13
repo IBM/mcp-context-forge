@@ -9677,11 +9677,15 @@ async def handle_internal_mcp_tools_call(request: Request):
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
     except PluginViolationError as exc:
         # Use violation's codes if present, otherwise JSON-RPC defaults
-        error_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+        error_code = -32602  # Invalid params (JSON-RPC standard)
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
 
         return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
     except PluginError as exc:
-        error_code = exc.error.mcp_error_code if exc.error and exc.error.mcp_error_code else -32603
+        error_code = -32603  # Internal error (JSON-RPC standard)
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
 
         return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
     except JSONRPCError as e:
@@ -9815,8 +9819,13 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
     except PluginViolationError as exc:
         request_id = body.get("id") if isinstance(body, dict) else None
         # Use violation's codes if present, otherwise JSON-RPC defaults
-        error_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
-        http_status = exc.violation.http_status_code if exc.violation and exc.violation.http_status_code else 422
+        error_code = -32602  # Invalid params (JSON-RPC standard)
+        http_status = 422
+        if exc.violation:
+            if hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+                error_code = exc.violation.mcp_error_code
+            if hasattr(exc.violation, "http_status_code") and isinstance(exc.violation.http_status_code, int):
+                http_status = exc.violation.http_status_code
 
         return ORJSONResponse(
             status_code=http_status,
@@ -9828,7 +9837,9 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         )
     except PluginError as exc:
         request_id = body.get("id") if isinstance(body, dict) else None
-        error_code = exc.error.mcp_error_code if exc.error and exc.error.mcp_error_code else -32603
+        error_code = -32603  # Internal error (JSON-RPC standard)
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
 
         return ORJSONResponse(
             status_code=500,
