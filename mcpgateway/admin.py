@@ -19619,10 +19619,7 @@ async def get_policy_partial(
     pdp = getattr(request.app.state, "pdp", None)
 
     if pdp is None:
-        return HTMLResponse(
-            "<div class='p-8 text-center text-gray-500'>Policy engine not initialised. "
-            "Set up the PDP singleton in main.py startup.</div>"
-        )
+        return HTMLResponse("<div class='p-8 text-center text-gray-500'>Policy engine not initialised. Set up the PDP singleton in main.py startup.</div>")
 
     # First-Party
     from plugins.unified_pdp.pdp_models import EngineType
@@ -19631,20 +19628,18 @@ async def get_policy_partial(
     cache_stats = pdp.cache_stats()
 
     # Get native rules for the table
-    native = pdp._engines.get(EngineType.NATIVE)  # pylint: disable=protected-access  # pylint: disable=protected-access
-    rules = native._rules if native else []  # pylint: disable=protected-access  # pylint: disable=protected-access
+    native = pdp.get_engine(EngineType.NATIVE)
+    rules = native.rules if native else []
 
     context = {
         "request": request,
         "health": health,
-        "engine_count": len(pdp._engines),
+        "engine_count": pdp.engine_count,
         "rule_count": len(rules),
         "rules": rules,
         "cache_stats": cache_stats,
     }
-    return request.app.state.templates.TemplateResponse(
-        request, "policy_partial.html", context
-    )
+    return request.app.state.templates.TemplateResponse(request, "policy_partial.html", context)
 
 
 @admin_router.get("/policy/rules")
@@ -19787,22 +19782,24 @@ async def test_policy_access(
 
     decision = await pdp.check_access(subject, body.action, resource, context)
 
-    return JSONResponse({
-        "decision": decision.decision.value,
-        "reason": decision.reason,
-        "matching_policies": decision.matching_policies,
-        "duration_ms": decision.duration_ms,
-        "cached": decision.cached,
-        "engine_decisions": [
-            {
-                "engine": ed.engine.value,
-                "decision": ed.decision.value,
-                "reason": ed.reason,
-                "matching_policies": ed.matching_policies,
-            }
-            for ed in decision.engine_decisions
-        ],
-    })
+    return JSONResponse(
+        {
+            "decision": decision.decision.value,
+            "reason": decision.reason,
+            "matching_policies": decision.matching_policies,
+            "duration_ms": decision.duration_ms,
+            "cached": decision.cached,
+            "engine_decisions": [
+                {
+                    "engine": ed.engine.value,
+                    "decision": ed.decision.value,
+                    "reason": ed.reason,
+                    "matching_policies": ed.matching_policies,
+                }
+                for ed in decision.engine_decisions
+            ],
+        }
+    )
 
 
 @admin_router.get("/policy/health")
@@ -19826,18 +19823,20 @@ async def policy_health(
         raise HTTPException(status_code=503, detail="Policy engine not initialised")
 
     health = await pdp.health()
-    return JSONResponse({
-        "healthy": health.healthy,
-        "engines": [
-            {
-                "engine": e.engine.value,
-                "status": e.status.value,
-                "latency_ms": e.latency_ms,
-                "detail": e.detail,
-            }
-            for e in health.engines
-        ],
-    })
+    return JSONResponse(
+        {
+            "healthy": health.healthy,
+            "engines": [
+                {
+                    "engine": e.engine.value,
+                    "status": e.status.value,
+                    "latency_ms": e.latency_ms,
+                    "detail": e.detail,
+                }
+                for e in health.engines
+            ],
+        }
+    )
 
 
 @admin_router.get("/policy/cache/stats")

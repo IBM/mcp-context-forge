@@ -1222,4 +1222,108 @@ describe("showTab", () => {
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  test("loads policy tab with fetch", async () => {
+    const { fetchWithTimeout } =
+      await import("../../../mcpgateway/admin_ui/utils.js");
+
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve("<div>Policy content</div>"),
+    });
+
+    const panel = document.createElement("div");
+    panel.id = "policy-panel";
+    panel.classList.add("tab-panel", "hidden");
+    document.body.appendChild(panel);
+
+    const link = document.createElement("a");
+    link.classList.add("sidebar-link");
+    link.href = "#policy";
+    document.body.appendChild(link);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showTab("policy");
+    vi.runAllTimers();
+
+    await vi.waitFor(() => {
+      expect(fetchWithTimeout).toHaveBeenCalledWith(
+        "/admin/policy/partial",
+        expect.any(Object),
+        5000
+      );
+    });
+
+    logSpy.mockRestore();
+  });
+
+  test("handles policy tab non-ok HTTP response", async () => {
+    const { fetchWithTimeout } =
+      await import("../../../mcpgateway/admin_ui/utils.js");
+
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+    });
+
+    const panel = document.createElement("div");
+    panel.id = "policy-panel";
+    panel.classList.add("tab-panel", "hidden");
+    document.body.appendChild(panel);
+
+    const link = document.createElement("a");
+    link.classList.add("sidebar-link");
+    link.href = "#policy";
+    document.body.appendChild(link);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    showTab("policy");
+    vi.runAllTimers();
+
+    await vi.waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Error loading policy"),
+        expect.any(Error)
+      );
+    });
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  test("handles policy tab fetch error", async () => {
+    const { fetchWithTimeout } =
+      await import("../../../mcpgateway/admin_ui/utils.js");
+
+    fetchWithTimeout.mockRejectedValueOnce(new Error("Network error"));
+
+    const panel = document.createElement("div");
+    panel.id = "policy-panel";
+    panel.classList.add("tab-panel", "hidden");
+    document.body.appendChild(panel);
+
+    const link = document.createElement("a");
+    link.classList.add("sidebar-link");
+    link.href = "#policy";
+    document.body.appendChild(link);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    showTab("policy");
+    vi.runAllTimers();
+
+    await vi.waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Error loading policy"),
+        expect.any(Error)
+      );
+    });
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });

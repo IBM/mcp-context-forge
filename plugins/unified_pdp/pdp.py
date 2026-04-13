@@ -385,9 +385,7 @@ class PolicyDecisionPoint:
         # FIRST_MATCH – use the first (highest priority) decision
         return self._combine_first_match(decisions)
 
-    def _combine_all_must_allow(
-        self, decisions: List[EngineDecision]
-    ) -> tuple[Decision, str, List[str]]:
+    def _combine_all_must_allow(self, decisions: List[EngineDecision]) -> tuple[Decision, str, List[str]]:
         """Apply AND logic: all engines must allow for access to be granted.
 
         Args:
@@ -405,9 +403,7 @@ class PolicyDecisionPoint:
         all_policies = [p for d in decisions for p in d.matching_policies]
         return (Decision.ALLOW, "[all_must_allow] All engines allowed", all_policies)
 
-    def _combine_any_allow(
-        self, decisions: List[EngineDecision]
-    ) -> tuple[Decision, str, List[str]]:
+    def _combine_any_allow(self, decisions: List[EngineDecision]) -> tuple[Decision, str, List[str]]:
         """Apply OR logic: at least one engine must allow for access.
 
         Args:
@@ -427,9 +423,7 @@ class PolicyDecisionPoint:
         all_policies = [p for d in decisions for p in d.matching_policies]
         return (Decision.DENY, f"[any_allow] All engines denied: {all_reasons}", all_policies)
 
-    def _combine_first_match(
-        self, decisions: List[EngineDecision]
-    ) -> tuple[Decision, str, List[str]]:
+    def _combine_first_match(self, decisions: List[EngineDecision]) -> tuple[Decision, str, List[str]]:
         """Use the first decision by priority (lowest priority number wins).
 
         Args:
@@ -534,6 +528,19 @@ class PolicyDecisionPoint:
         return all_perms
 
     # ------------------------------------------------------------------
+    # Introspection (public)
+    # ------------------------------------------------------------------
+
+    @property
+    def engine_count(self) -> int:
+        """Return the number of initialized engines."""
+        return len(self._engines)
+
+    def get_engine(self, engine_type: "EngineType") -> "PolicyEngineAdapter | None":
+        """Return the adapter for *engine_type*, or None if not initialized."""
+        return self._engines.get(engine_type)
+
+    # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
 
@@ -557,9 +564,7 @@ class PolicyDecisionPoint:
 
         for eng_cfg in self._config.engines:
             if eng_cfg.name not in initialized:
-                reports.append(
-                    EngineHealthReport(engine=eng_cfg.name, status=EngineStatus.DISABLED)
-                )
+                reports.append(EngineHealthReport(engine=eng_cfg.name, status=EngineStatus.DISABLED))
 
         healthy = all(r.status.value != "unhealthy" for r in reports)
         return PDPHealthReport(healthy=healthy, engines=reports)

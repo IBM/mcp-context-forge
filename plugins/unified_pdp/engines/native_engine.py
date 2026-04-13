@@ -131,6 +131,11 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
         logger.info("NativeRBAC: no rules configured – all requests will be denied")
 
+    @property
+    def rules(self) -> List[Rule]:
+        """Return the current rule list."""
+        return self._rules
+
     def add_rule(self, rule: Rule) -> None:
         """Programmatically add a rule at runtime.
 
@@ -295,12 +300,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
             rule_id = rule.get("id", "")
             if not rule_id.startswith("deny:"):
                 continue
-            if (
-                self._role_matches(rule, subject)
-                and self._action_matches(rule, action)
-                and self._resource_matches(rule, resource)
-                and self._conditions_match(rule, subject, context)
-            ):
+            if self._role_matches(rule, subject) and self._action_matches(rule, action) and self._resource_matches(rule, resource) and self._conditions_match(rule, subject, context):
                 duration = (time.perf_counter() - start) * 1000
                 return EngineDecision(
                     engine=EngineType.NATIVE,
@@ -316,12 +316,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
             rule_id = rule.get("id", "")
             if rule_id.startswith("deny:"):
                 continue
-            if (
-                self._role_matches(rule, subject)
-                and self._action_matches(rule, action)
-                and self._resource_matches(rule, resource)
-                and self._conditions_match(rule, subject, context)
-            ):
+            if self._role_matches(rule, subject) and self._action_matches(rule, action) and self._resource_matches(rule, resource) and self._conditions_match(rule, subject, context):
                 matched_policies.append(rule_id)
 
         duration = (time.perf_counter() - start) * 1000

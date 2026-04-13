@@ -38,6 +38,13 @@ vi.mock("../../../mcpgateway/admin_ui/tags.js", () => ({ initializeTagFiltering:
 vi.mock("../../../mcpgateway/admin_ui/teams.js", () => ({ hideTeamEditModal: vi.fn(), initializeAddMembersForms: vi.fn(), initializePasswordValidation: vi.fn(), updateDefaultVisibility: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({ initializeTeamScopingMonitor: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({ cleanupToolTestState: vi.fn(), editTool: vi.fn(), enrichTool: vi.fn(), generateToolTestCases: vi.fn(), initToolSelect: vi.fn(), loadTools: vi.fn(), validateTool: vi.fn(), viewTool: vi.fn() }));
+vi.mock("../../../mcpgateway/admin_ui/policy.js", () => ({
+  closeAddRuleModal: vi.fn(),
+  deleteRule: vi.fn(),
+  openAddRuleModal: vi.fn(),
+  runPolicyTest: vi.fn(),
+  submitAddRule: vi.fn(),
+}));
 vi.mock("../../../mcpgateway/admin_ui/users.js", () => ({ hideUserEditModal: vi.fn(), performUserSearch: vi.fn(), registerAdminActionListeners: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/initialization.js", () => ({ initializeCodeMirrorEditors: vi.fn(), initializeEventListeners: vi.fn(), initializeExportImport: vi.fn(), initializeGlobalSearch: vi.fn(), initializeSearchInputs: vi.fn(), initializeTabState: vi.fn(), initializeToolSelects: vi.fn(), registerReloadAllResourceSections: vi.fn(), setupBulkImportModal: vi.fn(), setupTooltipsWithAlpine: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({ createMemoizedInit: vi.fn((fn) => ({ init: fn, debouncedInit: vi.fn(), reset: vi.fn() })), safeGetElement: vi.fn((id) => document.getElementById(id)), showErrorMessage: vi.fn(), showSuccessMessage: vi.fn(), updateEditToolUrl: vi.fn() }));
@@ -273,6 +280,107 @@ describe("events.js - Keyboard event handling", () => {
     vi.clearAllMocks();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(closeModal).not.toHaveBeenCalled();
+  });
+});
+
+describe("events.js - Policy onclick delegation", () => {
+  beforeEach(async () => {
+    await import("../../../mcpgateway/admin_ui/events.js");
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    vi.clearAllMocks();
+  });
+
+  function clickOnclick(onclickValue) {
+    const btn = document.createElement("button");
+    btn.setAttribute("onclick", onclickValue);
+    document.body.appendChild(btn);
+    btn.click();
+    document.body.removeChild(btn);
+  }
+
+  test("onclick openAddRuleModal calls openAddRuleModal", async () => {
+    const { openAddRuleModal } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("openAddRuleModal()");
+    expect(openAddRuleModal).toHaveBeenCalled();
+  });
+
+  test("onclick closeAddRuleModal calls closeAddRuleModal", async () => {
+    const { closeAddRuleModal } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("closeAddRuleModal()");
+    expect(closeAddRuleModal).toHaveBeenCalled();
+  });
+
+  test("onclick submitAddRule calls submitAddRule", async () => {
+    const { submitAddRule } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("submitAddRule()");
+    expect(submitAddRule).toHaveBeenCalled();
+  });
+
+  test("onclick runPolicyTest calls runPolicyTest", async () => {
+    const { runPolicyTest } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("runPolicyTest()");
+    expect(runPolicyTest).toHaveBeenCalled();
+  });
+
+  test("onclick deleteRule extracts and passes the rule id", async () => {
+    const { deleteRule } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("deleteRule('my-rule-id')");
+    expect(deleteRule).toHaveBeenCalledWith("my-rule-id");
+  });
+
+  test("onclick without a matching policy function is ignored", async () => {
+    const { openAddRuleModal } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickOnclick("somethingElse()");
+    expect(openAddRuleModal).not.toHaveBeenCalled();
+  });
+});
+
+describe("events.js - Policy data-action delegation", () => {
+  beforeEach(async () => {
+    await import("../../../mcpgateway/admin_ui/events.js");
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    vi.clearAllMocks();
+  });
+
+  function clickDataAction(action, extraAttrs = {}) {
+    const el = document.createElement("button");
+    el.setAttribute("data-action", action);
+    for (const [key, val] of Object.entries(extraAttrs)) {
+      el.setAttribute(key, val);
+    }
+    document.body.appendChild(el);
+    el.click();
+    document.body.removeChild(el);
+  }
+
+  test("data-action open-add-rule calls openAddRuleModal", async () => {
+    const { openAddRuleModal } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickDataAction("open-add-rule");
+    expect(openAddRuleModal).toHaveBeenCalled();
+  });
+
+  test("data-action close-add-rule calls closeAddRuleModal", async () => {
+    const { closeAddRuleModal } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickDataAction("close-add-rule");
+    expect(closeAddRuleModal).toHaveBeenCalled();
+  });
+
+  test("data-action submit-add-rule calls submitAddRule", async () => {
+    const { submitAddRule } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickDataAction("submit-add-rule");
+    expect(submitAddRule).toHaveBeenCalled();
+  });
+
+  test("data-action run-policy-test calls runPolicyTest", async () => {
+    const { runPolicyTest } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickDataAction("run-policy-test");
+    expect(runPolicyTest).toHaveBeenCalled();
+  });
+
+  test("data-action delete-rule passes rule id to deleteRule", async () => {
+    const { deleteRule } = await import("../../../mcpgateway/admin_ui/policy.js");
+    clickDataAction("delete-rule", { "data-rule-id": "rule-xyz" });
+    expect(deleteRule).toHaveBeenCalledWith("rule-xyz");
   });
 });
 

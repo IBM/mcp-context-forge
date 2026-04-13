@@ -3298,9 +3298,8 @@ try:
     # First-Party
     from plugins.unified_pdp.pdp import PolicyDecisionPoint
     from plugins.unified_pdp.pdp_models import EngineConfig, EngineType, PDPConfig
-    pdp_config = PDPConfig(
-        engines=[EngineConfig(name=EngineType.NATIVE, enabled=True, priority=0, settings={})]
-    )
+
+    pdp_config = PDPConfig(engines=[EngineConfig(name=EngineType.NATIVE, enabled=True, priority=0, settings={})])
     app.state.pdp = PolicyDecisionPoint(pdp_config)
     logger.info("Policy Decision Point initialised")
 except Exception as exc:
@@ -11608,7 +11607,7 @@ app.include_router(export_import_router)
 # Tool plugin bindings router
 try:
     # First-Party
-    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel,ungrouped-imports
 
     app.include_router(tool_plugin_bindings_router)
     logger.info("Tool plugin bindings router included")
