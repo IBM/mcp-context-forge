@@ -47,6 +47,23 @@ from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingSer
 
 
 # ---------------------------------------------------------------------------
+# Canonical full-field configs (must include all schema fields)
+# ---------------------------------------------------------------------------
+
+_OLG: dict = {
+    "min_chars": 0, "max_chars": 2000, "min_tokens": 0, "max_tokens": None,
+    "chars_per_token": 4, "limit_mode": "character", "strategy": "truncate",
+    "ellipsis": "\u2026", "word_boundary": False, "max_text_length": 1_000_000,
+    "max_structure_size": 10_000, "max_recursion_depth": 100,
+}
+_RL: dict = {
+    "by_user": None, "by_tenant": None, "by_tool": None,
+    "algorithm": "fixed_window", "backend": "memory",
+    "redis_url": None, "redis_key_prefix": "rl", "redis_fallback": True,
+}
+
+
+# ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
@@ -134,7 +151,7 @@ class TestGetConfigFromDb:
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             mode=PluginBindingMode.ENFORCE,
                             priority=42,
-                            config={"min_chars": 0, "max_chars": 500, "strategy": "truncate", "ellipsis": "..."},
+                            config={**_OLG, "max_chars": 500},
                         )
                     ]
                 )
@@ -151,7 +168,7 @@ class TestGetConfigFromDb:
         assert o.name == "OutputLengthGuardPlugin"
         assert o.mode == PluginMode.ENFORCE
         assert o.priority == 42
-        assert o.config == {"min_chars": 0, "max_chars": 500, "strategy": "truncate", "ellipsis": "..."}
+        assert o.config == {**_OLG, "max_chars": 500}
 
     @pytest.mark.asyncio
     async def test_unknown_plugin_id_is_skipped(self, db_session):
@@ -194,7 +211,7 @@ class TestGetConfigFromDb:
                             plugin_id=PluginId.RATE_LIMITER,
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=5,
-                            config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
+                            config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
                         )
                     ]
                 )

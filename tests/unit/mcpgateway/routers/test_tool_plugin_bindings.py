@@ -85,6 +85,23 @@ def user_ctx(db_session):
     }
 
 
+# ---------------------------------------------------------------------------
+# Canonical full-field configs (must include all schema fields)
+# ---------------------------------------------------------------------------
+
+_OLG: dict = {
+    "min_chars": 0, "max_chars": 2000, "min_tokens": 0, "max_tokens": None,
+    "chars_per_token": 4, "limit_mode": "character", "strategy": "truncate",
+    "ellipsis": "\u2026", "word_boundary": False, "max_text_length": 1_000_000,
+    "max_structure_size": 10_000, "max_recursion_depth": 100,
+}
+_RL: dict = {
+    "by_user": None, "by_tenant": None, "by_tool": None,
+    "algorithm": "fixed_window", "backend": "memory",
+    "redis_url": None, "redis_key_prefix": "rl", "redis_fallback": True,
+}
+
+
 def _simple_request() -> ToolPluginBindingRequest:
     """Minimal single-team single-tool POST payload."""
     return ToolPluginBindingRequest(
@@ -96,7 +113,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
-                        config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                        config=dict(_OLG),
                     )
                 ]
             )
@@ -115,7 +132,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
-                        config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                        config=dict(_OLG),
                     )
                 ]
             ),
@@ -126,7 +143,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.RATE_LIMITER,
                         mode=PluginBindingMode.PERMISSIVE,
                         priority=30,
-                        config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
+                        config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
                     )
                 ]
             ),
@@ -189,7 +206,7 @@ class TestToolPluginBindingsRouter:
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=99,
-                            config={"min_chars": 0, "max_chars": 500, "strategy": "block", "ellipsis": "..."},
+                            config={**_OLG, "max_chars": 500, "strategy": "block"},
                         )
                     ]
                 )
@@ -335,7 +352,7 @@ class TestToolPluginBindingsRouter:
         assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
         assert team_a.mode == "enforce"
         assert team_a.priority == 50
-        assert team_a.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert team_a.config == _OLG
         assert team_a.created_by == "admin@example.com"
 
         team_b = by_team["team-b"]
@@ -343,7 +360,7 @@ class TestToolPluginBindingsRouter:
         assert team_b.plugin_id == "RATE_LIMITER"
         assert team_b.mode == "permissive"
         assert team_b.priority == 30
-        assert team_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
+        assert team_b.config == {**_RL, "by_user": "60/m", "by_tenant": "600/m"}
         assert team_b.created_by == "admin@example.com"
 
     # ------------------------------------------------------------------
@@ -372,7 +389,7 @@ class TestToolPluginBindingsRouter:
         assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
         assert binding.mode == "enforce"
         assert binding.priority == 50
-        assert binding.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert binding.config == _OLG
         assert binding.created_by == "admin@example.com"
 
     @pytest.mark.asyncio
