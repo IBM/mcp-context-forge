@@ -9,7 +9,7 @@ Deploy and benchmark ContextForge on OpenShift using Ansible playbooks. These pl
 - `oc` CLI authenticated to your cluster
 - `helm` CLI available
 - CrunchyData PGO operator installed on the cluster
-- Secrets file created at `charts/mcp-stack/values-ocp-pgo-secrets.yaml`
+- Secrets file created at `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml`
 
 ## Quick Start
 
@@ -50,9 +50,9 @@ ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/clust
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ocp_namespace` | `contextforge` | Namespace and Helm release name |
-| `ocp_values` | `charts/mcp-stack/values-ocp-pgo.yaml` | Helm values file |
-| `ocp_secrets` | `charts/mcp-stack/values-ocp-pgo-secrets.yaml` | Secrets override file |
-| `ocp_pg_cr` | `charts/mcp-stack/crunchydata-postgres-cr.yaml` | PostgresCluster CR |
+| `ocp_values` | `charts/mcp-stack/profiles/ocp/values-pgo.yaml` | Helm values file |
+| `ocp_secrets` | `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` | Secrets override file |
+| `ocp_pg_cr` | `charts/mcp-stack/profiles/ocp/manifests/pgo-postgrescluster.yaml` | PostgresCluster CR |
 | `bench_users` | `125` | Number of simulated users |
 | `bench_spawn` | `30` | Users spawned per second |
 | `bench_runtime` | `60s` | Benchmark duration |

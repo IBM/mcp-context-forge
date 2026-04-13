@@ -7,9 +7,9 @@ ocp_namespace: contextforge
 
 # Helm chart and values
 ocp_chart_path: "{{ playbook_dir }}/../../../charts/mcp-stack"
-ocp_values: "{{ ocp_chart_path }}/values-ocp-pgo.yaml"
-ocp_secrets: "{{ ocp_chart_path }}/values-ocp-pgo-secrets.yaml"
-ocp_pg_cr: "{{ ocp_chart_path }}/crunchydata-postgres-cr.yaml"
+ocp_values: "{{ ocp_chart_path }}/profiles/ocp/values-pgo.yaml"
+ocp_secrets: "{{ ocp_chart_path }}/profiles/ocp/values-pgo-secrets.yaml"
+ocp_pg_cr: "{{ ocp_chart_path }}/profiles/ocp/manifests/pgo-postgrescluster.yaml"
 
 # Helm install timeout
 helm_timeout: "10m"

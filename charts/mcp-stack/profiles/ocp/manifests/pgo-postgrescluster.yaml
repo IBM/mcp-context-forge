@@ -1,6 +1,6 @@
 # CrunchyData PostgresCluster CR
 # Tuned to match VM benchmark Postgres configuration
-# Apply with: oc apply -n <namespace> -f charts/mcp-stack/crunchydata-postgres-cr.yaml
+# Apply with: oc apply -n <namespace> -f charts/mcp-stack/profiles/ocp/manifests/pgo-postgrescluster.yaml
 # Requires: CrunchyData PGO operator installed
 #           nfs-client StorageClass available (dynamic provisioner)
 apiVersion: postgres-operator.crunchydata.com/v1beta1

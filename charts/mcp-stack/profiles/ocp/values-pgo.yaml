@@ -420,6 +420,6 @@ testing:
     runTime: 60s
     expectWorkers: 1                         # master starts with 1 worker; more join as they come up
     script:
-      file: "tests/locustfile_mcp_protocol_ocp.py"
+      file: "files/ocp/locustfile_mcp_protocol.py"
     worker:
       replicaCount: 3

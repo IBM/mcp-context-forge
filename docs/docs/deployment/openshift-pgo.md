@@ -88,7 +88,7 @@ pip install ansible
 ansible-galaxy collection install kubernetes.core
 ```
 
-**1. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
+**1. Create a secrets file** at `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` (gitignored):
 
 ```yaml
 mcpContextForge:
@@ -220,7 +220,7 @@ Apply the CrunchyData PostgresCluster CR. A tuned example is provided in the cha
 > The provided example uses `gp-postgres` — adjust if you prefer a different name.
 
 ```bash
-oc apply -n contextforge -f charts/mcp-stack/crunchydata-postgres-cr.yaml
+oc apply -n contextforge -f charts/mcp-stack/profiles/ocp/manifests/pgo-postgrescluster.yaml
 ```
 
 Wait for the Postgres pods to be ready:
@@ -243,7 +243,7 @@ The secret name follows the pattern `<cr-name>-pguser-<username>`. If you used t
 
 ## Step 4: Prepare values and secrets files
 
-The chart includes an OCP-specific values override file: `charts/mcp-stack/values-ocp-pgo.yaml`
+The chart includes an OCP-specific values override file: `charts/mcp-stack/profiles/ocp/values-pgo.yaml`
 
 **Update it for your environment:**
 
@@ -256,7 +256,7 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
 
 2. Create a local secrets file (never committed to git):
    ```bash
-   cat > charts/mcp-stack/values-ocp-pgo-secrets.yaml << 'EOF'
+   cat > charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml << 'EOF'
    mcpContextForge:
      secret:
        JWT_SECRET_KEY: "<your-strong-jwt-key-at-least-32-chars>"
@@ -274,7 +274,7 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
 
    Replace the placeholder values with your actual secrets.
 
-> The committed `values-ocp-pgo.yaml` has placeholder secrets (`changeme`, `my-test-salt`).
+> The committed `profiles/ocp/values-pgo.yaml` has placeholder secrets (`changeme`, `my-test-salt`).
 > Real secrets are provided via the local `-secrets.yaml` file at deploy time, keeping
 > credentials out of version control.
 
@@ -287,8 +287,8 @@ A single `helm install` deploys the full stack. Database migration runs as a `pr
 ```bash
 helm install contextforge charts/mcp-stack \
   -n contextforge \
-  -f charts/mcp-stack/values-ocp-pgo.yaml \
-  -f charts/mcp-stack/values-ocp-pgo-secrets.yaml
+  -f charts/mcp-stack/profiles/ocp/values-pgo.yaml \
+  -f charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml
 ```
 
 Wait for pods to be ready:
@@ -399,7 +399,7 @@ When enabled, Locust is configured with:
 - 3 worker replicas (auto-connected via ZeroMQ)
 - 125 users, 30/s spawn rate, 60s runtime
 - `expectWorkers: 1` so the master starts as soon as 1 worker connects (additional workers join as they come up)
-- OCP-patched locustfile deployed from `charts/mcp-stack/tests/locustfile_mcp_protocol_ocp.py`
+- OCP-patched locustfile deployed from `charts/mcp-stack/files/ocp/locustfile_mcp_protocol.py`
 
 **1. Enable Locust and configure the server ID:**
 
@@ -423,8 +423,8 @@ SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
 
 helm upgrade <release> charts/mcp-stack \
   -n <namespace> \
-  -f charts/mcp-stack/values-ocp-pgo.yaml \
-  -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
+  -f charts/mcp-stack/profiles/ocp/values-pgo.yaml \
+  -f charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml \
   --set testing.locust.enabled=true \
   --set testing.locust.mcpServerID=$SERVER_ID
 ```
@@ -454,7 +454,7 @@ Plugins in enforce: RateLimiterPlugin (10,000/m), OutputLengthGuardPlugin (15K c
 
 ## Enabling Plugins
 
-By default, `pluginConfig.enabled: true` in the OCP values file. The plugins are configured in the plugin config section of `values-ocp-pgo.yaml`.
+By default, `pluginConfig.enabled: true` in the OCP values file. The plugins are configured in the plugin config section of `profiles/ocp/values-pgo.yaml`.
 
 The following plugins are included:
 
@@ -490,7 +490,7 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 
 ## Key Configuration
 
-The `values-ocp-pgo.yaml` file includes these OCP-specific settings:
+The `profiles/ocp/values-pgo.yaml` file includes these OCP-specific settings:
 
 | Setting | Value | Why |
 |---------|-------|-----|
