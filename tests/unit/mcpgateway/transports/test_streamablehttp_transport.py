@@ -13550,3 +13550,142 @@ async def test_handle_streamable_http_initialize_span_exits_with_exception(monke
     assert exc_type is ValueError
     assert isinstance(exc_val, ValueError)
     assert str(exc_val) == "initialize failed"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# isError + outputSchema validation bypass
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_call_tool_is_error_returns_call_tool_result(monkeypatch):
+    """When tool result has is_error=True, call_tool should return CallToolResult(isError=True)
+    directly so the MCP SDK skips outputSchema validation."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "Upstream tool error: resource not found"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = True  # Explicitly set to bool True
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    # Should return CallToolResult directly (not a list), so SDK skips validation
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    assert len(result.content) == 1
+    assert isinstance(result.content[0], types.TextContent)
+    assert result.content[0].text == "Upstream tool error: resource not found"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_is_error_false_returns_list(monkeypatch):
+    """When tool result has is_error=False, call_tool should return a list (normal path)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "success result"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = False
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    # Should return list (normal unstructured path)
+    assert isinstance(result, list)
+    assert isinstance(result[0], types.TextContent)
+    assert result[0].text == "success result"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_is_error_preserves_content(monkeypatch):
+    """Error message content should be preserved exactly, not replaced by validation errors."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "Access denied: insufficient permissions for this resource"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = True
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    # Original error message must be preserved, not replaced by SDK validation error
+    assert result.content[0].text == "Access denied: insufficient permissions for this resource"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_is_error_with_structured_returns_tuple(monkeypatch):
+    """When is_error=True but structured_content exists, structured path takes precedence."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = '{"error": "something"}'
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = True
+    mock_result.structured_content = {"error": "something"}
+    mock_result.model_dump = lambda by_alias=True: {"structuredContent": {"error": "something"}}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {})
+
+    # Structured content path takes precedence (returned as tuple)
+    assert isinstance(result, tuple)
+    assert len(result) == 2

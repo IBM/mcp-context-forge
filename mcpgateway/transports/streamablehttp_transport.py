@@ -1683,6 +1683,14 @@ async def call_tool(name: str, arguments: dict) -> Union[
             if structured:
                 return (unstructured, structured)
 
+            # When the upstream tool returned an error (isError: true), return a
+            # CallToolResult directly so the MCP SDK skips outputSchema validation.
+            # Without this, the SDK replaces the original error message with
+            # "outputSchema defined but no structured output returned".
+            is_error = getattr(result, "is_error", None)
+            if is_error is True:
+                return types.CallToolResult(content=unstructured, isError=True)
+
             return unstructured
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
