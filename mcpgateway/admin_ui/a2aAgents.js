@@ -14,6 +14,24 @@ import {
 } from "./utils.js";
 
 // ===================================================================
+// UAID TOGGLE FUNCTIONALITY
+// ===================================================================
+
+/**
+ * Toggle UAID fields visibility based on checkbox state
+ * @param {string} formSuffix - Form identifier suffix ('a2a' or 'a2a-edit')
+ * @param {boolean} enabled - Whether UAID generation is enabled
+ */
+export const toggleUAIDFields = function (formSuffix, enabled) {
+  const uaidFieldsId = `uaid-fields-${formSuffix}`;
+  const uaidFields = document.getElementById(uaidFieldsId);
+
+  if (uaidFields) {
+    uaidFields.style.display = enabled ? 'block' : 'none';
+  }
+};
+
+// ===================================================================
 // A2A AGENT TEST MODAL FUNCTIONALITY
 // ===================================================================
 
@@ -137,6 +155,39 @@ export const viewA2AAgent = async function (agentId) {
       statusSpan.innerHTML = `${statusText} ${statusIcon}`;
       statusP.appendChild(statusSpan);
       container.appendChild(statusP);
+
+      // UAID Section (if agent has UAID)
+      if (agent.uaid) {
+        const uaidSection = document.createElement("div");
+        uaidSection.className = "mt-4 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded";
+
+        const uaidTitle = document.createElement("strong");
+        uaidTitle.className = "block mb-2 text-indigo-700 dark:text-indigo-300";
+        uaidTitle.textContent = "🆔 Universal Agent ID (UAID):";
+        uaidSection.appendChild(uaidTitle);
+
+        const uaidFields = [
+          { label: "Full UAID", value: agent.uaid, mono: true },
+          { label: "Registry", value: agent.uaidRegistry || "N/A" },
+          { label: "Protocol", value: agent.uaidProto || "N/A" },
+          { label: "Native ID", value: agent.uaidNativeId || "N/A", mono: true },
+        ];
+
+        uaidFields.forEach((field) => {
+          const p = document.createElement("p");
+          p.className = "text-sm mt-1";
+          const strong = document.createElement("strong");
+          strong.textContent = field.label + ": ";
+          p.appendChild(strong);
+          const span = document.createElement("span");
+          if (field.mono) span.className = "font-mono text-xs break-all";
+          span.textContent = field.value;
+          p.appendChild(span);
+          uaidSection.appendChild(p);
+        });
+
+        container.appendChild(uaidSection);
+      }
 
       // Capabilities + Config (JSON formatted)
       const capConfigDiv = document.createElement("div");
@@ -567,6 +618,26 @@ export const editA2AAgent = async function (agentId) {
       } else {
         passthroughHeadersField.value = "";
       }
+    }
+
+    // Handle UAID fields
+    const generateUAIDCheckbox = safeGetElement("a2a-generate-uaid-edit");
+    const uaidRegistryField = safeGetElement("a2a-uaid-registry-edit");
+    const uaidProtocolField = safeGetElement("a2a-uaid-protocol-edit");
+
+    if (generateUAIDCheckbox) {
+      // Check if this is a UAID agent (has uaid field populated)
+      const isUAIDAgent = !!agent.uaid;
+      generateUAIDCheckbox.checked = isUAIDAgent;
+      toggleUAIDFields("a2a-edit", isUAIDAgent);
+    }
+
+    if (uaidRegistryField && agent.uaidRegistry) {
+      uaidRegistryField.value = agent.uaidRegistry;
+    }
+
+    if (uaidProtocolField && agent.uaidProto) {
+      uaidProtocolField.value = agent.uaidProto;
     }
 
     openModal("a2a-edit-modal");
