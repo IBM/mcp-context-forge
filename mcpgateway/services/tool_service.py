@@ -4277,16 +4277,16 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
-                                # For GET: merge query params from URL into payload and send as query string
+                                # For GET: merge extracted URL query params into payload; everything sent as query string
                                 if not tool_query_mapping:
                                     payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
-                                # For POST/PUT/PATCH/DELETE: query params stay in URL, payload goes to body
-                                if not tool_query_mapping and query_params:
-                                    response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, params=query_params, headers=headers), timeout=effective_timeout)
-                                else:
-                                    response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                                # For POST/PUT/PATCH/DELETE: merge query params into the JSON body
+                                # (preserves backward compatibility with existing tool configurations)
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(

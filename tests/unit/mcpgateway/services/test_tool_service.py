@@ -2223,7 +2223,8 @@ class TestToolService:
         - Path parameters (e.g., {user_id}) are substituted into the URL path
         - Query parameters can also use templates (e.g., ?api_key={api_key})
         - Static query parameters (e.g., ?version=v2) are preserved as-is
-        - Remaining payload goes to the JSON body
+        - Query parameters are merged into the JSON body for POST requests
+        - Remaining payload goes to the JSON body alongside merged query params
         """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
@@ -2234,10 +2235,10 @@ class TestToolService:
 
         # Payload contains: path param (user_id), query param (api_key), and body params (title, content)
         payload = {
-            "user_id": 456,           # Will be substituted into URL path
-            "api_key": "secret123",   # Will be substituted into query parameter
-            "title": "New Post",      # Will go to JSON body
-            "content": "Hello World"  # Will go to JSON body
+            "user_id": 456,  # Will be substituted into URL path
+            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param
+            "title": "New Post",  # Will go to JSON body
+            "content": "Hello World",  # Will go to JSON body
         }
 
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -2251,16 +2252,83 @@ class TestToolService:
 
         await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
-        # Verify the complete parameter separation:
+        # Verify parameter handling for POST:
         # 1. Path parameter substituted: /users/456/posts
         # 2. Query param template substituted: api_key=secret123
         # 3. Static query param preserved: version=v2
-        # 4. Body params: title and content (user_id and api_key removed after substitution)
+        # 4. Query params merged into JSON body (backward-compatible behavior for POST)
+        # 5. Body params: title and content (user_id and api_key removed after path/query substitution)
         tool_service._http_client.request.assert_called_once_with(
             "POST",
-            "http://example.com/api/users/456/posts",  # Path param substituted, query string removed
-            json={"title": "New Post", "content": "Hello World"},  # Body params only
-            params={"api_key": "secret123", "version": "v2"},  # Query params (both templated and static)
+            "http://example.com/api/users/456/posts",  # Path param substituted, query string stripped
+            json={"title": "New Post", "content": "Hello World", "api_key": "secret123", "version": "v2"},  # Body + merged query params
+            headers=mock_tool.headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_get_with_static_query_params_no_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test GET request with static URL query params and no query_mapping.
+
+        Verifies that query params extracted from the URL are merged into the
+        payload and sent together via params= on the GET request.
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/api/search?version=v2&format=json"
+
+        payload = {"q": "hello"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"results": []})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
+
+        # URL query params (version, format) are merged into payload alongside the user-provided "q"
+        tool_service._http_client.get.assert_called_once_with(
+            "http://example.com/api/search",
+            params={"q": "hello", "version": "v2", "format": "json"},
+            headers=mock_tool.headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_put_with_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test PUT request with URL query params merges them into the JSON body.
+
+        Verifies that non-GET methods other than POST (e.g. PUT) also merge
+        URL query params into the JSON body for backward compatibility.
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "PUT"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/api/items/1?version=v2"
+
+        payload = {"name": "updated"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"status": "ok"})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
+
+        # Query params merged into JSON body, same as POST
+        tool_service._http_client.request.assert_called_once_with(
+            "PUT",
+            "http://example.com/api/items/1",
+            json={"name": "updated", "version": "v2"},
             headers=mock_tool.headers,
         )
 
