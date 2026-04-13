@@ -9675,8 +9675,15 @@ async def handle_internal_mcp_tools_call(request: Request):
             db.close()
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except (PluginError, PluginViolationError):
-        raise
+    except PluginViolationError as exc:
+        # Use violation's codes if present, otherwise JSON-RPC defaults
+        error_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = exc.error.mcp_error_code if exc.error and exc.error.mcp_error_code else -32603
+
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
@@ -9705,11 +9712,12 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         request: Trusted internal MCP tools/call resolve request.
 
     Returns:
-        JSON response containing either an execution plan or a JSON-RPC-visible error.
+        ORJSONResponse: JSON-RPC response containing execution plan on success,
+                        or JSON-RPC error on validation/permission/plugin failures.
+                        All errors returned as structured JSON-RPC (never re-raised)
+                        since this is an internal Rust↔Python interface.
 
     Raises:
-        PluginError: Re-raised so plugin middleware can preserve existing behavior.
-        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
         Exception: Propagated after best-effort rollback when unexpected failures occur.
     """
     db = SessionLocal()
@@ -9804,8 +9812,32 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
                 "id": request_id,
             },
         )
-    except (PluginError, PluginViolationError):
-        raise
+    except PluginViolationError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        # Use violation's codes if present, otherwise JSON-RPC defaults
+        error_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+        http_status = exc.violation.http_status_code if exc.violation and exc.violation.http_status_code else 422
+
+        return ORJSONResponse(
+            status_code=http_status,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": error_code, "message": str(exc)},
+                "id": request_id,
+            },
+        )
+    except PluginError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        error_code = exc.error.mcp_error_code if exc.error and exc.error.mcp_error_code else -32603
+
+        return ORJSONResponse(
+            status_code=500,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": error_code, "message": str(exc)},
+                "id": request_id,
+            },
+        )
     except JSONRPCError as exc:
         request_id = body.get("id") if isinstance(body, dict) else None
         return ORJSONResponse(

@@ -820,3 +820,163 @@ class TestAdminTemplateValidationErrorHandlers:
             assert "Template validation failed" in content["message"]
             assert content["template_name"] == "admin-edit-prompt"
             assert "Unbalanced template braces" in content["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# Internal MCP Plugin Exception Tests (Issue #4103)                           #
+# --------------------------------------------------------------------------- #
+
+
+class TestInternalMcpPluginExceptions:
+    """Test plugin exception handling in internal MCP endpoints.
+
+    These tests verify the fix for Issue #4103, ensuring that plugin exceptions
+    return proper JSON-RPC format instead of being re-raised, which caused the
+    Rust runtime to fall back to Python execution.
+    """
+
+    @pytest.fixture
+    def mock_internal_auth(self):
+        """Mock internal MCP authentication helpers."""
+        with patch("mcpgateway.main._build_internal_mcp_forwarded_user") as mock_user, patch(
+            "mcpgateway.main._get_internal_mcp_auth_context"
+        ) as mock_auth, patch("mcpgateway.main._get_rpc_filter_context") as mock_filter, patch(
+            "mcpgateway.main._ensure_rpc_permission"
+        ) as mock_perm, patch("mcpgateway.main._enforce_internal_mcp_server_scope") as mock_scope:
+            mock_user.return_value = MagicMock(email="test@example.com")
+            mock_auth.return_value = {"is_authenticated": True}
+            mock_filter.return_value = ("test@example.com", [], False)
+            mock_perm.return_value = AsyncMock()
+            mock_scope.return_value = None
+            yield
+
+    def test_resolve_plugin_violation_returns_jsonrpc_format(self, test_client, mock_internal_auth):
+        """Resolve endpoint returns proper JSON-RPC format for PluginViolationError."""
+        # First-Party
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # Setup: Mock prepare_rust_mcp_tool_execution to raise PluginViolationError
+        violation = PluginViolation(
+            reason="Access Denied",
+            description="User lacks required license",
+            code="LICENSE_CHECK_FAILED",
+            plugin_name="license_check",
+            mcp_error_code=-32602,
+            http_status_code=403,
+        )
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("Plugin blocked tool execution", violation=violation)
+
+            # Execute: Call resolve endpoint
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 1},
+            )
+
+            # Verify: Response has complete JSON-RPC format
+            assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+            content = response.json()
+
+            # CRITICAL: Must have "jsonrpc" field for Rust validation (lib.rs:8186-8188)
+            assert "jsonrpc" in content, "Missing 'jsonrpc' field - Rust will fallback to Python execution"
+            assert content["jsonrpc"] == "2.0", f"Expected 'jsonrpc': '2.0', got {content.get('jsonrpc')}"
+
+            # CRITICAL: Must have "error" field
+            assert "error" in content, "Missing 'error' field"
+            assert content["error"]["code"] == -32602, f"Expected error code -32602, got {content['error']['code']}"
+            assert "License" in content["error"]["message"] or "blocked" in content["error"]["message"]
+
+            # CRITICAL: Must have "id" field for JSON-RPC correlation
+            assert "id" in content, "Missing 'id' field - required for JSON-RPC correlation"
+            assert content["id"] == 1, f"Expected id 1, got {content.get('id')}"
+
+    def test_resolve_plugin_error_returns_jsonrpc_format(self, test_client, mock_internal_auth):
+        """Resolve endpoint returns proper JSON-RPC format for PluginError."""
+        # First-Party
+        from mcpgateway.plugins.framework.errors import PluginError
+        from mcpgateway.plugins.framework.models import PluginErrorModel
+
+        # Setup: Mock prepare_rust_mcp_tool_execution to raise PluginError
+        error = PluginErrorModel(
+            message="Plugin internal error",
+            plugin_name="test_plugin",
+            code="INTERNAL_ERROR",
+            mcp_error_code=-32603,
+        )
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginError(error=error)
+
+            # Execute: Call resolve endpoint
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 2},
+            )
+
+            # Verify: Response has complete JSON-RPC format
+            assert response.status_code == 500
+            content = response.json()
+
+            # CRITICAL: Must have "jsonrpc" field
+            assert "jsonrpc" in content
+            assert content["jsonrpc"] == "2.0"
+
+            # CRITICAL: Must have "error" field
+            assert "error" in content
+            assert content["error"]["code"] == -32603
+
+            # CRITICAL: Must have "id" field
+            assert "id" in content
+            assert content["id"] == 2
+
+    def test_call_plugin_violation_returns_jsonrpc_format(self, test_client, mock_internal_auth):
+        """Tools/call endpoint returns proper JSON-RPC format for PluginViolationError."""
+        # First-Party
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            mcp_error_code=-32000,
+        )
+
+        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
+            mock_invoke.side_effect = PluginViolationError("Rate limited", violation=violation)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 4},
+            )
+
+            content = response.json()
+
+            # Verify JSON-RPC format (returns dict, not ORJSONResponse)
+            assert content["jsonrpc"] == "2.0"
+            assert "error" in content
+            assert content["error"]["code"] == -32000
+            assert content["id"] == 4
+
+    def test_resolve_preserves_request_id(self, test_client, mock_internal_auth):
+        """Resolve endpoint preserves request ID from incoming JSON-RPC request."""
+        # First-Party
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(reason="test", description="test", code="TEST")
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("test", violation=violation)
+
+            # Test with various ID types
+            for test_id in [1, "string-id", 12345]:
+                response = test_client.post(
+                    "/_internal/mcp/tools/call/resolve",
+                    json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": test_id},
+                )
+
+                content = response.json()
+                assert content["id"] == test_id, f"Expected id {test_id}, got {content.get('id')}"
