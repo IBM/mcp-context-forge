@@ -3231,8 +3231,8 @@ class Tool(Base):
     # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     path_template: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    query_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    header_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    query_mapping: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
+    header_mapping: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
     timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     expose_passthrough: Mapped[bool] = mapped_column(Boolean, default=True)
     allowlist: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)

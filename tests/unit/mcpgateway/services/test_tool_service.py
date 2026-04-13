@@ -41,6 +41,9 @@ from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    _validate_header_mapping_targets,
+    _validate_mapping_contents,
+    apply_mapping_into_target,
     extract_using_jq,
     TextContent,
     ToolError,
@@ -412,6 +415,8 @@ def mock_tool(mock_gateway):
     tool.display_name = None
     tool.tags = []
     tool.team = None
+    tool.query_mapping = None
+    tool.header_mapping = None
 
     # Set up metrics
     tool.metrics = []
@@ -4203,6 +4208,149 @@ class TestToolService:
             # Should not raise
             await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_query_mapping", "tool_header_mapping", "expected_json", "expected_headers"),
+        [
+            (
+                {"query": "mapped_query"},
+                {"query": "X-Mapped-Query"},
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json", "X-Mapped-Query": "test"},
+            ),
+            (
+                None,
+                None,
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json"},
+            ),
+            (
+                {"query": "mapped_query"},
+                None,
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json"},
+            ),
+            (
+                None,
+                {"query": "X-Query"},
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json", "X-Query": "test"},
+            ),
+            (
+                {},
+                {},
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json"},
+            ),
+        ],
+    )
+    async def test_invoke_tool_rest_headers_and_query_maps_applied(
+        self,
+        tool_service,
+        mock_tool,
+        mock_global_config_obj,
+        test_db,
+        tool_query_mapping,
+        tool_header_mapping,
+        expected_json,
+        expected_headers,
+    ):
+        """invoke_tool should apply query_mapping and header_mapping through apply_mapping_into_target."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test?existing=1"
+        mock_tool.query_mapping = tool_query_mapping
+        mock_tool.header_mapping = tool_header_mapping
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
+
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "http://example.com/tools/test",
+            json=expected_json,
+            headers=expected_headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_get_with_query_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """GET requests send mapped payload as query params via params= instead of json=."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test?existing=1"
+        mock_tool.query_mapping = {"query": "q"}
+        mock_tool.header_mapping = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.get.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
+
+        tool_service._http_client.get.assert_called_once_with(
+            "http://example.com/tools/test",
+            params={"existing": "1", "q": "test"},
+            headers={"Content-Type": "application/json"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_header_mapping_uses_original_arguments(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Header mapping sources from original arguments, so URL-template-consumed params are still available for headers."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/{id}/detail?existing=1"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"id": "X-Resource-Id"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"id": "42", "other": "val"}, request_headers=None)
+
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "http://example.com/tools/42/detail",
+            json={"other": "val", "existing": "1"},
+            headers={"Content-Type": "application/json", "X-Resource-Id": "42"},
+        )
+
 
 # --------------------------------------------------------------------------- #
 #                               extract_using_jq                              #
@@ -4239,6 +4387,320 @@ def test_extract_using_jq_short_circuits_and_errors():
 
     # Unsupported input type
     assert extract_using_jq(42, ".foo") == ["Input data must be a JSON string, dictionary, or list."]
+
+
+# --------------------------------------------------------------------------- #
+#                         apply_mapping_into_target                            #
+# --------------------------------------------------------------------------- #
+
+
+class TestApplyMappingIntoTarget:
+    """Unit tests for the apply_mapping_into_target utility function."""
+
+    def test_maps_matching_keys_and_renames(self):
+        data = {"query": "test", "page": 1}
+        mapping = {"query": "q", "page": "p"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"q": "test", "p": 1}
+
+    def test_merges_into_existing_target(self):
+        data = {"query": "test"}
+        mapping = {"query": "q"}
+        target = {"existing": "1"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"existing": "1", "q": "test"}
+
+    def test_mapped_keys_overwrite_target(self):
+        data = {"key": "new_value"}
+        mapping = {"key": "shared"}
+        target = {"shared": "old_value"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"shared": "new_value"}
+
+    def test_none_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, None, target)
+        assert result == {"a": 1}
+
+    def test_empty_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, {}, target)
+        assert result == {"a": 1}
+
+    def test_none_mapping_none_target_returns_empty_dict(self):
+        result = apply_mapping_into_target({"x": 10}, None)
+        assert result == {}
+
+    def test_unmapped_keys_excluded_from_result(self):
+        data = {"mapped": "yes", "unmapped": "dropped"}
+        mapping = {"mapped": "m"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"m": "yes"}
+        assert "unmapped" not in result
+        assert "dropped" not in result
+
+    def test_empty_data_with_mapping_returns_target_only(self):
+        result = apply_mapping_into_target({}, {"k": "v"}, {"existing": "1"})
+        assert result == {"existing": "1"}
+
+    def test_does_not_mutate_inputs(self):
+        data = {"a": 1}
+        mapping = {"a": "b"}
+        target = {"c": 2}
+        apply_mapping_into_target(data, mapping, target)
+        assert data == {"a": 1}
+        assert target == {"c": 2}
+
+    def test_unmapped_keys_logged_at_debug(self):
+        """When DEBUG is enabled, unmapped keys are logged."""
+
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            mock_logger.isEnabledFor.return_value = True
+            with patch("mcpgateway.services.tool_service.structured_logger") as mock_slog:
+                apply_mapping_into_target({"mapped": "v", "extra": "dropped"}, {"mapped": "m"})
+                mock_slog.log.assert_called_once()
+                assert "unmapped keys excluded" in mock_slog.log.call_args[1]["message"]
+
+
+# --------------------------------------------------------------------------- #
+#              Schema-level Mapping Validation Tests                          #
+# --------------------------------------------------------------------------- #
+
+
+class TestMappingSizeValidation:
+    """Tests for _validate_mapping_size via ToolCreate/ToolUpdate schema validators."""
+
+    def test_none_mapping_accepted(self):
+        """None mapping should pass validation."""
+        tool = ToolCreate(name="test_tool", query_mapping=None, header_mapping=None)
+        assert tool.query_mapping is None
+
+    def test_valid_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", integration_type="REST", query_mapping={"a": "b"})
+        assert tool.query_mapping == {"a": "b"}
+
+    def test_too_many_entries_rejected(self):
+        big_mapping = {f"k{i}": f"v{i}" for i in range(51)}
+        with pytest.raises(Exception, match="50 entries"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping=big_mapping)
+
+    def test_long_key_rejected(self):
+        with pytest.raises(Exception, match="key exceeds"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping={"x" * 129: "v"})
+
+    def test_long_value_rejected(self):
+        with pytest.raises(Exception, match="value exceeds"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping={"k": "x" * 129})
+
+    def test_tool_update_too_many_entries_rejected(self):
+        big_mapping = {f"k{i}": f"v{i}" for i in range(51)}
+        with pytest.raises(Exception, match="50 entries"):
+            ToolUpdate(query_mapping=big_mapping)
+
+
+class TestSchemaHeaderMappingTargetValidation:
+    """Tests for _validate_header_mapping_targets via ToolCreate/ToolUpdate schema validators."""
+
+    def test_none_header_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", header_mapping=None)
+        assert tool.header_mapping is None
+
+    def test_safe_header_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "X-Custom"})
+        assert tool.header_mapping == {"field": "X-Custom"}
+
+    def test_blocked_header_rejected_at_create(self):
+        with pytest.raises(Exception, match="blocked header"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "Cookie"})
+
+    def test_sensitive_pattern_rejected_at_create(self):
+        with pytest.raises(Exception, match="sensitive header"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "X-API-Key"})
+
+    def test_invalid_name_rejected_at_create(self):
+        with pytest.raises(Exception, match="invalid header name"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "Bad Header"})
+
+    def test_blocked_header_rejected_at_update(self):
+        with pytest.raises(Exception, match="blocked header"):
+            ToolUpdate(header_mapping={"field": "Host"})
+
+    def test_sensitive_pattern_rejected_at_update(self):
+        with pytest.raises(Exception, match="sensitive header"):
+            ToolUpdate(header_mapping={"field": "X-Auth-Token"})
+
+
+# --------------------------------------------------------------------------- #
+#                  Mapping Security Validation Tests                          #
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMappingContents:
+    """Tests for _validate_mapping_contents runtime guard."""
+
+    def test_valid_string_mapping_passes(self):
+        result = _validate_mapping_contents({"a": "b", "c": "d"}, "test_mapping", "test_tool")
+        assert result == {"a": "b", "c": "d"}
+
+    def test_non_string_value_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({"a": 42}, "test_mapping", "test_tool")
+
+    def test_non_string_key_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({1: "b"}, "test_mapping", "test_tool")
+
+    def test_nested_dict_value_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({"a": {"nested": "obj"}}, "test_mapping", "test_tool")
+
+    def test_empty_dict_passes(self):
+        result = _validate_mapping_contents({}, "test_mapping", "test_tool")
+        assert result == {}
+
+    def test_error_includes_tool_name(self):
+        with pytest.raises(ToolInvocationError, match="my_tool"):
+            _validate_mapping_contents({"a": 42}, "query_mapping", "my_tool")
+
+
+class TestValidateHeaderMappingTargets:
+    """Tests for _validate_header_mapping_targets security checks."""
+
+    def test_safe_header_name_passes(self):
+        _validate_header_mapping_targets({"field": "X-Custom-Header"}, "test_tool")
+
+    def test_authorization_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Authorization"}, "test_tool")
+
+    def test_authorization_case_insensitive(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "AUTHORIZATION"}, "test_tool")
+
+    def test_proxy_authorization_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Proxy-Authorization"}, "test_tool")
+
+    def test_x_api_key_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "X-API-Key"}, "test_tool")
+
+    def test_crlf_injection_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": "X-Header\r\nEvil: injected"}, "test_tool")
+
+    def test_space_in_header_name_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": "X Header"}, "test_tool")
+
+    def test_empty_header_name_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": ""}, "test_tool")
+
+    def test_multiple_headers_all_validated(self):
+        """All targets must be validated — a valid header before a sensitive one does not skip checks."""
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"a": "X-Safe", "b": "Authorization"}, "test_tool")
+
+    def test_cookie_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Cookie"}, "test_tool")
+
+    def test_host_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Host"}, "test_tool")
+
+    def test_transfer_encoding_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Transfer-Encoding"}, "test_tool")
+
+    def test_connection_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Connection"}, "test_tool")
+
+
+class TestMappingIntegrationSecurity:
+    """Integration tests verifying mapping security at the invoke_tool level."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_sensitive_header_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header_mapping that targets Authorization."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"token": "Authorization"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="sensitive header"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"token": "evil-value"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_crlf_header_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header_mapping with CRLF injection in target name."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"field": "X-Header\r\nEvil: injected"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="invalid header name"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"field": "value"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_crlf_in_header_value(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header values containing CRLF (header injection via runtime arguments)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"field": "X-Custom"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="illegal characters"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"field": "good\r\nEvil: injected"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_non_scalar_query_mapped_value(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject non-scalar values produced by query_mapping."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = {"nested": "q"}
+        mock_tool.header_mapping = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="non-scalar value"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"nested": {"a": "b"}}, request_headers=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -5696,6 +6158,8 @@ class TestToolServiceHelpers:
             team_id="team-1",
             owner_email="owner@example.com",
             visibility="team",
+            query_mapping={},
+            header_mapping={},
         )
         gateway = SimpleNamespace(
             id="gw-1",
@@ -5725,6 +6189,8 @@ class TestToolServiceHelpers:
         assert payload["status"] == "active"
         assert payload["tool"]["headers"] == {}
         assert payload["tool"]["input_schema"]["type"] == "object"
+        assert payload["tool"]["query_mapping"] == {}
+        assert payload["tool"]["header_mapping"] == {}
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
@@ -7668,6 +8134,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (
@@ -7740,6 +8208,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (

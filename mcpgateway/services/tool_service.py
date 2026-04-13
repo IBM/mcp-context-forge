@@ -20,6 +20,7 @@ import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
+import logging
 import os
 import re
 import ssl
@@ -158,6 +159,14 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     # non-secret tracing/idempotency headers (e.g. X-Correlation-Token).
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    # Protocol-level and credential-bearing headers that must not be set via mapping.
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^host$", re.IGNORECASE),
+    re.compile(r"^transfer-encoding$", re.IGNORECASE),
+    re.compile(r"^content-length$", re.IGNORECASE),
+    re.compile(r"^connection$", re.IGNORECASE),
+    re.compile(r"^upgrade$", re.IGNORECASE),
 )
 
 
@@ -436,6 +445,66 @@ def extract_using_jq(data, jq_filter=""):
         return [TextContent(type="text", text=message)]
 
     return result
+
+
+_VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
+
+
+_INVALID_HEADER_VALUE_CHARS = re.compile(r"[\r\n\x00]")
+
+
+def _validate_mapping_contents(mapping: dict, label: str, tool_name: str) -> dict[str, str]:
+    """Validate that a mapping dict contains only string keys and string values.
+
+    Raises:
+        ToolInvocationError: If the mapping contains non-string keys or values.
+    """
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
+        raise ToolInvocationError(f"Tool '{tool_name}' has invalid {label}: non-string keys or values. Check the tool's {label} configuration.")
+    return mapping
+
+
+def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) -> None:
+    """Validate that header mapping target names are safe and well-formed.
+
+    Raises:
+        ToolInvocationError: If any target header name is sensitive or malformed.
+    """
+    for target_header in mapping.values():
+        if _is_sensitive_tool_header_name(target_header):
+            raise ToolInvocationError(f"header_mapping for tool '{tool_name}' targets sensitive header {repr(target_header[:64])}")
+        if not _VALID_HTTP_HEADER_NAME.match(target_header):
+            raise ToolInvocationError(f"header_mapping for tool '{tool_name}' contains invalid header name {repr(target_header[:64])}")
+
+
+def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_obj: dict | None = None) -> dict:
+    """Map fields from data_obj whose keys appear in mapping_obj, renaming them per mapping_obj's values, and merge into target_obj.
+
+    Only data_obj keys present in mapping_obj are included; unmapped keys are excluded from the result.
+    If mapping_obj is None or empty, returns target_obj unchanged.
+    If no target_obj is provided, an empty dict is used as the base.
+
+    Args:
+        data_obj: Source data whose keys may be mapped.
+        mapping_obj: Key-renaming map (old_key -> new_key), or None/empty to skip mapping.
+        target_obj: Base dict to merge mapped entries into. Mapped entries overwrite on collision.
+
+    Returns:
+        A new dict containing all entries from target_obj plus renamed entries from data_obj.
+    """
+
+    if target_obj is None:
+        target_obj = {}
+
+    if not mapping_obj:
+        return target_obj
+
+    if logger.isEnabledFor(logging.DEBUG):
+        dropped = {k for k in data_obj if k not in mapping_obj}
+        if dropped:
+            structured_logger.log(level="DEBUG", message=f"apply_mapping_into_target: unmapped keys excluded: {sorted(dropped)}", component="tool_service")
+
+    return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
 
 
 class ToolError(Exception):
@@ -773,6 +842,8 @@ class ToolService(BaseService):
             "team_id": tool.team_id,
             "owner_email": tool.owner_email,
             "visibility": tool.visibility,
+            "query_mapping": tool.query_mapping,
+            "header_mapping": tool.header_mapping,
         }
 
         gateway_payload = None
@@ -3859,6 +3930,12 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
+        if tool_query_mapping is not None:
+            tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
+        tool_header_mapping = tool_payload.get("header_mapping") if isinstance(tool_payload.get("header_mapping"), dict) else None
+        if tool_header_mapping is not None:
+            tool_header_mapping = _validate_mapping_contents(tool_header_mapping, "header_mapping", name)
 
         # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
         # timeout_ms is stored in milliseconds, convert to seconds
@@ -4175,8 +4252,27 @@ class ToolService(BaseService):
 
                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    # Merge leftover payload + query params
-                    payload.update(query_params)
+                    if tool_query_mapping:
+                        # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
+                        # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
+                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                        # Reject non-scalar values that would be inappropriate as query parameters.
+                        for qk, qv in payload.items():
+                            if isinstance(qv, (dict, list)):
+                                raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
+                    else:
+                        # No query mapping — merge URL query params into the payload (query params override on collision)
+                        payload.update(query_params)
+
+                    # Headers are mapped from the original arguments (not the path-param-reduced payload)
+                    # to preserve all available data for header injection.
+                    if tool_header_mapping:
+                        _validate_header_mapping_targets(tool_header_mapping, name)
+                        headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
+                        # Reject header values containing CRLF or null bytes to prevent header injection.
+                        for hdr_name, hdr_val in headers.items():
+                            if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
+                                raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"

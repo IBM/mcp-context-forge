@@ -58,6 +58,68 @@ _SLUG_RE: Pattern[str] = re.compile(r"^[a-z0-9-]+$")
 
 _VALID_VISIBILITY = {"private", "team", "public"}
 
+_MAX_MAPPING_ENTRIES = 50
+_MAX_MAPPING_KEY_LENGTH = 128
+
+_VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
+_BLOCKED_HEADER_MAPPING_TARGETS = frozenset(
+    name.lower()
+    for name in (
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "host",
+        "transfer-encoding",
+        "content-length",
+        "connection",
+        "upgrade",
+    )
+)
+_SENSITIVE_HEADER_MAPPING_PATTERNS = (
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+)
+
+
+def _validate_mapping_size(v: dict | None) -> dict | None:
+    """Validate that a mapping dict does not exceed size limits.
+
+    Shared by ToolCreate and ToolUpdate field validators.
+    """
+    if v is None:
+        return v
+    if len(v) > _MAX_MAPPING_ENTRIES:
+        raise ValueError(f"Mapping must not contain more than {_MAX_MAPPING_ENTRIES} entries")
+    for k, val in v.items():
+        if len(k) > _MAX_MAPPING_KEY_LENGTH:
+            raise ValueError(f"Mapping key exceeds {_MAX_MAPPING_KEY_LENGTH} characters: '{k[:32]}...'")
+        if len(val) > _MAX_MAPPING_KEY_LENGTH:
+            raise ValueError(f"Mapping value exceeds {_MAX_MAPPING_KEY_LENGTH} characters: '{val[:32]}...'")
+    return v
+
+
+def _validate_header_mapping_targets(v: dict | None) -> dict | None:
+    """Validate that header_mapping target names are safe and well-formed.
+
+    Rejects sensitive headers (Authorization, Cookie, Host, etc.) and
+    names that violate RFC 7230 token syntax. Applied at registration time;
+    tool_service applies the same checks at invocation as defense-in-depth.
+    """
+    if v is None:
+        return v
+    for target in v.values():
+        if target.strip().lower() in _BLOCKED_HEADER_MAPPING_TARGETS:
+            raise ValueError(f"header_mapping targets blocked header {repr(target[:64])}")
+        if any(p.match(target) for p in _SENSITIVE_HEADER_MAPPING_PATTERNS):
+            raise ValueError(f"header_mapping targets sensitive header {repr(target[:64])}")
+        if not _VALID_HTTP_HEADER_NAME.match(target):
+            raise ValueError(f"header_mapping contains invalid header name {repr(target[:64])}")
+    return v
+
 
 def _coerce_visibility(v: Optional[str]) -> Optional[str]:
     """Normalize legacy visibility values in Read/response schemas.
@@ -415,8 +477,8 @@ class ToolCreate(BaseModel):
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
@@ -944,6 +1006,18 @@ class ToolCreate(BaseModel):
                     raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
+    @field_validator("query_mapping", "header_mapping")
+    @classmethod
+    def validate_mapping_size(cls, v: dict | None) -> dict | None:
+        """Validate that mapping dicts do not exceed size limits."""
+        return _validate_mapping_size(v)
+
+    @field_validator("header_mapping")
+    @classmethod
+    def validate_header_mapping_targets(cls, v: dict | None) -> dict | None:
+        """Reject header_mapping targets that are sensitive or malformed."""
+        return _validate_header_mapping_targets(v)
+
     @model_validator(mode="after")
     def handle_timeout_ms_defaults(self):
         """Handle timeout_ms defaults based on integration_type and expose_passthrough.
@@ -984,8 +1058,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
@@ -1384,6 +1458,18 @@ class ToolUpdate(BaseModelWithConfigDict):
                     raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
+    @field_validator("query_mapping", "header_mapping")
+    @classmethod
+    def validate_mapping_size(cls, v: dict | None) -> dict | None:
+        """Validate that mapping dicts do not exceed size limits."""
+        return _validate_mapping_size(v)
+
+    @field_validator("header_mapping")
+    @classmethod
+    def validate_header_mapping_targets(cls, v: dict | None) -> dict | None:
+        """Reject header_mapping targets that are sensitive or malformed."""
+        return _validate_header_mapping_targets(v)
+
 
 class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
@@ -1451,8 +1537,8 @@ class ToolRead(BaseModelWithConfigDict):
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(20000, description="Timeout in milliseconds for REST passthrough")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
