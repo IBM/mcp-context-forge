@@ -577,6 +577,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    # UAID Cross-Gateway Routing Security
+    uaid_allowed_domains: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain allowlist for UAID cross-gateway routing. When not empty, only UAIDs with endpoints "
+            "ending in these domains will be allowed for cross-gateway routing. Empty list = allow all domains."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
