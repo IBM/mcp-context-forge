@@ -1433,6 +1433,3 @@ class TestListBindingsByReference:
         """list_bindings with a non-existent binding_reference_id returns an empty list."""
         results = service.list_bindings(db_session, binding_reference_id="does-not-exist")
         assert results == []
-
-
-
