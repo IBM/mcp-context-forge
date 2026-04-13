@@ -350,6 +350,10 @@ class Settings(BaseSettings):
 
     # Security Validation & Sanitization
     experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
+    experimental_rust_request_logging_masking_enabled: bool = Field(
+        default=False,
+        description="Enable experimental Rust native extension for request logging sensitive-data masking",
+    )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
