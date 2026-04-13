@@ -717,6 +717,63 @@ def test_start_trace_parent_id_included(mock_session_factory):
     assert isinstance(trace_id, str)
 
 
+def test_start_trace_token_claims_merged_into_attributes(mock_session_factory):
+    """When token_claims is provided, they are stored in trace attributes as token.sub, token.iss, etc."""
+    mock_factory, mock_session = mock_session_factory
+    service = ObservabilityService()
+    token_claims = {"sub": "user-42", "iss": "https://issuer.example.com", "exp": 1700086400}
+    service.start_trace(
+        "POST /rpc",
+        token_claims=token_claims,
+        attributes={"http.route": "/rpc"},
+    )
+    mock_session.add.assert_called_once()
+    trace_obj = mock_session.add.call_args[0][0]
+    attrs = trace_obj.attributes or {}
+    assert attrs.get("token.sub") == "user-42"
+    assert attrs.get("token.iss") == "https://issuer.example.com"
+    assert attrs.get("token.exp") == 1700086400
+    assert attrs.get("http.route") == "/rpc"
+
+
+def test_start_trace_token_claims_none_not_added(mock_session_factory):
+    """When token_claims is None, no token.* keys are added to attributes."""
+    mock_factory, mock_session = mock_session_factory
+    service = ObservabilityService()
+    service.start_trace("GET /health", attributes={"a": 1})
+    trace_obj = mock_session.add.call_args[0][0]
+    attrs = trace_obj.attributes or {}
+    assert not any(k.startswith("token.") for k in attrs)
+
+
+@patch("mcpgateway.services.observability_service.current_token_claims")
+def test_start_span_merges_current_token_claims(mock_token_claims, mock_session_factory):
+    """When current_token_claims is set, span attributes include token.sub, token.iss, etc."""
+    mock_factory, mock_session = mock_session_factory
+    mock_token_claims.get.return_value = {"sub": "user-99", "iss": "https://auth.test"}
+    service = ObservabilityService()
+    service.start_span("traceid", "tool.invoke", attributes={"tool.name": "my_tool"})
+    mock_session.add.assert_called_once()
+    span_obj = mock_session.add.call_args[0][0]
+    attrs = span_obj.attributes or {}
+    assert attrs.get("token.sub") == "user-99"
+    assert attrs.get("token.iss") == "https://auth.test"
+    assert attrs.get("tool.name") == "my_tool"
+
+
+@patch("mcpgateway.services.observability_service.current_token_claims")
+def test_start_span_no_token_claims_no_token_keys(mock_token_claims, mock_session_factory):
+    """When current_token_claims is None, span attributes have no token.* keys."""
+    mock_factory, mock_session = mock_session_factory
+    mock_token_claims.get.return_value = None
+    service = ObservabilityService()
+    service.start_span("traceid", "http.request", attributes={"http.method": "GET"})
+    span_obj = mock_session.add.call_args[0][0]
+    attrs = span_obj.attributes or {}
+    assert not any(k.startswith("token.") for k in attrs)
+    assert attrs.get("http.method") == "GET"
+
+
 def test_end_trace_merges_additional_attributes(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
