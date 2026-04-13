@@ -194,11 +194,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Extract safe token claims only when enabled (observability_store_token_claims).
         # Stored in trace/span attributes only; not in user_email column.
-        token_claims = (
-            _get_safe_token_claims_from_request(request)
-            if getattr(settings, "observability_store_token_claims", False)
-            else None
-        )
+        token_claims = _get_safe_token_claims_from_request(request) if getattr(settings, "observability_store_token_claims", False) else None
 
         # Extract W3C Trace Context from headers (for distributed tracing)
         external_trace_id = None
