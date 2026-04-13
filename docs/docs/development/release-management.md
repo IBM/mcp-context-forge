@@ -155,9 +155,6 @@ python .github/tools/update_dependencies.py --file plugins/external/cedar/pyproj
 python .github/tools/update_dependencies.py --file plugins/external/llmguard/pyproject.toml
 python .github/tools/update_dependencies.py --file plugins/external/opa/pyproject.toml
 
-# Rust plugins (Python bindings)
-python .github/tools/update_dependencies.py --file plugins_rust/pyproject.toml
-
 # Requirements files
 python .github/tools/update_dependencies.py --file docs/requirements.txt
 python .github/tools/update_dependencies.py --file tests/load/requirements.txt
@@ -204,7 +201,6 @@ Update `Cargo.lock` files for all Rust crates and verify they build and pass tes
 
 ```bash
 # Update dependencies
-cd plugins_rust && cargo update && cd ..
 cd mcp-servers/rust/fast-test-server && cargo update && cd ../../..
 cd mcp-servers/rust/filesystem-server && cargo update && cd ../../..
 cd tools_rust/wrapper && cargo update && cd ../..
@@ -338,13 +334,12 @@ make autoflake isort black pre-commit
 ### 4.2 Python linters
 
 ```bash
-make flake8 ruff vulture bandit interrogate pylint verify
+make ruff vulture bandit interrogate pylint verify
 ```
 
 | Target | What it checks |
 |--------|----------------|
-| `flake8` | PEP 8 style violations (E3, E4, E7, E9, F, D1) |
-| `ruff` | Fast lint pass (overlaps flake8, catches additional patterns) |
+| `ruff` | PEP 8 style, pyflakes, docstrings, pylint rules (E3, E4, E7, E9, F, D1, D417, PL) |
 | `vulture` | Dead code detection (unused functions, variables, imports) |
 | `bandit` | Security vulnerabilities in Python code |
 | `interrogate` | Docstring coverage (must meet threshold) |
@@ -496,16 +491,16 @@ This builds the lite production image with Docker Content Trust enabled.
 Lint the Dockerfiles for best-practice violations, then scan the built image for vulnerabilities and CIS benchmark compliance:
 
 ```bash
-make hadolint dockle trivy
+make hadolint dockle security-scan
 ```
 
 | Target | What it checks |
 |--------|----------------|
 | `hadolint` | Dockerfile best practices and shell linting for `Containerfile`, `Containerfile.lite`, and any `Dockerfile.*` |
 | `dockle` | CIS Docker Benchmark compliance and image best practices (runs against the built image via tarball) |
-| `trivy` | Vulnerability scan of the built image for HIGH and CRITICAL CVEs in OS packages and application dependencies |
+| `security-scan` | Show current local container review guidance |
 
-**Acceptance criteria:** No HIGH or CRITICAL vulnerabilities in `trivy` output. No errors from `hadolint` (warnings are acceptable if documented). No failures from `dockle` at warn level.
+**Acceptance criteria:** Review the generated SBOM and any separately-run container scan results before publishing. No errors from `hadolint` (warnings are acceptable if documented). No failures from `dockle` at warn level.
 
 ### 6.3 Compose stack validation
 
@@ -674,7 +669,7 @@ This produces a CycloneDX XML SBOM (`mcpgateway.sbom.xml`) listing all Python de
 
 ### 9.4 Container security scanning
 
-The CI pipeline (`docker-scan.yml`) runs Trivy and Grype scans on the container image. Verify no critical or high vulnerabilities exist in the final image. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
+The CI pipeline (`docker-scan.yml`) builds the container image and generates an SBOM artifact for review. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
 
 ---
 
@@ -779,7 +774,7 @@ Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
 
 ```yaml
 - name: "PIIFilterPlugin"
-  kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+  kind: "cpex_pii_filter.PIIFilterPlugin"
   mode: "enforce"  # Change from "disabled" to "enforce"
   priority: 50
   config:
@@ -1073,7 +1068,7 @@ Create a token for API and client access:
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key)
+  --secret my-test-key-but-now-longer-than-32-bytes)
 ```
 
 Set the base URL (use `8080` for the nginx-proxied compose stack):
@@ -1323,9 +1318,7 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-cd plugins_rust && cargo update && cd ..
 # ... repeat for all Cargo.toml dirs (see Section 3) ...
-make rust-check
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
@@ -1339,7 +1332,7 @@ make test
 
 # 4. Format, lint & security
 make autoflake isort black pre-commit
-make flake8 ruff vulture bandit interrogate pylint verify
+make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web
 make dodgy gitleaks
@@ -1352,7 +1345,7 @@ make test-js-coverage
 
 # 6. Build, Containerfile lint & compose stack
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
-make hadolint dockle trivy
+make hadolint dockle security-scan
 make testing-down compose-clean testing-up
 
 # 7. Integration tests (compose stack must be running)

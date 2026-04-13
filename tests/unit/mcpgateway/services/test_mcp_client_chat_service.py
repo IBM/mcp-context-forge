@@ -320,6 +320,7 @@ async def test_mcpchatservice_initialize_success_and_idempotent(monkeypatch, pat
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg, user_id="u1")
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "connect", AsyncMock(return_value=None))
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1", "t2"]))
     service.llm_provider = MagicMock()
@@ -1258,7 +1259,55 @@ async def test_chat_events_wraps_astream_event_errors(monkeypatch, patch_logger)
     service._agent = SimpleNamespace(astream_events=_astream_events)
     monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
 
-    with pytest.raises(RuntimeError, match="Chat processing error: stream blew up"):
+    with pytest.raises(svc.ChatProcessingError, match="Chat processing error: stream blew up"):
+        async for _ev in service.chat_events("hello"):
+            pass
+
+    assert patch_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_chat_events_reraises_connection_error(monkeypatch, patch_logger):
+    """ConnectionError must propagate without being wrapped as RuntimeError."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):
+        yield {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="hi")}}
+        raise ConnectionError("peer reset")
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    with pytest.raises(ConnectionError, match="peer reset"):
+        async for _ev in service.chat_events("hello"):
+            pass
+
+    assert patch_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_chat_events_reraises_timeout_error(monkeypatch, patch_logger):
+    """TimeoutError must propagate without being wrapped as RuntimeError."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):
+        yield {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="hi")}}
+        raise TimeoutError("request timed out")
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    with pytest.raises(TimeoutError, match="request timed out"):
         async for _ev in service.chat_events("hello"):
             pass
 
@@ -1374,6 +1423,7 @@ async def test_reload_tools_success(monkeypatch, patch_logger):
     )
     service = svc.MCPChatService(cfg)
     service._initialized = True
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1", "t2"]))
     service.llm_provider = SimpleNamespace(get_llm=MagicMock(return_value=object()))
     agent_obj = object()
@@ -1394,9 +1444,46 @@ async def test_reload_tools_logs_and_raises_on_error(monkeypatch, patch_logger):
     )
     service = svc.MCPChatService(cfg)
     service._initialized = True
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(side_effect=RuntimeError("reload failed")))
 
     with pytest.raises(RuntimeError, match="reload failed"):
         await service.reload_tools()
 
     patch_logger.error.assert_called_with("Failed to reload tools: reload failed")
+
+
+# --------------------------------------------------------------------------- #
+# GUARD TESTS: _LLMCHAT_AVAILABLE is False (langgraph not installed)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_initialize_raises_when_llmchat_unavailable(monkeypatch, patch_logger):
+    """initialize() raises ImportError with install hint when llmchat deps are missing."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg, user_id="u1")
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
+
+    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
+        await service.initialize()
+
+    assert service.is_initialized is False
+
+
+@pytest.mark.asyncio
+async def test_reload_tools_raises_when_llmchat_unavailable(monkeypatch, patch_logger):
+    """reload_tools() raises ImportError with install hint when llmchat deps are missing."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
+
+    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
+        await service.reload_tools()

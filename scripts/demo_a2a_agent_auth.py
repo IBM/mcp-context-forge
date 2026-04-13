@@ -45,7 +45,7 @@ AUTH_TOKEN = "secret-bearer-token"
 AUTH_API_KEY = "secret-api-key"
 PORT = 0
 CONTEXTFORGE_URL = "http://localhost:8000"
-JWT_SECRET = "my-test-key"
+JWT_SECRET = "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
 AUTO_REGISTER = False
 AGENT_NAME = ""
 
@@ -167,8 +167,8 @@ ContextForge Registration:
     )
     cf_group.add_argument(
         "--jwt-secret",
-        default="my-test-key",
-        help="JWT secret for ContextForge auth (default: my-test-key)",
+        default="my-test-key-but-now-longer-than-32-bytes",
+        help="JWT secret for ContextForge auth (default: my-test-key-but-now-longer-than-32-bytes)",
     )
 
     return parser.parse_args()
@@ -334,19 +334,19 @@ class SimpleAgent:
 class Parameters(BaseModel):
     """Parameters object containing the actual query."""
 
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class A2ARequest(BaseModel):
     """Request model for A2A protocol format (ContextForge custom agent format)."""
 
-    interaction_type: str = ""
+    interaction_type: Optional[str] = None
     parameters: Optional[Parameters] = None
-    protocol_version: str = ""
+    protocol_version: Optional[str] = None
     # Also support direct query/message for simple testing
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class MessagePart(BaseModel):

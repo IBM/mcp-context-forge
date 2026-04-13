@@ -41,9 +41,7 @@ def upgrade() -> None:
         return
 
     # Check if cleanup already ran (idempotency check)
-    result = bind.execute(
-        text(
-            """
+    result = bind.execute(text("""
         SELECT COUNT(*) as duplicate_count
         FROM user_roles ur1
         WHERE ur1.is_active = FALSE
@@ -55,9 +53,7 @@ def upgrade() -> None:
             AND (ur2.scope_id = ur1.scope_id OR (ur2.scope_id IS NULL AND ur1.scope_id IS NULL))
             AND ur2.is_active = TRUE
         )
-    """
-        )
-    )
+    """))
     duplicate_count = result.scalar()
 
     if duplicate_count == 0:
@@ -69,9 +65,7 @@ def upgrade() -> None:
     # Dialect-specific cleanup
     if bind.dialect.name == "postgresql":
         # PostgreSQL supports DELETE with EXISTS efficiently
-        bind.execute(
-            text(
-                """
+        bind.execute(text("""
             DELETE FROM user_roles
             WHERE is_active = FALSE
             AND EXISTS (
@@ -82,9 +76,7 @@ def upgrade() -> None:
                 AND (active.scope_id = user_roles.scope_id OR (active.scope_id IS NULL AND user_roles.scope_id IS NULL))
                 AND active.is_active = TRUE
             )
-        """
-            )
-        )
+        """))
 
         # No unique index added here: assign_role_to_user() allows re-assignment
         # when the current row is expired but still active (is_active=True,
@@ -95,9 +87,7 @@ def upgrade() -> None:
 
     elif bind.dialect.name == "sqlite":
         # SQLite: Use subquery approach (more compatible)
-        bind.execute(
-            text(
-                """
+        bind.execute(text("""
             DELETE FROM user_roles
             WHERE id IN (
                 SELECT ur1.id
@@ -112,16 +102,12 @@ def upgrade() -> None:
                     AND ur2.is_active = 1
                 )
             )
-        """
-            )
-        )
+        """))
         print("Cleanup complete using SQLite-compatible SQL")
 
     else:
         # Other databases: use conservative approach
-        bind.execute(
-            text(
-                """
+        bind.execute(text("""
             DELETE FROM user_roles
             WHERE id IN (
                 SELECT ur1.id
@@ -136,9 +122,7 @@ def upgrade() -> None:
                     AND ur2.is_active = TRUE
                 )
             )
-        """
-            )
-        )
+        """))
         print(f"Cleanup complete using conservative approach for {bind.dialect.name}")
 
     print(f"Cleanup complete: removed {duplicate_count} inactive duplicate rows")

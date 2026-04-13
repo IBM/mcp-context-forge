@@ -27,6 +27,7 @@ import argparse
 import asyncio
 from collections import defaultdict
 import cProfile
+import importlib.util
 import io
 import logging
 import os
@@ -64,6 +65,17 @@ from mcpgateway.plugins.framework import (  # noqa: E402
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "plugins", "config.yaml")
 PROFILE_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "plugins", "prof")
 ITERATIONS = 1000  # Number of iterations per hook
+
+# Optional cpex-* plugin packages referenced by tests/performance/plugins/config.yaml.
+# These ship in the [plugins] extra; if any are missing, the perf script skips
+# cleanly rather than failing inside PluginManager initialization.
+REQUIRED_CPEX_PACKAGES = (
+    "cpex_pii_filter",
+    "cpex_rate_limiter",
+    "cpex_retry_with_backoff",
+    "cpex_secrets_detection",
+    "cpex_url_reputation",
+)
 
 
 def ensure_profile_dir() -> None:
@@ -368,6 +380,15 @@ Examples:
     print(f"Output: {PROFILE_OUTPUT_DIR}/")
     if args.details:
         print("Mode: Detailed profiles enabled")
+
+    # Skip cleanly if optional cpex-* plugin packages are not installed.
+    # The perf config references plugins from the [plugins] extra; without them
+    # PluginManager.initialize() would raise inside the loader.
+    missing = [pkg for pkg in REQUIRED_CPEX_PACKAGES if importlib.util.find_spec(pkg) is None]
+    if missing:
+        print(f"\n⏭️  Skipping plugin perf profiling — missing optional packages: {', '.join(missing)}")
+        print("   Install with: pip install -e '.[plugins]'")
+        return
 
     # Ensure output directory exists
     ensure_profile_dir()

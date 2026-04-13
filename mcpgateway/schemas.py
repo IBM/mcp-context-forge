@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationError, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -55,6 +55,90 @@ logger = logging.getLogger(__name__)
 # override class/settings attributes at runtime via monkeypatch.
 _HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
 _SLUG_RE: Pattern[str] = re.compile(r"^[a-z0-9-]+$")
+
+_VALID_VISIBILITY = {"private", "team", "public"}
+
+_MAX_MAPPING_ENTRIES = 50
+_MAX_MAPPING_KEY_LENGTH = 128
+
+_VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
+_BLOCKED_HEADER_MAPPING_TARGETS = frozenset(
+    name.lower()
+    for name in (
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "host",
+        "transfer-encoding",
+        "content-length",
+        "connection",
+        "upgrade",
+    )
+)
+_SENSITIVE_HEADER_MAPPING_PATTERNS = (
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+)
+
+
+def _validate_mapping_size(v: dict | None) -> dict | None:
+    """Validate that a mapping dict does not exceed size limits.
+
+    Shared by ToolCreate and ToolUpdate field validators.
+    """
+    if v is None:
+        return v
+    if len(v) > _MAX_MAPPING_ENTRIES:
+        raise ValueError(f"Mapping must not contain more than {_MAX_MAPPING_ENTRIES} entries")
+    for k, val in v.items():
+        if len(k) > _MAX_MAPPING_KEY_LENGTH:
+            raise ValueError(f"Mapping key exceeds {_MAX_MAPPING_KEY_LENGTH} characters: '{k[:32]}...'")
+        if len(val) > _MAX_MAPPING_KEY_LENGTH:
+            raise ValueError(f"Mapping value exceeds {_MAX_MAPPING_KEY_LENGTH} characters: '{val[:32]}...'")
+    return v
+
+
+def _validate_header_mapping_targets(v: dict | None) -> dict | None:
+    """Validate that header_mapping target names are safe and well-formed.
+
+    Rejects sensitive headers (Authorization, Cookie, Host, etc.) and
+    names that violate RFC 7230 token syntax. Applied at registration time;
+    tool_service applies the same checks at invocation as defense-in-depth.
+    """
+    if v is None:
+        return v
+    for target in v.values():
+        if target.strip().lower() in _BLOCKED_HEADER_MAPPING_TARGETS:
+            raise ValueError(f"header_mapping targets blocked header {repr(target[:64])}")
+        if any(p.match(target) for p in _SENSITIVE_HEADER_MAPPING_PATTERNS):
+            raise ValueError(f"header_mapping targets sensitive header {repr(target[:64])}")
+        if not _VALID_HTTP_HEADER_NAME.match(target):
+            raise ValueError(f"header_mapping contains invalid header name {repr(target[:64])}")
+    return v
+
+
+def _coerce_visibility(v: Optional[str]) -> Optional[str]:
+    """Normalize legacy visibility values in Read/response schemas.
+
+    DB columns are unconstrained strings, so historical rows may contain
+    values outside the Literal enum.  Coerce them to 'public' (the DB
+    default) instead of letting Pydantic raise a ValidationError on the
+    read path.
+
+    Args:
+        v: Visibility value to normalize.
+
+    Returns:
+        The original value if valid, 'public' if invalid, or None if None.
+    """
+    if v is not None and v not in _VALID_VISIBILITY:
+        logger.warning("Coercing invalid visibility value %r to 'public'", v)
+        return "public"
+    return v
 
 
 def encode_datetime(v: datetime) -> str:
@@ -343,6 +427,43 @@ class AuthenticationValues(BaseModelWithConfigDict):
     authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
+# Minimal valid JSON Schema used as the default input_schema for REST tools.
+_DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
+
+
+def _extract_rest_url_components(values: dict) -> dict:
+    """Extract ``base_url`` and ``path_template`` from ``url`` for REST integration tools.
+
+    Shared logic used by both :class:`ToolCreate` and :class:`ToolUpdate` model
+    validators so the URL-parsing behaviour stays consistent across create and
+    update paths.
+
+    Args:
+        values: The raw model input dict (mutated in-place).
+
+    Returns:
+        The same *values* dict, potentially with ``base_url`` and
+        ``path_template`` populated.
+    """
+    url = values.get("url")
+    if not url:
+        return values
+
+    parsed = urlparse(str(url))
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    path_template = parsed.path
+
+    if path_template:
+        path_template = "/" + path_template.lstrip("/")
+
+    if not values.get("base_url"):
+        values["base_url"] = base_url
+    if not values.get("path_template"):
+        values["path_template"] = path_template
+
+    return values
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -368,12 +489,13 @@ class ToolCreate(BaseModel):
 
     name: str = Field(..., description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
+    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: dict(_DEFAULT_INPUT_SCHEMA), description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
@@ -387,13 +509,13 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
@@ -477,7 +599,13 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to register successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -494,12 +622,20 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
-        for pat in forbidden_patterns:
-            if pat in v:
-                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can register without error.
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
+                if pat in v:
+                    if settings.validation_strict:
+                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -769,33 +905,22 @@ class ToolCreate(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        Only for integration_type 'REST':
-        If 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
+        """For REST tools: extract URL components and ensure a default input_schema.
 
         Args:
             values (dict): The input values to process.
 
         Returns:
-            dict: The updated values with base_url and path_template if applicable.
+            dict: The updated values with base_url and path_template extracted from url.
         """
-        integration_type = values.get("integration_type")
-        if integration_type != "REST":
-            # Only process for REST, skip for others
+        if values.get("integration_type") != "REST":
             return values
-        url = values.get("url")
-        if url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
+
+        _extract_rest_url_components(values)
+
+        if not values.get("input_schema"):
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
+
         return values
 
     @field_validator("base_url")
@@ -907,6 +1032,18 @@ class ToolCreate(BaseModel):
                     raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
+    @field_validator("query_mapping", "header_mapping")
+    @classmethod
+    def validate_mapping_size(cls, v: dict | None) -> dict | None:
+        """Validate that mapping dicts do not exceed size limits."""
+        return _validate_mapping_size(v)
+
+    @field_validator("header_mapping")
+    @classmethod
+    def validate_header_mapping_targets(cls, v: dict | None) -> dict | None:
+        """Reject header_mapping targets that are sensitive or malformed."""
+        return _validate_header_mapping_targets(v)
+
     @model_validator(mode="after")
     def handle_timeout_ms_defaults(self):
         """Handle timeout_ms defaults based on integration_type and expose_passthrough.
@@ -928,6 +1065,7 @@ class ToolUpdate(BaseModelWithConfigDict):
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
@@ -946,8 +1084,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
@@ -1011,16 +1149,22 @@ class ToolUpdate(BaseModelWithConfigDict):
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure descriptions display safely
+        """Ensure descriptions display safely, truncate if too long
 
         Args:
             v (str): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to be updated successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolUpdate
@@ -1036,6 +1180,22 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
+
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can be updated without error.
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
+                if pat in v:
+                    if settings.validation_strict:
+                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                    break
+
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
             truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
@@ -1133,6 +1293,31 @@ class ToolUpdate(BaseModelWithConfigDict):
                     values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """For REST tools: extract URL components and normalise empty input_schema.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template extracted from url.
+        """
+        if values.get("integration_type") != "REST":
+            return values
+
+        _extract_rest_url_components(values)
+
+        # Normalise explicitly-empty input_schema to the typed default.
+        # None is left alone (partial update semantics — omitted fields
+        # should not overwrite existing values in the database).
+        input_schema = values.get("input_schema")
+        if input_schema is not None and isinstance(input_schema, dict) and not input_schema:
+            values["input_schema"] = dict(_DEFAULT_INPUT_SCHEMA)
+
+        return values
+
     @field_validator("displayName")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
@@ -1185,34 +1370,6 @@ class ToolUpdate(BaseModelWithConfigDict):
             raise ValueError("Cannot update tools to MCP integration type. MCP tools are managed by the gateway service.")
         if integration_type == "A2A":
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
-        return values
-
-    @model_validator(mode="before")
-    @classmethod
-    def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        If 'integration_type' is 'REST' and 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
-
-        Args:
-            values (dict): The input values to process.
-
-        Returns:
-            dict: The updated values with base_url and path_template if applicable.
-        """
-        integration_type = values.get("integration_type")
-        url = values.get("url")
-        if integration_type == "REST" and url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
         return values
 
     @field_validator("base_url")
@@ -1324,6 +1481,18 @@ class ToolUpdate(BaseModelWithConfigDict):
                     raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
+    @field_validator("query_mapping", "header_mapping")
+    @classmethod
+    def validate_mapping_size(cls, v: dict | None) -> dict | None:
+        """Validate that mapping dicts do not exceed size limits."""
+        return _validate_mapping_size(v)
+
+    @field_validator("header_mapping")
+    @classmethod
+    def validate_header_mapping_targets(cls, v: dict | None) -> dict | None:
+        """Reject header_mapping targets that are sensitive or malformed."""
+        return _validate_header_mapping_targets(v)
+
 
 class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
@@ -1344,6 +1513,7 @@ class ToolRead(BaseModelWithConfigDict):
     url: Optional[str]
     description: Optional[str]
     original_description: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]
@@ -1385,13 +1555,13 @@ class ToolRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
-    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
-    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(20000, description="Timeout in milliseconds for REST passthrough")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
@@ -1400,6 +1570,8 @@ class ToolRead(BaseModelWithConfigDict):
 
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class ToolInvocation(BaseModelWithConfigDict):
@@ -1590,6 +1762,7 @@ class ResourceCreate(BaseModel):
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
@@ -1598,7 +1771,7 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
     @field_validator("tags")
@@ -1693,7 +1866,10 @@ class ResourceCreate(BaseModel):
     @field_validator("content")
     @classmethod
     def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
-        """Validate content size and safety
+        """Validate content safety.
+
+        Note: Size validation is performed at the service layer using configurable limits.
+        This validator only checks encoding and dangerous patterns.
 
         Args:
             v (Union[str, bytes]): Value to validate
@@ -1707,9 +1883,7 @@ class ResourceCreate(BaseModel):
         if v is None:
             return v
 
-        if len(v) > SecurityValidator.MAX_CONTENT_LENGTH:
-            raise ValueError(f"Content exceeds maximum length of {SecurityValidator.MAX_CONTENT_LENGTH}")
-
+        # Validate UTF-8 encoding for bytes
         if isinstance(v, bytes):
             try:
                 text = v.decode("utf-8")
@@ -1717,6 +1891,8 @@ class ResourceCreate(BaseModel):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
+
+        # Check for dangerous HTML patterns
         # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")
@@ -1733,6 +1909,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
@@ -1741,7 +1918,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -1822,7 +1999,10 @@ class ResourceUpdate(BaseModelWithConfigDict):
     @field_validator("content")
     @classmethod
     def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
-        """Validate content size and safety
+        """Validate content safety.
+
+        Note: Size validation is performed at the service layer using configurable limits.
+        This validator only checks encoding and dangerous patterns.
 
         Args:
             v (Union[str, bytes]): Value to validate
@@ -1836,9 +2016,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
 
-        if len(v) > SecurityValidator.MAX_CONTENT_LENGTH:
-            raise ValueError(f"Content exceeds maximum length of {SecurityValidator.MAX_CONTENT_LENGTH}")
-
+        # Validate UTF-8 encoding for bytes
         if isinstance(v, bytes):
             try:
                 text = v.decode("utf-8")
@@ -1846,6 +2024,8 @@ class ResourceUpdate(BaseModelWithConfigDict):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
+
+        # Check for dangerous HTML patterns
         # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")
@@ -1869,6 +2049,7 @@ class ResourceRead(BaseModelWithConfigDict):
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
@@ -1896,12 +2077,14 @@ class ResourceRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2143,6 +2326,7 @@ class PromptCreate(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
@@ -2151,7 +2335,7 @@ class PromptCreate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
 
     @field_validator("tags")
@@ -2310,6 +2494,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
@@ -2319,7 +2504,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -2456,6 +2641,7 @@ class PromptRead(BaseModelWithConfigDict):
     custom_name: str
     custom_name_slug: str
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
     gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str
@@ -2486,11 +2672,13 @@ class PromptRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -2547,7 +2735,7 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "STREAMABLEHTTP"
 
 
-class GatewayCreate(BaseModel):
+class GatewayCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new gateway.
 
@@ -2610,12 +2798,16 @@ class GatewayCreate(BaseModel):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     # CA certificate
     ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
     ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
     signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
+
+    # mTLS client certificate/key
+    client_cert: Optional[str] = Field(None, description="Client TLS certificate for mTLS authentication")
+    client_key: Optional[str] = Field(None, description="Client TLS key for mTLS authentication")
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
@@ -2951,13 +3143,22 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Gateway visibility: private, team, or public")
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
+
+    # CA certificate configuration for custom TLS trust
+    ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate")
+    signing_algorithm: Optional[str] = Field(None, description="Algorithm used for signing the CA certificate")
+
+    # mTLS client TLS certificate and key
+    client_cert: Optional[str] = Field(None, description="Client TLS certificate for mTLS gateway authentication")
+    client_key: Optional[str] = Field(None, description="Client TLS key for mTLS gateway authentication")
 
     @field_validator("tags")
     @classmethod
@@ -3253,6 +3454,11 @@ class GatewayRead(BaseModelWithConfigDict):
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    ca_certificate: Optional[str] = Field(default=None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(default=None, description="Signature of the custom CA certificate")
+    signing_algorithm: Optional[str] = Field(default="ed25519", description="Algorithm used for signing the CA certificate")
+    client_cert: Optional[str] = Field(default=None, description="Client TLS certificate for mTLS authentication")
+    client_key: Optional[str] = Field(default=None, description="Client TLS key for mTLS authentication")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
@@ -3288,7 +3494,7 @@ class GatewayRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -3313,6 +3519,11 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
+    # Tool count (populated from the tools relationship; 0 when not loaded)
+    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
 
     @model_validator(mode="before")
     @classmethod
@@ -3523,6 +3734,8 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_token_unmasked"] = None
         masked_data["auth_header_value_unmasked"] = None
         masked_data["auth_headers_unmasked"] = None
+        # SECURITY: Mask mTLS client private key
+        masked_data["client_key"] = settings.masked_auth_value if masked_data.get("client_key") else None
         return GatewayRead.model_validate(masked_data)
 
 
@@ -3852,7 +4065,7 @@ class ServerCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
@@ -3937,24 +4150,6 @@ class ServerCreate(BaseModel):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
-
     @field_validator("team_id")
     @classmethod
     def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
@@ -3986,7 +4181,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
@@ -4163,11 +4358,13 @@ class ServerRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -4366,7 +4563,7 @@ class A2AAgentCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -4454,24 +4651,6 @@ class A2AAgentCreate(BaseModel):
             dict: Value if validated as safe
         """
         SecurityValidator.validate_json_depth(v)
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
         return v
 
     @field_validator("team_id")
@@ -4701,7 +4880,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -4793,24 +4972,6 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
         SecurityValidator.validate_json_depth(v)
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v is not None and v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
         return v
 
     @field_validator("team_id")
@@ -5070,7 +5231,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -5829,7 +5992,7 @@ class TeamCreateRequest(BaseModel):
     slug: Optional[str] = Field(None, min_length=2, max_length=255, pattern="^[a-z0-9-]+$", description="URL-friendly team identifier")
     description: Optional[str] = Field(None, max_length=1000, description="Team description")
     visibility: Literal["private", "public"] = Field("private", description="Team visibility level")
-    max_members: Optional[int] = Field(default=None, description="Maximum number of team members")
+    max_members: Optional[int] = Field(default=None, ge=1, description="Maximum number of team members. If omitted, the team inherits the global MAX_MEMBERS_PER_TEAM setting at check time.")
 
     @field_validator("name")
     @classmethod
@@ -5924,7 +6087,9 @@ class TeamUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255, description="Team display name")
     description: Optional[str] = Field(None, max_length=1000, description="Team description")
     visibility: Optional[Literal["private", "public"]] = Field(None, description="Team visibility level")
-    max_members: Optional[int] = Field(default=None, description="Maximum number of team members")
+    max_members: Optional[int] = Field(
+        default=None, ge=1, description="Maximum number of team members. Set to null to clear a per-team override and revert to the global MAX_MEMBERS_PER_TEAM setting."
+    )
 
     @field_validator("name")
     @classmethod
@@ -6016,8 +6181,8 @@ class TeamResponse(BaseModel):
     description: Optional[str] = Field(None, description="Team description")
     created_by: str = Field(..., description="Email of team creator")
     is_personal: bool = Field(..., description="Whether this is a personal team")
-    visibility: Optional[str] = Field(..., description="Team visibility level")
-    max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
+    visibility: Optional[Literal["private", "public"]] = Field(..., description="Team visibility level")
+    max_members: Optional[int] = Field(None, description="Per-team member limit override. Null means the team uses the global MAX_MEMBERS_PER_TEAM setting.")
     member_count: int = Field(..., description="Current number of team members")
     created_at: datetime = Field(..., description="Team creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -6035,6 +6200,7 @@ class TeamMemberResponse(BaseModel):
         joined_at: When the member joined
         invited_by: Email of user who invited this member
         is_active: Whether the membership is active
+        grant_source: Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = TeamMemberResponse(
@@ -6058,6 +6224,7 @@ class TeamMemberResponse(BaseModel):
     joined_at: datetime = Field(..., description="When the member joined")
     invited_by: Optional[str] = Field(None, description="Email of user who invited this member")
     is_active: bool = Field(..., description="Whether the membership is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PaginatedTeamMembersResponse(BaseModel):
@@ -6962,7 +7129,7 @@ class GrpcServiceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
 
     @field_validator("name")
     @classmethod
@@ -7027,7 +7194,7 @@ class GrpcServiceUpdate(BaseModel):
     tls_key_path: Optional[str] = Field(None, description="TLS key path")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
     tags: Optional[List[str]] = Field(None, description="Service tags")
-    visibility: Optional[str] = Field(None, description="Visibility level")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("name")
     @classmethod
@@ -7123,7 +7290,9 @@ class GrpcServiceRead(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Owner email")
-    visibility: str = Field(default="public", description="Visibility level")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 # Plugin-related schemas
@@ -7377,31 +7546,6 @@ class PaginatedResponse(BaseModel):
     links: Optional[PaginationLinks] = Field(None, description="Navigation links")
 
 
-class PaginationParams(BaseModel):
-    """Common pagination query parameters.
-
-    Attributes:
-        page: Page number (1-indexed)
-        per_page: Items per page
-        cursor: Cursor for cursor-based pagination
-        sort_by: Field to sort by
-        sort_order: Sort order (asc/desc)
-
-    Examples:
-        >>> params = PaginationParams(page=1, per_page=50)
-        >>> params.page
-        1
-        >>> params.sort_order
-        'desc'
-    """
-
-    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    per_page: int = Field(default=50, ge=1, le=500, description="Items per page (max 500)")
-    cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
-    sort_by: Optional[str] = Field("created_at", description="Sort field")
-    sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
-
-
 # ============================================================================
 # Cursor Pagination Response Schemas (for main API endpoints)
 # ============================================================================
@@ -7622,21 +7766,6 @@ class ObservabilitySpanWithEvents(ObservabilitySpanRead):
     events: List[ObservabilityEventRead] = Field(default_factory=list, description="List of events in this span")
 
 
-class ObservabilityQueryParams(BaseModel):
-    """Query parameters for filtering observability data."""
-
-    start_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics after this time")
-    end_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics before this time")
-    status: Optional[str] = Field(None, description="Filter by status (ok, error, unset)")
-    http_status_code: Optional[int] = Field(None, description="Filter by HTTP status code")
-    user_email: Optional[str] = Field(None, description="Filter by user email")
-    resource_type: Optional[str] = Field(None, description="Filter by resource type")
-    resource_name: Optional[str] = Field(None, description="Filter by resource name")
-    trace_id: Optional[str] = Field(None, description="Filter by trace ID")
-    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
-    offset: int = Field(default=0, ge=0, description="Result offset for pagination")
-
-
 # --- Performance Monitoring Schemas ---
 
 
@@ -7824,19 +7953,287 @@ class PerformanceDashboard(BaseModel):
     is_distributed: bool = Field(False, description="Running in distributed mode")
 
 
-class PerformanceHistoryParams(BaseModel):
-    """Query parameters for historical performance data."""
-
-    start_time: Optional[datetime] = Field(None, description="Start of time range")
-    end_time: Optional[datetime] = Field(None, description="End of time range")
-    period_type: str = Field("hourly", description="Aggregation period (hourly, daily)")
-    host: Optional[str] = Field(None, description="Filter by host")
-    limit: int = Field(default=168, ge=1, le=1000, description="Maximum results")
-
-
 class PerformanceHistoryResponse(BaseModel):
     """Response for historical performance data."""
 
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# ---------------------------------------------------------------------------
+# Tool Plugin Binding Schemas
+# ---------------------------------------------------------------------------
+
+
+class PluginId(str, Enum):
+    """Supported plugin identifiers for tool plugin bindings."""
+
+    OUTPUT_LENGTH_GUARD = "OUTPUT_LENGTH_GUARD"
+    RATE_LIMITER = "RATE_LIMITER"
+    SECRETS_DETECTION = "SECRETS_DETECTION"
+
+
+# Maps PluginId enum values (stored in DB) to plugin class names used by the
+# plugin framework's PluginConfigOverride.name field.
+PLUGIN_ID_TO_NAME: dict[str, str] = {
+    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
+    PluginId.RATE_LIMITER: "RateLimiterPlugin",
+    PluginId.SECRETS_DETECTION: "SecretsDetection",
+}
+
+
+class PluginBindingMode(str, Enum):
+    """Plugin execution mode for tool plugin bindings."""
+
+    ENFORCE = "enforce"
+    PERMISSIVE = "permissive"
+    DISABLED = "disabled"
+
+
+# --- Plugin-specific config schemas ---
+
+
+class OutputLengthGuardConfig(BaseModel):
+    """Config schema for OUTPUT_LENGTH_GUARD plugin.
+
+    Attributes:
+        min_chars: Minimum character count (>= 0).
+        max_chars: Maximum character count (> 1).
+        strategy: What to do when limit is exceeded.
+        ellipsis: Suffix appended when truncating.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_chars: int = Field(0, ge=0, description="Minimum character count, must be >= 0")
+    max_chars: int = Field(2000, gt=1, description="Maximum character count, must be > 1")
+    strategy: Literal["truncate", "block"] = Field("truncate", description="Action when limit exceeded")
+    ellipsis: str = Field("...", max_length=20, description="Suffix appended on truncation")
+
+    @model_validator(mode="after")
+    def min_less_than_max(self) -> "OutputLengthGuardConfig":
+        """Validate min_chars < max_chars.
+
+        Returns:
+            self after validation.
+
+        Raises:
+            ValueError: If min_chars >= max_chars.
+        """
+        if self.min_chars >= self.max_chars:
+            raise ValueError("min_chars must be less than max_chars")
+        return self
+
+
+class RateLimiterConfig(BaseModel):
+    """Config schema for RATE_LIMITER plugin.
+
+    Rate strings use the format ``<count>/<period>`` where period is
+    ``s`` (second) or ``m`` (minute), e.g. ``60/m``, ``10/s``.
+
+    Attributes:
+        by_user: Rate limit per user.
+        by_tenant: Rate limit per tenant.
+        by_tool: Rate limit per tool.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    by_user: Optional[str] = Field(None, description="Rate limit per user, e.g. '60/m' or '10/s'")
+    by_tenant: Optional[str] = Field(None, description="Rate limit per tenant, e.g. '600/m'")
+    by_tool: Optional[str] = Field(None, description="Rate limit per tool, e.g. '10/m'")
+
+    @field_validator("by_user", "by_tenant", "by_tool", mode="before")
+    @classmethod
+    def validate_rate_string(cls, v: Optional[str]) -> Optional[str]:
+        """Validate rate string format <count>/<s|m>.
+
+        Args:
+            v: Rate string to validate.
+
+        Returns:
+            Validated rate string or None.
+
+        Raises:
+            ValueError: If format is invalid.
+        """
+        if v is None:
+            return v
+        if not re.match(r"^\d+/[sm]$", v):
+            raise ValueError(f"Rate string '{v}' is invalid. Use format '<count>/s' or '<count>/m'")
+        return v
+
+
+class SecretsDetectionConfig(BaseModel):
+    """Config schema for SECRETS_DETECTION plugin.
+
+    Attributes:
+        enabled: Map of pattern names to whether they are active.
+        redact: Whether to redact detected secrets from output.
+        redaction_text: Text used to replace redacted secrets.
+        block_on_detection: Whether to block the response when secrets are found.
+        min_findings_to_block: Minimum number of findings required to trigger a block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
+    redact: bool = Field(True, description="Whether to redact detected secrets")
+    redaction_text: str = Field("[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
+    block_on_detection: bool = Field(False, description="Whether to block the response when secrets are detected")
+    min_findings_to_block: int = Field(1, ge=1, description="Minimum number of findings required to block")
+
+
+# Map of plugin_id → config schema class for validation
+_PLUGIN_CONFIG_MAP: Dict[str, type] = {
+    PluginId.OUTPUT_LENGTH_GUARD: OutputLengthGuardConfig,
+    PluginId.RATE_LIMITER: RateLimiterConfig,
+    PluginId.SECRETS_DETECTION: SecretsDetectionConfig,
+}
+
+
+# --- Policy item (one plugin, one or more tools) ---
+
+
+class PluginPolicyItem(BaseModel):
+    """A single plugin policy entry within a team's binding payload.
+
+    Attributes:
+        tool_names: List of tool names this policy applies to. Use ``["*"]`` for all tools.
+        plugin_id: The plugin to bind.
+        mode: Execution mode.
+        priority: Execution order — lower numbers run first.
+        config: Plugin-specific configuration.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
+    plugin_id: PluginId = Field(..., description="Plugin to bind")
+    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
+    priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
+    config: Dict[str, Any] = Field(
+        ..., description="Plugin-specific configuration; always provide all fields you care about — on upsert the config is fully replaced, so any key you omit reverts to the plugin's default value"
+    )
+
+    @model_validator(mode="after")
+    def validate_config_for_plugin(self) -> "PluginPolicyItem":
+        """Validate config against the schema for the selected plugin_id.
+
+        Returns:
+            self after validation.
+
+        Raises:
+            ValueError: If config is invalid for the chosen plugin.
+        """
+        config_cls = _PLUGIN_CONFIG_MAP.get(self.plugin_id)
+        if config_cls:
+            expected = set(config_cls.model_fields.keys())
+            provided = set(self.config.keys())
+            missing = expected - provided
+            if missing:
+                raise ValueError(f"Missing config fields for {self.plugin_id.value}: {sorted(missing)}")
+            try:
+                config_cls(**self.config)
+            except ValidationError as exc:
+                parts = []
+                for e in exc.errors():
+                    loc = ".".join(str(p) for p in e["loc"])
+                    parts.append(f"{loc}: {e['msg']}" if loc else e["msg"])
+                raise ValueError(f"Invalid {self.plugin_id.value} config: [{', '.join(parts)}]") from exc
+        return self
+
+
+# --- Per-team policies wrapper ---
+
+
+class TeamPolicies(BaseModel):
+    """Policies for a single team."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policies: List[PluginPolicyItem] = Field(..., min_length=1, description="List of plugin policies for this team")
+
+
+# --- Top-level request body ---
+
+
+class ToolPluginBindingRequest(BaseModel):
+    """Request body for POST /v1/tools/plugin_bindings.
+
+    The payload is a dict keyed by team_id, each value being a ``TeamPolicies``
+    object.  Multiple teams can be configured in a single request.  If a
+    (team_id, tool_name, plugin_id) triple already exists the row is updated
+    in place (upsert); otherwise a new row is inserted.
+
+    Example::
+
+        {
+            "team_abc": {
+                "policies": [
+                    {
+                        "tool_names": ["tool_a", "tool_b"],
+                        "plugin_id": "OUTPUT_LENGTH_GUARD",
+                        "mode": "enforce",
+                        "priority": 10,
+                        "config": {"max_chars": 2000, "strategy": "truncate"}
+                    }
+                ]
+            }
+        }
+    """
+
+    teams: Dict[str, TeamPolicies] = Field(..., min_length=1, description="Map of team_id to its plugin policies")
+
+
+# --- Response schemas ---
+
+
+class ToolPluginBindingResponse(BaseModelWithConfigDict):
+    """A single tool plugin binding record returned from the API.
+
+    Attributes:
+        id: Unique binding identifier (UUID).
+        team_id: Team the binding belongs to.
+        tool_name: Tool name the policy applies to.
+        plugin_id: Plugin identifier.
+        mode: Execution mode.
+        priority: Execution priority.
+        config: Plugin-specific configuration.
+        created_at: Creation timestamp.
+        created_by: Email of creator.
+        updated_at: Last update timestamp.
+        updated_by: Email of last updater.
+    """
+
+    id: str = Field(..., description="Unique binding identifier")
+    team_id: str = Field(..., description="Team the binding belongs to")
+    tool_name: str = Field(..., description="Tool name the policy applies to")
+    plugin_id: str = Field(..., description="Plugin identifier")
+    mode: str = Field(..., description="Execution mode")
+    priority: int = Field(..., description="Execution priority")
+    config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    created_by: str = Field(..., description="Email of creator")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_by: str = Field(..., description="Email of last updater")
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dt(self, v: datetime) -> str:
+        """Serialize datetime fields to ISO 8601.
+
+        Args:
+            v: Datetime to serialize.
+
+        Returns:
+            ISO 8601 string.
+        """
+        return encode_datetime(v)
+
+
+class ToolPluginBindingListResponse(BaseModelWithConfigDict):
+    """Response for GET /v1/tools/plugin_bindings[/{team_id}]."""
+
+    bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
+    total: int = Field(0, description="Total number of bindings returned")

@@ -77,6 +77,10 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.playwright-mcp/
+.playwright-mcp
+output
+output/
 htmlcov
 htmlcov/
 .tox/
@@ -102,6 +106,7 @@ tests/migration/reports/
 tests/migration/logs/
 test-results-*.xml
 playwright-report-*.html
+.playwright-cli/
 
 # Vitest
 coverage/
@@ -130,6 +135,7 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
+.codex
 .vscode
 .vscode/
 .idea/
@@ -191,6 +197,7 @@ packages.json
 .aider*
 aider*
 .ai*
+.bob
 .claude/*
 !.claude/skills/
 CLAUDE.local.md
@@ -255,13 +262,7 @@ uv.lock
 .uv-cache/
 .uv-tmp/
 
-# ========================================
-# Rust (plugins_rust)
-# ========================================
-plugins_rust/target/
-plugins_rust/*/target/
 *.rs.bk
-plugins_rust/Cargo.lock
 
 # ========================================
 # Project-Specific (ContextForge)
@@ -271,8 +272,10 @@ plugins_rust/Cargo.lock
 certs/
 jwt/
 
-# Static assets (downloaded during container build)
+# Static assets (downloaded or built during container build)
 mcpgateway/static/vendor/
+mcpgateway/static/bundle-*.js
+mcpgateway/static/.vite/
 public/
 
 # Export & SBOM files
@@ -365,3 +368,4 @@ tools_rust/mcp_runtime/perf.data*
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+.bob

@@ -150,6 +150,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_search_gateways,
     admin_search_prompts,
     admin_search_resources,
+    admin_search_roots,
     admin_search_servers,
     admin_search_teams,
     admin_search_tokens,
@@ -249,6 +250,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
+    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
@@ -277,6 +279,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerService
+from mcpgateway.services.team_management_service import UNSET
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNotFoundError,
@@ -380,7 +383,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
 
@@ -982,6 +985,93 @@ class TestAdminServerRoutes:
         assert isinstance(response, JSONResponse)
         assert response.status_code == 500
 
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_preserves_team_id_when_not_in_form(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Editing a server without team_id in form should preserve the existing team, not fall back to personal team."""
+        server_id = "00000000-0000-0000-0000-000000000099"
+        existing_team_id = "team-original"
+
+        # Form data WITHOUT team_id (simulates All Teams view edit)
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "My_Server",
+                "visibility": "team",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock existing server in DB with original team
+        mock_existing_server = MagicMock()
+        mock_existing_server.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_server
+
+        # Mock verify_team_for_user to return whatever team_id is passed
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "My_Server"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        # verify_team_for_user should have been called with the EXISTING team_id, not None
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        # ServerUpdate should have the existing team_id
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]
+        assert server_update.team_id == existing_team_id
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_uses_explicit_team_id_from_form(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """When team_id IS provided in the form, it should be used instead of the existing one."""
+        server_id = "00000000-0000-0000-0000-000000000099"
+        explicit_team_id = "team-new"
+
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "My_Server",
+                "visibility": "team",
+                "team_id": explicit_team_id,
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "My_Server"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        # db.get should NOT have been called — the form-provided team_id takes precedence
+        mock_db.get.assert_not_called()
+        team_service.verify_team_for_user.assert_called_once_with("test-user", explicit_team_id)
+
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_activate(self, mock_set_state, mock_request, mock_db):
         """Test activating a server."""
@@ -1496,7 +1586,7 @@ class TestAdminToolRoutes:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.headers == {}
-        assert tool_update.input_schema == {}
+        assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
@@ -2414,6 +2504,46 @@ class TestAdminResourceRoutes:
         assert result.status_code == 500
 
     @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentSizeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentSizeError(content_type="resource", actual_size=200000, max_size=102400)
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 413
+
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentTypeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentTypeError(mime_type="application/x-executable", allowed_types=["text/plain", "application/json"])
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
+    @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_validation_conflict_and_rollback_failure(self, mock_register_resource, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/URI conflict handlers and rollback failure suppression in admin_add_resource."""
         # Third-Party
@@ -2460,7 +2590,95 @@ class TestAdminResourceRoutes:
         assert mock_update_resource.call_args[0][1] == uri
 
     @patch.object(ResourceService, "update_resource")
-    async def test_admin_edit_resource_error_handlers(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+    async def test_admin_edit_resource_preserves_team_id_when_not_in_form(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+        """Editing a resource without team_id in form should preserve the existing team."""
+        resource_id = "resource-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm(
+            {
+                "uri": "/test/resource",
+                "name": "My Resource",
+                "mimeType": "text/plain",
+                "content": "hello",
+                "template": "t",
+                "visibility": "team",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_resource = MagicMock()
+        mock_existing_resource.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_resource
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_resource.return_value = None
+
+        result = await admin_edit_resource(resource_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_resource.call_args
+        resource_update = call_args[0][2]
+        assert resource_update.team_id == existing_team_id
+
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
+        """Test editing resource with ContentSizeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock the module-level resource_service instance
+        mock_update = AsyncMock(side_effect=ContentSizeError(content_type="resource", actual_size=200000, max_size=102400))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+
+        result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 413
+
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_content_type_error(self, mock_request, mock_db, monkeypatch):
+        """Test editing resource with ContentTypeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock the module-level resource_service instance to raise ContentTypeError
+        mock_update = AsyncMock(side_effect=ContentTypeError(mime_type="text/plain", allowed_types=["application/json", "application/xml"]))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+
+        result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
+    async def test_admin_edit_resource_error_handlers(self, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
         # First-Party
         from mcpgateway.services.resource_service import ResourceURIConflictError
@@ -2473,24 +2691,34 @@ class TestAdminResourceRoutes:
         form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        mock_update_resource.side_effect = PermissionError("nope")
+        # Test PermissionError
+        mock_update = AsyncMock(side_effect=PermissionError("nope"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 403
 
+        # Test ValidationError
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
-        mock_update_resource.side_effect = ValidationError.from_exception_data("test", error_details)
+        mock_update = AsyncMock(side_effect=ValidationError.from_exception_data("test", error_details))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 422
 
-        mock_update_resource.side_effect = IntegrityError("stmt", {}, Exception("constraint"))
+        # Test IntegrityError
+        mock_update = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("constraint")))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
 
-        mock_update_resource.side_effect = ResourceURIConflictError("conflict")
+        # Test ResourceURIConflictError
+        mock_update = AsyncMock(side_effect=ResourceURIConflictError("conflict"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
 
-        mock_update_resource.side_effect = Exception("boom")
+        # Test generic Exception
+        mock_update = AsyncMock(side_effect=Exception("boom"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 500
 
@@ -2660,6 +2888,7 @@ class TestAdminPromptRoutes:
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/IntegrityError/name conflict and generic exception paths in admin_add_prompt."""
         # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
         from mcpgateway.services.prompt_service import PromptNameConflictError
 
         team_service = MagicMock()
@@ -2701,6 +2930,45 @@ class TestAdminPromptRoutes:
         mock_register_prompt.side_effect = RuntimeError("boom")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 500
+        mock_register_prompt.side_effect = ContentSizeError(content_type="prompt", actual_size=20000, max_size=10240)
+        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert resp.status_code == 413
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_preserves_team_id_when_not_in_form(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
+        """Editing a prompt without team_id in form should preserve the existing team."""
+        prompt_id = "prompt-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm(
+            {
+                "name": "My Prompt",
+                "template": "Hello {{name}}",
+                "visibility": "team",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_prompt = MagicMock()
+        mock_existing_prompt.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_prompt
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_prompt.return_value = None
+
+        result = await admin_edit_prompt(prompt_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_prompt.call_args
+        prompt_update = call_args[0][2]
+        assert prompt_update.team_id == existing_team_id
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_name_change(self, mock_update_prompt, mock_request, mock_db):
@@ -2824,6 +3092,12 @@ class TestAdminPromptRoutes:
         mock_update_prompt.side_effect = Exception("boom")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 500
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update_prompt.side_effect = ContentSizeError(content_type="prompt", actual_size=20000, max_size=10240)
+        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert response.status_code == 413
 
     @patch.object(PromptService, "set_prompt_state")
     async def test_admin_set_prompt_state_edge_cases(self, mock_toggle_status, mock_request, mock_db):
@@ -3014,6 +3288,43 @@ class TestAdminGatewayRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code in (400, 422)
         assert body["success"] is False
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_preserves_team_id_when_not_in_form(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """Editing a gateway without team_id in form should preserve the existing team."""
+        gateway_id = "gateway-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm(
+            {
+                "name": "Updated_Gateway",
+                "url": "http://example.com:9000/sse",
+                "transport": "SSE",
+                "visibility": "team",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_gw = MagicMock()
+        mock_existing_gw.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_gw
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        result = await admin_edit_gateway(gateway_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_gateway.call_args
+        gateway_update = call_args[1].get("gateway") or call_args[0][2]
+        assert gateway_update.team_id == existing_team_id
 
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
@@ -3613,6 +3924,155 @@ class TestUIVisibilityConfig:
         ]
         assert config["cookie_action"] == "set"
 
+    def test_get_ui_visibility_config_admin_uses_admin_vars(self, monkeypatch):
+        """Admin users should use _ADMIN hide lists, not the default ones."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == ["maintenance"]
+        assert config["hidden_header_items"] == []
+
+    def test_get_ui_visibility_config_nonadmin_uses_default_vars(self, monkeypatch):
+        """Non-admin users should use the default hide lists."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=False)
+
+        assert config["hidden_sections"] == ["resources", "tools"]
+        assert config["hidden_header_items"] == ["logout"]
+
+    def test_get_ui_visibility_config_embedded_skips_admin(self, monkeypatch):
+        """Embedded mode defaults should NOT apply to admin users."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert "logout" not in config["hidden_header_items"]
+        assert "team_selector" not in config["hidden_header_items"]
+
+    def test_get_ui_visibility_config_embedded_applies_to_nonadmin(self, monkeypatch):
+        """Embedded mode defaults should apply to non-admin users."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=False)
+
+        assert "logout" in config["hidden_header_items"]
+        assert "team_selector" in config["hidden_header_items"]
+
+    def test_get_ui_visibility_config_admin_empty_means_see_all(self, monkeypatch):
+        """When admin hide lists are empty, admins see all sections."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources", "teams"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout", "team_selector"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == []
+        assert config["hidden_header_items"] == []
+        assert config["hidden_tabs"] == []
+
+    def test_get_ui_visibility_config_admin_query_override_additive(self, monkeypatch):
+        """Query param overrides should be additive on admin hide list."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "tools"}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == ["maintenance", "tools"]
+
+    def test_get_ui_visibility_config_default_is_admin_false(self, monkeypatch):
+        """Calling without is_admin should default to non-admin path (backward compat)."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["tools"]
+        assert config["hidden_header_items"] == ["logout"]
+
+    def test_get_ui_visibility_config_admin_cookie_override(self, monkeypatch):
+        """Admin cookie overrides should be additive to admin hide list."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "tools,resources"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert set(config["hidden_sections"]) == {"maintenance", "tools", "resources"}
+
+    def test_get_ui_visibility_config_admin_query_overrides_cookie(self, monkeypatch):
+        """Admin query param should take precedence over cookie."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "users"}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,teams"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        # Query param is used instead of cookie, additive to admin config
+        assert set(config["hidden_sections"]) == {"maintenance", "users"}
+        assert config["cookie_action"] == "set"
+
 
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
@@ -3840,6 +4300,65 @@ class TestAdminUIRoute:
         assert any(UI_HIDE_SECTIONS_COOKIE_NAME in header for header in cookie_headers)
         # Verify cookie max_age is set
         assert any("Max-Age=" in header for header in cookie_headers if UI_HIDE_SECTIONS_COOKIE_NAME in header)
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_admin_user_uses_admin_visibility(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Admin user should use _ADMIN hide lists, not non-admin ones."""
+        mock_request.query_params = {}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+        # Non-admin: hide tools and resources
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        # Admin: only hide maintenance
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", False, raising=False)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        # Admin should see admin hide list, not non-admin
+        assert "maintenance" in context["ui_hidden_sections"]
+        assert "tools" not in context["ui_hidden_sections"]
+        assert "resources" not in context["ui_hidden_sections"]
+        # Embedded-mode header defaults should NOT apply to admin
+        assert "logout" not in context["ui_hidden_header_items"]
+        assert "team_selector" not in context["ui_hidden_header_items"]
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -4634,6 +5153,32 @@ class TestGlobalConfigurationEndpoints:
 class TestA2AAgentManagement:
     """Test A2A agent management endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _force_a2a_enabled(self, monkeypatch):
+        """Force ``mcpgateway.admin.a2a_service`` + ``mcpgateway_a2a_enabled``.
+
+        ``admin.a2a_service`` is initialised at module-import time based on
+        ``settings.mcpgateway_a2a_enabled``. If admin.py was first imported
+        while A2A was disabled (possible under xdist if another file had
+        already set the env var), the module-level ``a2a_service`` is
+        ``None`` and every handler in this class short-circuits with a
+        403 JSON response before exercising the code path under test.
+        Force a real ``A2AAgentService`` instance and the flag so each
+        test in this class runs deterministically regardless of
+        collection order. A real instance (not a ``MagicMock``) is used
+        because several tests patch service methods at the class level
+        via ``@patch.object(A2AAgentService, "method")``, and class-level
+        patches only intercept calls routed through an actual
+        ``A2AAgentService`` instance. Tests that want to exercise the
+        disabled branch override these monkeypatches themselves (e.g.
+        ``test_admin_list_a2a_agents_disabled``).
+        """
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService
+
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", A2AAgentService(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+
     @patch.object(A2AAgentService, "list_agents")
     async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
         """Test listing A2A agents when A2A is enabled."""
@@ -4873,8 +5418,93 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         assert "result" in body
-        mock_get_agent.assert_called_with(mock_db, "agent-1")
+        # Non-admin user without token_teams key → normalized to [] (public-only)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=[])
         mock_invoke_agent.assert_called_once()
+        # Verify invoke_agent receives correct user context
+        invoke_kwargs = mock_invoke_agent.call_args.kwargs
+        assert invoke_kwargs["user_email"] == "test-user"
+        assert invoke_kwargs["token_teams"] == []
+
+    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "invoke_agent")
+    async def test_admin_test_a2a_agent_admin_bypass(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
+        """Admin user with token_teams=None gets full bypass (user_email=None)."""
+        mock_agent = MagicMock()
+        mock_agent.name = "Test Agent"
+        mock_get_agent.return_value = mock_agent
+        mock_invoke_agent.return_value = {"result": "success"}
+
+        mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
+
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "token_teams": None, "db": mock_db},
+        )
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+        # Admin bypass: get_agent called with user_email=None, token_teams=None
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email=None, token_teams=None)
+        invoke_kwargs = mock_invoke_agent.call_args.kwargs
+        assert invoke_kwargs["user_email"] is None
+        assert invoke_kwargs["token_teams"] is None
+        # user_id still carries the real email for audit logging
+        assert invoke_kwargs["user_id"] == "admin@example.com"
+
+    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "invoke_agent")
+    async def test_admin_test_a2a_agent_team_scoped(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
+        """Team-scoped user passes actual email and team list."""
+        mock_agent = MagicMock()
+        mock_agent.name = "Test Agent"
+        mock_get_agent.return_value = mock_agent
+        mock_invoke_agent.return_value = {"result": "success"}
+
+        mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
+
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "dev@example.com", "is_admin": False, "token_teams": ["team-1"], "db": mock_db},
+        )
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="dev@example.com", token_teams=["team-1"])
+        invoke_kwargs = mock_invoke_agent.call_args.kwargs
+        assert invoke_kwargs["user_email"] == "dev@example.com"
+        assert invoke_kwargs["token_teams"] == ["team-1"]
+
+    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "invoke_agent")
+    async def test_admin_test_a2a_agent_proxy_auth_no_token_teams_key(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
+        """Proxy-auth user without token_teams key gets public-only scope, not admin bypass."""
+        mock_agent = MagicMock()
+        mock_agent.name = "Test Agent"
+        mock_get_agent.return_value = mock_agent
+        mock_invoke_agent.return_value = {"result": "success"}
+
+        mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
+
+        # Proxy auth: is_admin=False, no token_teams key at all
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "proxy@example.com", "is_admin": False, "db": mock_db},
+        )
+
+        assert isinstance(result, JSONResponse)
+        # Missing token_teams key normalizes to [] (public-only), not None (admin bypass)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="proxy@example.com", token_teams=[])
+        invoke_kwargs = mock_invoke_agent.call_args.kwargs
+        assert invoke_kwargs["token_teams"] == []
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -5577,6 +6207,11 @@ class TestOAuthFunctionality:
             assert result.status_code == 200
 
             gateway_update = mock_update_gateway.call_args.args[2]
+            assert gateway_update.oauth_config["issuer"] == "https://issuer.example.com"
+            assert gateway_update.oauth_config["token_url"] == "https://issuer.example.com/token"
+            assert gateway_update.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+            assert gateway_update.oauth_config["redirect_uri"] == "https://client.example.com/callback"
+            assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
 
@@ -6782,6 +7417,19 @@ async def test_admin_create_team_with_nonnumeric_max_members(monkeypatch, mock_d
 
 
 @pytest.mark.asyncio
+async def test_admin_create_team_with_zero_max_members(monkeypatch, mock_db, allow_permission):
+    """Zero max_members in create form returns a 400 error."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Safe Team", "visibility": "private", "max_members": "0"}))
+
+    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 400
+    assert "at least 1" in response.body.decode()
+
+
+@pytest.mark.asyncio
 async def test_admin_create_team_integrity_error(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
@@ -7074,7 +7722,7 @@ async def test_admin_update_team_with_max_members(monkeypatch, mock_db, allow_pe
 
 @pytest.mark.asyncio
 async def test_admin_update_team_with_nonnumeric_max_members(monkeypatch, mock_db, allow_permission):
-    """Non-numeric max_members in update form falls back to None (preserves existing value)."""
+    """Non-numeric max_members in update form maps to UNSET (leaves existing value unchanged)."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
     request.scope = {"root_path": ""}
@@ -7089,13 +7737,28 @@ async def test_admin_update_team_with_nonnumeric_max_members(monkeypatch, mock_d
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
     _, kwargs = team_service.update_team.call_args
-    assert kwargs.get("max_members") is None
+    assert kwargs.get("max_members") is UNSET
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_with_zero_max_members(monkeypatch, mock_db, allow_permission):
+    """Zero max_members in update form returns a 400 error."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "max_members": "0"}))
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 400
+    assert "at least 1" in response.body.decode()
 
 
 @pytest.mark.asyncio
 async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request, mock_db, allow_permission):
     """Edit team form includes max_members input pre-populated with current value."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=25))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
@@ -7103,6 +7766,93 @@ async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request
     body = response.body.decode()
     assert 'name="max_members"' in body
     assert 'value="25"' in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_over_limit_non_admin(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-admin editing a team whose max_members exceeds the limit sees an empty field with a hint."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "is_admin": False, "db": mock_db})
+    body = response.body.decode()
+    # Field should be empty to avoid browser validation blocking form submission
+    assert 'value=""' in body
+    assert "Current: 500" in body
+    assert "above max 100" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_over_limit_admin(monkeypatch, mock_request, mock_db, allow_permission):
+    """Admin editing a team whose max_members exceeds the limit sees the actual value."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+    body = response.body.decode()
+    # Admin sees the actual value, no max attribute
+    assert 'value="500"' in body
+    assert 'max="100"' not in body
+    assert "Admins can set any limit" in body
+    # Checkbox should be unchecked (explicit override present)
+    assert 'id="use-default-max-members"' in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_null_max_members(monkeypatch, mock_request, mock_db, allow_permission):
+    """Team with max_members=None shows checkbox checked and input disabled."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=None))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    body = response.body.decode()
+    assert "checked" in body
+    assert "disabled" in body
+    assert "Currently using global default (100)" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_use_default_checkbox_clears_override(monkeypatch, mock_db, allow_permission):
+    """Checking 'Use global default' checkbox passes max_members=None to clear the per-team override."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "use_default_max_members": "on"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("max_members") is None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_empty_max_members_no_checkbox_sends_unset(monkeypatch, mock_db, allow_permission):
+    """Empty max_members without the checkbox sends UNSET (leave unchanged)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("max_members") is UNSET
 
 
 @pytest.mark.asyncio
@@ -7311,6 +8061,85 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "Error%20updating%20team" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_for_admin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=True when user is admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "500"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_false_for_nonadmin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=False when user is not admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "50"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is False
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_htmx_rolls_back(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team returns 400 with rollback (no partial commit)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot exceed" in response.body.decode()
+    # Verify rollback was called to prevent partial commit
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_redirect(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team redirects with error for non-HTMX request."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.headers = {}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert "cannot%20exceed" in response.headers["location"]
+    mock_db.rollback.assert_called()
 
 
 @pytest.mark.asyncio
@@ -9383,6 +10212,36 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
 
 
 @pytest.mark.asyncio
+async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Verify include_inactive defaults to True so inactive servers appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
+
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
 async def test_admin_tools_partial_html_renders(monkeypatch, mock_request, mock_db, render):
     pagination = make_pagination_meta()
@@ -9975,6 +10834,36 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
 
 
 @pytest.mark.asyncio
+async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Verify include_inactive defaults to True so inactive gateways appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
+
+
+@pytest.mark.asyncio
 async def test_admin_resources_partial_html_all_teams_view(monkeypatch, mock_request, mock_db):
     """Cover All Teams view access conditions in resources partial."""
     pagination = make_pagination_meta()
@@ -10396,6 +11285,7 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -10413,9 +11303,9 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
 
 @pytest.mark.asyncio
 async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public prompts appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public prompts appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -10429,6 +11319,7 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -10443,9 +11334,9 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public resources appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public resources appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -10459,6 +11350,7 @@ async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatc
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -11157,6 +12049,328 @@ async def test_admin_unified_search_empty_query_and_tags_returns_empty(mock_db, 
     assert result["results"]["tools"] == []
 
 
+# ---------------------------------------------------------------------------
+# admin_search_roots tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_returns_matching_by_name(allow_permission, monkeypatch):
+    """admin_search_roots returns roots whose name contains the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root_tmp = Root(uri="file:///tmp", name="tmp")
+    root_home = Root(uri="file:///home", name="home")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root_tmp, root_home])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "file:///tmp"
+    assert result["items"][0]["name"] == "tmp"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_matches_by_uri(allow_permission, monkeypatch):
+    """admin_search_roots returns roots whose URI contains the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///project/data", name="data")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="project", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    assert result["items"][0]["uri"] == "file:///project/data"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_empty_query_returns_all(allow_permission, monkeypatch):
+    """admin_search_roots with empty query returns all roots."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri="file:///tmp", name="tmp"), Root(uri="file:///home", name="home")]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_no_match_returns_empty(allow_permission, monkeypatch):
+    """admin_search_roots returns empty list when no roots match the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri="file:///tmp", name="tmp")]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="xyz12345", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 0
+    assert result["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_respects_limit(allow_permission, monkeypatch):
+    """admin_search_roots respects the limit parameter."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri=f"file:///dir{i}", name=f"dir{i}") for i in range(10)]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="dir", limit=3, user={"email": "admin@example.com"})
+
+    assert result["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_case_insensitive(allow_permission, monkeypatch):
+    """admin_search_roots performs case-insensitive matching on both name and URI."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///TMP", name="MyRoot")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+    assert result["count"] == 1
+
+    result2 = await admin_search_roots(q="myroot", limit=10, user={"email": "admin@example.com"})
+    assert result2["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_null_name_falls_back_to_uri(allow_permission, monkeypatch):
+    """admin_search_roots returns the URI as name when root.name is None."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///tmp")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    item = result["items"][0]
+    # name must never be None or empty – falls back to the URI string
+    assert item["name"]
+    assert item["uri"] == item["id"]
+
+
+# ---------------------------------------------------------------------------
+# admin_unified_search — roots integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_includes_roots_by_default(monkeypatch, mock_db, allow_permission):
+    """Roots are included in the default entity_types for unified search."""
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert "roots" in result["entity_types"]
+    assert result["results"]["roots"][0]["id"] == "file:///tmp"
+    roots_search.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_only(monkeypatch, mock_db, allow_permission):
+    """Unified search with entity_types=roots returns only root results."""
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["roots"]
+    assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_swallows_http_exception(monkeypatch, mock_db, allow_permission):
+    """Unified search falls back to empty roots when admin_search_roots raises 401/403.
+
+    This is the intentional silent-suppression contract in _safe_entity_search:
+    unified search must not fail or leak existence of restricted entities when a
+    single entity type is gated by a stricter permission than the caller holds.
+    """
+    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    roots_search = AsyncMock(side_effect=HTTPException(status_code=403, detail="forbidden"))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="tools,roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert result["results"]["roots"] == []
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_denies_without_system_config_permission(monkeypatch, mock_db):
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[Root(uri="file:///tmp", name="tmp")])))
+    deny_service = MagicMock()
+    deny_service.check_permission = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: deny_service)
+    monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: deny_service)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_search_roots(q="tmp", limit=10, user={"email": "dev@example.com", "db": mock_db})
+
+    assert exc_info.value.status_code == 403
+
+
+def test_admin_search_roots_disables_admin_bypass():
+    """The decorator must enforce admin.system_config even for platform admins.
+
+    The roots catalog is a system-wide resource and must not be readable via the
+    generic admin bypass; this regression guard fires if the decorator argument
+    is ever changed.
+    """
+    assert getattr(admin_search_roots, "_allow_admin_bypass", True) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_db):
+    """Non-admin user without admin.system_config sees roots=[] while other entity types populate.
+
+    Exercises the real permission decorator path through _safe_entity_search rather
+    than a mocked HTTPException, proving the silent-suppression contract end-to-end.
+    """
+    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_users", AsyncMock(return_value={"users": [], "count": 0}))
+
+    async def _check_permission(**kwargs):
+        return kwargs.get("permission") != "admin.system_config"
+
+    perm_service = MagicMock()
+    perm_service.check_permission = AsyncMock(side_effect=_check_permission)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: perm_service)
+    monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: perm_service)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="tools,roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "dev@example.com", "db": mock_db},
+    )
+
+    assert result["results"]["roots"] == []
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_limit", [0, -5, 1_000_000])
+async def test_admin_search_roots_clamps_out_of_range_limit(raw_limit, allow_permission, monkeypatch):
+    """Defense-in-depth clamp: direct Python callers bypass FastAPI ge/le validation."""
+    # First-Party
+    from mcpgateway.common.models import Root
+    from mcpgateway.config import settings
+
+    roots = [Root(uri=f"file:///r{i}", name=f"root{i}") for i in range(3)]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="", limit=raw_limit, user={"email": "admin@example.com"})
+
+    assert 1 <= result["count"] <= settings.pagination_max_page_size
+    assert result["count"] <= len(roots)
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_ignores_tag_filter(monkeypatch, mock_db, allow_permission):
+    """Roots lack tag metadata; a tag filter must not suppress the roots branch."""
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags="nonexistent",
+        entity_types="roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    roots_search.assert_called_once()
+    call_kwargs = roots_search.call_args.kwargs
+    assert "tags" not in call_kwargs
+    assert result["results"]["roots"][0]["id"] == "file:///tmp"
+
+
 class TestAdminAdditionalCoverage:
     """Additional admin tests to cover missing branches."""
 
@@ -11208,6 +12422,27 @@ class TestAdminAdditionalCoverage:
         response = await _generate_unified_teams_view(team_service, SimpleNamespace(email="user@example.com"), "")
         assert isinstance(response, HTMLResponse)
         assert "No teams found" in response.body.decode()
+
+    @patch("mcpgateway.admin.settings")
+    async def test_generate_unified_teams_view_join_requests_disabled(self, mock_settings):
+        """Cover the disabled join request button branch when allow_team_join_requests=False."""
+        mock_settings.email_auth_enabled = True
+        mock_settings.allow_team_join_requests = False
+
+        public_team = SimpleNamespace(id="t1", name="Public Team", visibility="public", is_personal=False, created_by="owner@example.com", description=None)
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[])
+        team_service.discover_public_teams = AsyncMock(return_value=[public_team])
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 5})
+        team_service.get_user_roles_batch = MagicMock(return_value={})
+        team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+
+        response = await _generate_unified_teams_view(team_service, SimpleNamespace(email="user@example.com"), "")
+        assert isinstance(response, HTMLResponse)
+        html_content = response.body.decode()
+        assert "disabled" in html_content
+        assert "team-card" in html_content
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_list_with_rotation(self, mock_settings, tmp_path, mock_db):
@@ -11484,6 +12719,50 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+
+    async def test_admin_edit_a2a_agent_preserves_team_id_when_not_in_form(self, monkeypatch, mock_request, mock_db):
+        """Editing an A2A agent without team_id in form should preserve the existing team."""
+        agent_id = "agent-99"
+        existing_team_id = "00000000-0000-0000-0000-000000000099"
+
+        mock_service = MagicMock()
+        mock_service.update_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        encryption = MagicMock()
+        encryption.encrypt_secret_async = AsyncMock(return_value="encrypted")
+        monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda *_args, **_kwargs: encryption)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+        )
+
+        # Form data WITHOUT team_id
+        form_data = FakeForm(
+            {
+                "name": "Agent Updated",
+                "endpoint_url": "http://example.com/agent",
+                "visibility": "team",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_agent = MagicMock()
+        mock_existing_agent.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_agent
+
+        response = await admin_edit_a2a_agent(agent_id, mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+        assert response.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("user@example.com", existing_team_id)
+        call_args = mock_service.update_agent.call_args
+        agent_update = call_args[1].get("agent_data") or call_args[0][2]
+        # UUID is normalized (dashes removed) by schema validation
+        assert agent_update.team_id == existing_team_id.replace("-", "")
 
     async def test_admin_search_a2a_agents_access_filtering(self, monkeypatch, mock_db):
         """Search A2A agents with team access filters."""
@@ -11844,6 +13123,9 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache = MagicMock()
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
+    # invalidate_passthrough_header_caches() calls global_config_cache.invalidate()
+    # via its own module reference, so patch there too.
+    monkeypatch.setattr("mcpgateway.utils.passthrough_headers.global_config_cache", cache)
 
     result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
     assert result["status"] == "invalidated"
@@ -12342,7 +13624,7 @@ async def test_admin_teams_partial_html_enriched_non_admin(monkeypatch, mock_req
 @pytest.mark.asyncio
 async def test_admin_team_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
 
@@ -12361,7 +13643,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
     team_service.count_team_owners.return_value = 1
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
@@ -12371,7 +13653,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
 async def test_admin_team_members_partial_html_invalid_team_id(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
-    response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -12386,7 +13668,7 @@ async def test_admin_team_members_partial_html_team_not_found(monkeypatch, mock_
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -12402,7 +13684,7 @@ async def test_admin_team_members_partial_html_not_owner(monkeypatch, mock_reque
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -12414,9 +13696,29 @@ async def test_admin_team_members_partial_html_exception(monkeypatch, mock_reque
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading members" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_team_members_partial_html_with_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Members partial passes search term to service and propagates it in pagination URL."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    pagination = make_pagination_meta(page=1, per_page=5, total_items=1)
+    team_service.get_team_members = AsyncMock(return_value={"data": [("user", "member")], "pagination": pagination})
+    team_service.count_team_owners.return_value = 1
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="john", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    team_service.get_team_members.assert_awaited_once_with(normalized_id, page=1, per_page=5, search="john")
 
 
 @pytest.mark.asyncio
@@ -12434,16 +13736,56 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
 
 
 @pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_empty_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint returns a search prompt when no search term is provided."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "search for users" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_short_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint requires at least 2 characters before querying users."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    auth_service = MagicMock()
+    auth_service.list_users_not_in_team = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="a", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "type at least 2 characters" in response.body.decode().lower()
+    auth_service.list_users_not_in_team.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_admin_team_non_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "email authentication is disabled" in response.body.decode().lower()
 
@@ -12454,7 +13796,7 @@ async def test_admin_team_non_members_partial_html_invalid_team_id(monkeypatch, 
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-    response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -12473,7 +13815,7 @@ async def test_admin_team_non_members_partial_html_team_not_found(monkeypatch, m
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -12493,7 +13835,7 @@ async def test_admin_team_non_members_partial_html_not_owner(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -12513,7 +13855,7 @@ async def test_admin_team_non_members_partial_html_exception(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading non-members" in response.body.decode().lower()
 
@@ -14689,6 +16031,11 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
     assert agent_data.passthrough_headers is None
+    assert agent_data.oauth_config["issuer"] == "https://issuer.example.com"
+    assert agent_data.oauth_config["token_url"] == "https://issuer.example.com/token"
+    assert agent_data.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+    assert agent_data.oauth_config["redirect_uri"] == "https://client.example.com/callback"
+    assert agent_data.oauth_config["client_id"] == "cid"
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 
@@ -16102,6 +17449,35 @@ class TestTeamJoinRequests:
         result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "error canceling join request" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_cancel_join_request_join_requests_disabled(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_team_join_requests", False, raising=False)
+        ts = MagicMock()
+        ts.cancel_join_request = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 200
+        assert "disabled" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_create_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        team = SimpleNamespace(visibility="public", name="PublicTeam")
+        ts = MagicMock()
+        ts.get_team_by_id = AsyncMock(return_value=team)
+        ts.get_user_role_in_team = AsyncMock(return_value=None)
+        ts.get_user_join_requests = AsyncMock(return_value=[])
+        ts.create_join_request = AsyncMock(side_effect=ValueError("duplicate request"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        request = MagicMock(spec=Request)
+        request.form = AsyncMock(return_value={"message": "join me"})
+        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 400
+        assert "duplicate request" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_list_join_requests_success(self, monkeypatch, allow_permission, mock_db):
@@ -18210,12 +19586,15 @@ class TestTemplateButtonGating:
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
         """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
-        admin_js_path = settings.static_dir / "admin.js"
-        admin_js = admin_js_path.read_text(encoding="utf-8")
+        # admin.js was modularised; the CSRF-injection logic now lives in the
+        # formHandlers module under mcpgateway/admin_ui/.  The bundle is minified
+        # so exact-string assertions must target the source module instead.
+        form_handlers_path = settings.static_dir.parent / "admin_ui" / "formHandlers.js"
+        form_handlers_js = form_handlers_path.read_text(encoding="utf-8")
         # handleToggleSubmit uses fetch() and injects the CSRF token directly
         # into FormData via getCookie rather than via the old DOM helper.
-        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
-        assert 'formData.set("csrf_token", csrfToken)' in admin_js
+        assert 'getCookie("mcpgateway_csrf_token")' in form_handlers_js
+        assert 'formData.set("csrf_token", csrfToken)' in form_handlers_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
@@ -18285,6 +19664,109 @@ class TestTemplateButtonGating:
         html = self._render_agents_partial(jinja_env, agent_data, current_user_email="other@example.com")
         assert "editA2AAgent" not in html
         assert "/delete" not in html
+
+    # -- tokens_partial.html button tests --
+
+    def _render_tokens_partial(self, jinja_env, token_data_list, current_user_email="user@example.com", is_admin=False, user_team_roles=None):
+        """Helper to render tokens_partial.html with given context."""
+        template = jinja_env.get_template("tokens_partial.html")
+        return template.render(
+            data=token_data_list,
+            pagination={"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False},
+            links=None,
+            root_path="",
+            include_inactive=False,
+            team_id=None,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def test_tokens_revoke_button_uses_data_action_not_hx_delete(self, jinja_env):
+        """Revoke button must use data-action='token-revoke' (JS path), not hx-delete (broken HTMX path)."""
+        token_data = {
+            "id": "tok-abc-123",
+            "name": "My Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": True,
+            "is_revoked": False,
+            "revoked_at": None,
+            "revoked_by": None,
+            "revocation_reason": None,
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' in html
+        assert 'data-token-id="tok-abc-123"' in html
+        assert "hx-delete" not in html
+
+    def test_tokens_revoke_button_hidden_for_inactive_token(self, jinja_env):
+        """Revoke button must be hidden when token is inactive."""
+        token_data = {
+            "id": "tok-inactive",
+            "name": "Inactive Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": False,
+            "is_revoked": False,
+            "revoked_at": None,
+            "revoked_by": None,
+            "revocation_reason": None,
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' not in html
+
+    def test_tokens_revoke_button_hidden_for_revoked_token(self, jinja_env):
+        """Revoke button must be hidden when token is already revoked."""
+        token_data = {
+            "id": "tok-revoked",
+            "name": "Revoked Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": True,
+            "is_revoked": True,
+            "revoked_at": "2026-04-02T00:00:00",
+            "revoked_by": "admin@example.com",
+            "revocation_reason": "Test",
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' not in html
 
 
 class TestAdminGetToolPassesTeamRoles:
@@ -19409,6 +20891,22 @@ class TestAdminTokensPartialSearch:
                 response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
                 assert "server_error" in response.headers["location"]
 
+    def test_render_user_card_html_delete_button_has_error_handler(self):
+        """Delete button includes hx-on::after-request error handler."""
+        user_obj = SimpleNamespace(
+            email="deletable@test.com",
+            full_name="Deletable User",
+            auth_provider="local",
+            created_at=datetime(2025, 1, 1),
+            is_admin=False,
+            is_active=True,
+            password_change_required=False,
+            is_account_locked=lambda: False,
+        )
+        html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="")
+        assert "hx-on::after-request" in html_output
+        assert "handleDeleteUserError" in html_output
+
     def test_render_user_card_html_locked_user_shows_locked_badge_and_unlock_action(self):
         """Locked users render lock badge and unlock action."""
         locked_user = SimpleNamespace(
@@ -20410,6 +21908,16 @@ class TestPaginationSwapStyle:
 
         templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
         env = Environment(loader=FileSystemLoader(templates_dir))
+
+        def tojson_attr(value: object) -> str:
+            # Standard
+            import json as _json
+
+            s = _json.dumps(value)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
+        env.filters["tojson_attr"] = tojson_attr
         template = env.get_template("pagination_controls.html")
         ctx = {
             "pagination": {
@@ -20430,14 +21938,14 @@ class TestPaginationSwapStyle:
         return template.render(**ctx)
 
     def test_default_swap_is_innerhtml(self):
-        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        """Without hx_swap set, data-hx-swap defaults to innerHTML."""
         html = self._render_pagination_controls()
-        assert "swapStyle: 'innerHTML'" in html
+        assert 'data-hx-swap="innerHTML"' in html
 
     def test_outerhtml_swap_when_set(self):
-        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        """When hx_swap='outerHTML', data-hx-swap is outerHTML."""
         html = self._render_pagination_controls(hx_swap="outerHTML")
-        assert "swapStyle: 'outerHTML'" in html
+        assert 'data-hx-swap="outerHTML"' in html
 
     @pytest.mark.parametrize(
         "partial_template",
@@ -20488,7 +21996,7 @@ class TestPublicVisibilityGuard:
         mock_perm_service.check_permission = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
         monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
         return mock_perm_service
 
     @pytest.mark.asyncio
@@ -20600,6 +22108,15 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_add_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        # ``mcpgateway.admin.a2a_service`` is initialised at module import
+        # time based on ``settings.mcpgateway_a2a_enabled``. If an earlier
+        # test (or test file collection order) ran with A2A disabled, the
+        # module-level ``a2a_service`` is None and ``admin_add_a2a_agent``
+        # short-circuits with a 403 JSON response instead of reaching the
+        # visibility guard. Force a truthy stub so the visibility check
+        # is always exercised.
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:
@@ -20609,6 +22126,8 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_edit_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:

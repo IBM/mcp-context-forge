@@ -11,9 +11,9 @@ from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.routers import log_search
 from mcpgateway.middleware import rbac as rbac_module
 import mcpgateway.plugins.framework as plugin_framework
+from mcpgateway.routers import log_search
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,11 @@ def allow_permissions(monkeypatch: pytest.MonkeyPatch):
         return True
 
     monkeypatch.setattr(rbac_module.PermissionService, "check_permission", _ok)
-    monkeypatch.setattr(plugin_framework, "get_plugin_manager", lambda: None)
+
+    async def _no_plugin_manager():
+        return None
+
+    monkeypatch.setattr(plugin_framework, "get_plugin_manager", _no_plugin_manager)
 
 
 def test_align_to_window_rounds_down():

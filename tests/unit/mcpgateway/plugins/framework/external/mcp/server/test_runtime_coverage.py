@@ -26,6 +26,17 @@ class TestModuleLevelTools:
         with pytest.raises(RuntimeError, match="Plugin server not initialized"):
             await runtime.get_plugin_config("anything")
 
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/health", False),
+            ("/metrics/prometheus/", False),
+            ("/mcp", True),
+        ],
+    )
+    def test_should_trace_plugin_server_path_filters_health_endpoints(self, path, expected):
+        assert runtime._should_trace_plugin_server_path(path) is expected
+
 
 # ===========================================================================
 # SSLCapableFastMCP __init__
@@ -205,6 +216,88 @@ class TestRunStreamableHTTPAsync:
         served.assert_called_once()
         # Verify routes were added (health + metrics_disabled)
         assert len(routes_added) >= 2
+
+    @pytest.mark.asyncio
+    async def test_wraps_streamable_app_with_otel_when_enabled(self, monkeypatch):
+        config = MCPServerConfig(host="127.0.0.1", port=8000)
+
+        server = object.__new__(runtime.SSLCapableFastMCP)
+        server.server_config = config
+        server.settings = SimpleNamespace(host="127.0.0.1", port=8000, log_level="info")
+        starlette_app = SimpleNamespace(routes=[])
+        server.streamable_http_app = lambda: starlette_app
+
+        monkeypatch.setattr(runtime.SSLCapableFastMCP, "_get_ssl_config", lambda self: {})
+        monkeypatch.setenv("OTEL_ENABLE_OBSERVABILITY", "true")
+        monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+
+        served = MagicMock()
+        configs_seen = []
+
+        class DummyServer:
+            def __init__(self, config):
+                self.config = config
+
+            async def serve(self):
+                served()
+
+        def capture_config(**kwargs):
+            configs_seen.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        otel_middleware = MagicMock(side_effect=lambda app, should_trace_request_path=None: SimpleNamespace(app=app, routes=app.routes, should_trace_request_path=should_trace_request_path))
+
+        monkeypatch.setattr(runtime.uvicorn, "Config", capture_config)
+        monkeypatch.setattr(runtime.uvicorn, "Server", lambda config: DummyServer(config))
+
+        with patch("mcpgateway.observability.init_telemetry") as mock_init_telemetry:
+            with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
+                with patch("mcpgateway.observability.OpenTelemetryRequestMiddleware", otel_middleware):
+                    await runtime.SSLCapableFastMCP.run_streamable_http_async(server)
+
+        served.assert_called_once()
+        mock_init_telemetry.assert_called_once()
+        otel_middleware.assert_called_once()
+        assert configs_seen[0]["app"].app is starlette_app
+        assert os.environ["OTEL_SERVICE_NAME"] == runtime.MCP_SERVER_NAME
+
+    @pytest.mark.asyncio
+    async def test_skips_otel_wrapper_when_tracing_not_initialized(self, monkeypatch):
+        config = MCPServerConfig(host="127.0.0.1", port=8000)
+
+        server = object.__new__(runtime.SSLCapableFastMCP)
+        server.server_config = config
+        server.settings = SimpleNamespace(host="127.0.0.1", port=8000, log_level="info")
+        starlette_app = SimpleNamespace(routes=[])
+        server.streamable_http_app = lambda: starlette_app
+
+        monkeypatch.setattr(runtime.SSLCapableFastMCP, "_get_ssl_config", lambda self: {})
+        monkeypatch.setenv("OTEL_ENABLE_OBSERVABILITY", "true")
+
+        configs_seen = []
+
+        class DummyServer:
+            def __init__(self, config):
+                self.config = config
+
+            async def serve(self):
+                return None
+
+        def capture_config(**kwargs):
+            configs_seen.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        monkeypatch.setattr(runtime.uvicorn, "Config", capture_config)
+        monkeypatch.setattr(runtime.uvicorn, "Server", lambda config: DummyServer(config))
+
+        with patch("mcpgateway.observability.init_telemetry") as mock_init_telemetry:
+            with patch("mcpgateway.observability.otel_tracing_enabled", return_value=False):
+                with patch("mcpgateway.observability.OpenTelemetryRequestMiddleware") as mock_middleware:
+                    await runtime.SSLCapableFastMCP.run_streamable_http_async(server)
+
+        mock_init_telemetry.assert_called_once()
+        mock_middleware.assert_not_called()
+        assert configs_seen[0]["app"] is starlette_app
 
 
 # ===========================================================================

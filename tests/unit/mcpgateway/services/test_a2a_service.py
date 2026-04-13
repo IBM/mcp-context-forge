@@ -302,6 +302,73 @@ class TestA2AAgentService:
                 assert mock_schema.called
                 assert sample_db_agent.version == 2  # Should be incremented
 
+    async def test_update_agent_team_id_rejects_nonexistent_team(self, service, mock_db, sample_db_agent):
+        """Reassigning an agent to a non-existent team must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = "00000000-0000-0000-0000-000000000001"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None  # team not found
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(team_id="00000000-0000-0000-0000-000000000099")
+
+            with pytest.raises(A2AAgentError, match="not found"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+    async def test_update_agent_visibility_team_without_team_id_rejects(self, service, mock_db, sample_db_agent):
+        """Setting visibility to 'team' without any team_id must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = None
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(visibility="team")
+
+            with pytest.raises(A2AAgentError, match="without a team_id"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+    async def test_update_agent_team_id_rejects_non_owner(self, service, mock_db, sample_db_agent):
+        """Reassigning an agent to a team where user is not owner must raise."""
+        from mcpgateway.services.a2a_service import _validate_a2a_team_assignment
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_session = MagicMock()
+        mock_session.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_a2a_team_assignment(mock_session, "user@example.com", "00000000-0000-0000-0000-000000000099")
+
+    async def test_update_agent_team_id_skips_ownership_without_user_email(self, service, mock_db, sample_db_agent):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = "00000000-0000-0000-0000-000000000001"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = MagicMock()  # Team exists
+            mock_db.query.return_value = mock_query
+
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(team_id="00000000-0000-0000-0000-000000000099")
+                await service.update_agent(mock_db, sample_db_agent.id, update_data, user_email=None)
+
+        # UUID is normalized by schema
+        assert sample_db_agent.team_id == "00000000000000000000000000000099"
+
     async def test_update_agent_encrypts_oauth_sensitive_values(self, service, mock_db, sample_db_agent):
         """update_agent encrypts oauth_config secrets before saving."""
         sample_db_agent.version = 1
@@ -952,8 +1019,12 @@ class TestA2AAgentService:
         assert service._check_agent_access(agent, user_email=None, token_teams=["x"]) is True
 
         agent.visibility = "team"
+        # Full admin bypass (both None) grants access to team agents
+        assert service._check_agent_access(agent, user_email=None, token_teams=None) is True
         # No user context (user_email=None) denies access to non-public agents
         assert service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is False
+        # Admin bypass: token_teams=None grants access regardless of user_email
+        assert service._check_agent_access(agent, user_email="admin@example.com", token_teams=None) is True
         # With user context, team membership grants access
         assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["team-1"]) is True
         assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["other"]) is False
@@ -1238,7 +1309,7 @@ class TestSetAgentStateEdgeCases:
 
     async def test_set_state_permission_allowed(self, service, mock_db, monkeypatch):
         """Owner can toggle activation when PermissionService allows it."""
-        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, owner_email="owner@x.com")
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, owner_email="owner@x.com", tool_id=None)
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -1255,7 +1326,7 @@ class TestSetAgentStateEdgeCases:
 
     async def test_set_state_with_reachable(self, service, mock_db):
         """Setting reachable flag together with activation."""
-        agent = SimpleNamespace(id="a1", enabled=False, name="ag", reachable=False)
+        agent = SimpleNamespace(id="a1", enabled=False, name="ag", reachable=False, tool_id=None)
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -2641,3 +2712,506 @@ class TestAggregateMetricsEdgeCases:
         assert result.active_agents == 2
         assert result.total_interactions == 10
         mock_cache.set.assert_called_once()
+
+    async def test_cache_non_dict_falls_through(self, service, mock_db, monkeypatch):
+        """Non-dict cached value (e.g. list from leaked mock) is ignored and metrics are recomputed."""
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        mock_metrics = AggregatedMetrics(
+            total_executions=7,
+            successful_executions=6,
+            failed_executions=1,
+            failure_rate=round(1 / 7, 4),
+            min_response_time=0.2,
+            max_response_time=1.5,
+            avg_response_time=0.8,
+            last_execution_time=None,
+            raw_count=7,
+            rollup_count=0,
+        )
+
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = [1, 2, 3]  # Non-dict: should be skipped
+        mock_cache.set = MagicMock()
+
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
+        monkeypatch.setattr("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", lambda db, t: mock_metrics)
+        monkeypatch.setattr("mcpgateway.cache.a2a_stats_cache.a2a_stats_cache.get_counts", lambda db: {"total": 4, "active": 3})
+
+        result = await service.aggregate_metrics(mock_db)
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 4
+        assert result.total_interactions == 7
+        mock_cache.set.assert_called_once()
+
+
+class TestListAgentsCacheAttributeError:
+    """Cover list_agents AttributeError branch when cache set fails (line 721-722)."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    async def test_cache_set_attribute_error_skipped(self, service, mock_db, monkeypatch):
+        """AttributeError during cache set is silently ignored."""
+        # Return an object without model_dump to trigger AttributeError
+        agent = SimpleNamespace(id="a1", team_id=None, visibility="public")
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
+        mock_db.execute.return_value.all.return_value = []
+        mock_db.commit = MagicMock()
+
+        service.convert_agent_to_read = MagicMock(return_value=SimpleNamespace(no_model_dump=True))
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="h"),
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: cache)
+
+        # Should not raise even though result objects lack model_dump
+        result, cursor = await service.list_agents(mock_db)
+        assert len(result) == 1
+
+
+class TestUpdateAgentQueryParamAuth:
+    """Cover update_agent query_param auth branches (lines 1052-1053, 1086-1128)."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def _make_agent(self, **overrides):
+        defaults = dict(
+            id="a1",
+            name="ag",
+            slug="ag",
+            endpoint_url="https://example.com",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            enabled=True,
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            passthrough_headers=None,
+            oauth_config=None,
+        )
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    async def test_switching_away_from_queryparam_clears_params(self, service, mock_db, monkeypatch):
+        """Switching from query_param to bearer clears auth_query_params (lines 1051-1053)."""
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with patch("mcpgateway.services.tool_service.tool_service") as ts:
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+                update = A2AAgentUpdate.model_construct(auth_type="bearer", auth_value="new-token")
+                await service.update_agent(mock_db, "a1", update)
+
+        assert agent.auth_query_params is None
+
+    async def test_switching_to_queryparam_with_new_value(self, service, mock_db, monkeypatch):
+        """Switching to query_param with key+value encrypts and stores (lines 1086-1111, 1126-1128)."""
+        agent = self._make_agent(auth_type="bearer", auth_value="old-token")
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                update = A2AAgentUpdate.model_construct(
+                    auth_type="query_param",
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="secret123",
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        assert agent.auth_type == "query_param"
+        assert agent.auth_value is None
+        assert agent.auth_query_params is not None
+        assert "api_key" in agent.auth_query_params
+
+    async def test_updating_queryparam_value_only_rotation(self, service, mock_db, monkeypatch):
+        """Updating value without key reuses existing key (lines 1089-1092)."""
+        agent = self._make_agent(
+            auth_type="query_param",
+            auth_query_params={"existing_key": encode_auth({"existing_key": "old_value"})},
+        )
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                # Only value provided, no key — should reuse "existing_key"
+                update = A2AAgentUpdate.model_construct(
+                    auth_query_param_key=None,
+                    auth_query_param_value="new_value",
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        assert agent.auth_query_params is not None
+        assert "existing_key" in agent.auth_query_params
+
+    async def test_updating_queryparam_masked_value_same_key(self, service, mock_db, monkeypatch):
+        """Masked placeholder value with same key preserves existing encrypted value (line 1112)."""
+        agent = self._make_agent(
+            auth_type="query_param",
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+        )
+        original_params = dict(agent.auth_query_params)
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                mock_settings.masked_auth_value = "****"
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                # SecretStr-like value that returns the masked placeholder
+                masked_value = MagicMock()
+                masked_value.get_secret_value.return_value = "****"
+                update = A2AAgentUpdate.model_construct(
+                    auth_query_param_key="api_key",
+                    auth_query_param_value=masked_value,
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        # Params unchanged because key is the same and value was masked
+        assert agent.auth_query_params == original_params
+
+    async def test_updating_queryparam_masked_value_different_key(self, service, mock_db, monkeypatch):
+        """Masked value with changed key re-encrypts under new key (lines 1115-1123)."""
+        agent = self._make_agent(
+            auth_type="query_param",
+            auth_query_params={"old_key": encode_auth({"old_key": "real_secret"})},
+        )
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                mock_settings.masked_auth_value = "****"
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                masked_value = MagicMock()
+                masked_value.get_secret_value.return_value = "****"
+                update = A2AAgentUpdate.model_construct(
+                    auth_query_param_key="new_key",
+                    auth_query_param_value=masked_value,
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        # Key should have changed
+        assert "new_key" in agent.auth_query_params
+        assert "old_key" not in agent.auth_query_params
+
+    async def test_updating_queryparam_no_value_provided(self, service, mock_db, monkeypatch):
+        """Key provided without value results in raw_value=None, no update (lines 1105-1106)."""
+        agent = self._make_agent(
+            auth_type="query_param",
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+        )
+        original_params = dict(agent.auth_query_params)
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                update = A2AAgentUpdate.model_construct(
+                    auth_query_param_key="api_key",
+                    auth_query_param_value=None,
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        # No change since raw_value was None
+        assert agent.auth_query_params == original_params
+
+    async def test_queryparam_string_value(self, service, mock_db, monkeypatch):
+        """Plain string value (no get_secret_value) is used directly (lines 1103-1104)."""
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "old"})
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+            dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
+            monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+            monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.tool_service") as ts,
+            ):
+                mock_settings.insecure_allow_queryparam_auth = True
+                mock_settings.insecure_queryparam_auth_allowed_hosts = []
+                ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
+
+                # Plain string, not a SecretStr
+                update = A2AAgentUpdate.model_construct(
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="new_plain_value",
+                )
+                await service.update_agent(mock_db, "a1", update)
+
+        assert agent.auth_query_params is not None
+        assert "api_key" in agent.auth_query_params
+
+
+class TestSetAgentStateToolCascade:
+    """Cover set_agent_state tool cascade branches (lines 1236-1240)."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    async def test_cascade_deactivates_tool(self, service, mock_db, monkeypatch):
+        """Deactivating agent with tool_id cascades to tool (lines 1236-1240)."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool", gateway_id="gw1"))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 1
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+            tool_update_result,
+        ]
+        mock_db.execute.side_effect = execute_results
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        dummy_tool_lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: dummy_tool_lookup_cache)
+
+        await service.set_agent_state(mock_db, "a1", activate=False)
+
+        assert agent.enabled is False
+        assert mock_db.execute.call_count == 2
+        dummy_cache.invalidate_tools.assert_awaited_once()
+        dummy_tool_lookup_cache.invalidate.assert_awaited_once_with("my-tool", gateway_id="gw1")
+
+    async def test_cascade_activates_tool(self, service, mock_db, monkeypatch):
+        """Activating agent with tool_id cascades to tool."""
+        agent = SimpleNamespace(id="a1", enabled=False, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool", gateway_id="gw1"))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 1
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+            tool_update_result,
+        ]
+        mock_db.execute.side_effect = execute_results
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        dummy_tool_lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: dummy_tool_lookup_cache)
+
+        await service.set_agent_state(mock_db, "a1", activate=True)
+
+        assert agent.enabled is True
+        dummy_cache.invalidate_tools.assert_awaited_once()
+        dummy_tool_lookup_cache.invalidate.assert_awaited_once_with("my-tool", gateway_id="gw1")
+
+    async def test_cascade_deactivates_tool_no_gateway_id(self, service, mock_db, monkeypatch):
+        """Deactivating agent with tool that has no gateway_id passes gateway_id=None."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool", gateway_id=None))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 1
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+            tool_update_result,
+        ]
+        mock_db.execute.side_effect = execute_results
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        dummy_tool_lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: dummy_tool_lookup_cache)
+
+        await service.set_agent_state(mock_db, "a1", activate=False)
+
+        assert agent.enabled is False
+        dummy_tool_lookup_cache.invalidate.assert_awaited_once_with("my-tool", gateway_id=None)
+
+    async def test_cascade_no_tool_id_skips_update(self, service, mock_db, monkeypatch):
+        """Agent without tool_id skips tool cascade."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id=None, tool=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        await service.set_agent_state(mock_db, "a1", activate=False)
+
+        assert mock_db.execute.call_count == 1  # Only agent lookup
+        dummy_cache.invalidate_tools.assert_not_awaited()
+
+    async def test_cascade_tool_already_matching_no_commit(self, service, mock_db, monkeypatch):
+        """Tool already in desired state — rowcount=0, no extra commit or cache invalidation."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 0
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+            tool_update_result,
+        ]
+        mock_db.execute.side_effect = execute_results
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        await service.set_agent_state(mock_db, "a1", activate=False)
+
+        assert mock_db.execute.call_count == 2
+        dummy_cache.invalidate_tools.assert_not_awaited()
+
+    async def test_cascade_tool_update_failure_propagates(self, service, mock_db, monkeypatch):
+        """Tool cascade failure propagates to caller (matches gateway_service pattern)."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
+
+        # First call returns agent, second call (tool UPDATE) raises
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+        ]
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return execute_results[0]
+            raise RuntimeError("DB write failed")
+
+        mock_db.execute.side_effect = side_effect
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        with pytest.raises(RuntimeError, match="DB write failed"):
+            await service.set_agent_state(mock_db, "a1", activate=False)

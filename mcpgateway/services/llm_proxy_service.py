@@ -32,6 +32,7 @@ from mcpgateway.llm_schemas import (
     ChatMessage,
     UsageStats,
 )
+from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.llm_provider_service import (
     decrypt_provider_config_for_runtime,
     LLMModelNotFoundError,
@@ -39,10 +40,52 @@ from mcpgateway.services.llm_provider_service import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _provider_trace_system(provider: LLMProvider) -> str:
+    """Map provider type to a stable ``gen_ai.system`` label.
+
+    Args:
+        provider: Provider model used to resolve the tracing system label.
+
+    Returns:
+        Lowercase provider type string for trace attributes.
+    """
+    provider_type = str(provider.provider_type.value if hasattr(provider.provider_type, "value") else provider.provider_type)
+    return provider_type.lower()
+
+
+def _request_trace_input(request: ChatCompletionRequest) -> str:
+    """Return a redacted serialized prompt payload for tracing.
+
+    Args:
+        request: Chat completion request payload being proxied.
+
+    Returns:
+        Redacted serialized request payload for the trace input field.
+    """
+    return serialize_trace_payload(request.model_dump(mode="json", exclude_none=True))
+
+
+def _usage_trace_attrs(response: ChatCompletionResponse) -> Dict[str, int]:
+    """Extract token usage attributes from a chat completion response.
+
+    Args:
+        response: Provider response carrying token usage metadata.
+
+    Returns:
+        Trace attribute mapping for prompt, completion, and total token counts.
+    """
+    return {
+        "gen_ai.usage.prompt_tokens": response.usage.prompt_tokens,
+        "gen_ai.usage.completion_tokens": response.usage.completion_tokens,
+        "gen_ai.usage.total_tokens": response.usage.total_tokens,
+    }
 
 
 class LLMProxyError(Exception):
@@ -438,28 +481,50 @@ class LLMProxyService:
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
-        try:
-            response = await self._client.post(url, headers=headers, json=body)
-            response.raise_for_status()
-            data = response.json()
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _provider_trace_system(provider),
+            "gen_ai.request.model": model.model_id,
+            "llm.provider.id": str(provider.id),
+            "llm.provider.type": _provider_trace_system(provider),
+            "llm.model.id": str(model.id),
+        }
+        if is_input_capture_enabled("llm.proxy"):
+            span_attributes["langfuse.observation.input"] = _request_trace_input(request)
 
-            # Transform response based on provider
-            if provider.provider_type == LLMProviderType.ANTHROPIC:
-                return self._transform_anthropic_response(data, model.model_id)
-            if provider.provider_type == LLMProviderType.OLLAMA:
-                # Check if using OpenAI-compatible endpoint
-                base_url = (provider.api_base or "").rstrip("/")
-                if base_url.endswith("/v1"):
-                    return self._transform_openai_response(data)
-                return self._transform_ollama_response(data, model.model_id)
-            return self._transform_openai_response(data)
+        with create_span("llm.proxy", span_attributes) as span:
+            try:
+                response = await self._client.post(url, headers=headers, json=body)
+                response.raise_for_status()
+                data = response.json()
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"LLM request failed: {e.response.status_code} - {e.response.text}")
-            raise LLMProxyRequestError(f"Request failed: {e.response.status_code}")
-        except httpx.RequestError as e:
-            logger.error(f"LLM request error: {e}")
-            raise LLMProxyRequestError(f"Connection error: {str(e)}")
+                # Transform response based on provider
+                if provider.provider_type == LLMProviderType.ANTHROPIC:
+                    result = self._transform_anthropic_response(data, model.model_id)
+                elif provider.provider_type == LLMProviderType.OLLAMA:
+                    base_url = (provider.api_base or "").rstrip("/")
+                    if base_url.endswith("/v1"):
+                        result = self._transform_openai_response(data)
+                    else:
+                        result = self._transform_ollama_response(data, model.model_id)
+                else:
+                    result = self._transform_openai_response(data)
+
+                if span:
+                    set_span_attribute(span, "gen_ai.response.model", result.model)
+                    for key, value in _usage_trace_attrs(result).items():
+                        set_span_attribute(span, key, value)
+                    if is_output_capture_enabled("llm.proxy"):
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
+
+                return result
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"LLM request failed: {e.response.status_code} - {e.response.text}")
+                raise LLMProxyRequestError(f"Request failed: {e.response.status_code}")
+            except httpx.RequestError as e:
+                logger.error(f"LLM request error: {e}")
+                raise LLMProxyRequestError(f"Connection error: {str(e)}")
 
     async def chat_completion_stream(
         self,
@@ -504,74 +569,92 @@ class LLMProxyService:
 
         response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         created = int(time.time())
+        capture_output = is_output_capture_enabled("llm.proxy")
+        captured_output = ""
 
-        try:
-            async with self._client.stream("POST", url, headers=headers, json=body) as response:
-                response.raise_for_status()
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _provider_trace_system(provider),
+            "gen_ai.request.model": model.model_id,
+            "llm.provider.id": str(provider.id),
+            "llm.provider.type": _provider_trace_system(provider),
+            "llm.model.id": str(model.id),
+            "llm.stream": True,
+        }
+        if is_input_capture_enabled("llm.proxy"):
+            span_attributes["langfuse.observation.input"] = _request_trace_input(request)
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
+        with create_span("llm.proxy", span_attributes) as span:
+            try:
+                async with self._client.stream("POST", url, headers=headers, json=body) as response:
+                    response.raise_for_status()
 
-                    # Handle SSE format
-                    if line.startswith("data:"):
-                        data_str = line[5:]
-                        if data_str.startswith(" "):
-                            data_str = data_str[1:]
-                        if data_str.strip() == "[DONE]":
-                            yield "data: [DONE]\n\n"
-                            break
-
-                        try:
-                            data = orjson.loads(data_str)
-
-                            # Transform based on provider
-                            if provider.provider_type == LLMProviderType.ANTHROPIC:
-                                chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
-                            elif provider.provider_type == LLMProviderType.OLLAMA:
-                                # Check if using OpenAI-compatible endpoint
-                                base_url = (provider.api_base or "").rstrip("/")
-                                if base_url.endswith("/v1"):
-                                    chunk = data_str  # Already OpenAI format
-                                else:
-                                    chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
-                            else:
-                                chunk = data_str
-
-                            if chunk:
-                                yield f"data: {chunk}\n\n"
-
-                        except orjson.JSONDecodeError:
+                    async for line in response.aiter_lines():
+                        if not line:
                             continue
 
-                    # Handle Ollama's newline-delimited JSON (native API only)
-                    elif provider.provider_type == LLMProviderType.OLLAMA:
-                        base_url = (provider.api_base or "").rstrip("/")
-                        if not base_url.endswith("/v1"):
+                        # Handle SSE format
+                        if line.startswith("data:"):
+                            data_str = line[5:]
+                            if data_str.startswith(" "):
+                                data_str = data_str[1:]
+                            if data_str.strip() == "[DONE]":
+                                yield "data: [DONE]\n\n"
+                                break
+
                             try:
-                                data = orjson.loads(line)
-                                chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
+                                data = orjson.loads(data_str)
+
+                                if provider.provider_type == LLMProviderType.ANTHROPIC:
+                                    chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
+                                elif provider.provider_type == LLMProviderType.OLLAMA:
+                                    base_url = (provider.api_base or "").rstrip("/")
+                                    if base_url.endswith("/v1"):
+                                        chunk = data_str
+                                    else:
+                                        chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
+                                else:
+                                    chunk = data_str
+
                                 if chunk:
+                                    if capture_output and len(captured_output) < 65536:
+                                        captured_output += chunk[: 65536 - len(captured_output)]
                                     yield f"data: {chunk}\n\n"
+
                             except orjson.JSONDecodeError:
                                 continue
 
-        except httpx.HTTPStatusError as e:
-            error_chunk = {
-                "error": {
-                    "message": f"Request failed: {e.response.status_code}",
-                    "type": "proxy_error",
+                        elif provider.provider_type == LLMProviderType.OLLAMA:
+                            base_url = (provider.api_base or "").rstrip("/")
+                            if not base_url.endswith("/v1"):
+                                try:
+                                    data = orjson.loads(line)
+                                    chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
+                                    if chunk:
+                                        if capture_output and len(captured_output) < 65536:
+                                            captured_output += chunk[: 65536 - len(captured_output)]
+                                        yield f"data: {chunk}\n\n"
+                                except orjson.JSONDecodeError:
+                                    continue
+            except httpx.HTTPStatusError as e:
+                error_chunk = {
+                    "error": {
+                        "message": f"Request failed: {e.response.status_code}",
+                        "type": "proxy_error",
+                    }
                 }
-            }
-            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
-        except httpx.RequestError as e:
-            error_chunk = {
-                "error": {
-                    "message": f"Connection error: {str(e)}",
-                    "type": "proxy_error",
+                yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
+            except httpx.RequestError as e:
+                error_chunk = {
+                    "error": {
+                        "message": f"Connection error: {str(e)}",
+                        "type": "proxy_error",
+                    }
                 }
-            }
-            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
+                yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
+            finally:
+                if span and capture_output and captured_output:
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"stream": captured_output}))
 
     def _transform_openai_response(self, data: Dict[str, Any]) -> ChatCompletionResponse:
         """Transform OpenAI response to standard format.

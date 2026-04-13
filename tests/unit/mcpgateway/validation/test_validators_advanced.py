@@ -586,14 +586,14 @@ def test_validate_template_dangerous():
 
 
 def test_validate_template_length():
-    """Test template length validation."""
+    """Test template length passes schema validation (size enforced at service layer)."""
     # At limit (10000 chars)
     valid_template = "a" * 10000
     assert SecurityValidator.validate_template(valid_template) == valid_template
 
-    # Over limit
-    with pytest.raises(ValueError, match="exceeds maximum length"):
-        SecurityValidator.validate_template("a" * 10001)
+    # Over limit - schema no longer rejects; size enforcement is at service layer
+    over_limit = "a" * 10001
+    assert SecurityValidator.validate_template(over_limit) == over_limit
 
 
 # =============================================================================
@@ -877,10 +877,16 @@ class TestValidateMimeType:
         assert SecurityValidator.validate_mime_type("image/jpeg") == "image/jpeg"
 
     def test_invalid_format(self):
-        with pytest.raises(ValueError, match="Invalid MIME type"):
-            SecurityValidator.validate_mime_type("invalid")
-        with pytest.raises(ValueError, match="Invalid MIME type"):
-            SecurityValidator.validate_mime_type("text/")
+        allowed_mime_types = DummySettings.validation_allowed_mime_types
+        invalid_mime_types = [
+            "invalid",
+            *(f"{mime_type};param" for mime_type in allowed_mime_types),
+            *(f"{mime_type}; charset" for mime_type in allowed_mime_types),
+            *(f"{mime_type.split('/', 1)[0]}/" for mime_type in allowed_mime_types if "/" in mime_type),
+        ]
+        for mime_type in invalid_mime_types:
+            with pytest.raises(ValueError, match="Invalid MIME type"):
+                SecurityValidator.validate_mime_type(mime_type)
 
     def test_vendor_types_allowed(self):
         assert SecurityValidator.validate_mime_type("application/x-custom") == "application/x-custom"
@@ -890,9 +896,20 @@ class TestValidateMimeType:
         assert SecurityValidator.validate_mime_type("application/vnd.api+json") == "application/vnd.api+json"
         assert SecurityValidator.validate_mime_type("image/svg+xml") == "image/svg+xml"
 
+    def test_parameterized_types_allowed(self):
+        allowed_parameterized_types = [
+            "text/plain; charset=utf-8",
+            "application/json; charset=utf-8",
+            "text/html; profile=interactive-app",
+        ]
+        for mime_type in allowed_parameterized_types:
+            assert SecurityValidator.validate_mime_type(mime_type) == mime_type
+
     def test_not_in_whitelist(self):
         with pytest.raises(ValueError, match="not in the allowed list"):
             SecurityValidator.validate_mime_type("application/evil")
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            SecurityValidator.validate_mime_type("application/evil; charset=utf-8")
 
 
 # --------------------------------------------------------------------------- #

@@ -67,3 +67,18 @@ def clear_plugins_settings_cache():
     settings.cache_clear()
     yield
     settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_app_root_path(monkeypatch):
+    """Reset app_root_path to empty string for all tests.
+
+    This ensures tests are not affected by APP_ROOT_PATH environment variable.
+    The resolve_root_path() function in mcpgateway.utils.paths falls back to
+    settings.app_root_path when request.scope["root_path"] is empty. Without
+    this fixture, tests would fail when APP_ROOT_PATH is set in the environment.
+
+    Tests that specifically need to test root_path behavior should override this
+    by setting the monkeypatch value explicitly in the test.
+    """
+    monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "")

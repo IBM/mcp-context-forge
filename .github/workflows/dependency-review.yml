@@ -69,14 +69,16 @@ jobs:
       # 0️⃣  Check out the repository
       # -----------------------------------------------------------
       - name: ⬇️  Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # -----------------------------------------------------------
       # 1️⃣  Dependency & License gate
       # -----------------------------------------------------------
       - name: 🔍  Dependency Review
         id: dep-scan
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           # ───────── Vulnerability policy ─────────
           fail-on-severity: moderate # MODERATE, HIGH, CRITICAL ⇒ ❌
@@ -94,7 +96,17 @@ jobs:
             RPL-1.5,
             OSL-3.0,
             CPAL-1.0
-          allow-dependencies-licenses: "pkg:pypi/pylint-pydantic"
+
+          # To whitelist a specific dependency whose license would otherwise
+          # be denied (e.g. a transitively-pulled GPL package that has been
+          # legally reviewed and approved), add it to `allow-dependencies-licenses`
+          # as a comma-separated list of Package URLs (purl spec). Example:
+          #
+          #   allow-dependencies-licenses: "pkg:pypi/some-package, pkg:npm/another-pkg"
+          #
+          # Each entry exempts that one package from the `deny-licenses` check
+          # above while keeping the policy in force for every other dependency.
+          # See: https://github.com/actions/dependency-review-action#configuration-options
           license-check: true # (default)
           # ───────── UX tweaks ─────────
           warn-only: false # actually fail the workflow

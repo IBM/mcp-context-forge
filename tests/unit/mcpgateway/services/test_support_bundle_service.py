@@ -72,6 +72,18 @@ class TestSupportBundleService:
         assert "secret123" not in sanitized
         assert "*****" in sanitized
 
+        # Test driver-qualified PostgreSQL URL
+        url = "postgresql+psycopg://user:password@localhost:5432/db"
+        sanitized = service._sanitize_url(url)
+        assert "password" not in sanitized
+        assert "*****" in sanitized
+
+        # Test legacy/stale MySQL URL (credentials must still be redacted)
+        url = "mysql+pymysql://admin:secret@db.host:3306/mydb"
+        sanitized = service._sanitize_url(url)
+        assert "secret" not in sanitized
+        assert "*****" in sanitized
+
         # Test URL without credentials
         url = "http://example.com/path"
         sanitized = service._sanitize_url(url)

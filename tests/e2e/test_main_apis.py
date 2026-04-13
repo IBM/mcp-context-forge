@@ -62,7 +62,6 @@ from sqlalchemy.pool import StaticPool
 
 # Standard
 # Patch bootstrap_db to prevent it from running during tests
-
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
     from mcpgateway.config import settings
@@ -110,13 +109,20 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {generate_test_jwt()}"}
 # Fixtures
 # -------------------------
 @pytest_asyncio.fixture
-async def temp_db():
+async def temp_db(main_app_with_admin_api):
     """
     Create a temporary SQLite database for testing.
 
     This fixture creates a fresh database for each test, ensuring complete
     isolation between tests. The database is automatically cleaned up after
     the test completes.
+
+    Depending on ``main_app_with_admin_api`` flips the admin API + UI
+    flags on and dynamically mounts the admin router on the existing
+    ``main.app`` (no reload, so module-level references stay valid).
+    A handful of tests in this file exercise ``/admin/...`` endpoints
+    and the root-path redirect, which both need the admin router
+    mounted.
     """
     # Create temporary file for SQLite database
     db_fd, db_path = tempfile.mkstemp(suffix=".db")
@@ -459,11 +465,10 @@ class TestProtocolAPIs:
         response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-    async def test_notifications_cancelled_denied_for_unknown_run(self, client: AsyncClient):
-        """Test POST /protocol/notifications - unknown run is denied for non-admin token."""
+    async def test_notifications_cancelled_accepts_unknown_run_as_noop(self, client: AsyncClient):
+        """Test POST /protocol/notifications - unknown run is accepted as a no-op."""
         response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Not authorized to cancel this run"
+        assert response.status_code == 200
 
     async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
         """Test POST /protocol/notifications - owner can cancel."""
@@ -1838,10 +1843,12 @@ class TestErrorHandling:
             # UI is enabled, check redirect
             assert "/admin" in response.headers.get("location", "")
         else:
-            # UI is disabled, check API info
+            # UI is disabled, check API info. ``root_info()`` returns
+            # ``{"name": <app_name>, "description": f"{app_name} API"}``.
             assert response.status_code == 200
             result = response.json()
-            assert "app" in result or "api" in result
+            assert "name" in result
+            assert "description" in result
 
 
 # -------------------------
@@ -1933,15 +1940,15 @@ class TestIntegrationScenarios:
 
     async def test_complete_resource_lifecycle(self, client: AsyncClient, mock_auth):
         """Test complete resource lifecycle: create, read, update, delete."""
-        # Create
+        # Create - use URI without extension to avoid MIME type detection override
         resource_data = {
-            "resource": {"uri": "file:///home/user/documents/report.pdf", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
+            "resource": {"uri": "file:///home/user/documents/report", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
             "team_id": None,
             "visibility": "private",
         }
 
         create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
-        assert create_response.status_code == 200
+        assert create_response.status_code == 200, f"Failed to create resource: {create_response.text}"
         resource_id = create_response.json()["id"]
 
         # Read

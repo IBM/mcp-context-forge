@@ -151,6 +151,48 @@ clean = "Result: Error"
 - Preserves `\n` (newline) and `\t` (tab)
 - Verifies Content-Type matches payload
 
+### Tool Description Content Validation
+
+**Scenario**: MCP server tools whose descriptions contain Markdown syntax fail to register
+
+**Blocked patterns**: `> `, `< `, `&&`, `||`, `$(`
+
+These shell metacharacters are blocked by default in `ToolCreate` and `ToolUpdate` to reduce injection risk from externally-sourced tool metadata. However, they are common in Markdown content (e.g. `> blockquote`, `< input`). Note: single pipes (`|`), semicolons (`;`), and backticks (`` ` ``) are explicitly allowed as they commonly appear in natural-language documentation and Markdown tables.
+
+**Control variables**:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | `true` | Master switch — set to `false` to disable all pattern checks |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | `["&&", "||", "$(", "> ", "< "]` | Override the blocked substrings (JSON array) |
+| `VALIDATION_STRICT` | `true` | When `false`, matched patterns log a warning instead of rejecting |
+
+**Option 1 — Customize the pattern list** (recommended):
+
+```bash
+# Keep injection checks but allow pipe and redirect syntax in descriptions
+TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=["&&", "||", "$("]
+```
+
+**Option 2 — Disable pattern checks entirely**:
+
+```bash
+TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=false
+```
+
+**Option 3 — Warn-only mode** (all patterns checked but never rejected):
+
+```bash
+VALIDATION_STRICT=false
+```
+
+When `VALIDATION_STRICT=false`:
+- The forbidden-pattern check in `ToolCreate.validate_description` and `ToolUpdate.validate_description` logs a warning and proceeds instead of raising a validation error.
+- All other sanitization (XSS, length truncation) still runs.
+
+!!! note "Upgrade note (v0.9.0 → v1.0.0.Beta2)"
+    The forbidden-pattern check was introduced in v1.0.0.Beta2. If you are upgrading from v0.9.0 and your MCP servers expose tools with Markdown descriptions, set `VALIDATION_STRICT=false` or customize `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` to allow the specific characters your tools use.
+
 ### JSON Schema Validation
 
 **Scenario**: Validate tool and prompt schemas during registration
@@ -168,6 +210,8 @@ tool = {
 # Strict mode (Default): Rejects with 400 Bad Request
 # Non-strict mode: Logs warning but accepts registration
 ```
+
+**Control variable**: `JSON_SCHEMA_VALIDATION_STRICT` (default: `true`)
 
 **Validation Rules**:
 - Enforces valid JSON Schema 2020-12 (default)
@@ -338,6 +382,32 @@ grep "SECURITY" /var/log/mcpgateway.log | tail -100
 ```bash
 ALLOWED_ROOTS='["/srv/data", "/var/app", "/opt/resources"]'
 ```
+
+### Issue: MCP Server Tools Fail to Register with "unsafe characters" Error
+
+**Symptom**:
+```
+All N tools failed validation. First error: Validation failed for tool 'X':
+[{'type': 'value_error', 'loc': ('description',),
+  'msg': "Value error, Description contains unsafe characters: '> '", ...}]
+```
+
+**Cause**: The tool's `description` field contains a shell metacharacter (`> `, `< `, `&&`, `||`, `$(`) that is blocked by default. This is common with Markdown-formatted descriptions. Note: single pipes (`|`), semicolons (`;`), and backticks (`` ` ``) are allowed as they commonly appear in natural-language documentation.
+
+**Solution** (pick one):
+
+```bash
+# Option 1: Customize the pattern list to allow specific characters
+TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=["&&", "||", "$("]
+
+# Option 2: Disable pattern checks entirely
+TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=false
+
+# Option 3: Warn-only mode (log but don't reject)
+VALIDATION_STRICT=false
+```
+
+**Note**: `EXPERIMENTAL_VALIDATE_IO=false` and `JSON_SCHEMA_VALIDATION_STRICT=false` do **not** affect this check — only `VALIDATION_STRICT` and `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` do.
 
 ### Issue: Tool Parameters Escaped
 

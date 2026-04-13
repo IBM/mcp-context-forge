@@ -98,9 +98,36 @@ password_reset_completions_counter = Counter(
     ["outcome"],
 )
 
+# Content Security Metrics (US-2)
+content_size_violations_counter = Counter(
+    "content_size_violations_total",
+    "Total number of content size limit violations",
+    ["content_type"],  # "resource" or "prompt"
+)
+
+content_type_violations_counter = Counter(
+    "content_type_violations_total",
+    "Total number of MIME type violations",
+    ["content_type"],  # "resource" or "prompt" — rejected type is in logs, not labels (unbounded cardinality)
+)
+
+# MCP Auth Cache Metrics
 mcp_auth_cache_events_counter = Counter(
     "mcp_auth_cache_events_total",
     "Total number of MCP auth cache events by outcome",
+    ["outcome"],
+)
+
+# OAuth / JWKS access-token verification on oauth_enabled virtual servers.
+# Outcome labels:
+#   success          — IdP-issued token verified and user context populated
+#   failed           — verification attempted and rejected (401/503 emitted)
+#   not_applicable   — target server is not oauth_enabled, issuer outside the
+#                      allowlist, token undecodable, or URL path missing a
+#                      server id; caller falls through to internal verify
+oauth_verify_events_counter = Counter(
+    "oauth_verify_events_total",
+    "OAuth access token verification outcomes on virtual server MCP endpoints",
     ["outcome"],
 )
 
@@ -141,14 +168,10 @@ def setup_metrics(app):
     if enable_metrics:
         # Detect database engine from DATABASE_URL
         database_url = settings.database_url.lower()
-        if database_url.startswith("mysql+pymysql://") or "mariadb" in database_url:
-            db_engine = "mariadb"
-        elif database_url.startswith("postgresql://") or database_url.startswith("postgres://"):
+        if database_url.startswith(("postgresql", "postgres://")):
             db_engine = "postgresql"
-        elif database_url.startswith("sqlite://"):
+        elif database_url.startswith("sqlite"):
             db_engine = "sqlite"
-        elif database_url.startswith("mongodb://"):
-            db_engine = "mongodb"
         else:
             db_engine = "unknown"
 

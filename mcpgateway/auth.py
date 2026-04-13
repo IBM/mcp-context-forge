@@ -31,6 +31,14 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.trace_context import (
+    clear_trace_context,
+    set_trace_auth_method,
+    set_trace_context_from_teams,
+    set_trace_team_scope,
+    set_trace_user_email,
+    set_trace_user_is_admin,
+)
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
@@ -185,6 +193,122 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         return [row[0] for row in result.all()]
 
 
+def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
+    """Return the active team display name for a team ID.
+
+    Args:
+        team_id: Team identifier to resolve.
+
+    Returns:
+        Team display name when the active team exists, otherwise ``None``.
+    """
+    if not team_id:
+        return None
+
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(
+            select(EmailTeam.name).where(
+                EmailTeam.id == team_id,
+                EmailTeam.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+def _extract_claim_team_name(payload: Dict[str, Any], team_id: Optional[str]) -> Optional[str]:
+    """Extract a matching team display name from raw JWT team claims.
+
+    Args:
+        payload: Decoded JWT payload.
+        team_id: Normalized primary team identifier to match.
+
+    Returns:
+        Matching team display name from the JWT claims, if present.
+    """
+    if not team_id:
+        return None
+
+    raw_teams = payload.get("teams")
+    if not isinstance(raw_teams, list):
+        return None
+
+    for raw_team in raw_teams:
+        raw_team_id = None
+        raw_team_name = None
+        if isinstance(raw_team, dict):
+            raw_team_id = raw_team.get("id")
+            raw_team_name = raw_team.get("name")
+        elif isinstance(raw_team, str):
+            raw_team_id = raw_team
+
+        if str(raw_team_id).strip() != team_id:
+            continue
+
+        if raw_team_name is None:
+            return None
+
+        normalized_name = str(raw_team_name).strip()
+        return normalized_name or None
+
+    return None
+
+
+async def resolve_trace_team_name(
+    payload: Dict[str, Any],
+    token_teams: Optional[List[str]],
+    *,
+    preresolved_team_names: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Resolve the primary team display name for tracing.
+
+    The primary team name is additive trace metadata only. It does not affect
+    scope enforcement, which continues to rely on canonical team IDs. For
+    session tokens, DB-resolved membership is authoritative and raw JWT team
+    display names are only used as a best-effort fallback for non-session
+    tokens when no canonical name can be resolved.
+
+    Args:
+        payload: Decoded JWT payload.
+        token_teams: Canonical resolved team IDs, or ``None`` for admin scope.
+        preresolved_team_names: Optional mapping of team_id to display name from
+            a batched DB lookup.
+
+    Returns:
+        Display name for the primary concrete team, or ``None`` for public/admin
+        scopes or when the name cannot be resolved.
+    """
+    if not token_teams:
+        return None
+
+    primary_team_id = token_teams[0]
+    if preresolved_team_names:
+        resolved_name = preresolved_team_names.get(primary_team_id)
+        if resolved_name:
+            return resolved_name
+
+    try:
+        resolved_name = await asyncio.to_thread(_get_team_name_by_id_sync, primary_team_id)
+        if resolved_name:
+            return resolved_name
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Failed to resolve trace team name for team_id=%s: %s", primary_team_id, exc)
+
+    if payload.get("token_use") == "session":
+        return None
+
+    claim_team_name = _extract_claim_team_name(payload, primary_team_id)
+    if claim_team_name:
+        return claim_team_name
+
+    return None
+
+
 def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
     """Return a {team_id: role} mapping for a user's active team memberships.
 
@@ -206,56 +330,43 @@ def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
         return {}
 
 
-def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str]]:
-    """Resolve teams synchronously with L1 cache support.
+def _narrow_by_jwt_teams(payload: Dict[str, Any], db_teams: Optional[List[str]]) -> Optional[List[str]]:
+    """Apply JWT intersection policy to DB-resolved teams.
 
-    Used by StreamableHTTP transport which runs in a sync context.
-    Checks the in-memory L1 cache before falling back to DB.
+    If *db_teams* is ``None`` (admin bypass), returns ``None`` immediately.
+    If the JWT ``teams`` claim is a non-empty list, returns the intersection
+    of *db_teams* and the JWT teams.  If the intersection is empty (e.g.
+    all JWT-claimed teams have been revoked), returns ``[]`` so that
+    downstream enforcement denies the request rather than silently
+    broadening scope.
 
     Args:
-        email: User email address
-        is_admin: Whether the user is an admin
+        payload: The decoded JWT payload dict.
+        db_teams: Teams resolved from the database, or ``None`` for admin bypass.
 
     Returns:
-        None (admin bypass), [] (no teams), or list of team ID strings
+        None (admin bypass), [] (public-only / empty intersection), or list of team ID strings.
     """
-    if is_admin:
-        return None  # Admin bypass
+    if db_teams is None:
+        return None
 
-    cache_key = f"{email}:True"
+    jwt_teams = payload.get("teams")
+    if isinstance(jwt_teams, list) and jwt_teams:
+        # Non-empty JWT teams → intersect with DB teams.  An empty
+        # intersection (all JWT teams revoked) returns [], which gives
+        # public-only access and lets downstream enforcement deny the
+        # request (fail-closed).
+        jwt_team_set = set(normalize_token_teams({"teams": jwt_teams}) or [])
+        return [t for t in db_teams if t in jwt_team_set]
 
-    # Check L1 in-memory cache (sync-safe, no network I/O)
-    try:
-        # First-Party
-        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-        entry = auth_cache._teams_list_cache.get(cache_key)  # pylint: disable=protected-access
-        if entry and not entry.is_expired():
-            auth_cache._hit_count += 1  # pylint: disable=protected-access
-            return entry.value
-    except Exception:  # nosec B110 - Cache unavailable is non-fatal
-        pass
-
-    # Cache miss: query DB
-    team_ids = _get_user_team_ids_sync(email)
-
-    # Populate L1 cache for subsequent requests
-    try:
-        # Standard
-        import time  # pylint: disable=import-outside-toplevel
-
-        # First-Party
-        from mcpgateway.cache.auth_cache import auth_cache, CacheEntry  # pylint: disable=import-outside-toplevel
-
-        with auth_cache._lock:  # pylint: disable=protected-access
-            auth_cache._teams_list_cache[cache_key] = CacheEntry(  # pylint: disable=protected-access
-                value=team_ids,
-                expiry=time.time() + auth_cache._teams_list_ttl,  # pylint: disable=protected-access
-            )
-    except Exception:  # nosec B110 - Cache write failure is non-fatal
-        pass
-
-    return team_ids
+    # JWT teams absent, null, or empty list → no narrowing requested.
+    # An explicit ``teams: []`` means "don't restrict by team" (i.e. use
+    # the full DB membership), which intentionally differs from
+    # ``normalize_token_teams`` where ``[] → public-only``.  The
+    # distinction exists because session tokens always start from DB-
+    # resolved teams — an empty JWT claim simply means the caller did not
+    # request a subset.
+    return db_teams
 
 
 async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
@@ -299,6 +410,65 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
         pass
 
     return team_ids
+
+
+_UNSET: Any = object()  # sentinel distinguishing "not supplied" from explicit None
+
+
+async def resolve_session_teams(
+    payload: Dict[str, Any],
+    email: Optional[str],
+    user_info,
+    *,
+    preresolved_db_teams: Optional[List[str]] = _UNSET,
+) -> Optional[List[str]]:
+    """Resolve teams for a session token, using DB as the authority.
+
+    The database is always consulted first so that revoked team memberships
+    take effect immediately.  If the JWT carries a ``teams`` claim, the
+    result is narrowed to the **intersection** of the DB teams and the JWT
+    teams — this lets callers scope a session to a subset of their actual
+    memberships (e.g. single-team mode) without risking stale grants.
+
+    This is the **single policy point** for session-token team resolution.
+    All code paths that need teams for a session token should call this
+    function rather than inlining the decision.
+
+    If *email* is ``None`` or empty, returns ``[]`` (public-only).  An
+    identity-less session token never receives admin bypass — there is no
+    user to resolve from the database.
+
+    Policy:
+        1. If *email* is falsy, return ``[]`` immediately (public-only).
+        2. Resolve teams from DB/cache (``_resolve_teams_from_db``), or
+           use *preresolved_db_teams* when the caller already fetched them
+           (e.g. via a batched query).
+        3. If DB returns ``None`` (admin bypass), return ``None``.
+        4. If the JWT ``teams`` claim is a non-empty list, intersect with
+           DB teams.  If the intersection is empty (all JWT-claimed teams
+           revoked), return ``[]`` so downstream enforcement denies the
+           request.
+        5. Otherwise return the full DB result.
+
+    Args:
+        payload: The decoded JWT payload dict.
+        email: User email address (for the DB lookup), or ``None``.
+        user_info: User dict or EmailUser instance (for admin detection).
+        preresolved_db_teams: If the caller already resolved DB teams (e.g.
+            from a batched query), pass them here to skip the DB call.
+            Pass ``None`` to indicate admin bypass was already determined.
+
+    Returns:
+        None (admin bypass), [] (public-only), or list of team ID strings.
+    """
+    if not email:
+        return []  # No identity — public-only; never admin bypass
+    if preresolved_db_teams is not _UNSET:
+        db_teams: Optional[List[str]] = preresolved_db_teams
+    else:
+        db_teams = await _resolve_teams_from_db(email, user_info)
+
+    return _narrow_by_jwt_teams(payload, db_teams)
 
 
 def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
@@ -746,7 +916,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
-        is_token_revoked (bool), team_ids (list of str)
+        is_token_revoked (bool), team_ids (list of str), team_names (dict)
 
     Examples:
         >>> # This function runs in a thread pool
@@ -765,6 +935,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             "personal_team_id": None,
             "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
             "team_ids": [],
+            "team_names": {},
         }
 
         # Query 1: Get user data
@@ -801,12 +972,46 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
             # Query 4: Get all active team memberships (for session token team resolution)
             team_ids_result = db.execute(
-                select(EmailTeamMember.team_id).where(
+                select(EmailTeamMember.team_id, EmailTeam.name)
+                .join(EmailTeam, EmailTeam.id == EmailTeamMember.team_id)
+                .where(
                     EmailTeamMember.user_email == email,
                     EmailTeamMember.is_active.is_(True),
+                    EmailTeam.is_active.is_(True),
                 )
             )
-            result["team_ids"] = [row[0] for row in team_ids_result.all()]
+            team_rows = team_ids_result.all()
+            team_ids: list[str] = []
+            team_names: dict[str, str] = {}
+
+            for row in team_rows:
+                team_id = None
+                team_name = None
+
+                mapping = getattr(row, "_mapping", None)
+                if mapping is not None:
+                    team_id = mapping.get("team_id")
+                    team_name = mapping.get("name")
+
+                if team_id is None:
+                    team_id = getattr(row, "team_id", None)
+                if team_name is None:
+                    team_name = getattr(row, "name", None)
+
+                if team_id is None and isinstance(row, tuple):
+                    team_id = row[0] if len(row) > 0 else None
+                    team_name = row[1] if len(row) > 1 else None
+
+                if not team_id:
+                    continue
+
+                team_id_str = str(team_id)
+                team_ids.append(team_id_str)
+                if team_name:
+                    team_names[team_id_str] = str(team_name)
+
+            result["team_ids"] = team_ids
+            result["team_names"] = team_names
 
         # Query 3: Check token revocation (if JTI provided)
         if jti:
@@ -858,6 +1063,7 @@ async def get_current_user(
         HTTPException: If authentication fails
     """
     logger = logging.getLogger(__name__)
+    clear_trace_context()
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
         """Set request.state.auth_method based on JWT payload.
@@ -910,11 +1116,41 @@ async def get_current_user(
             # No auth_provider or JTI; default to interactive
             request.state.auth_method = "jwt"
 
+    def _set_trace_for_user(user_obj: EmailUser, *, teams: Any = _UNSET, auth_method: Optional[str] = None, team_name: Optional[str] = None) -> None:
+        """Populate trace context from the resolved user and request state.
+
+        Args:
+            user_obj: Resolved authenticated user object.
+            teams: Optional resolved team scope override. When unset, team scope is derived from the user object.
+            auth_method: Optional explicit authentication method label to record on the trace.
+            team_name: Optional display name for the primary concrete team.
+        """
+        resolved_auth_method = auth_method
+        if resolved_auth_method is None and request:
+            resolved_auth_method = getattr(request.state, "auth_method", None)
+
+        if teams is not _UNSET:
+            set_trace_context_from_teams(
+                teams,
+                user_email=user_obj.email,
+                is_admin=bool(user_obj.is_admin),
+                auth_method=resolved_auth_method,
+                team_name=team_name,
+            )
+            return
+
+        set_trace_user_email(user_obj.email)
+        set_trace_user_is_admin(bool(user_obj.is_admin))
+        if resolved_auth_method:
+            set_trace_auth_method(resolved_auth_method)
+        if user_obj.is_admin:
+            set_trace_team_scope("admin")
+
     # NEW: Custom authentication hook - allows plugins to provide alternative auth
     # This hook is invoked BEFORE standard JWT/API token validation
     try:
         # Get plugin manager singleton
-        plugin_manager = get_plugin_manager()
+        plugin_manager = await get_plugin_manager()
 
         if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_RESOLVE_USER):
             # Extract client information
@@ -952,11 +1188,15 @@ async def get_current_user(
             # Get plugin contexts from request state if available
             global_context = getattr(request.state, "plugin_global_context", None) if request else None
             if not global_context:
-                # Create global context
+                # Propagate team_id → tenant_id for by_tenant rate limiting
+                team_id = getattr(getattr(request, "state", None), "team_id", None) if request else None
+                # Extract content type from headers
+                content_type = headers.get("content-type") if headers else None
                 global_context = GlobalContext(
                     request_id=request_id,
                     server_id=None,
-                    tenant_id=None,
+                    tenant_id=team_id,
+                    content_type=content_type,
                 )
 
             context_table = getattr(request.state, "plugin_context_table", None) if request else None
@@ -1011,9 +1251,11 @@ async def get_current_user(
                 if request and global_context:
                     request.state.plugin_global_context = global_context
 
-                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
+                _propagate_tenant_id(request)
 
+                _set_trace_for_user(user)
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 
@@ -1103,7 +1345,7 @@ async def get_current_user(
                         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                             # Session token: resolve teams from DB/cache
                             user_info = cached_ctx.user or {"is_admin": False}
-                            teams = await _resolve_teams_from_db(email, user_info)
+                            teams = await resolve_session_teams(payload, email, user_info)
                         else:
                             # API token or legacy: use embedded teams
                             teams = normalize_token_teams(payload)
@@ -1117,6 +1359,8 @@ async def get_current_user(
                             request.state.team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
                         else:
                             request.state.team_id = None
+
+                        request.state.trace_team_name = await resolve_trace_team_name(payload, teams)
 
                         await _set_auth_method_from_payload(payload)
 
@@ -1137,10 +1381,17 @@ async def get_current_user(
                                     headers={"WWW-Authenticate": "Bearer"},
                                 )
 
-                        if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                        if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
+                        _propagate_tenant_id(request)
 
-                        return _user_from_cached_dict(cached_ctx.user)
+                        cached_user = _user_from_cached_dict(cached_ctx.user)
+                        _set_trace_for_user(
+                            cached_user,
+                            teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET,
+                            team_name=getattr(request.state, "trace_team_name", None) if request else None,
+                        )
+                        return cached_user
 
                     # User not in cache but context was (shouldn't happen, but handle it)
                     logger.debug("Auth context cached but user missing, falling through to DB")
@@ -1166,13 +1417,11 @@ async def get_current_user(
                 # Resolve teams based on token_use
                 token_use = payload.get("token_use")
                 if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                    # Session token: use team_ids from batched query
+                    # Session token: use team_ids from batched query via resolve_session_teams
                     user_dict = auth_ctx.get("user")
                     is_admin = user_dict.get("is_admin", False) if user_dict else False
-                    if is_admin:
-                        teams = None  # Admin bypass
-                    else:
-                        teams = auth_ctx.get("team_ids", [])
+                    batch_teams = None if is_admin else auth_ctx.get("team_ids", [])
+                    teams = await resolve_session_teams(payload, email, {"is_admin": is_admin}, preresolved_db_teams=batch_teams)
                 else:
                     # API token or legacy: use embedded teams
                     teams = normalize_token_teams(payload)
@@ -1189,6 +1438,7 @@ async def get_current_user(
                     request.state.token_teams = teams
                     request.state.team_id = team_id
                     request.state.token_use = token_use
+                    request.state.trace_team_name = await resolve_trace_team_name(payload, teams, preresolved_team_names=auth_ctx.get("team_names"))
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -1208,8 +1458,11 @@ async def get_current_user(
                         )
                         # Also populate teams-list cache so cached-path requests
                         # don't need an extra DB query via _resolve_teams_from_db()
-                        if token_use == "session" and teams is not None:  # nosec B105
-                            await auth_cache.set_user_teams(f"{email}:True", teams)
+                        # Cache the raw DB teams (batch_teams), not the narrowed
+                        # intersection (teams), so that other sessions for the same
+                        # user see the full membership and can narrow independently.
+                        if token_use == "session" and batch_teams is not None:  # nosec B105
+                            await auth_cache.set_user_teams(f"{email}:True", batch_teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 
@@ -1267,9 +1520,15 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
-                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
+                _propagate_tenant_id(request)
 
+                _set_trace_for_user(
+                    _batched_user,
+                    teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET,
+                    team_name=getattr(request.state, "trace_team_name", None) if request else None,
+                )
                 return _batched_user
 
             except HTTPException:
@@ -1307,7 +1566,7 @@ async def get_current_user(
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
             user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
-            normalized_teams = await _resolve_teams_from_db(email, user_info)
+            normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
             normalized_teams = normalize_token_teams(payload)
@@ -1324,6 +1583,7 @@ async def get_current_user(
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
             request.state.token_use = token_use
+            request.state.trace_team_name = await resolve_trace_team_name(payload, normalized_teams)
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
@@ -1442,10 +1702,35 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+    if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
+    _propagate_tenant_id(request)
 
+    trace_teams = getattr(request.state, "token_teams", _UNSET) if request else _UNSET
+    _set_trace_for_user(user, teams=trace_teams, team_name=getattr(request.state, "trace_team_name", None) if request else None)
     return user
+
+
+def _propagate_tenant_id(request: Optional[object] = None) -> None:
+    """Propagate request.state.team_id into GlobalContext.tenant_id for rate limiting.
+
+    Called unconditionally at every return path in get_current_user() — unlike
+    _inject_userinfo_instate() which is gated by include_user_info.  This
+    ensures by_tenant rate limiting works even when include_user_info is False
+    (the default) and the middleware has already created plugin_global_context.
+
+    Only writes when tenant_id is still None (no overwrite of plugin-set values).
+
+    Args:
+        request: The incoming request object, or ``None`` if unavailable.
+    """
+    if not request:
+        return
+    global_context = getattr(getattr(request, "state", None), "plugin_global_context", None)
+    if global_context and global_context.tenant_id is None:
+        team_id = getattr(getattr(request, "state", None), "team_id", None)
+        if team_id:
+            global_context.tenant_id = team_id
 
 
 def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[EmailUser] = None) -> None:
@@ -1471,11 +1756,14 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     # Get plugin contexts from request state if available
     global_context = getattr(request.state, "plugin_global_context", None) if request else None
     if not global_context:
+        # Extract content type from request headers
+        content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
         # Create global context
         global_context = GlobalContext(
             request_id=request_id,
             server_id=None,
             tenant_id=None,
+            content_type=content_type,
         )
 
     if user:

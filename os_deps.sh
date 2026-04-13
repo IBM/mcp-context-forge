@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/os_deps.sh - install/verify Graphviz, Pandoc, Trivy, SCC
+# scripts/os_deps.sh - install/verify Graphviz, Pandoc, SCC
 # Supports macOS (Intel/Apple-Silicon), Debian/Ubuntu, RHEL/Fedora,
 #          generic Linux, Windows (prints manual steps).
 # ──────────────────────────────────────────────────────────────────────────
@@ -29,43 +29,10 @@ install_scc() {
   echo "✅  scc installed."
 }
 
-install_trivy_deb() {
-  echo "📦  Setting up Aqua Security Trivy APT repo..."
-  $(sudo_if) apt-get update -qq
-  $(sudo_if) apt-get install -y wget gnupg lsb-release
-  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-      | gpg --dearmor \
-      | $(sudo_if) tee /usr/share/keyrings/trivy.gpg >/dev/null
-  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb \
-generic main" \
-      | $(sudo_if) tee /etc/apt/sources.list.d/trivy.list >/dev/null
-  $(sudo_if) apt-get update -qq
-  $(sudo_if) apt-get install -y trivy
-}
-
-install_trivy_rpm() {
-  echo "📦  Setting up Aqua Security Trivy YUM/DNF repo..."
-  cat << 'EOF' | $(sudo_if) tee /etc/yum.repos.d/trivy.repo >/dev/null
-[trivy]
-name=Trivy repository
-baseurl=https://aquasecurity.github.io/trivy-repo/rpm/releases/$basearch/
-gpgcheck=1
-enabled=1
-gpgkey=https://aquasecurity.github.io/trivy-repo/rpm/public.key
-EOF
-  if have dnf; then
-      $(sudo_if) dnf -y update
-      $(sudo_if) dnf -y install trivy
-  else
-      $(sudo_if) yum -y update
-      $(sudo_if) yum -y install trivy
-  fi
-}
-
 # ───────────────────────── main logic ─────────────────────────
 echo "🔍  Checking platform prerequisites ..."
 MISSING=()
-for cmd in dot pandoc trivy scc; do
+for cmd in dot pandoc scc; do
   need "$cmd" && MISSING+=("$cmd")
 done
 
@@ -87,7 +54,6 @@ if [[ "$OS" == "Darwin" ]]; then
   have brew || { echo "❌  Homebrew missing → https://brew.sh"; exit 1; }
   need dot    && brew install graphviz
   need pandoc && brew install pandoc
-  need trivy  && brew install aquasecurity/trivy/trivy
   need scc    && install_scc "Darwin" "$ARCH_TAG"
 
 elif [[ "$OS" == "Linux" ]]; then
@@ -97,16 +63,14 @@ elif [[ "$OS" == "Linux" ]]; then
        $(sudo_if) apt-get update -qq
        need graphviz && $INSTALL graphviz
        need pandoc   && $INSTALL pandoc
-       if need trivy; then install_trivy_deb; fi
   elif have dnf || have yum; then
        PKG_MGR=$(have dnf && echo dnf || echo yum)
        INSTALL="$(sudo_if) $PKG_MGR install -y"
        $(sudo_if) $PKG_MGR -y update || true
        need graphviz && $INSTALL graphviz
        need pandoc   && $INSTALL pandoc
-       if need trivy; then install_trivy_rpm; fi
   else
-       echo "❌  Unsupported Linux package manager - please install Graphviz, Pandoc, and Trivy manually."
+       echo "❌  Unsupported Linux package manager - please install Graphviz, Pandoc, and SCC manually."
   fi
   need scc && install_scc "Linux" "$ARCH_TAG"
 
@@ -114,7 +78,6 @@ elif [[ "$OS" =~ MINGW|MSYS|CYGWIN ]]; then
   echo "ℹ️  On Windows please install:"
   echo "    - Graphviz (https://graphviz.org)"
   echo "    - Pandoc   (https://pandoc.org/installing.html)"
-  echo "    - Trivy    (https://aquasecurity.github.io/trivy/)"
   need scc && install_scc "Windows" "$ARCH_TAG"
 
 else

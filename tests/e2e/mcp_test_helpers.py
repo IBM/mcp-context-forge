@@ -31,7 +31,7 @@ import pytest
 # Configuration
 # ---------------------------------------------------------------------------
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes
 MCP_CLI_TIMEOUT = int(os.getenv("MCP_CLI_TIMEOUT", "30"))  # seconds per command
@@ -70,9 +70,26 @@ def _rust_mcp_gateway_active() -> bool:
         return False
 
 
+def _rust_mcp_session_core_active() -> bool:
+    try:
+        # Third-Party
+        import httpx
+
+        resp = httpx.get(f"{BASE_URL}/health", timeout=5)
+        if resp.status_code != 200:
+            return False
+        return resp.headers.get("x-contextforge-mcp-transport-mounted") == "rust" and resp.headers.get("x-contextforge-mcp-session-core-mode") == "rust"
+    except Exception:
+        return False
+
+
 skip_no_mcp_cli = pytest.mark.skipif(not _mcp_cli_available(), reason="mcp-cli not installed (pip install 'mcp-cli[cli]')")
 skip_no_gateway = pytest.mark.skipif(not _gateway_reachable(), reason=f"ContextForge not reachable at {BASE_URL}")
 skip_no_rust_mcp_gateway = pytest.mark.skipif(not _rust_mcp_gateway_active(), reason=f"Rust MCP public transport not active at {BASE_URL}")
+skip_no_rust_mcp_session_core = pytest.mark.skipif(
+    not _rust_mcp_session_core_active(),
+    reason=f"Rust MCP session core not active at {BASE_URL}",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,14 +151,37 @@ def send_jsonrpc_via_wrapper(
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
 
+    def _parsed_response_ids() -> set[Any]:
+        """Return currently observed JSON-RPC response ids from stdout lines."""
+        response_ids: set[Any] = set()
+        for line in stdout_lines:
+            line = line.strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "id" in payload:
+                response_ids.add(payload["id"])
+        return response_ids
+
+    expected_response_ids = {msg["id"] for msg in messages if "id" in msg}
+
     # Write all messages
     assert proc.stdin is not None
     for msg in messages:
         proc.stdin.write(json.dumps(msg) + "\n")
         proc.stdin.flush()
 
-    # Wait for responses to arrive before closing stdin
-    time.sleep(settle_seconds)
+    # Wait for responses to arrive before closing stdin. On a freshly recreated
+    # stack, tool/prompt calls can take longer than a fixed short sleep.
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        if expected_response_ids.issubset(_parsed_response_ids()):
+            break
+        time.sleep(0.1)
 
     # Close stdin to trigger graceful shutdown
     proc.stdin.close()

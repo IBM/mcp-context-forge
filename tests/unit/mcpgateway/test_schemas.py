@@ -53,7 +53,14 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    PromptCreate,
+    PromptMetrics,
+    PromptRead,
+    PromptUpdate,
     ResourceCreate,
+    ResourceMetrics,
+    ResourceRead,
+    ResourceUpdate,
     ServerCreate,
     ServerMetrics,
     ServerRead,
@@ -63,6 +70,7 @@ from mcpgateway.schemas import (
     TeamCreateRequest,
     TeamUpdateRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 
@@ -1224,6 +1232,37 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    def test_gateway_read_tool_count_defaults_to_zero(self):
+        """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc",
+            name="Tool Count GW",
+            slug="tool-count-gw",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+        )
+        assert gateway.tool_count == 0
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 0
+
+    def test_gateway_read_tool_count_set_explicitly(self):
+        """GatewayRead.tool_count should accept an explicit value."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc2",
+            name="Tool Count GW 2",
+            slug="tool-count-gw-2",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            tool_count=5,
+        )
+        assert gateway.tool_count == 5
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 5
+
     def test_resource_subscription_rejects_empty_subscriber_id(self):
         """ResourceSubscription should reject empty subscriber IDs."""
         from mcpgateway.schemas import ResourceSubscription
@@ -1254,3 +1293,207 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+    @pytest.mark.parametrize("schema_cls,kwargs", [
+        (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
+        (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
+        (PromptCreate, {"name": "p", "template": "hi"}),
+    ])
+    def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
+        """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
+        with pytest.raises(ValidationError, match="literal_error"):
+            schema_cls(**kwargs, visibility="bogus")
+
+
+class TestGatewayCreateCamelCase:
+    """Verify GatewayCreate accepts camelCase input and serializes to camelCase output.
+
+    Regression tests for #3577 — GatewayCreate previously extended BaseModel
+    directly, missing alias_generator and populate_by_name from
+    BaseModelWithConfigDict, so camelCase fields were silently ignored.
+    """
+
+    def test_accepts_camel_case_fields(self):
+        """GatewayCreate must accept camelCase field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            authType="bearer",
+            authToken="tok123",
+            passthroughHeaders=["X-Request-Id"],
+            gatewayMode="direct_proxy",
+            refreshIntervalSeconds=120,
+            oneTimeAuth=True,
+            caCertificate="PEM-DATA",
+        )
+        assert gw.auth_type == "bearer"
+        assert gw.auth_token == "tok123"
+        assert gw.passthrough_headers == ["X-Request-Id"]
+        assert gw.gateway_mode == "direct_proxy"
+        assert gw.refresh_interval_seconds == 120
+        assert gw.one_time_auth is True
+        assert gw.ca_certificate == "PEM-DATA"
+
+    def test_accepts_snake_case_fields(self):
+        """GatewayCreate must still accept snake_case field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+            passthrough_headers=["Authorization"],
+            gateway_mode="cache",
+        )
+        assert gw.auth_type == "basic"
+        assert gw.auth_username == "user"
+        assert gw.auth_password == "pass"
+        assert gw.passthrough_headers == ["Authorization"]
+        assert gw.gateway_mode == "cache"
+
+    def test_serializes_to_camel_case(self):
+        """GatewayCreate.model_dump(by_alias=True) must use camelCase keys."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="bearer",
+            auth_token="tok",
+            passthrough_headers=["X-Foo"],
+            gateway_mode="direct_proxy",
+            refresh_interval_seconds=300,
+        )
+        data = gw.model_dump(by_alias=True)
+        assert "authType" in data
+        assert "authToken" in data
+        assert "passthroughHeaders" in data
+        assert "gatewayMode" in data
+        assert "refreshIntervalSeconds" in data
+        # snake_case keys must NOT appear in aliased output
+        assert "auth_type" not in data
+        assert "passthrough_headers" not in data
+
+    def test_consistent_with_gateway_update(self):
+        """GatewayCreate and GatewayUpdate must both accept camelCase."""
+        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
+        create = GatewayCreate(name="gw", url="https://example.com", authType="bearer", authToken="t")
+        update = GatewayUpdate(authType="basic", authUsername="u", authPassword="p")
+        assert create.auth_type == "bearer"
+        assert update.auth_type == "basic"
+
+        # Both must serialize identically for shared fields
+        create_keys = set(create.model_dump(by_alias=True).keys())
+        update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
+        for key in update_keys:
+            assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
+
+
+class TestTitleSchemas:
+    """Test title field in schema models."""
+
+    def test_tool_schemas_with_title(self):
+        """Test ToolCreate, ToolUpdate, and ToolRead pass title field."""
+        tool_create = ToolCreate(name="test-tool", url="http://example.com", title="My Custom Tool Title")
+        assert tool_create.title == "My Custom Tool Title"
+
+        tool_update = ToolUpdate(title="Updated Title")
+        assert tool_update.title == "Updated Title"
+
+        tool_read = ToolRead(
+            id="1",
+            name="test-tool",
+            originalName="test-tool-original",
+            url="http://example.com",
+            title="Read Tool Title",
+            description="Test Tool Description",
+            requestType="rpc",
+            integrationType="JSON",
+            headers={},
+            inputSchema={},
+            annotations={},
+            jsonpathFilter="",
+            auth={"type": "none"},
+            enabled=True,
+            reachable=True,
+            gatewayId="gw-1",
+            gatewaySlug="gw-1-slug",
+            customName="test-tool-custom",
+            customNameSlug="test-tool-custom-slug",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ServerMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert tool_read.title == "Read Tool Title"
+
+    def test_resource_schemas_with_title(self):
+        """Test ResourceCreate, ResourceUpdate, and ResourceRead pass title field."""
+        resource_create = ResourceCreate(uri="test://uri", name="test-resource", content="data", title="My Custom Resource Title")
+        assert resource_create.title == "My Custom Resource Title"
+
+        resource_update = ResourceUpdate(title="Updated Resource Title")
+        assert resource_update.title == "Updated Resource Title"
+
+        resource_read = ResourceRead(
+            id="1",
+            uri="test://uri",
+            name="test-resource",
+            title="Read Resource Title",
+            description="Test Resource Description",
+            mimeType="text/plain",
+            size=1024,
+            enabled=True,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ResourceMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert resource_read.title == "Read Resource Title"
+
+    def test_prompt_schemas_with_title(self):
+        """Test PromptCreate, PromptUpdate, and PromptRead pass title field."""
+        prompt_create = PromptCreate(
+            name="test-prompt",
+            title="My Custom Prompt Title",
+            template="Hello {{name}}"
+        )
+        assert prompt_create.title == "My Custom Prompt Title"
+
+        prompt_update = PromptUpdate(title="Updated Prompt Title")
+        assert prompt_update.title == "Updated Prompt Title"
+
+        prompt_read = PromptRead(
+            id="1",
+            name="test-prompt",
+            originalName="test-prompt-original",
+            customName="test-prompt-custom",
+            customNameSlug="test-prompt-custom-slug",
+            description="Test Prompt Description",
+            template="Hello {{name}}",
+            arguments=[],
+            enabled=True,
+            title="Read Prompt Title",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=PromptMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert prompt_read.title == "Read Prompt Title"
