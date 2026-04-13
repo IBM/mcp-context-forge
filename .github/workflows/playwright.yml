@@ -61,11 +61,22 @@ jobs:
           version: "0.9.2"
           python-version: "3.12"
 
-      - name: 🟢 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
+      - name: 🟢 Install Node.js 22
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl gnupg
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
+
+      - name: 🔧 Upgrade npm to minimum required version
+        run: sudo npm install -g npm@^11.10.0
 
       - name: 📦 Install gateway dependencies
         run: |
