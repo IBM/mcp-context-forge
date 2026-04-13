@@ -5,21 +5,24 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 Unit tests for request logging middleware.
 """
+
 import orjson
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.types import Scope
 from mcpgateway.middleware.request_logging_middleware import (
+    _load_rust_request_logging_module,
+    _mask_json_payload_for_logging,
     mask_sensitive_data,
     mask_jwt_in_cookies,
     mask_sensitive_headers,
     RequestLoggingMiddleware,
     SENSITIVE_KEYS,
 )
-import logging
+
 
 class DummyLogger:
     def __init__(self):
@@ -39,6 +42,7 @@ class DummyLogger:
     def debug(self, msg):
         pass
 
+
 @pytest.fixture
 def dummy_logger(monkeypatch):
     logger = DummyLogger()
@@ -54,11 +58,20 @@ def mock_structured_logger(monkeypatch):
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.structured_logger", mock_logger)
     return mock_logger
 
+
 @pytest.fixture
 def dummy_call_next():
     async def _call_next(request):
         return Response(content="OK", status_code=200)
+
     return _call_next
+
+
+@pytest.fixture(autouse=True)
+def reset_rust_request_logging_module_state(monkeypatch):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_MODULE", None)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_IMPORT_FAILED", False)
+
 
 def make_request(body: bytes = b"{}", headers=None, query_params=None):
     scope: Scope = {
@@ -66,15 +79,17 @@ def make_request(body: bytes = b"{}", headers=None, query_params=None):
         "method": "POST",
         "path": "/test",
         "headers": Headers(headers or {}).raw,
-        "query_string": b"&".join(
-            [f"{k}={v}".encode() for k, v in (query_params or {}).items()]
-        ),
+        "query_string": b"&".join([f"{k}={v}".encode() for k, v in (query_params or {}).items()]),
     }
+
     async def receive():
         return {"type": "http.request", "body": body, "more_body": False}
+
     return Request(scope, receive=receive)
 
+
 # --- mask_sensitive_data tests ---
+
 
 def test_mask_sensitive_data_dict():
     data = {"password": "123", "username": "user", "nested": {"token": "abc"}}
@@ -83,11 +98,13 @@ def test_mask_sensitive_data_dict():
     assert masked["nested"]["token"] == "******"
     assert masked["username"] == "user"
 
+
 def test_mask_sensitive_data_list():
     data = [{"secret": "x"}, {"normal": "y"}]
     masked = mask_sensitive_data(data)
     assert masked[0]["secret"] == "******"
     assert masked[1]["normal"] == "y"
+
 
 def test_mask_sensitive_data_non_dict_list():
     assert mask_sensitive_data("string") == "string"
@@ -115,7 +132,47 @@ def test_mask_sensitive_data_ignores_empty_normalized_keys():
     assert masked["!!!"] == "value"
     assert masked["password"] == "******"
 
+
+def test_mask_sensitive_data_uses_native_extension_when_enabled(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_data.return_value = {"password": "******", "username": "user"}  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        masked = mask_sensitive_data({"password": "secret", "username": "user"})  # pragma: allowlist secret
+
+    assert masked == {"password": "******", "username": "user"}  # pragma: allowlist secret
+    native_extension.mask_sensitive_data.assert_called_once_with({"password": "secret", "username": "user"}, 10)  # pragma: allowlist secret
+
+
+def test_mask_sensitive_data_falls_back_to_python_when_native_extension_import_fails(monkeypatch, dummy_logger):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    masked = mask_sensitive_data({"password": "secret", "username": "user"})  # pragma: allowlist secret
+
+    assert masked == {"password": "******", "username": "user"}  # pragma: allowlist secret
+    assert len(dummy_logger.warnings) == 1
+    assert "falling back to Python masking" in dummy_logger.warnings[0]
+    assert "native extension" in dummy_logger.warnings[0]
+
+
+def test_mask_sensitive_data_caches_failed_native_extension_import(monkeypatch, dummy_logger):
+    import_module = MagicMock(side_effect=ImportError("boom"))
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", import_module)
+
+    first = mask_sensitive_data({"password": "secret"})  # pragma: allowlist secret
+    second = mask_sensitive_data({"password": "secret"})  # pragma: allowlist secret
+
+    assert first == {"password": "******"}  # pragma: allowlist secret
+    assert second == {"password": "******"}  # pragma: allowlist secret
+    assert import_module.call_count == 1
+    assert len(dummy_logger.warnings) == 1
+
+
 # --- mask_jwt_in_cookies tests ---
+
 
 def test_mask_jwt_in_cookies_with_sensitive():
     cookie = "jwt_token=abc; sessionid=xyz; other=123"
@@ -124,15 +181,19 @@ def test_mask_jwt_in_cookies_with_sensitive():
     assert "sessionid=******" in masked
     assert "other=123" in masked
 
+
 def test_mask_jwt_in_cookies_non_sensitive():
     cookie = "user=abc; theme=dark"
     masked = mask_jwt_in_cookies(cookie)
     assert masked == cookie
 
+
 def test_mask_jwt_in_cookies_empty():
     assert mask_jwt_in_cookies("") == ""
 
+
 # --- mask_sensitive_headers tests ---
+
 
 def test_mask_sensitive_headers_authorization():
     headers = {"Authorization": "Bearer abc", "Cookie": "jwt_token=abc", "X-Custom": "ok"}
@@ -140,6 +201,7 @@ def test_mask_sensitive_headers_authorization():
     assert masked["Authorization"] == "******"
     assert "******" in masked["Cookie"]
     assert masked["X-Custom"] == "ok"
+
 
 def test_mask_sensitive_headers_non_sensitive():
     headers = {"Content-Type": "application/json"}
@@ -153,11 +215,13 @@ def test_mask_sensitive_headers_masks_api_key_variants():
     assert masked["X-Api-Key"] == "******"
     assert masked["X-Token-Count"] == "5"
 
+
 def test_mask_sensitive_headers_masks_auth_like_names():
     headers = {"X-Auth-Device": "device-secret", "X-Custom-JWT": "tokenish"}
     masked = mask_sensitive_headers(headers)
     assert masked["X-Auth-Device"] == "******"
     assert masked["X-Custom-JWT"] == "******"
+
 
 def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
     headers = {"X-Auth-Count": "5", "X-JWT_Status_Count": "7"}
@@ -165,7 +229,64 @@ def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
     assert masked["X-Auth-Count"] == "5"
     assert masked["X-JWT_Status_Count"] == "7"
 
+
+def test_mask_sensitive_headers_uses_native_extension_when_enabled(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_headers.return_value = {"Authorization": "******"}
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        masked = mask_sensitive_headers({"Authorization": "Bearer abc"})
+
+    assert masked == {"Authorization": "******"}
+    native_extension.mask_sensitive_headers.assert_called_once_with({"Authorization": "Bearer abc"})
+
+
+def test_mask_sensitive_headers_fall_back_to_python_when_native_extension_import_fails(monkeypatch, dummy_logger):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    masked = mask_sensitive_headers({"Authorization": "Bearer abc", "X-Trace-Id": "123"})
+
+    assert masked == {"Authorization": "******", "X-Trace-Id": "123"}
+    assert len(dummy_logger.warnings) == 1
+
+
+def test_mask_json_payload_for_logging_returns_native_string_result(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.return_value = '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        masked = _mask_json_payload_for_logging(orjson.dumps({"password": "123", "data": "ok"}))
+
+    assert masked == '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+
+
+def test_mask_json_payload_for_logging_falls_back_when_native_json_masking_raises(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.side_effect = RuntimeError("boom")
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with (
+        patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension),
+        patch("mcpgateway.middleware.request_logging_middleware.mask_sensitive_data", return_value={"password": "******", "data": "ok"}),  # pragma: allowlist secret
+    ):
+        masked = _mask_json_payload_for_logging(orjson.dumps({"password": "123", "data": "ok"}))
+
+    assert masked == '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+
+
+def test_load_rust_request_logging_module_returns_cached_module(monkeypatch):
+    cached_module = object()
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_MODULE", cached_module)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_IMPORT_FAILED", False)
+
+    assert _load_rust_request_logging_module() is cached_module
+
+
 # --- RequestLoggingMiddleware tests ---
+
 
 @pytest.mark.asyncio
 async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dummy_call_next):
@@ -177,6 +298,43 @@ async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dum
     assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
     assert "******" in dummy_logger.logged[0][1]
 
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_native_json_bytes_fast_path_when_available(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.return_value = b'{"password":"******","data":"ok"}'  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    body = orjson.dumps({"password": "123", "data": "ok"})
+    request = make_request(body=body, headers={"Authorization": "Bearer abc"})
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        response = await middleware.dispatch(request, dummy_call_next)
+
+    assert response.status_code == 200
+    native_extension.mask_sensitive_json_bytes.assert_called_once_with(body, 10)
+    native_extension.mask_sensitive_data.assert_not_called()
+    assert any('"password":"******"' in msg for _, msg in dummy_logger.logged)  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_python_masking_when_native_extension_import_fails(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    body = orjson.dumps({"password": "123", "data": "ok"})
+    request = make_request(body=body, headers={"Authorization": "Bearer abc"})
+
+    response = await middleware.dispatch(request, dummy_call_next)
+
+    assert response.status_code == 200
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+    assert "******" in dummy_logger.logged[0][1]
+    assert any("falling back to Python masking" in warning for warning in dummy_logger.warnings)
+
+
 @pytest.mark.asyncio
 async def test_dispatch_logs_non_json_body(dummy_logger, mock_structured_logger, dummy_call_next):
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
@@ -185,6 +343,7 @@ async def test_dispatch_logs_non_json_body(dummy_logger, mock_structured_logger,
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
     assert any("<contains sensitive data - masked>" in msg for _, msg in dummy_logger.logged)
+
 
 @pytest.mark.asyncio
 async def test_dispatch_large_body_truncated(dummy_logger, mock_structured_logger, dummy_call_next):
@@ -195,6 +354,7 @@ async def test_dispatch_large_body_truncated(dummy_logger, mock_structured_logge
     assert response.status_code == 200
     assert any("[truncated]" in msg for _, msg in dummy_logger.logged)
 
+
 @pytest.mark.asyncio
 async def test_dispatch_logging_disabled(dummy_logger, mock_structured_logger, dummy_call_next):
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=False)
@@ -203,6 +363,7 @@ async def test_dispatch_logging_disabled(dummy_logger, mock_structured_logger, d
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
     assert dummy_logger.logged == []
+
 
 @pytest.mark.asyncio
 async def test_dispatch_logger_disabled(dummy_logger, mock_structured_logger, dummy_call_next):
@@ -214,10 +375,12 @@ async def test_dispatch_logger_disabled(dummy_logger, mock_structured_logger, du
     assert response.status_code == 200
     assert dummy_logger.logged == []
 
+
 @pytest.mark.asyncio
 async def test_dispatch_exception_handling(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
     async def bad_body():
         raise ValueError("fail")
+
     request = make_request()
     monkeypatch.setattr(request, "body", bad_body)
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
@@ -258,6 +421,7 @@ def test_middleware_does_not_consume_stream_for_form_parsing():
 
 # --- mask_sensitive_data depth limit tests ---
 
+
 def test_mask_sensitive_data_depth_limit():
     """Deep nesting should be truncated at max_depth."""
     # Create deeply nested structure
@@ -292,6 +456,7 @@ def test_mask_sensitive_data_depth_limit_with_password():
 
 # --- Large body fast path tests ---
 
+
 def make_request_with_headers(body: bytes = b"{}", headers=None, query_params=None):
     """Create a request with specific headers including content-length."""
     headers = headers or {}
@@ -300,12 +465,12 @@ def make_request_with_headers(body: bytes = b"{}", headers=None, query_params=No
         "method": "POST",
         "path": "/test",
         "headers": Headers(headers).raw,
-        "query_string": b"&".join(
-            [f"{k}={v}".encode() for k, v in (query_params or {}).items()]
-        ),
+        "query_string": b"&".join([f"{k}={v}".encode() for k, v in (query_params or {}).items()]),
     }
+
     async def receive():
         return {"type": "http.request", "body": body, "more_body": False}
+
     return Request(scope, receive=receive)
 
 
@@ -325,6 +490,7 @@ async def test_large_body_fast_path(dummy_logger, mock_structured_logger, dummy_
 @pytest.mark.asyncio
 async def test_large_body_fast_path_exception_logs_failure(dummy_logger, mock_structured_logger):
     """Large body fast path should still log request failures."""
+
     async def _call_next(_request):
         raise RuntimeError("boom")
 
@@ -351,8 +517,10 @@ async def test_no_logging_for_skipped_paths(mock_structured_logger, dummy_call_n
         "headers": [],
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -362,12 +530,14 @@ async def test_no_logging_for_skipped_paths(mock_structured_logger, dummy_call_n
 
 # --- SENSITIVE_KEYS frozenset test ---
 
+
 def test_sensitive_keys_is_frozenset():
     """SENSITIVE_KEYS should be a frozenset for performance."""
     assert isinstance(SENSITIVE_KEYS, frozenset)
 
 
 # --- Skip endpoints tests ---
+
 
 @pytest.mark.asyncio
 async def test_skip_endpoints_skips_detailed_logging(dummy_logger, mock_structured_logger, dummy_call_next):
@@ -385,8 +555,10 @@ async def test_skip_endpoints_skips_detailed_logging(dummy_logger, mock_structur
         "headers": [],
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -410,8 +582,10 @@ async def test_skip_endpoints_prefix_match(dummy_logger, mock_structured_logger,
         "headers": [],
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -437,6 +611,7 @@ async def test_skip_endpoints_non_matching_path_logs(dummy_logger, mock_structur
 
 
 # --- Sampling tests ---
+
 
 @pytest.mark.asyncio
 async def test_sampling_rate_zero_skips_all(dummy_logger, mock_structured_logger, dummy_call_next):
@@ -471,10 +646,9 @@ async def test_sampling_rate_one_logs_all(dummy_logger, mock_structured_logger, 
     # With sample rate 1.0, detailed logging should occur
     assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
 
+
 @pytest.mark.asyncio
-async def test_sampling_rate_half_keeps_logging_when_random_below_rate(
-    dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch
-):
+async def test_sampling_rate_half_keeps_logging_when_random_below_rate(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
     """Sample rate <1.0 should keep detailed logging when random value is below rate."""
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.secrets.randbelow", lambda _n: 0)
 
@@ -491,9 +665,7 @@ async def test_sampling_rate_half_keeps_logging_when_random_below_rate(
 
 
 @pytest.mark.asyncio
-async def test_request_start_and_completion_logging_failures_warn(
-    dummy_logger, mock_structured_logger, dummy_call_next
-):
+async def test_request_start_and_completion_logging_failures_warn(dummy_logger, mock_structured_logger, dummy_call_next):
     """Structured logging failures should be caught and warn."""
     mock_structured_logger.log.side_effect = Exception("structured log boom")
 
@@ -523,9 +695,7 @@ async def test_request_start_and_completion_logging_failures_warn(
 
 
 @pytest.mark.asyncio
-async def test_large_body_fast_path_exception_no_boundary_skips_structured_logging(
-    dummy_logger, mock_structured_logger
-):
+async def test_large_body_fast_path_exception_no_boundary_skips_structured_logging(dummy_logger, mock_structured_logger):
     """Large body fast path should not attempt boundary logging when disabled."""
 
     async def _call_next(_request):
@@ -541,9 +711,7 @@ async def test_large_body_fast_path_exception_no_boundary_skips_structured_loggi
 
 
 @pytest.mark.asyncio
-async def test_large_body_fast_path_exception_structured_logging_failure_warns(
-    dummy_logger, mock_structured_logger
-):
+async def test_large_body_fast_path_exception_structured_logging_failure_warns(dummy_logger, mock_structured_logger):
     """Large body fast path should warn if boundary failure logging fails."""
 
     async def _call_next(_request):
@@ -561,9 +729,7 @@ async def test_large_body_fast_path_exception_structured_logging_failure_warns(
 
 
 @pytest.mark.asyncio
-async def test_large_body_fast_path_completion_structured_logging_failure_warns(
-    dummy_logger, mock_structured_logger, dummy_call_next
-):
+async def test_large_body_fast_path_completion_structured_logging_failure_warns(dummy_logger, mock_structured_logger, dummy_call_next):
     """Large body fast path should warn if boundary completion logging fails."""
     mock_structured_logger.log.side_effect = Exception("structured log boom")
 
@@ -606,9 +772,7 @@ async def test_dispatch_uses_original_request_for_call_next(dummy_logger, mock_s
 
 
 @pytest.mark.asyncio
-async def test_call_next_exception_structured_logging_failure_warns(
-    dummy_logger, mock_structured_logger
-):
+async def test_call_next_exception_structured_logging_failure_warns(dummy_logger, mock_structured_logger):
     """If downstream errors and structured logging fails, it should warn and re-raise."""
     mock_structured_logger.log.side_effect = Exception("structured log boom")
 
@@ -625,9 +789,7 @@ async def test_call_next_exception_structured_logging_failure_warns(
 
 
 @pytest.mark.asyncio
-async def test_call_next_exception_no_boundary_does_not_attempt_structured_logging(
-    dummy_logger, mock_structured_logger
-):
+async def test_call_next_exception_no_boundary_does_not_attempt_structured_logging(dummy_logger, mock_structured_logger):
     """If boundary logging is disabled, downstream errors should not trigger structured logging."""
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
     request = make_request(body=b'{"data": "test"}')
@@ -640,7 +802,9 @@ async def test_call_next_exception_no_boundary_does_not_attempt_structured_loggi
 
     mock_structured_logger.log.assert_not_called()
 
+
 # --- User identity resolution gating tests ---
+
 
 @pytest.mark.asyncio
 async def test_log_resolve_user_identity_false_skips_db_lookup(mock_structured_logger, dummy_call_next, monkeypatch):
@@ -667,8 +831,10 @@ async def test_log_resolve_user_identity_false_skips_db_lookup(mock_structured_l
         "headers": Headers({"Authorization": "Bearer test-token"}).raw,
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -701,8 +867,10 @@ async def test_log_resolve_user_identity_true_attempts_db_lookup(mock_structured
         "headers": Headers({"Authorization": "Bearer test-token"}).raw,
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -712,18 +880,27 @@ async def test_log_resolve_user_identity_true_attempts_db_lookup(mock_structured
 
 # --- _resolve_user_identity tests ---
 
+
 @pytest.mark.asyncio
 async def test_resolve_user_identity_from_request_state(mock_structured_logger, dummy_call_next):
     """User identity resolved from request.state.user."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
-        "headers": [], "query_string": b"", "state": {},
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": [],
+        "query_string": b"",
+        "state": {},
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     request.state.user = MagicMock(id=42, email="user@test.com")
     response = await middleware.dispatch(request, dummy_call_next)
@@ -738,21 +915,29 @@ async def test_resolve_user_identity_from_request_state(mock_structured_logger, 
 @pytest.mark.asyncio
 async def test_resolve_user_identity_cookie_token(mock_structured_logger, dummy_call_next, monkeypatch):
     """User identity resolved from jwt_token cookie when log_resolve_user_identity=True."""
+
     async def mock_get_current_user(credentials):
         return MagicMock(id=7, email="cookie@test.com")
+
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
         log_resolve_user_identity=True,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
         "headers": Headers({"cookie": "jwt_token=some-token"}).raw,
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -764,15 +949,22 @@ async def test_resolve_user_identity_cookie_token(mock_structured_logger, dummy_
 async def test_resolve_user_identity_no_token(mock_structured_logger, dummy_call_next):
     """No cookies, no auth header returns (None, None)."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
         log_resolve_user_identity=True,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
-        "headers": [], "query_string": b"",
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": [],
+        "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -784,21 +976,29 @@ async def test_resolve_user_identity_no_token(mock_structured_logger, dummy_call
 @pytest.mark.asyncio
 async def test_resolve_user_identity_exception(mock_structured_logger, dummy_call_next, monkeypatch):
     """get_current_user raises → returns (None, None)."""
+
     async def mock_get_current_user(credentials):
         raise RuntimeError("DB error")
+
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
         log_resolve_user_identity=True,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
         "headers": Headers({"Authorization": "Bearer bad-token"}).raw,
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -808,16 +1008,22 @@ async def test_resolve_user_identity_exception(mock_structured_logger, dummy_cal
 
 # --- Sampling exception fallback ---
 
+
 @pytest.mark.asyncio
 async def test_sampling_exception_fallback(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
     """If secrets.randbelow raises, detailed logging defaults to enabled."""
+
     def bad_randbelow(_):
         raise OSError("entropy")
+
     import secrets as _secrets
+
     monkeypatch.setattr(_secrets, "randbelow", bad_randbelow)
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
         log_detailed_sample_rate=0.5,
     )
     body = b'{"data": "test"}'
@@ -830,20 +1036,27 @@ async def test_sampling_exception_fallback(dummy_logger, mock_structured_logger,
 
 # --- Detailed-only user identity from cached state ---
 
+
 @pytest.mark.asyncio
 async def test_detailed_only_user_identity(dummy_logger, mock_structured_logger, dummy_call_next):
     """When only detailed logging is enabled, user identity from cached state."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
     )
     body = b'{"data": "test"}'
     scope: Scope = {
-        "type": "http", "method": "POST", "path": "/test",
+        "type": "http",
+        "method": "POST",
+        "path": "/test",
         "headers": Headers({}).raw,
         "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": body, "more_body": False}
+
     request = Request(scope, receive=receive)
     request.state.user = MagicMock(id=99, email="detail@test.com")
     response = await middleware.dispatch(request, dummy_call_next)
@@ -852,19 +1065,27 @@ async def test_detailed_only_user_identity(dummy_logger, mock_structured_logger,
 
 # --- log_request_start ---
 
+
 @pytest.mark.asyncio
 async def test_log_request_start_enabled(mock_structured_logger, dummy_call_next):
     """When log_request_start=True, structured logger called with request_started event."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
         log_request_start=True,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
-        "headers": [], "query_string": b"",
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": [],
+        "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -876,18 +1097,26 @@ async def test_log_request_start_enabled(mock_structured_logger, dummy_call_next
 
 # --- Boundary-only without detailed ---
 
+
 @pytest.mark.asyncio
 async def test_boundary_only_no_detailed(mock_structured_logger, dummy_call_next):
     """Boundary logging enabled, detailed disabled: logs request_completed."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
     )
     scope: Scope = {
-        "type": "http", "method": "GET", "path": "/test",
-        "headers": [], "query_string": b"",
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": [],
+        "query_string": b"",
     }
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(scope, receive=receive)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -898,20 +1127,25 @@ async def test_boundary_only_no_detailed(mock_structured_logger, dummy_call_next
 
 # --- Logger TypeError fallback ---
 
+
 @pytest.mark.asyncio
 async def test_logger_type_error_fallback(dummy_logger, mock_structured_logger, dummy_call_next):
     """Logger.log raises TypeError on first call → falls back without extra."""
     call_count = [0]
     original_log = dummy_logger.log
+
     def patched_log(level, msg, extra=None):
         call_count[0] += 1
         if call_count[0] == 1 and extra is not None:
             raise TypeError("unexpected keyword argument 'extra'")
         original_log(level, msg)
+
     dummy_logger.log = patched_log
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
     )
     body = b'{"data": "test"}'
     request = make_request(body=body)
@@ -923,14 +1157,19 @@ async def test_logger_type_error_fallback(dummy_logger, mock_structured_logger, 
 
 # --- Large body exception with boundary logging ---
 
+
 @pytest.mark.asyncio
 async def test_large_body_exception_with_boundary(dummy_logger, mock_structured_logger):
     """Large body fast path + call_next raises + boundary logging."""
+
     async def _call_next(_request):
         raise RuntimeError("server error")
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
+        max_body_size=100,
     )
     body = b"x" * 500
     request = make_request_with_headers(body=body, headers={"content-length": "500"})
@@ -945,11 +1184,14 @@ async def test_large_body_exception_with_boundary(dummy_logger, mock_structured_
 
 # --- Body read with full dispatch (covers receive/content-length/empty paths) ---
 
+
 @pytest.mark.asyncio
 async def test_body_read_with_receive(dummy_logger, mock_structured_logger, dummy_call_next):
     """Full dispatch with body - covers body read + new request creation."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
     )
     body = b'{"name": "test"}'
     request = make_request(body=body, headers={"content-length": str(len(body))})
@@ -962,14 +1204,18 @@ async def test_body_read_with_receive(dummy_logger, mock_structured_logger, dumm
 
 # --- Exception during processing with boundary log ---
 
+
 @pytest.mark.asyncio
 async def test_exception_during_processing_boundary_log(dummy_logger, mock_structured_logger):
     """call_next raises during detailed+boundary processing."""
+
     async def _call_next(_request):
         raise ValueError("processing error")
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
     )
     body = b'{"data": "test"}'
     request = make_request(body=body)
@@ -987,11 +1233,14 @@ async def test_exception_during_processing_boundary_log(dummy_logger, mock_struc
 
 # --- Response completion logging ---
 
+
 @pytest.mark.asyncio
 async def test_response_completion_logging(dummy_logger, mock_structured_logger, dummy_call_next):
     """Successful response with boundary logging: logs request_completed with status code."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
     )
     body = b'{"data": "test"}'
     request = make_request(body=body)
@@ -1011,6 +1260,7 @@ async def test_response_completion_logging(dummy_logger, mock_structured_logger,
 
 # --- _categorize_response_time ---
 
+
 def test_categorize_response_time():
     """Test all 4 response time categories."""
     assert RequestLoggingMiddleware._categorize_response_time(50) == "fast"
@@ -1025,11 +1275,15 @@ def test_categorize_response_time():
 
 # --- Invalid content-length ---
 
+
 @pytest.mark.asyncio
 async def test_invalid_content_length(dummy_logger, mock_structured_logger, dummy_call_next):
     """Invalid content-length header should be handled gracefully."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=100,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        max_body_size=100,
     )
     body = b'{"data": "test"}'
     request = make_request_with_headers(body=body, headers={"content-length": "not-a-number"})
@@ -1041,6 +1295,7 @@ async def test_invalid_content_length(dummy_logger, mock_structured_logger, dumm
 
 # --- mask_jwt_in_cookies with no-equals cookie ---
 
+
 def test_mask_jwt_in_cookies_no_equals():
     """Cookie without '=' should be preserved as-is."""
     cookie = "flagonly; jwt_token=abc"
@@ -1051,6 +1306,7 @@ def test_mask_jwt_in_cookies_no_equals():
 
 # --- Large body with boundary logging - request failure path ---
 
+
 @pytest.mark.asyncio
 async def test_large_body_boundary_logging_on_exception(dummy_logger, mock_structured_logger):
     """Large body + call_next raises + boundary logging captures failure."""
@@ -1059,7 +1315,10 @@ async def test_large_body_boundary_logging_on_exception(dummy_logger, mock_struc
         raise RuntimeError("downstream failure")
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=10,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
+        max_body_size=10,
     )
     body = b"x" * 500  # Way over max_body_size * 4
     request = make_request(body=body, headers={"content-length": str(len(body))})
@@ -1075,7 +1334,10 @@ async def test_large_body_boundary_logging_on_exception(dummy_logger, mock_struc
 async def test_large_body_boundary_completion_logging(dummy_logger, mock_structured_logger):
     """Large body + successful response triggers boundary completion logging."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=10,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
+        max_body_size=10,
     )
     body = b"x" * 500  # Way over max_body_size * 4
 
@@ -1117,14 +1379,19 @@ async def test_large_body_logger_type_error_fallback(dummy_logger, mock_structur
             pass
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=10,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        max_body_size=10,
     )
     import mcpgateway.middleware.request_logging_middleware as rlm
+
     original_logger = rlm.logger
     rlm.logger = TypeErrorOnFirstLog()
 
     body = b"x" * 500
     try:
+
         async def _call_next(request):
             return Response(content="OK", status_code=200)
 
@@ -1141,7 +1408,10 @@ async def test_large_body_logger_type_error_fallback(dummy_logger, mock_structur
 async def test_empty_body_logs_empty_placeholder(dummy_logger, mock_structured_logger):
     """Empty body logs <empty> placeholder."""
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=1000,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        max_body_size=1000,
     )
 
     async def _call_next(request):
@@ -1161,7 +1431,10 @@ async def test_dispatch_exception_with_boundary_logging(dummy_logger, mock_struc
         raise ValueError("handler error")
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=1000,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
+        max_body_size=1000,
     )
     request = make_request(body=b'{"key": "value"}')
 
@@ -1178,7 +1451,10 @@ async def test_boundary_completion_structured_log_failure(dummy_logger, mock_str
     mock_structured_logger.log.side_effect = RuntimeError("structured log failed")
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=1000,
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=True,
+        max_body_size=1000,
     )
 
     async def _call_next(request):
@@ -1193,6 +1469,7 @@ async def test_boundary_completion_structured_log_failure(dummy_logger, mock_str
 
 # --- _categorize_response_time ---
 
+
 def test_categorize_response_time_all_buckets():
     assert RequestLoggingMiddleware._categorize_response_time(50) == "fast"
     assert RequestLoggingMiddleware._categorize_response_time(200) == "normal"
@@ -1202,15 +1479,20 @@ def test_categorize_response_time_all_buckets():
 
 # --- Sampling exception fallback ---
 
+
 @pytest.mark.asyncio
 async def test_sampling_exception_defaults_to_logging(dummy_logger, mock_structured_logger, monkeypatch):
     """When secrets.randbelow raises, detailed logging is NOT disabled."""
     import secrets as secrets_mod
+
     monkeypatch.setattr(secrets_mod, "randbelow", lambda _: (_ for _ in ()).throw(RuntimeError("rng fail")))
 
     middleware = RequestLoggingMiddleware(
-        app=None, enable_gateway_logging=False, log_detailed_requests=True,
-        max_body_size=1000, log_detailed_sample_rate=0.5,
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        max_body_size=1000,
+        log_detailed_sample_rate=0.5,
     )
 
     async def _call_next(request):
