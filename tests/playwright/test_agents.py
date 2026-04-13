@@ -386,3 +386,70 @@ class TestAgentsUI:
         # The server should respond with either success (2xx) or a validation error (4xx).
         # A 5xx would indicate an unexpected server error.
         assert response.status < 500, f"Unexpected server error: {response.status}"
+
+    def test_uaid_checkbox_visibility(self, agents_page: AgentsPage):
+        """Test that UAID checkbox is present and functional."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Verify UAID checkbox is visible
+        expect(agents_page.generate_uaid_checkbox).to_be_visible()
+        expect(agents_page.generate_uaid_checkbox).not_to_be_checked()
+
+        # Verify UAID fields are initially hidden
+        expect(agents_page.uaid_fields_container).to_be_hidden()
+
+    def test_uaid_fields_toggle(self, agents_page: AgentsPage):
+        """Test that UAID fields appear when checkbox is checked."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Check UAID checkbox
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.page.wait_for_timeout(300)
+
+        # Verify UAID fields are now visible
+        expect(agents_page.uaid_fields_container).to_be_visible()
+        expect(agents_page.uaid_registry_input).to_be_visible()
+        expect(agents_page.uaid_protocol_select).to_be_visible()
+
+        # Uncheck and verify fields are hidden again
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.page.wait_for_timeout(300)
+        expect(agents_page.uaid_fields_container).to_be_hidden()
+
+    def test_uaid_protocol_options(self, agents_page: AgentsPage):
+        """Test that UAID protocol select has correct options."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Enable UAID fields
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.wait_for_visible(agents_page.uaid_fields_container)
+
+        # Get protocol options
+        options = agents_page.uaid_protocol_select.locator("option")
+        option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
+
+        # Verify expected options are present
+        assert "a2a" in option_values
+        assert "mcp" in option_values
+        assert "rest" in option_values
+        assert "grpc" in option_values
+
+    def test_uaid_default_values(self, agents_page: AgentsPage):
+        """Test that UAID fields have correct default values."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Enable UAID fields
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.wait_for_visible(agents_page.uaid_fields_container)
+
+        # Check default registry value
+        registry_value = agents_page.uaid_registry_input.input_value()
+        assert registry_value == "context-forge"
+
+        # Check default protocol value
+        protocol_value = agents_page.uaid_protocol_select.input_value()
+        assert protocol_value == "a2a"

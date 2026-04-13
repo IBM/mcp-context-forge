@@ -93,13 +93,13 @@ class TestParseUaid:
             parse_uaid("not-a-uaid")
 
     def test_parse_uaid_missing_method(self):
-        """Test parsing UAID with missing method."""
-        with pytest.raises(ValueError, match="Invalid UAID format"):
+        """Test parsing UAID with missing method (too few colons)."""
+        with pytest.raises(ValueError, match="Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:'"):
             parse_uaid("uaid:9BjK3mP7xQv;uid=0")
 
     def test_parse_uaid_invalid_method(self):
-        """Test parsing UAID with invalid method."""
-        with pytest.raises(ValueError, match="Invalid UAID format"):
+        """Test parsing UAID with invalid method (not aid or did)."""
+        with pytest.raises(ValueError, match="Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:'"):
             parse_uaid("uaid:xyz:9BjK3mP7xQv;uid=0;proto=a2a;nativeId=agent.example.com")
 
     def test_parse_uaid_missing_uid(self):
