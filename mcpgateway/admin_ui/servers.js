@@ -857,11 +857,19 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+
+      // Extract OAuth client_id for audience validation
+      const oauthClientIdField = safeGetElement("edit-server-oauth-client-id");
+      if (oauthClientIdField) {
+        oauthClientIdField.value = server.oauthConfig.client_id || "";
+      }
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";
       if (oauthScopesField) oauthScopesField.value = "";
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+      const oauthClientIdField = safeGetElement("edit-server-oauth-client-id");
+      if (oauthClientIdField) oauthClientIdField.value = "";
     }
 
     // Store server data for modal population

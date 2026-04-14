@@ -5328,6 +5328,206 @@ class TestOAuthAudienceEnforcement:
         assert captured["expected_audience"] == [f"https://canonical.example.com/servers/{SERVER_ID}/mcp"]
         assert not any("attacker.example.com" in aud for aud in captured["expected_audience"])
 
+    # --- client_id audience extension (non-RFC-8707 IdP support) ---
+
+    @pytest.mark.asyncio
+    async def test_client_id_extends_expected_audiences(self, _pinned_app_domain):
+        """``oauth_config.client_id`` is appended to expected audiences independently of ``resource``."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "client_id": "my-oauth-client-id",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL, "my-oauth-client-id"]
+
+    @pytest.mark.asyncio
+    async def test_client_id_and_resource_both_extend_audiences(self, _pinned_app_domain):
+        """Both ``resource`` and ``client_id`` are additive — neither shadows the other."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": "https://api.example.com",
+            "client_id": "my-oauth-client-id",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [
+            EXPECTED_RESOURCE_URL,
+            "https://api.example.com",
+            "my-oauth-client-id",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_client_id_not_duplicated_if_matches_resource_url(self, _pinned_app_domain):
+        """If ``client_id`` already appears in expected audiences, it is not added twice."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "resource": "my-oauth-client-id",
+            "client_id": "my-oauth-client-id",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        # client_id should not be duplicated
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL, "my-oauth-client-id"]
+
+    @pytest.mark.asyncio
+    async def test_client_id_trims_whitespace(self, _pinned_app_domain):
+        """``client_id`` entries are stripped of leading/trailing whitespace."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "client_id": "   my-oauth-client-id   ",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL, "my-oauth-client-id"]
+
+    @pytest.mark.asyncio
+    async def test_empty_client_id_is_ignored(self, _pinned_app_domain):
+        """Empty or whitespace-only ``client_id`` does not pollute the audience list."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "client_id": "   ",
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL]
+
+    @pytest.mark.asyncio
+    async def test_no_client_id_preserves_original_behavior(self, _pinned_app_domain):
+        """When ``client_id`` is absent, behavior is identical to before this feature."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL]
+
+    @pytest.mark.asyncio
+    async def test_none_client_id_is_ignored(self, _pinned_app_domain):
+        """``client_id`` set to None does not pollute the audience list."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "client_id": None,
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL]
+
+    @pytest.mark.asyncio
+    async def test_non_string_client_id_is_ignored(self, _pinned_app_domain):
+        """Non-string ``client_id`` values (int, list, etc.) are silently ignored."""
+        handler, _responses = _make_handler()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {
+            "authorization_servers": [IDP_ISSUER],
+            "client_id": 12345,
+        }
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+        ):
+            await handler._try_oauth_access_token(_make_idp_token())
+
+        assert captured["expected_audience"] == [EXPECTED_RESOURCE_URL]
+
 
 class TestOAuthServerMisconfigurationRejected:
     """Invariant: an ``oauth_enabled`` server with an empty issuer allowlist fails closed.

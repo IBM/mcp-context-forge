@@ -3364,6 +3364,25 @@
                     Leave blank to use standard discovery from authorization server
                   </p>
                 </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    for="server-oauth-client-id"
+                    >OAuth Client ID (for audience validation)</label
+                  >
+                  <input
+                    type="text"
+                    name="oauth_client_id"
+                    id="server-oauth-client-id"
+                    placeholder="your-idp-client-id"
+                    class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    If your IdP does not support RFC 8707 Resource Indicators (e.g. Authentik),
+                    enter the OAuth client_id here. It will be accepted as a valid token audience
+                    in addition to the resource URL. Leave blank to use resource URL only.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -11449,6 +11468,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       />
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Leave blank to use standard discovery from authorization server
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        for="edit-server-oauth-client-id"
+                        >OAuth Client ID (for audience validation)</label
+                      >
+                      <input
+                        type="text"
+                        name="oauth_client_id"
+                        id="edit-server-oauth-client-id"
+                        placeholder="your-idp-client-id"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        If your IdP does not support RFC 8707 Resource Indicators (e.g. Authentik),
+                        enter the OAuth client_id here. It will be accepted as a valid token audience
+                        in addition to the resource URL. Leave blank to use resource URL only.
                       </p>
                     </div>
                   </div>

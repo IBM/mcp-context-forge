@@ -3997,11 +3997,21 @@ class _StreamableHttpAuthHandler:
             return OAuthAuthResult.FAILED
 
         expected_audiences: list[str] = [resource_url]
-        extra_audience = server.oauth_config.get("resource") or server.oauth_config.get("client_id")
-        if isinstance(extra_audience, str) and extra_audience.strip():
-            expected_audiences.append(extra_audience.strip())
-        elif isinstance(extra_audience, list):
-            expected_audiences.extend(s.strip() for s in extra_audience if isinstance(s, str) and s.strip())
+        extra_resource = server.oauth_config.get("resource")
+        if isinstance(extra_resource, str) and extra_resource.strip():
+            expected_audiences.append(extra_resource.strip())
+        elif isinstance(extra_resource, list):
+            expected_audiences.extend(s.strip() for s in extra_resource if isinstance(s, str) and s.strip())
+
+        # When the IdP does not support RFC 8707 Resource Indicators (e.g.
+        # Authentik), the access token ``aud`` claim is set to the OAuth
+        # client_id rather than the resource URL.  Operators can specify the
+        # per-virtual-server ``client_id`` in ``oauth_config`` so it is
+        # automatically accepted as a valid audience.  This is independent
+        # of the ``resource`` list — both are additive.
+        vs_client_id = server.oauth_config.get("client_id")
+        if isinstance(vs_client_id, str) and vs_client_id.strip() and vs_client_id.strip() not in expected_audiences:
+            expected_audiences.append(vs_client_id.strip())
 
         claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audiences)
         if claims is None:

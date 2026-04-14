@@ -2949,6 +2949,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             authorization_server = str(form.get("oauth_authorization_server", "")).strip()
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+            oauth_client_id = str(form.get("oauth_client_id", "")).strip()
 
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
@@ -2957,6 +2958,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -3110,6 +3113,7 @@ async def admin_edit_server(
             authorization_server = str(form.get("oauth_authorization_server", "")).strip()
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+            oauth_client_id = str(form.get("oauth_client_id", "")).strip()
 
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
@@ -3118,6 +3122,8 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
