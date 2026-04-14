@@ -1818,9 +1818,11 @@ def validate_core_url(value: str, field_name: str = "URL") -> str:
 
 # CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
 # Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
-META_MAX_KEYS: int = 16
-META_MAX_DEPTH: int = 2
-META_MAX_BYTES: int = 4096
+# These are now read from config (settings.meta_max_keys, etc.) but kept as
+# module-level aliases for backward-compatible imports.
+META_MAX_KEYS: int = settings.meta_max_keys
+META_MAX_DEPTH: int = settings.meta_max_depth
+META_MAX_BYTES: int = settings.meta_max_bytes
 
 
 def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
@@ -1832,10 +1834,14 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
     Raises:
         ValueError: if any limit is exceeded.
     """
+    max_keys = settings.meta_max_keys
+    max_depth = settings.meta_max_depth
+    max_bytes = settings.meta_max_bytes
+
     if not meta_data:
         return
-    if len(meta_data) > META_MAX_KEYS:
-        raise ValueError(f"meta_data exceeds maximum key count ({META_MAX_KEYS}): got {len(meta_data)}")
+    if len(meta_data) > max_keys:
+        raise ValueError(f"meta_data exceeds maximum key count ({max_keys}): got {len(meta_data)}")
 
     def _check_depth(obj: Any, depth: int) -> None:
         """Recursively enforce nesting depth, traversing both dicts and lists (CWE-400).
@@ -1844,8 +1850,8 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
         list-of-dicts does not hide an extra level of dict nesting — e.g.
         ``{"k": [{"l2": {"l3": "x"}}]}`` is correctly caught as depth 3.
         """
-        if depth > META_MAX_DEPTH:
-            raise ValueError(f"meta_data exceeds maximum nesting depth ({META_MAX_DEPTH})")
+        if depth > max_depth:
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({max_depth})")
         if isinstance(obj, dict):
             for v in obj.values():
                 _check_depth(v, depth + 1)
@@ -1861,7 +1867,7 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
         # raise TypeError rather than being silently coerced — keeps the byte limit
         # meaningful and matches the strict rejection behaviour used in prompt_service.
         size = len(json.dumps(meta_data))
-        if size > META_MAX_BYTES:
-            raise ValueError(f"meta_data exceeds maximum size ({META_MAX_BYTES} bytes): got {size}")
+        if size > max_bytes:
+            raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"meta_data is not serializable: {exc}") from exc
