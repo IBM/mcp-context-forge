@@ -6,6 +6,8 @@ description = "Ultra-fast MCP test server with echo and time tools"
 license = "Apache-2.0"
 authors = ["ContextForge Contributors"]
 
+[workspace]
+
 [dependencies]
 # MCP protocol implementation
 rmcp = { version = "0.12", features = [
@@ -42,9 +44,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
-strip = true

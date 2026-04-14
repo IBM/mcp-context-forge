@@ -1,0 +1,672 @@
+# Unified Rust CI: workspace (crates/*), maturin plugins, and tools. Uses Makefile rust-* targets.
+# Runs on ubuntu and macos only; Makefile requires a Unix shell (Windows not supported).
+name: Rust CI
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - "v*"
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "Makefile"
+      - "mcpgateway/db.py"
+      - "mcpgateway/alembic/**"
+      - "supply-chain/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main, develop]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "Makefile"
+      - "mcpgateway/db.py"
+      - "mcpgateway/alembic/**"
+      - "supply-chain/**"
+      - ".github/workflows/rust.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust-build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python (for uv / maturin)
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.9.2"
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo build (workspace)
+        run: make rust-build-check
+
+      - name: Generate Python stubs (maturin crates)
+        run: make rust-stub-gen
+      - name: Verify Python stubs
+        run: make rust-verify-stubs
+
+  rust-fmt:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup component add rustfmt
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo fmt (check)
+        run: make rust-fmt-check
+
+  rust-clippy:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup component add clippy
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo clippy (workspace)
+        run: make rust-lint
+
+  rust-test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo test (workspace)
+        run: make rust-test
+
+  rust-test-redis:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust test (Redis-backed paths)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AUTH_ENCRYPTION_SECRET: ci-rust-auth-encryption-secret-1234567890 # pragma: allowlist secret
+      REDIS_URL: redis://127.0.0.1:6379/0
+      MCP_RUST_REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7-bookworm
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-redis-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo test (Redis-backed runtime paths)
+        run: cargo test -p contextforge_mcp_runtime --test runtime
+
+  build-wheels:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Build wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.9.2"
+
+      - name: Install maturin
+        run: uv tool install maturin==1.12.6
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wheels-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Build wheels (maturin crates)
+        run: make rust-build-wheels
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-${{ matrix.os }}
+          path: crates/**/target/wheels/*.whl
+
+  security-audit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Run rust-deny
+        run: make rust-deny
+
+  supply-chain-vet:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Supply-chain vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Install cargo-vet
+        run: cargo install --locked cargo-vet --version 0.10.2
+
+      - name: Run rust-vet
+        run: make rust-vet
+
+  license-check:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: License check (workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Run rust-licenses (workspace)
+        run: make rust-licenses
+
+  benchmark-build-check:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Benchmarks (build check only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Verify benchmarks build (no run)
+        run: make rust-bench-check
+
+  coverage:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust and llvm-tools
+        run: |
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.9.2"
+
+      - name: Install coverage tools
+        run: |
+          uv tool install maturin==1.12.6
+          cargo install --locked cargo-llvm-cov --version 0.8.5
+
+      - name: Run rust-coverage
+        run: make rust-coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-coverage
+          path: coverage/cobertura.xml
+
+  documentation:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Build rust-doc
+        run: make rust-doc
+
+      - name: Upload docs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-docs
+          path: target/doc
+
+  resolve-release:
+    name: Resolve Rust Python release matrix
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    outputs:
+      has_pyo3_release_crates: ${{ steps.resolve.outputs.has_pyo3_release_crates }}
+      pyo3_release_crates: ${{ steps.resolve.outputs.pyo3_release_crates }}
+      wheel_matrix: ${{ steps.resolve.outputs.wheel_matrix }}
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          crates = []
+          for cargo_toml in sorted(pathlib.Path("crates").rglob("Cargo.toml")):
+              pyproject_toml = cargo_toml.with_name("pyproject.toml")
+              if not pyproject_toml.exists():
+                  continue
+
+              cargo = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+              pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))
+
+              dependencies = cargo.get("dependencies", {})
+              if "pyo3" not in dependencies:
+                  continue
+
+              build_system = pyproject.get("build-system", {})
+              backend = str(build_system.get("build-backend", ""))
+              requires = [str(item) for item in build_system.get("requires", [])]
+              if "maturin" not in backend and not any("maturin" in item for item in requires):
+                  continue
+
+              crates.append(cargo_toml.parent.as_posix())
+
+          github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with github_output.open("a", encoding="utf-8") as handle:
+              handle.write(f"pyo3_release_crates={json.dumps(crates)}\n")
+              handle.write(f"has_pyo3_release_crates={'true' if crates else 'false'}\n")
+          PY
+          echo 'wheel_matrix=[{"runner":"ubuntu-latest","platform":"linux-x86_64"},{"runner":"ubuntu-24.04-arm","platform":"linux-aarch64"},{"runner":"ubuntu-24.04-s390x","platform":"linux-s390x"},{"runner":"ubuntu-24.04-ppc64le","platform":"linux-ppc64le"},{"runner":"macos-latest","platform":"macos-arm64"},{"runner":"windows-latest","platform":"windows-x86_64"}]' >> "${GITHUB_OUTPUT}"
+
+  release-wheel:
+    name: Release wheels (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    if: startsWith(github.ref, 'refs/tags/') && needs.resolve-release.outputs.has_pyo3_release_crates == 'true'
+    needs: [rust-build, rust-fmt, rust-clippy, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.resolve-release.outputs.wheel_matrix) }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        if: ${{ matrix.runner != 'ubuntu-24.04-s390x' && matrix.runner != 'ubuntu-24.04-ppc64le' }}
+        with:
+          python-version: "3.12"
+
+      - name: Install system Python on partner runners
+        if: ${{ matrix.runner == 'ubuntu-24.04-s390x' || matrix.runner == 'ubuntu-24.04-ppc64le' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.12 python3.12-dev python3.12-venv python3-pip
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          python_bin_dir="${RUNNER_TEMP}/python-bin"
+          mkdir -p "${python_bin_dir}"
+          ln -sf "$(which python3.12)" "${python_bin_dir}/python"
+          export PATH="${python_bin_dir}:$PATH"
+          echo "${python_bin_dir}" >> "${GITHUB_PATH}"
+          python --version
+          python -m pip --version
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Install cargo-auditable
+        run: cargo install --locked cargo-auditable --version 0.7.4
+
+      - name: Wrap cargo with cargo-auditable for release builds
+        run: |
+          mkdir -p "${RUNNER_TEMP}/cargo-wrapper"
+          REAL_CARGO="$(command -v cargo)"
+          cat > "${RUNNER_TEMP}/cargo-wrapper/cargo" <<EOF
+          #!/bin/sh
+          exec "${REAL_CARGO}" auditable "\$@"
+          EOF
+          chmod +x "${RUNNER_TEMP}/cargo-wrapper/cargo"
+          echo "${RUNNER_TEMP}/cargo-wrapper" >> "${GITHUB_PATH}"
+
+      - name: Install uv and maturin
+        run: python -m pip install uv==0.9.30 maturin==1.12.6
+
+      - name: Build release wheels for dynamic PyO3 crates
+        env:
+          RELEASE_CRATES: ${{ needs.resolve-release.outputs.pyo3_release_crates }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          crates = json.loads(os.environ["RELEASE_CRATES"])
+          if not crates:
+              raise SystemExit("No releasable PyO3 crates found")
+
+          for crate in crates:
+              crate_dir = pathlib.Path(crate)
+              crate_dir.joinpath("dist").mkdir(exist_ok=True)
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "maturin",
+                      "build",
+                      "--release",
+                      "--manifest-path",
+                      str(crate_dir / "Cargo.toml"),
+                      "--out",
+                      str(crate_dir / "dist"),
+                  ],
+                  check=True,
+              )
+          PY
+
+      - name: Upload release wheel artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-wheel-${{ matrix.platform }}
+          path: crates/**/dist/*.whl
+
+  release-sdist:
+    name: Release sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: startsWith(github.ref, 'refs/tags/') && needs.resolve-release.outputs.has_pyo3_release_crates == 'true'
+    needs: [rust-build, rust-fmt, rust-clippy, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Install uv and maturin
+        run: python -m pip install uv==0.9.30 maturin==1.12.6
+
+      - name: Build release sdists for dynamic PyO3 crates
+        env:
+          RELEASE_CRATES: ${{ needs.resolve-release.outputs.pyo3_release_crates }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          crates = json.loads(os.environ["RELEASE_CRATES"])
+          if not crates:
+              raise SystemExit("No releasable PyO3 crates found")
+
+          for crate in crates:
+              crate_dir = pathlib.Path(crate)
+              crate_dir.joinpath("dist").mkdir(exist_ok=True)
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "maturin",
+                      "sdist",
+                      "--manifest-path",
+                      str(crate_dir / "Cargo.toml"),
+                      "--out",
+                      str(crate_dir / "dist"),
+                  ],
+                  check=True,
+              )
+          PY
+
+      - name: Upload release sdist artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-sdist
+          path: crates/**/dist/*.tar.gz
+
+  release-publish:
+    name: Publish Rust Python packages
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && needs.resolve-release.outputs.has_pyo3_release_crates == 'true'
+    needs: [resolve-release, release-wheel, release-sdist]
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.9.2"
+
+      - name: Publish distributions to PyPI
+        run: uv publish dist/*
