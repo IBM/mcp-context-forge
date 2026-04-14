@@ -232,6 +232,81 @@ async def get_oauth_protected_resource(
     )
 
 
+@router.get("/.well-known/oauth-authorization-server/{path:path}")
+async def get_oauth_authorization_server_metadata(
+    path: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """RFC 8414 OAuth 2.0 Authorization Server Metadata endpoint.
+
+    When a virtual server has MCP OAuth proxy configured (``client_id``
+    in ``oauth_config``), ContextForge acts as the authorization server.
+    This endpoint returns metadata that MCP clients use to discover
+    the authorization, token, and registration endpoints.
+
+    Path format: ``/.well-known/oauth-authorization-server/servers/{UUID}``
+    (derived by MCP clients from ``authorization_servers`` in the
+    RFC 9728 resource metadata).
+
+    Args:
+        path: The issuer path after the well-known prefix.
+        request: FastAPI request object for URL construction.
+        db: Database session dependency.
+
+    Returns:
+        JSONResponse with RFC 8414 Authorization Server Metadata.
+
+    Raises:
+        HTTPException: 404 if server not found or MCP OAuth not configured.
+    """
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Parse path: expect "servers/{UUID}" or "servers/{UUID}/..."
+    path_parts = path.strip("/").split("/")
+    if len(path_parts) < 2 or path_parts[0] != "servers":
+        raise HTTPException(status_code=404, detail="Invalid path format")
+
+    server_id = path_parts[1]
+    if not UUID_PATTERN.match(server_id):
+        raise HTTPException(status_code=404, detail="Invalid server_id format")
+
+    # Validate server exists and has MCP OAuth proxy configured
+    from mcpgateway.db import Server as DbServer
+
+    server = db.get(DbServer, server_id)
+    if not server or not server.enabled:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    oauth_config = getattr(server, "oauth_config", None) or {}
+    if not oauth_config.get("client_id"):
+        raise HTTPException(status_code=404, detail="MCP OAuth proxy not configured for this server")
+
+    # Build ContextForge endpoint URLs
+    base_url = get_base_url_with_protocol(request)
+
+    metadata = {
+        "issuer": f"{base_url}/servers/{server_id}",
+        "authorization_endpoint": f"{base_url}/oauth/authorize/servers/{server_id}",
+        "token_endpoint": f"{base_url}/oauth/token/servers/{server_id}",
+        "registration_endpoint": f"{base_url}/oauth/register/{server_id}",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "code_challenge_methods_supported": ["S256"],
+    }
+
+    # Add scopes if configured
+    scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+    if scopes:
+        metadata["scopes_supported"] = scopes
+
+    headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
+    logger.debug("Served OAuth AS metadata for server %s", server_id)
+    return JSONResponse(content=metadata, headers=headers)
+
+
 def get_well_known_file_content(filename: str) -> PlainTextResponse:
     """
     Get the response for a well-known URI file.
