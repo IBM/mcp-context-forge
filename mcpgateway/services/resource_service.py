@@ -126,44 +126,14 @@ metrics_buffer = get_metrics_buffer_service()
 
 
 def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a ReadResource ClientRequest that carries _meta (CWE-20, CWE-284).
-
-    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
-    key written into the dict so the subsequent ``model_validate`` call
-    resolves it correctly regardless of ``populate_by_name`` settings.
-
-    ``send_request`` is used instead of ``session.read_resource()`` because the
-    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
-    updated if the SDK later adds that capability.
-
-    Args:
-        uri: The resource URI.
-        meta_data: Validated metadata dict to inject as ``_meta``.
-
-    Returns:
-        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
-    """
+    """Build a ReadResource ClientRequest that carries _meta."""
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
     _rp_dict["_meta"] = meta_data
     return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
-    """Dispatch a read_resource call, injecting ``_meta`` when meta_data is provided.
-
-    Eliminates the repeated ``if meta_data: send_request … else: read_resource``
-    pattern across every transport/pool branch in this module.
-
-    Args:
-        session: An active MCP :class:`ClientSession`.
-        uri: The resource URI to read.
-        meta_data: Optional validated metadata dict. When ``None`` the standard
-            SDK helper is used; when non-empty the low-level ``send_request``
-            path is taken to carry ``_meta``.
-
-    Returns:
-        The raw MCP result object (caller extracts ``.contents``).
-    """
+    """Dispatch read_resource and inject _meta when metadata is provided."""
     if meta_data:
         return await session.send_request(
             _build_read_resource_request(uri, meta_data),
@@ -1631,7 +1601,7 @@ class ResourceService(BaseService):
         resource_uri: str,
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
-        meta_data: Optional[Dict[str, Any]] = None,  # Forwarded as _meta in upstream MCP requests
+        meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
         resource_obj: Optional[Any] = None,
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
@@ -1805,7 +1775,7 @@ class ResourceService(BaseService):
                     try:
                         db_span_id = observability_service.start_span(
                             trace_id=trace_id,
-                            name="invoke.resource",
+                            name="resource.read",
                             attributes={
                                 "resource.name": resource_name if resource_name else "unknown",
                                 "resource.id": str(resource_id) if resource_id else "unknown",
@@ -1826,10 +1796,10 @@ class ResourceService(BaseService):
                     "gateway.transport": getattr(gateway, "transport") or "uknown",
                     "gateway.url": getattr(gateway, "url") or "unknown",
                 }
-                if is_input_capture_enabled("invoke.resource"):
+                if is_input_capture_enabled("resource.read"):
                     span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": str(uri) if uri else "unknown"})
 
-                with create_span("invoke.resource", span_attributes) as span:
+                with create_span("resource.read", span_attributes) as span:
                     valid = False
                     if gateway.ca_certificate:
                         if settings.enable_ed25519_signing:
@@ -1985,8 +1955,8 @@ class ResourceService(BaseService):
                             ``None`` instead of raising.
 
                             Note:
-                                When meta_data is provided, the request is built using send_request
-                                with _meta injected into ReadResourceRequestParams.
+                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
+                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2066,8 +2036,8 @@ class ResourceService(BaseService):
                             of propagating the exception.
 
                             Note:
-                                When meta_data is provided, the request is built using send_request
-                                with _meta injected into ReadResourceRequestParams.
+                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
+                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2137,10 +2107,12 @@ class ResourceService(BaseService):
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
+                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
+                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
-                        if span and resource_text is not None and is_output_capture_enabled("invoke.resource"):
+                        if span and resource_text is not None and is_output_capture_enabled("resource.read"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
                         success = True  # Mark as successful before returning
                         return resource_text
@@ -2162,7 +2134,7 @@ class ResourceService(BaseService):
                                     status_message=error_message if error_message else None,
                                 )
                                 db_span_ended = True
-                                logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
+                                logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                             except Exception as e:
                                 logger.warning(f"Failed to end observability span for invoking resource: {e}")
 
@@ -2429,7 +2401,6 @@ class ResourceService(BaseService):
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
-
                                     result = await _read_resource_with_meta(session, uri, meta_data)
 
                                     # Convert MCP result to MCP-compliant content models
