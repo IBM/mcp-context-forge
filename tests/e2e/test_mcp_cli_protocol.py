@@ -337,6 +337,154 @@ class TestMcpStdioProtocol:
         text = result["content"][0]["text"]
         print(f"    -> get-stats = {text[:120]}")
 
+    def _require_declared_output_schema(self, tool_name: str) -> dict:
+        """Preflight guard: assert the gateway advertises ``tool_name`` with a non-empty outputSchema.
+
+        Without this guard, a stale fast_test_server image, an uncompleted
+        federation sync, or a gateway-side tool validation rejection (such
+        as the unsafe-character filter that caused a ``schema_error``
+        description with ``;`` to be silently dropped during PR development)
+        would cause the actual ``tools/call`` tests below to fail with a
+        misleading assertion. This helper hits ``tools/list`` through the
+        same stdio wrapper the tests use, confirms both the tool name and
+        the declared schema are present, and fails fast with an actionable
+        message pointing the operator at the image rebuild.
+
+        MCP spec reference: 2025-11-25 "Output Schema" — tools with a
+        declared output schema must expose it via ``tools/list``.
+        """
+        messages = [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        ]
+        responses = _send_jsonrpc_via_wrapper(self.env, messages)
+        list_resp = next((r for r in responses if r.get("id") == 2), None)
+        assert list_resp is not None, f"No tools/list response: {responses}"
+        tools = list_resp.get("result", {}).get("tools", [])
+        match = next((t for t in tools if t.get("name") == tool_name), None)
+        assert match is not None, (
+            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
+        )
+        schema = match.get("outputSchema") or match.get("output_schema")
+        assert schema, (
+            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " f"Check that the upstream tool declares an output_schema and that " f"the gateway sync completed successfully."
+        )
+        return schema
+
+    def test_tools_call_schema_error_preserves_payload(self) -> None:
+        """End-to-end regression guard for ContextForge #4202.
+
+        Issue: https://github.com/IBM/mcp-context-forge/issues/4202
+
+        Drives the full MCP-federation path through the stdio wrapper →
+        gateway (server-side SDK) → federated Rust ``fast_test_server`` →
+        gateway ingress validator → gateway egress handler → back to the
+        stdio client. The upstream ``fast-test-schema-error`` tool declares
+        an ``outputSchema`` of ``{"required": ["recognitionId"], ...}`` and
+        always returns ``isError=true`` with the verbatim user text
+        "You cannot send more than 200 points". Every validator in the
+        chain — MCP Python client SDK, gateway's own
+        ``_extract_and_validate_structured_content`` (ingress fix), and
+        the MCP Python server SDK at the gateway's egress (via the
+        ``types.CallToolResult`` short-circuit) — must honour the spec's
+        "error responses do not require structured content" rule and leave
+        the payload untouched.
+
+        The assertion additionally guards against the specific pre-fix
+        symptom: a payload substituted with a JSON validation-error dict
+        containing ``"validator"`` or ``"required"`` keys. Seeing those
+        strings in the returned text indicates a regression of the ingress
+        fix, the egress fix, or both.
+
+        MCP spec references:
+        - 2025-11-25 "Error Handling":
+          https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling
+        - 2025-11-25 "Output Schema":
+          https://modelcontextprotocol.io/specification/2025-11-25/server/tools#output-schema
+
+        Related:
+        - Ingress unit guards:
+          ``tests/unit/mcpgateway/services/test_tool_service_coverage.py::TestExtractAndValidateErrorResponses``
+        - Egress unit guards (local + pooled branches):
+          ``tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress``
+          and ``::test_call_tool_session_affinity_forwarded_preserves_is_error``
+        - Non-MCP path coverage gap (REST/OpenAPI/A2A):
+          https://github.com/IBM/mcp-context-forge/issues/4207
+        """
+        self._require_declared_output_schema("fast-test-schema-error")
+        messages = [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "fast-test-schema-error", "arguments": {}}},
+        ]
+        responses = _send_jsonrpc_via_wrapper(self.env, messages)
+        call_resp = next((r for r in responses if r.get("id") == 2), None)
+        assert call_resp is not None, f"No response for id=2: {responses}"
+        assert "result" in call_resp, f"Expected result envelope: {call_resp}"
+        result = call_resp["result"]
+        assert result.get("isError") is True, f"Expected isError=true, got: {result}"
+        text = result.get("content", [{}])[0].get("text", "")
+        # The original error text must be preserved — not replaced by a schema
+        # validation error payload (which would contain keys like 'validator'
+        # or 'required').
+        assert "200 points" in text, f"Expected original error text to be preserved, got: {text!r}"
+        assert '"validator"' not in text and '"required"' not in text, f"Error payload appears to have been replaced by a validation error (regression of #4202): {text!r}"
+        print(f"    -> schema_error isError=true preserved: {text}")
+
+    def test_tools_call_schema_success_validates_payload(self) -> None:
+        """End-to-end positive control for the #4202 fix.
+
+        While ``test_tools_call_schema_error_preserves_payload`` proves the
+        gateway *skips* validation for error responses, this test proves
+        that validation *still runs and succeeds* for legitimate responses —
+        catching any over-broad fix that accidentally disables the success
+        path. The upstream ``fast-test-schema-success`` Rust fixture
+        declares the same ``outputSchema`` as ``schema_error`` but returns
+        ``isError=false`` with ``{"recognitionId": "rec-123", "message":
+        "ok"}``, which satisfies the schema. Assertions:
+
+        1. ``isError`` is absent/false.
+        2. The text content round-trips through JSON.
+        3. The MCP SDK's server-side validator at the gateway's egress
+           propagates ``structuredContent`` to the downstream client —
+           proving the egress handler's success branch still returns the
+           ``(unstructured, structured)`` tuple so the SDK validates.
+
+        Without this positive control, a future refactor that simply drops
+        the validator everywhere would pass
+        ``test_tools_call_schema_error_preserves_payload`` (no validation
+        runs, error text is preserved) while silently breaking
+        ``outputSchema`` enforcement.
+
+        MCP spec reference: 2025-11-25 "Output Schema":
+        https://modelcontextprotocol.io/specification/2025-11-25/server/tools#output-schema
+
+        Related:
+        - Negative counterpart (#4202 skip):
+          ``test_tools_call_schema_error_preserves_payload``
+        - Structured-content attachment by the ingress validator:
+          ``tests/unit/mcpgateway/services/test_tool_service_coverage.py::TestExtractAndValidateErrorResponses::test_validate_success_response_normally``
+        """
+        self._require_declared_output_schema("fast-test-schema-success")
+        messages = [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "fast-test-schema-success", "arguments": {}}},
+        ]
+        responses = _send_jsonrpc_via_wrapper(self.env, messages)
+        call_resp = next((r for r in responses if r.get("id") == 2), None)
+        assert call_resp is not None, f"No response for id=2: {responses}"
+        assert "result" in call_resp, f"Expected result envelope: {call_resp}"
+        result = call_resp["result"]
+        assert not result.get("isError", False), f"Expected success, got: {result}"
+        text = result.get("content", [{}])[0].get("text", "")
+        payload = json.loads(text)
+        assert payload.get("recognitionId") == "rec-123", f"Unexpected payload: {payload}"
+        # When validation succeeds the gateway attaches structured_content
+        # alongside the original text content.
+        structured = result.get("structuredContent") or result.get("structured_content")
+        assert structured is not None, f"Expected structured content on successful validation: {result}"
+        assert structured.get("recognitionId") == "rec-123", f"Unexpected structured content: {structured}"
+        print(f"    -> schema_success validated: {payload}")
+
     def test_tools_call_nonexistent_tool(self) -> None:
         """JSON-RPC tools/call nonexistent-tool-xyz: returns error response."""
         messages = [
