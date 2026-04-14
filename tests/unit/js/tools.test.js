@@ -18,6 +18,10 @@ import {
   validateTool,
   cleanupToolTestState,
   cleanupToolTestModal,
+  fetchToolDetails,
+  createFormInput,
+  generateToolFormFields,
+  invokeTool,
 } from "../../../mcpgateway/admin_ui/tools.js";
 import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
 import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
@@ -1768,7 +1772,8 @@ describe("runToolTest - additional", () => {
     );
     await runToolTest();
 
-    expect(consoleSpy).toHaveBeenCalledWith("Tool test already running");
+    // When button is disabled, runToolTest returns silently without making a request
+    expect(fetchWithTimeout).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 
@@ -2189,7 +2194,7 @@ describe("runToolTest - scalar parameter types", () => {
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
     const body = JSON.parse(fetchWithTimeout.mock.calls.at(-1)[1].body);
-    expect(body.params[paramKey]).toEqual(expected);
+    expect(body.params.arguments[paramKey]).toEqual(expected);
     consoleSpy.mockRestore();
   });
 
@@ -2244,7 +2249,7 @@ describe("runToolTest - array parameter types", () => {
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
     const body = JSON.parse(fetchWithTimeout.mock.calls.at(-1)[1].body);
-    expect(body.params[paramKey]).toEqual(expected);
+    expect(body.params.arguments[paramKey]).toEqual(expected);
     consoleSpy.mockRestore();
   });
 
@@ -3111,5 +3116,447 @@ describe("initToolSelect - Select All respects search filter", () => {
     consoleSpy.mockRestore();
     warnSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchToolDetails
+// ---------------------------------------------------------------------------
+describe("fetchToolDetails", () => {
+  test("successfully fetches tool details", async () => {
+    window.ROOT_PATH = "";
+
+    const mockTool = {
+      name: "test-tool",
+      displayName: "Test Tool",
+      description: "A test tool",
+      input_schema: {
+        properties: {
+          param1: { type: "string" },
+        },
+      },
+    };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockTool),
+    });
+
+    const result = await fetchToolDetails("test-tool");
+
+    expect(fetchWithTimeout).toHaveBeenCalledWith(
+      "/admin/tools/test-tool",
+      expect.objectContaining({
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      })
+    );
+    expect(result).toEqual(mockTool);
+  });
+
+  test("handles error when fetch fails", async () => {
+    window.ROOT_PATH = "";
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve("Not found"),
+    });
+
+    await expect(fetchToolDetails("nonexistent-tool")).rejects.toThrow(
+      "Failed to fetch tool details (404): Not found"
+    );
+  });
+
+  test("encodes tool name in URL", async () => {
+    window.ROOT_PATH = "";
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await fetchToolDetails("tool/with/slashes");
+
+    expect(fetchWithTimeout).toHaveBeenCalledWith(
+      "/admin/tools/tool%2Fwith%2Fslashes",
+      expect.any(Object)
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createFormInput
+// ---------------------------------------------------------------------------
+describe("createFormInput", () => {
+  test("creates select input for enum schema", () => {
+    const schema = {
+      type: "string",
+      enum: ["option1", "option2", "option3"],
+      default: "option2",
+    };
+
+    const input = createFormInput("testField", schema, false);
+
+    expect(input.tagName).toBe("SELECT");
+    expect(input.name).toBe("testField");
+    expect(input.required).toBe(false);
+    expect(input.options.length).toBe(3);
+    expect(input.options[0].value).toBe("option1");
+    expect(input.options[1].selected).toBe(true); // default
+  });
+
+  test("creates checkbox for boolean schema", () => {
+    const schema = {
+      type: "boolean",
+      default: true,
+    };
+
+    const input = createFormInput("boolField", schema, false);
+
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("checkbox");
+    expect(input.name).toBe("boolField");
+    expect(input.checked).toBe(true);
+  });
+
+  test("creates number input for number schema", () => {
+    const schema = {
+      type: "number",
+      default: 42,
+    };
+
+    const input = createFormInput("numField", schema, true);
+
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("number");
+    expect(input.name).toBe("numField");
+    expect(input.value).toBe("42");
+    expect(input.required).toBe(true);
+  });
+
+  test("creates number input for integer schema", () => {
+    const schema = {
+      type: "integer",
+      default: 10,
+    };
+
+    const input = createFormInput("intField", schema, false);
+
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("number");
+    expect(input.name).toBe("intField");
+    expect(input.value).toBe("10");
+  });
+
+  test("creates text input for string schema", () => {
+    const schema = {
+      type: "string",
+      default: "default value",
+    };
+
+    const input = createFormInput("strField", schema, true);
+
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("text");
+    expect(input.name).toBe("strField");
+    expect(input.value).toBe("default value");
+    expect(input.required).toBe(true);
+  });
+
+  test("creates text input for unspecified type", () => {
+    const schema = {};
+
+    const input = createFormInput("unknownField", schema, false);
+
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("text");
+    expect(input.name).toBe("unknownField");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateToolFormFields
+// ---------------------------------------------------------------------------
+describe("generateToolFormFields", () => {
+  test("generates form fields from tool schema", () => {
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    document.body.appendChild(formFields);
+
+    const tool = {
+      name: "test-tool",
+      input_schema: {
+        properties: {
+          param1: {
+            type: "string",
+            description: "First parameter",
+          },
+          param2: {
+            type: "number",
+            description: "Second parameter",
+          },
+        },
+        required: ["param1"],
+      },
+    };
+
+    generateToolFormFields(tool);
+
+    const fields = formFields.children;
+    expect(fields.length).toBe(2);
+
+    // Check first field (required)
+    const firstField = fields[0];
+    const firstLabel = firstField.querySelector("label");
+    expect(firstLabel.textContent).toBe("param1 *");
+    const firstDesc = firstField.querySelector("p");
+    expect(firstDesc.textContent).toBe("First parameter");
+    const firstInput = firstField.querySelector('input[name="param1"]');
+    expect(firstInput).toBeTruthy();
+    expect(firstInput.required).toBe(true);
+
+    // Check second field (not required)
+    const secondField = fields[1];
+    const secondLabel = secondField.querySelector("label");
+    expect(secondLabel.textContent).toBe("param2");
+    const secondInput = secondField.querySelector('input[name="param2"]');
+    expect(secondInput).toBeTruthy();
+    expect(secondInput.required).toBe(false);
+  });
+
+  test("displays message when tool has no parameters", () => {
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    document.body.appendChild(formFields);
+
+    const tool = {
+      name: "test-tool",
+      input_schema: {},
+    };
+
+    generateToolFormFields(tool);
+
+    expect(formFields.children.length).toBe(1);
+    expect(formFields.children[0].textContent).toBe(
+      "This tool has no input parameters."
+    );
+  });
+
+  test("clears existing fields before generating new ones", () => {
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    const existingChild = document.createElement("div");
+    existingChild.textContent = "Old content";
+    formFields.appendChild(existingChild);
+    document.body.appendChild(formFields);
+
+    const tool = {
+      name: "test-tool",
+      input_schema: {
+        properties: {
+          newParam: { type: "string" },
+        },
+      },
+    };
+
+    generateToolFormFields(tool);
+
+    expect(formFields.children.length).toBe(1);
+    expect(formFields.textContent).not.toContain("Old content");
+  });
+
+  test("returns early if form fields element not found", () => {
+    const tool = {
+      name: "test-tool",
+      input_schema: {
+        properties: {
+          param1: { type: "string" },
+        },
+      },
+    };
+
+    // Should not throw error
+    expect(() => generateToolFormFields(tool)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// invokeTool
+// ---------------------------------------------------------------------------
+describe("invokeTool", () => {
+  test("successfully opens tool test modal", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const mockTool = {
+      name: "test-tool",
+      displayName: "Test Tool",
+      description: "A test tool",
+      input_schema: {
+        properties: {
+          param1: { type: "string" },
+        },
+      },
+    };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockTool),
+    });
+
+    const titleEl = document.createElement("div");
+    titleEl.id = "tool-test-modal-title";
+    document.body.appendChild(titleEl);
+
+    const descEl = document.createElement("div");
+    descEl.id = "tool-test-modal-description";
+    document.body.appendChild(descEl);
+
+    const resultContainer = document.createElement("div");
+    resultContainer.id = "tool-test-result";
+    document.body.appendChild(resultContainer);
+
+    const modal = document.createElement("div");
+    modal.id = "tool-test-modal";
+    modal.classList.add("hidden");
+    document.body.appendChild(modal);
+
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    document.body.appendChild(formFields);
+
+    await invokeTool("test-tool");
+
+    expect(fetchWithTimeout).toHaveBeenCalled();
+    expect(titleEl.textContent).toBe("Test Tool: Test Tool");
+    expect(descEl.textContent).toBe("A test tool");
+    expect(modal.classList.contains("hidden")).toBe(false);
+    expect(formFields.children.length).toBeGreaterThan(0);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("uses tool name when displayName is not available", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const mockTool = {
+      name: "test-tool",
+      description: "A test tool",
+      input_schema: {},
+    };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockTool),
+    });
+
+    const titleEl = document.createElement("div");
+    titleEl.id = "tool-test-modal-title";
+    document.body.appendChild(titleEl);
+
+    const descEl = document.createElement("div");
+    descEl.id = "tool-test-modal-description";
+    document.body.appendChild(descEl);
+
+    const resultContainer = document.createElement("div");
+    resultContainer.id = "tool-test-result";
+    document.body.appendChild(resultContainer);
+
+    const modal = document.createElement("div");
+    modal.id = "tool-test-modal";
+    modal.classList.add("hidden");
+    document.body.appendChild(modal);
+
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    document.body.appendChild(formFields);
+
+    await invokeTool("test-tool");
+
+    expect(titleEl.textContent).toBe("Test Tool: test-tool");
+
+    consoleSpy.mockRestore();
+  });
+
+  test("handles fetch error gracefully", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { showErrorMessage } = await import(
+      "../../../mcpgateway/admin_ui/utils"
+    );
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve("Not found"),
+    });
+
+    await invokeTool("nonexistent-tool");
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Error invoking tool:",
+      expect.any(Error)
+    );
+    expect(showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to open tool test modal")
+    );
+
+    consoleSpy.mockRestore();
+  });
+
+  test("calls window.renderToolTestForm if available", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const mockTool = {
+      name: "test-tool",
+      displayName: "Test Tool",
+      description: "A test tool",
+      input_schema: {
+        properties: {
+          param1: { type: "string" },
+        },
+      },
+    };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockTool),
+    });
+
+    const titleEl = document.createElement("div");
+    titleEl.id = "tool-test-modal-title";
+    document.body.appendChild(titleEl);
+
+    const descEl = document.createElement("div");
+    descEl.id = "tool-test-modal-description";
+    document.body.appendChild(descEl);
+
+    const resultContainer = document.createElement("div");
+    resultContainer.id = "tool-test-result";
+    document.body.appendChild(resultContainer);
+
+    const modal = document.createElement("div");
+    modal.id = "tool-test-modal";
+    modal.classList.add("hidden");
+    document.body.appendChild(modal);
+
+    const formFields = document.createElement("div");
+    formFields.id = "tool-test-form-fields";
+    document.body.appendChild(formFields);
+
+    const mockRenderToolTestForm = vi.fn();
+    window.renderToolTestForm = mockRenderToolTestForm;
+
+    await invokeTool("test-tool");
+
+    expect(mockRenderToolTestForm).toHaveBeenCalledWith(mockTool);
+
+    delete window.renderToolTestForm;
+    consoleSpy.mockRestore();
   });
 });

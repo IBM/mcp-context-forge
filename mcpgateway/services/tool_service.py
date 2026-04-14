@@ -20,6 +20,7 @@ import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
+import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
 import os
 import re
@@ -294,6 +295,33 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
 
 
+def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
+    """Handle JSON parsing failures with graceful fallback to raw text.
+
+    Args:
+        response: The HTTP response object with .text attribute
+        error: The exception that was raised during JSON parsing
+        is_error_response: If True, logs as "error response", else "response"
+
+    Returns:
+        Dictionary with response_text key containing the raw response text
+        (truncated to REST_RESPONSE_TEXT_MAX_LENGTH if longer to avoid exposing sensitive data),
+        or error details if response body is empty/None
+    """
+    msg = "error response" if is_error_response else "response"
+    if not response.text:
+        logger.warning(f"Failed to parse JSON {msg}: {error}. Response body was empty.")
+        return {"error": "Empty response body"}
+
+    max_length = settings.rest_response_text_max_length
+    text = response.text[:max_length] if len(response.text) > max_length else response.text
+    if len(response.text) > max_length:
+        logger.warning(f"Failed to parse JSON {msg}: {error}. Response truncated from {len(response.text)} to {max_length} characters.")
+    else:
+        logger.warning(f"Failed to parse JSON {msg}: {error}")
+    return {"response_text": text}
+
+
 @lru_cache(maxsize=256)
 def _compile_jq_filter(jq_filter: str):
     """Cache compiled jq filter program.
@@ -419,6 +447,18 @@ def extract_using_jq(data, jq_filter=""):
         {'a': 1}
     """
     if not jq_filter or jq_filter == "":
+        return data
+
+    # Validate that jq_filter looks like a valid jq expression
+    jq_filter_str = str(jq_filter).strip()
+    if not jq_filter_str:
+        return data
+
+    # Check if it looks like an email address (common mistake when jsonpath_filter
+    # field contains corrupted data). Intentionally simple regex to avoid false
+    # positives with valid jq expressions like .foo|.bar
+    if re.match(r"^[^.\[\]|]+@[^.\[\]|]+\.[^.\[\]|]+$", jq_filter_str):
+        logger.warning(f"Invalid jq filter (email address): {jq_filter_str}. Treating as empty filter.")
         return data
 
     # Track if input was originally a string (for error handling)
@@ -4246,30 +4286,37 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL (after substitution) ---
-                    parsed = urlparse(final_url)
-                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    # --- Extract query params from URL if query_mapping or header_mapping is used ---
+                    # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
+                    # When mappings are absent (None/empty), preserve query params in URL for signed URLs.
+                    query_params = {}
+                    # Treat empty dict same as None (no mapping configured)
+                    has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
+                    has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
 
-                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    if has_query_mapping or has_header_mapping:
+                        parsed = urlparse(final_url)
+                        final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                        query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    if tool_query_mapping:
-                        # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
-                        # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
-                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
-                        # Reject non-scalar values that would be inappropriate as query parameters.
-                        for qk, qv in payload.items():
-                            if isinstance(qv, (dict, list)):
-                                raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
+                        if tool_query_mapping:
+                            # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
+                            # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
+                            payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                            # Reject non-scalar values that would be inappropriate as query parameters.
+                            for qk, qv in payload.items():
+                                if isinstance(qv, (dict, list)):
+                                    raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
 
-                    # Headers are mapped from the original arguments (not the path-param-reduced payload)
-                    # to preserve all available data for header injection.
-                    if tool_header_mapping:
-                        _validate_header_mapping_targets(tool_header_mapping, name)
-                        headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
-                        # Reject header values containing CRLF or null bytes to prevent header injection.
-                        for hdr_name, hdr_val in headers.items():
-                            if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
-                                raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
+                        # Headers are mapped from the original arguments (not the path-param-reduced payload)
+                        # to preserve all available data for header injection.
+                        if tool_header_mapping:
+                            _validate_header_mapping_targets(tool_header_mapping, name)
+                            headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
+                            # Reject header values containing CRLF or null bytes to prevent header injection.
+                            for hdr_name, hdr_val in headers.items():
+                                if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
+                                    raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
@@ -4277,15 +4324,31 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
-                                # For GET: merge extracted URL query params into payload; everything sent as query string
-                                if not tool_query_mapping:
-                                    payload.update(query_params)
+                                # For GET: Extract and merge URL query params with input arguments
+                                if not has_query_mapping and not has_header_mapping:
+                                    # When no mappings (None or empty), extract query params from URL
+                                    parsed = urlparse(final_url)
+                                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+                                    conflicts = set(payload.keys()) & set(query_params.keys())
+                                    if conflicts:
+                                        logger.warning(
+                                            f"REST tool GET request has conflicting parameters between URL and input arguments. "
+                                            f"URL query params will take precedence for: {', '.join(sorted(conflicts))}. "
+                                            f"Tool: {name}"
+                                        )
+
+                                payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
-                                # For POST/PUT/PATCH/DELETE: merge query params into the JSON body
-                                # (preserves backward compatibility with existing tool configurations)
-                                if not tool_query_mapping:
+                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
+                                if has_query_mapping or has_header_mapping:
+                                    # When mappings are used (not None/empty), query params were already extracted and mapped
+                                    # Merge them into the JSON body for backward compatibility with mapped tools
                                     payload.update(query_params)
+                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
+                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
@@ -4315,17 +4378,39 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-                        response.raise_for_status()
+                        try:
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError:
+                            # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
+                            try:
+                                result = response.json()
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=True)
+                            if "error" in result:
+                                error_val = result["error"]
+                            elif "response_text" in result:
+                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
+                            else:
+                                error_val = f"HTTP {response.status_code}"
+                            tool_result = ToolResult(
+                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                is_error=True,
+                                structured_content={"status_code": response.status_code},
+                            )
+                            # Don't mark as successful — success remains False
 
                         # Handle 204 No Content responses that have no body
-                        if response.status_code == 204:
+                        if tool_result is not None and tool_result.is_error:
+                            pass  # Already handled by HTTPStatusError above
+                        elif response.status_code == 204:
                             tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
                             success = True
                         elif response.status_code not in [200, 201, 202, 206]:
+                            # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
                             try:
                                 result = response.json()
-                            except orjson.JSONDecodeError:
-                                result = {"response_text": response.text} if response.text else {}
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=True)
                             error_val = result["error"] if "error" in result else "Tool error encountered"
                             tool_result = ToolResult(
                                 content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
@@ -4335,8 +4420,8 @@ class ToolService(BaseService):
                         else:
                             try:
                                 result = response.json()
-                            except orjson.JSONDecodeError:
-                                result = {"response_text": response.text} if response.text else {}
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=False)
                             logger.debug(f"REST API tool response: {result}")
                             filtered_response = extract_using_jq(result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)

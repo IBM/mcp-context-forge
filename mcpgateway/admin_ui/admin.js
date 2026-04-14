@@ -485,6 +485,7 @@ Admin.showUsageStatsModal = showUsageStatsModal;
 import {
   editTool,
   initToolSelect,
+  invokeTool,
   testTool,
   enrichTool,
   generateToolTestCases,
@@ -496,6 +497,7 @@ import {
 
 Admin.editTool = editTool;
 Admin.initToolSelect = initToolSelect;
+Admin.invokeTool = invokeTool;
 Admin.testTool = testTool;
 Admin.enrichTool = enrichTool;
 Admin.generateToolTestCases = generateToolTestCases;

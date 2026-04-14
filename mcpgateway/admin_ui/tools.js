@@ -2916,8 +2916,11 @@ export const runToolValidation = async function (testIndex) {
     const payload = {
       jsonrpc: "2.0",
       id: Date.now(),
-      method: AppState.currentTestTool.name,
-      params,
+      method: "tools/call",
+      params: {
+        name: AppState.currentTestTool.name,
+        arguments: params,
+      },
     };
 
     // Parse custom headers from the passthrough headers field
@@ -3199,14 +3202,16 @@ export const runToolTest = async function () {
   const runButton = document.querySelector('button[onclick="runToolTest()"]');
 
   if (!form || !AppState.currentTestTool) {
-    console.error("Tool test form or current tool not found");
+    console.error("Tool test form or current tool not found", {
+      form: !!form,
+      currentTestTool: AppState.currentTestTool,
+    });
     showErrorMessage("Tool test form not available");
     return;
   }
 
   // Prevent multiple concurrent test runs
   if (runButton && runButton.disabled) {
-    console.log("Tool test already running");
     return;
   }
 
@@ -3329,8 +3334,11 @@ export const runToolTest = async function () {
     const payload = {
       jsonrpc: "2.0",
       id: Date.now(),
-      method: AppState.currentTestTool.name,
-      params,
+      method: "tools/call",
+      params: {
+        name: AppState.currentTestTool.name,
+        arguments: params,
+      },
     };
 
     // Parse custom headers from the passthrough headers field
@@ -3500,5 +3508,184 @@ export const cleanupToolTestModal = function () {
     console.log("✓ Tool test modal cleaned up");
   } catch (error) {
     console.error("Error cleaning up tool test modal:", error);
+  }
+};
+
+// ===================================================================
+// TOOL INVOCATION (opens test modal by tool name)
+// ===================================================================
+
+/**
+ * Fetch tool details from the API by name.
+ * @param {string} toolName - The name of the tool to fetch
+ * @returns {Promise<Object>} The tool object
+ */
+export async function fetchToolDetails(toolName) {
+  const response = await fetchWithTimeout(
+    `${window.ROOT_PATH}/admin/tools/${encodeURIComponent(toolName)}`,
+    {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to fetch tool details (${response.status}): ${errorText}`
+    );
+  }
+
+  return await response.json();
+}
+
+/**
+ * Create a form input field based on schema.
+ * @param {string} key - The field name
+ * @param {Object} schema - The field schema
+ * @param {boolean} isRequired - Whether the field is required
+ * @returns {HTMLElement} The input element
+ */
+export function createFormInput(key, schema, isRequired) {
+  let input;
+  const baseInputClass =
+    "mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-gray-200";
+
+  if (schema.enum) {
+    input = document.createElement("select");
+    input.className = baseInputClass;
+    schema.enum.forEach((option) => {
+      const opt = document.createElement("option");
+      opt.value = option;
+      opt.textContent = option;
+      if (option === schema.default) {
+        opt.selected = true;
+      }
+      input.appendChild(opt);
+    });
+  } else if (schema.type === "boolean") {
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.className =
+      "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-700";
+    if (schema.default === true) {
+      input.checked = true;
+    }
+  } else if (schema.type === "number" || schema.type === "integer") {
+    input = document.createElement("input");
+    input.type = "number";
+    input.className = baseInputClass;
+    if (schema.default !== undefined) {
+      input.value = schema.default;
+    }
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    input.className = baseInputClass;
+    if (schema.default !== undefined) {
+      input.value = schema.default;
+    }
+  }
+
+  input.name = key;
+  if (isRequired) {
+    input.required = true;
+  }
+
+  return input;
+}
+
+/**
+ * Generate form fields from tool input schema.
+ * @param {Object} tool - The tool object with input_schema
+ */
+export function generateToolFormFields(tool) {
+  const formFields = safeGetElement("tool-test-form-fields");
+  if (!formFields) return;
+
+  // Clear existing fields safely
+  while (formFields.firstChild) {
+    formFields.removeChild(formFields.firstChild);
+  }
+
+  if (!tool.input_schema || !tool.input_schema.properties) {
+    const noParams = document.createElement("p");
+    noParams.className = "text-sm text-gray-500 dark:text-gray-400";
+    noParams.textContent = "This tool has no input parameters.";
+    formFields.appendChild(noParams);
+    return;
+  }
+
+  const properties = tool.input_schema.properties;
+  const required = tool.input_schema.required || [];
+
+  for (const [key, schema] of Object.entries(properties)) {
+    const isRequired = required.includes(key);
+    const fieldDiv = document.createElement("div");
+
+    const label = document.createElement("label");
+    label.className =
+      "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1";
+    label.textContent = `${key}${isRequired ? " *" : ""}`;
+    fieldDiv.appendChild(label);
+
+    if (schema.description) {
+      const desc = document.createElement("p");
+      desc.className = "text-xs text-gray-500 dark:text-gray-400 mb-1";
+      desc.textContent = schema.description;
+      fieldDiv.appendChild(desc);
+    }
+
+    const input = createFormInput(key, schema, isRequired);
+    fieldDiv.appendChild(input);
+    formFields.appendChild(fieldDiv);
+  }
+}
+
+/**
+ * Open tool test modal and fetch tool details from API.
+ * Called by the "Invoke" button in the Tools table.
+ * @param {string} toolName - The name of the tool to test
+ */
+export const invokeTool = async function (toolName) {
+  try {
+    const tool = await fetchToolDetails(toolName);
+
+    // Store tool details in AppState for runToolTest to access
+    AppState.currentTestTool = tool;
+
+    // Populate modal title and description
+    const titleEl = safeGetElement("tool-test-modal-title");
+    const descEl = safeGetElement("tool-test-modal-description");
+    if (titleEl) {
+      titleEl.textContent = `Test Tool: ${tool.displayName || tool.name}`;
+    }
+    if (descEl) {
+      descEl.textContent = tool.description || "";
+    }
+
+    // Clear previous results
+    const resultContainer = safeGetElement("tool-test-result");
+    if (resultContainer) {
+      resultContainer.textContent = "";
+    }
+
+    // Show the modal
+    const modal = safeGetElement("tool-test-modal");
+    if (modal) {
+      modal.classList.remove("hidden");
+    }
+
+    // Generate form fields based on input schema
+    if (typeof window.renderToolTestForm === "function") {
+      window.renderToolTestForm(tool);
+    } else {
+      generateToolFormFields(tool);
+    }
+  } catch (error) {
+    console.error("Error invoking tool:", error);
+    showErrorMessage("Failed to open tool test modal: " + error.message);
   }
 };
