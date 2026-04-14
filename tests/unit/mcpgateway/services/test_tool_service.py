@@ -2219,12 +2219,12 @@ class TestToolService:
     async def test_invoke_tool_rest_post_with_path_query_and_body_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test POST request with path parameters, query parameters (with templates), and body parameters.
 
-        This test demonstrates the complete parameter handling:
+        This test demonstrates the complete parameter handling (no mappings = signed URL mode):
         - Path parameters (e.g., {user_id}) are substituted into the URL path
         - Query parameters can also use templates (e.g., ?api_key={api_key})
         - Static query parameters (e.g., ?version=v2) are preserved as-is
-        - Query parameters are merged into the JSON body for POST requests
-        - Remaining payload goes to the JSON body alongside merged query params
+        - Query parameters are preserved in URL for POST (signed URL support)
+        - Remaining payload goes to the JSON body (without query params)
         """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
@@ -2252,16 +2252,16 @@ class TestToolService:
 
         await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
-        # Verify parameter handling for POST:
+        # Verify parameter handling for POST (no mappings = signed URL support):
         # 1. Path parameter substituted: /users/456/posts
         # 2. Query param template substituted: api_key=secret123
         # 3. Static query param preserved: version=v2
-        # 4. Query params merged into JSON body (backward-compatible behavior for POST)
+        # 4. Query params STAY in URL (not merged into body) for signed URL support
         # 5. Body params: title and content (user_id and api_key removed after path/query substitution)
         tool_service._http_client.request.assert_called_once_with(
             "POST",
-            "http://example.com/api/users/456/posts",  # Path param substituted, query string stripped
-            json={"title": "New Post", "content": "Hello World", "api_key": "secret123", "version": "v2"},  # Body + merged query params
+            "http://example.com/api/users/456/posts?api_key=secret123&version=v2",  # Path param substituted, query params preserved
+            json={"title": "New Post", "content": "Hello World"},  # Only body params
             headers=mock_tool.headers,
         )
 
@@ -2324,11 +2324,11 @@ class TestToolService:
 
         await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
-        # Query params merged into JSON body, same as POST
+        # Query params preserved in URL for signed URL support (no mappings)
         tool_service._http_client.request.assert_called_once_with(
             "PUT",
-            "http://example.com/api/items/1",
-            json={"name": "updated", "version": "v2"},
+            "http://example.com/api/items/1?version=v2",
+            json={"name": "updated"},
             headers=mock_tool.headers,
         )
 
@@ -4335,10 +4335,12 @@ class TestToolService:
                 {"existing": "1", "mapped_query": "test"},
                 {"Content-Type": "application/json", "X-Mapped-Query": "test"},
             ),
+            # When both mappings are None, query params are preserved in URL (signed URL support)
+            # Only input args go in the body. Use {} to merge query params into body.
             (
                 None,
                 None,
-                {"query": "test", "existing": "1"},
+                {"query": "test"},  # Only input args, URL query params stay in URL
                 {"Content-Type": "application/json"},
             ),
             (
@@ -4396,12 +4398,21 @@ class TestToolService:
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
 
-        tool_service._http_client.request.assert_called_once_with(
-            "POST",
-            "http://example.com/tools/test",
-            json=expected_json,
-            headers=expected_headers,
-        )
+        # When both mappings are None, query params stay in URL (signed URL support)
+        if tool_query_mapping is None and tool_header_mapping is None:
+            tool_service._http_client.request.assert_called_once_with(
+                "POST",
+                "http://example.com/tools/test?existing=1",  # Query params preserved in URL
+                json=expected_json,
+                headers=expected_headers,
+            )
+        else:
+            tool_service._http_client.request.assert_called_once_with(
+                "POST",
+                "http://example.com/tools/test",
+                json=expected_json,
+                headers=expected_headers,
+            )
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_get_with_query_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):

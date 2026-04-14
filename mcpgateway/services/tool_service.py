@@ -4286,31 +4286,33 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL (after substitution) ---
-                    parsed = urlparse(final_url)
-                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    # --- Extract query params from URL if query_mapping or header_mapping is used ---
+                    # When mappings are present (not None), we strip query params from URL and apply transformations.
+                    # When mappings are absent (None), behavior differs by method (see below).
+                    query_params = {}
+                    if tool_query_mapping is not None or tool_header_mapping is not None:
+                        parsed = urlparse(final_url)
+                        final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                        query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                        if tool_query_mapping:
+                            # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
+                            # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
+                            payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                            # Reject non-scalar values that would be inappropriate as query parameters.
+                            for qk, qv in payload.items():
+                                if isinstance(qv, (dict, list)):
+                                    raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
 
-                    if tool_query_mapping:
-                        # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
-                        # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
-                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
-                        # Reject non-scalar values that would be inappropriate as query parameters.
-                        for qk, qv in payload.items():
-                            if isinstance(qv, (dict, list)):
-                                raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
-
-                    # Headers are mapped from the original arguments (not the path-param-reduced payload)
-                    # to preserve all available data for header injection.
-                    if tool_header_mapping:
-                        _validate_header_mapping_targets(tool_header_mapping, name)
-                        headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
-                        # Reject header values containing CRLF or null bytes to prevent header injection.
-                        for hdr_name, hdr_val in headers.items():
-                            if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
-                                raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
-
+                        # Headers are mapped from the original arguments (not the path-param-reduced payload)
+                        # to preserve all available data for header injection.
+                        if tool_header_mapping:
+                            _validate_header_mapping_targets(tool_header_mapping, name)
+                            headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
+                            # Reject header values containing CRLF or null bytes to prevent header injection.
+                            for hdr_name, hdr_val in headers.items():
+                                if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
+                                    raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
@@ -4318,8 +4320,13 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
-                                # For GET: merge extracted URL query params into payload; everything sent as query string
-                                if not tool_query_mapping:
+                                # For GET: Extract and merge URL query params with input arguments
+                                if tool_query_mapping is None and tool_header_mapping is None:
+                                    # When no mappings (both None), extract query params from URL
+                                    parsed = urlparse(final_url)
+                                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
                                     conflicts = set(payload.keys()) & set(query_params.keys())
                                     if conflicts:
                                         logger.warning(
@@ -4327,16 +4334,17 @@ class ToolService(BaseService):
                                             f"URL query params will take precedence for: {', '.join(sorted(conflicts))}. "
                                             f"Tool: {name}"
                                         )
-                                    payload.update(query_params)
+
+                                payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
-                                # For POST/PUT/PATCH/DELETE: Preserve query params in URL, only send input args in body.
-                                # This is critical for signed URLs (Azure SAS, AWS presigned URLs, webhook signatures).
-                                # When query_mapping is used, query params are already in payload; otherwise keep them in URL.
-                                if not tool_query_mapping and query_params:
-                                    # Reconstruct URL with query params
-                                    from urllib.parse import urlencode
-                                    final_url = f"{final_url}?{urlencode(query_params)}"
+                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
+                                if tool_query_mapping is not None or tool_header_mapping is not None:
+                                    # When mappings are used (not None), query params were already extracted and mapped
+                                    # Merge them into the JSON body for backward compatibility with mapped tools
+                                    payload.update(query_params)
+                                # else: No mappings (both None) - preserve query params in URL for signed URL support
+                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
