@@ -1667,7 +1667,7 @@ class ToolService(BaseService):
                 # upstream gets flagged in ops logs rather than silently
                 # downgraded to text.
                 logger.warning(
-                    "Dict payload matched MCP-envelope heuristics but failed ToolResult validation; " "falling back to text serialisation",
+                    "Dict payload matched MCP-envelope heuristics but failed ToolResult validation; falling back to text serialisation",
                     exc_info=True,
                 )
 
