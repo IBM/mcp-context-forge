@@ -68,6 +68,12 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
+/// Type alias for DNS cache entry: (resolved IPs, expiry time)
+type DnsCacheEntry = (Vec<IpAddr>, Instant);
+
+/// Type alias for DNS cache: hostname -> cache entry
+type DnsCache = HashMap<String, DnsCacheEntry>;
+
 /// Errors that can occur during URL validation.
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -172,7 +178,7 @@ pub struct UrlValidator {
 
     /// DNS result cache (hostname -> (IPs, expiry_time))
     /// TTL: 5 minutes to balance performance and security (DNS rebinding attacks)
-    dns_cache: Arc<RwLock<HashMap<String, (Vec<IpAddr>, Instant)>>>,
+    dns_cache: Arc<RwLock<DnsCache>>,
 
     /// DNS cache TTL
     dns_cache_ttl: Duration,
@@ -610,22 +616,33 @@ fn is_private_ip(ip: IpAddr) -> bool {
 mod tests {
     use super::*;
     use crate::config::RuntimeConfig;
+    use clap::Parser;
 
     fn create_test_config() -> RuntimeConfig {
-        // Create a test config with default SSRF protection
+        // Create a test config with default SSRF protection (allows localhost by default)
         let args = vec!["test"];
         RuntimeConfig::try_parse_from(args).unwrap()
     }
 
+    fn create_strict_config() -> RuntimeConfig {
+        // Create a strict config that blocks localhost and private networks
+        // Use environment variables to override bool defaults
+        unsafe {
+            std::env::set_var("SSRF_ALLOW_LOCALHOST", "false");
+            std::env::set_var("SSRF_ALLOW_PRIVATE_NETWORKS", "false");
+        }
+        let args = vec!["test"];
+        let config = RuntimeConfig::try_parse_from(args).unwrap();
+        unsafe {
+            std::env::remove_var("SSRF_ALLOW_LOCALHOST");
+            std::env::remove_var("SSRF_ALLOW_PRIVATE_NETWORKS");
+        }
+        config
+    }
+
     fn create_permissive_config() -> RuntimeConfig {
         // Create a config that allows localhost and private networks
-        let args = vec![
-            "test",
-            "--ssrf-allow-localhost",
-            "true",
-            "--ssrf-allow-private-networks",
-            "true",
-        ];
+        let args = vec!["test", "--ssrf-allow-private-networks"];
         RuntimeConfig::try_parse_from(args).unwrap()
     }
 
@@ -727,20 +744,20 @@ mod tests {
 
         for url in public_urls {
             let result = validator.validate_url(url, "test").await;
-            assert!(result.is_ok(), "Should allow public URL: {}", url);
+            assert!(result.is_ok(), "Should allow public URL: {} - Error: {:?}", url, result.err());
         }
     }
 
     #[tokio::test]
-    async fn test_blocks_localhost_by_default() {
-        let config = create_test_config();
+    async fn test_blocks_localhost_when_disabled() {
+        let config = create_strict_config();
         let validator = UrlValidator::from_config(&config).unwrap();
 
         let localhost_urls = vec!["http://localhost/", "http://127.0.0.1/"];
 
         for url in localhost_urls {
             let result = validator.validate_url(url, "test").await;
-            assert!(result.is_err(), "Should block localhost URL: {}", url);
+            assert!(result.is_err(), "Should block localhost URL when disabled: {}", url);
         }
     }
 
@@ -752,7 +769,7 @@ mod tests {
         let result = validator
             .validate_url("http://localhost:4444/rpc", "test")
             .await;
-        assert!(result.is_ok(), "Should allow localhost when configured");
+        assert!(result.is_ok(), "Should allow localhost when configured - Error: {:?}", result.err());
     }
 
     #[tokio::test]
