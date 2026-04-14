@@ -4335,8 +4335,8 @@ class TestToolService:
                 {"existing": "1", "mapped_query": "test"},
                 {"Content-Type": "application/json", "X-Mapped-Query": "test"},
             ),
-            # When both mappings are None, query params are preserved in URL (signed URL support)
-            # Only input args go in the body. Use {} to merge query params into body.
+            # When both mappings are None or empty, query params are preserved in URL (signed URL support)
+            # Only input args go in the body.
             (
                 None,
                 None,
@@ -4355,10 +4355,11 @@ class TestToolService:
                 {"query": "test", "existing": "1"},
                 {"Content-Type": "application/json", "X-Query": "test"},
             ),
+            # Empty dict mappings also preserve query params in URL (same as None)
             (
                 {},
                 {},
-                {"query": "test", "existing": "1"},
+                {"query": "test"},  # Only input args, URL query params stay in URL
                 {"Content-Type": "application/json"},
             ),
         ],
@@ -4398,8 +4399,13 @@ class TestToolService:
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
 
-        # When both mappings are None, query params stay in URL (signed URL support)
-        if tool_query_mapping is None and tool_header_mapping is None:
+        # When both mappings are None or empty dict, query params stay in URL (signed URL support)
+        # When mappings have actual values, query params are extracted and merged into body
+        has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
+        has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
+
+        if not has_query_mapping and not has_header_mapping:
+            # No mappings (None or empty) - query params preserved in URL
             tool_service._http_client.request.assert_called_once_with(
                 "POST",
                 "http://example.com/tools/test?existing=1",  # Query params preserved in URL
@@ -4407,6 +4413,7 @@ class TestToolService:
                 headers=expected_headers,
             )
         else:
+            # Mappings present - query params extracted and merged into body
             tool_service._http_client.request.assert_called_once_with(
                 "POST",
                 "http://example.com/tools/test",

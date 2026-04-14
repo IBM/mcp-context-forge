@@ -4287,10 +4287,14 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
                     # --- Extract query params from URL if query_mapping or header_mapping is used ---
-                    # When mappings are present (not None), we strip query params from URL and apply transformations.
-                    # When mappings are absent (None), behavior differs by method (see below).
+                    # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
+                    # When mappings are absent (None/empty), preserve query params in URL for signed URLs.
                     query_params = {}
-                    if tool_query_mapping is not None or tool_header_mapping is not None:
+                    # Treat empty dict same as None (no mapping configured)
+                    has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
+                    has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
+
+                    if has_query_mapping or has_header_mapping:
                         parsed = urlparse(final_url)
                         final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                         query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
@@ -4321,8 +4325,8 @@ class ToolService(BaseService):
                         try:
                             if method == "GET":
                                 # For GET: Extract and merge URL query params with input arguments
-                                if tool_query_mapping is None and tool_header_mapping is None:
-                                    # When no mappings (both None), extract query params from URL
+                                if not has_query_mapping and not has_header_mapping:
+                                    # When no mappings (None or empty), extract query params from URL
                                     parsed = urlparse(final_url)
                                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
@@ -4339,11 +4343,11 @@ class ToolService(BaseService):
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
                                 # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
-                                if tool_query_mapping is not None or tool_header_mapping is not None:
-                                    # When mappings are used (not None), query params were already extracted and mapped
+                                if has_query_mapping or has_header_mapping:
+                                    # When mappings are used (not None/empty), query params were already extracted and mapped
                                     # Merge them into the JSON body for backward compatibility with mapped tools
                                     payload.update(query_params)
-                                # else: No mappings (both None) - preserve query params in URL for signed URL support
+                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                                 # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
