@@ -59,6 +59,9 @@ include .snyk
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 exclude mcpgateway/static/iframe-test-harness.html
+# Vite build artifacts (gitignored; regenerated per build with hashed filenames)
+exclude mcpgateway/static/bundle-*.js
+recursive-exclude mcpgateway/static/.vite *
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
 recursive-include mcpgateway *.json

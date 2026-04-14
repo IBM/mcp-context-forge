@@ -272,12 +272,6 @@ install-db: venv
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
-	else \
-		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
-	fi
 	@$(MAKE) build-ui
 
 # help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
@@ -3713,7 +3707,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.25.8
+LINT_GO_TOOLCHAIN ?= go1.26.2
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -4968,32 +4962,14 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist
 	@echo "📦 Building Python package..."
 	@$(UV_BIN) build
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel & sdist written to ./dist'
-	@echo ''
-	@echo '💡 To publish both Python and Rust packages:'
-	@echo '   make publish         # Publish Python package'
-	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
 
-wheel: uv                    ## Build wheel only (Python + optionally Rust)
+wheel: uv                    ## Build wheel only
 	@echo "📦 Building Python wheel..."
 	@$(UV_BIN) build --wheel
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel written to ./dist'
 
 sdist: uv                    ## Build source distribution only
@@ -7443,7 +7419,7 @@ test-full: coverage test-js test-ui-report
 # 🔒 SECURITY TOOLS
 # =============================================================================
 # help: 🔒 SECURITY TOOLS
-# help: security-all        - Run all security tools (semgrep, dodgy, gitleaks, etc.)
+# help: security-all        - Run all security tools (semgrep, dodgy, detect-secrets-scan, etc.)
 # help: security-report     - Generate comprehensive security report in docs/security/
 # help: security-fix        - Auto-fix security issues where possible (pyupgrade, etc.)
 # help: semgrep             - Static analysis for security patterns
@@ -7453,8 +7429,6 @@ test-full: coverage test-js test-ui-report
 # help: interrogate         - Check docstring coverage
 # help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
-# help: gitleaks-install    - Install gitleaks secret scanner
-# help: gitleaks            - Scan git history for secrets
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
@@ -7463,9 +7437,9 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7477,9 +7451,6 @@ security-all:
 	    echo "- $$t"; \
 	    $(MAKE) $$t || true; \
 	done
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "🔍  Running gitleaks (if installed)..."
-	@command -v gitleaks >/dev/null 2>&1 && $(MAKE) gitleaks || echo "⚠️  gitleaks not installed - run 'make gitleaks-install'"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅  Security scan complete!"
 
@@ -7635,7 +7606,7 @@ async-clean:
 	@pkill -f "snakeviz" || true
 
 # Exclude pattern for detect-secrets to skip common directories and auto generated files
-DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock'
+DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock|go.sum|mcpgateway/sri_hashes.json'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
@@ -7701,6 +7672,10 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 	@echo "🛡️  Running DevSkim static analysis..."
 	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
 		export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		export DOTNET_ROLL_FORWARD=Major && \
+		if [ -z "$$DOTNET_ROOT" ] && [ -d /opt/homebrew/opt/dotnet/libexec ]; then \
+			export DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec; \
+		fi && \
 		echo "📂 Scanning mcpgateway/ for security anti-patterns..." && \
 		devskim analyze --source-code mcpgateway --output-file devskim-results.sarif -f sarif && \
 		echo "" && \
@@ -7769,7 +7744,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "✅ Auto-fixes applied where possible"
 	@echo "⚠️  Manual review still required for:"
 	@echo "   - Dependency updates (run 'make update')"
-	@echo "   - Secrets in code (review dodgy/gitleaks output)"
+	@echo "   - Secrets in code (review dodgy/detect-secrets output)"
 	@echo "   - Security patterns (review semgrep output)"
 	@echo "   - DevSkim findings (review devskim-results.sarif)"
 
@@ -8433,112 +8408,19 @@ rust-ensure-deps:                       ## Ensure Rust toolchain is installed
 		fi; \
 	fi
 
-rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
-	@$(MAKE) -C plugins_rust install
+# Rust crates in this tree (no top-level workspace).
+# Historical plugins_rust/ aggregator was removed during the Rust plugin restructure
+# (PR #3147); Rust plugins now ship as independent PyPI packages (cpex-*).
+RUST_CRATES := mcp-servers/rust/fast-test-server \
+               mcp-servers/rust/filesystem-server \
+               tools_rust/wrapper \
+               tools_rust/mcp_runtime
 
-rust-build: rust-ensure-deps            ## Build Rust plugins (release)
-	@$(MAKE) -C plugins_rust build
-
-rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
-	@$(MAKE) -C plugins_rust install
-
-rust-test: rust-ensure-deps             ## Run Rust plugin and MCP runtime tests
-	@$(MAKE) -C plugins_rust test
-	@$(MAKE) -C tools_rust/mcp_runtime test
-
-rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
-	@$(MAKE) -C plugins_rust test-python
-
-rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
-
-rust-bench: rust-ensure-deps            ## Run Rust benchmarks
-	@$(MAKE) -C plugins_rust bench
-
-rust-bench-build: rust-ensure-deps      ## Compile Rust plugin benchmarks without running them
-	@$(MAKE) -C plugins_rust bench-build
-
-rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
-	@$(MAKE) -C plugins_rust bench-compare
-
-rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
-	@$(MAKE) -C plugins_rust compare
-
-rust-check: rust-ensure-deps            ## Run all Rust checks (plugins and MCP runtime)
-	@$(MAKE) -C plugins_rust check
-	@$(MAKE) -C tools_rust/mcp_runtime lint
-
-rust-doc: rust-ensure-deps              ## Build Rust documentation
-	@$(MAKE) -C plugins_rust doc
-
-rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust build-wheels
-
-rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
-	@$(MAKE) -C plugins_rust audit
-
-rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on all Rust plugins
-	@$(MAKE) -C plugins_rust deny
-
-rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
-	@$(MAKE) -C plugins_rust coverage
-
-rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust release
-
-rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
-	@$(MAKE) -C plugins_rust release-publish
-
-rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
-	@$(MAKE) -C plugins_rust uninstall
-
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
-	@$(MAKE) -C plugins_rust uninstall
-	@$(MAKE) -C plugins_rust clean
-
-rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
-	@$(MAKE) -C plugins_rust verify
-
-rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
-	@$(MAKE) -C plugins_rust verify-stubs
-
-rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
-	@$(MAKE) -C plugins_rust clean-stubs
-
-rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
-	@echo "✅ Rust build dependencies installed"
-
-rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
-	@echo "🎯 Installing Rust cross-compilation targets..."
-	@rustup target add x86_64-unknown-linux-gnu
-	@rustup target add aarch64-unknown-linux-gnu
-	@rustup target add armv7-unknown-linux-gnueabihf
-	@rustup target add s390x-unknown-linux-gnu
-	@rustup target add powerpc64le-unknown-linux-gnu
-	@rustup target add x86_64-apple-darwin
-	@rustup target add aarch64-apple-darwin
-	@rustup target add x86_64-pc-windows-msvc
-
-rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
-	@echo "🎯 Ensuring Rust target $* is installed..."
-	@rustup target add $*
-	@$(MAKE) -C plugins_rust build-target-$*
-
-rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
-	@echo "✅ Built for all Linux architectures"
-
-rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
-	@echo "🦀 Building for macOS..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
-	@echo "🦀 Building for Windows..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
-	@echo "✅ Built for all platforms"
-
-rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
-	@echo "✅ Cross-compilation complete"
-
-rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
-	@echo "✅ Full cross-compilation setup and build complete"
+rust-check: rust-ensure-deps            ## Run Rust fmt, clippy, and tests across all crates
+	@for d in $(RUST_CRATES); do \
+	  echo "=== $$d ==="; \
+	  (cd $$d && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --release) || exit 1; \
+	done
 
 rust-mcp-runtime-build:                    ## Build the experimental Rust MCP runtime
 	@echo "🦀 Building experimental Rust MCP runtime..."

@@ -81,7 +81,6 @@ pub async fn edit_file(
         tmp.persist(&canon_path)
             .with_context(|| format!("Could not persist edits to '{}'", canon_path.display()))?;
         tracing::info!("persited file {}", canon_path.display());
-
     }
 
     Ok(Edits {

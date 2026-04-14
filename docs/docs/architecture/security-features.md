@@ -1,6 +1,6 @@
 # ContextForge Security Features
 
-**Current Version: 1.0.0-RC-2** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 1.0.0-RC-3** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 
@@ -147,7 +147,7 @@ The default allowlist includes common text, data, and media formats: `text/plain
 - **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).
 - **Security event logging.** `SECURITY_LOGGING_ENABLED` persists authentication attempts, authorization failures, and security-relevant events to the `security_events` table for audit and investigation. `SECURITY_LOGGING_LEVEL` controls verbosity: `all` (every event, high DB load), `failures_only` (default, authentication/authorization failures), or `high_severity` (critical events only). Disabled by default for performance.
 - **Continuous telemetry.** Permission checks, OAuth flows, and token usage log structured events with timestamps, IP addresses, user-agent strings, span attributes, and success/failure flags for downstream monitoring.
-- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make gitleaks`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
+- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make detect-secrets-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
 - **Observability hooks.** OpenTelemetry exports (when configured) tag spans with error flags, latency, and success status, supporting tracing-based detection of anomalies.
 - **Support bundle hygiene.** Operators can gather diagnostics without leaking credentials thanks to sanitisation routines and configurable size/time limits.
 

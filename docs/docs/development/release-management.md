@@ -318,10 +318,10 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 
 All formatting and linting checks must pass with zero errors.
 
-### 4.1 Code formatting and pre-commit hooks
+### 4.1 Code formatting
 
 ```bash
-make autoflake isort black pre-commit
+make autoflake isort black
 ```
 
 | Target | What it checks |
@@ -329,7 +329,9 @@ make autoflake isort black pre-commit
 | `autoflake` | Removes unused imports and variables |
 | `isort` | Sorts imports (profile=black) |
 | `black` | Formats Python code (line length 200) |
-| `pre-commit` | Runs all configured pre-commit hooks |
+
+!!! note "Pre-commit hooks run automatically"
+    The configured pre-commit hooks (whitespace, EOF fixers, detect-secrets, AST checks, etc.) are enforced at commit time and in CI — they do not need a dedicated release step. If a release commit passes pre-commit locally it will pass in CI; otherwise investigate before tagging.
 
 ### 4.2 Python linters
 
@@ -369,18 +371,18 @@ Runs eslint, nodejsscan, htmlhint, stylelint, retire.js, and npm audit against t
 ### 4.5 Secrets scanning
 
 ```bash
-make dodgy gitleaks
+make dodgy detect-secrets-scan
 ```
 
 | Target | What it checks |
 |--------|----------------|
 | `dodgy` | Hardcoded passwords, suspicious code patterns, secret-like strings |
-| `gitleaks` | Scans git history for leaked secrets, API keys, and tokens |
+| `detect-secrets-scan` | Scans tracked files for secrets against the `.secrets.baseline` allowlist |
 
-**Acceptance criteria:** No secrets or credentials detected. Any false positives should be added to `.gitleaksignore`.
+**Acceptance criteria:** No secrets or credentials detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`. `detect-secrets` also runs automatically as a pre-commit hook on every change, so most regressions are caught before merge.
 
 !!! warning "Run before tagging"
-    Secrets in git history survive even after deletion from the working tree. Always run `gitleaks` before creating a release tag.
+    Secrets in git history survive even after deletion from the working tree. Always run the secrets-scan gate before creating a release tag.
 
 ### 4.6 Security best practices
 
@@ -1331,11 +1333,11 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make test
 
 # 4. Format, lint & security
-make autoflake isort black pre-commit
+make autoflake isort black
 make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web
-make dodgy gitleaks
+make dodgy detect-secrets-scan
 make devskim prospector
 make check-headers
 

@@ -754,7 +754,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-3`               | string                                     |
 | `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag (dev/staging/prod)           | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |

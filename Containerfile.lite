@@ -35,7 +35,7 @@ ARG ENABLE_PROFILING=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
 
@@ -108,7 +108,7 @@ RUN npm run vite:build
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -252,7 +252,7 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Using ubi10-minimal for cross-platform compatibility
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1776071394 AS runtime
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
@@ -266,7 +266,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.0-RC-2"
+    org.opencontainers.image.version="1.0.0-RC-3"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
