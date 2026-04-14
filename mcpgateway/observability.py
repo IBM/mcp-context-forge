@@ -1181,6 +1181,20 @@ def init_telemetry() -> Optional[Any]:
 
             _TRACER = _NoopTracer()
 
+        # Auto-instrument httpx for outbound trace context propagation
+        # This ensures traceparent headers are injected into all HTTP requests
+        # made to backend MCP servers, enabling distributed tracing across the gateway.
+        try:
+            # Third-Party
+            from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # type: ignore[import-untyped]
+
+            HTTPXClientInstrumentor().instrument()
+            logger.info("   httpx instrumentation enabled (outbound trace propagation)")
+        except ImportError:
+            logger.debug("opentelemetry-instrumentation-httpx not installed — outbound propagation disabled")
+        except Exception as inst_err:
+            logger.warning("Failed to instrument httpx: %s", inst_err)
+
         logger.info(f"✅ OpenTelemetry initialized with {exporter_type} exporter")
         if exporter_type == "otlp":
             logger.info(f"   Endpoint: {_resolve_otlp_endpoint()}")
