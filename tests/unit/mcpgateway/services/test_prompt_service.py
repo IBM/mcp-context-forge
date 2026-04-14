@@ -3395,6 +3395,24 @@ class TestValidateMetaDataPrompt:
         with pytest.raises(ValueError, match="maximum nesting depth"):
             _validate_meta_data(deeply_nested)
 
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400 / Finding 4)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_non_serializable_value_raises(self):
+        """meta_data with non-JSON-serializable value must raise ValueError (CWE-20 / Finding 6)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
+
     def test_exact_max_depth_is_accepted(self):
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 

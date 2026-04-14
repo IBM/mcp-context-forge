@@ -64,6 +64,7 @@ from starlette.types import Receive, Scope, Send
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
@@ -1168,7 +1169,8 @@ def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestPar
     """
     if not meta:
         return None
-    logger.debug("Forwarding _meta to remote gateway: %s", meta)
+    # CWE-532: log only key names, never values which may carry PII/tokens
+    logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
     return PaginatedRequestParams(_meta=meta)
 
 
@@ -1252,7 +1254,8 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            logger.debug("Forwarding _meta to remote gateway: %s", meta)
+            # CWE-532: log only key names, never values which may carry PII/tokens
+            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
         # Use MCP SDK to connect and list resources
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -1312,7 +1315,8 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
-            logger.debug("Forwarding _meta to remote gateway: %s", meta)
+            # CWE-532: log only key names, never values which may carry PII/tokens
+            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -1322,8 +1326,10 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 # Prepare request params with _meta if provided
                 if meta:
                     # Create params and inject _meta
+                    # by_alias=True ensures the alias "_meta" key is written so
+                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
                     request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump()
+                    request_params_dict = request_params.model_dump(by_alias=True)
                     request_params_dict["_meta"] = meta
 
                     # Send request with _meta
@@ -2356,7 +2362,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         GATEWAY_ID_HEADER,
                         sorted(meta_data.keys()) if meta_data else None,
                     )
-
+                    # CWE-400: validate _meta limits before network I/O (bypassed in direct-proxy branch)
+                    _validate_meta_data(meta_data)
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)

@@ -1836,11 +1836,31 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
         return
     if len(meta_data) > META_MAX_KEYS:
         raise ValueError(f"meta_data exceeds maximum key count ({META_MAX_KEYS}): got {len(meta_data)}")
-    for v in meta_data.values():
-        if isinstance(v, dict) and any(isinstance(vv, dict) for vv in v.values()):
+
+    def _check_depth(obj: Any, depth: int) -> None:
+        """Recursively enforce nesting depth, traversing both dicts and lists (CWE-400).
+
+        Lists are traversed without incrementing the depth counter so that a
+        list-of-dicts does not hide an extra level of dict nesting — e.g.
+        ``{"k": [{"l2": {"l3": "x"}}]}`` is correctly caught as depth 3.
+        """
+        if depth > META_MAX_DEPTH:
             raise ValueError(f"meta_data exceeds maximum nesting depth ({META_MAX_DEPTH})")
+        if isinstance(obj, dict):
+            for v in obj.values():
+                _check_depth(v, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                _check_depth(item, depth)
+
+    for v in meta_data.values():
+        _check_depth(v, 1)
+
     try:
-        size = len(json.dumps(meta_data, default=str))
+        # CWE-20: Use strict json.dumps (no default=str) so non-serializable objects
+        # raise TypeError rather than being silently coerced — keeps the byte limit
+        # meaningful and matches the strict rejection behaviour used in prompt_service.
+        size = len(json.dumps(meta_data))
         if size > META_MAX_BYTES:
             raise ValueError(f"meta_data exceeds maximum size ({META_MAX_BYTES} bytes): got {size}")
     except (TypeError, ValueError) as exc:

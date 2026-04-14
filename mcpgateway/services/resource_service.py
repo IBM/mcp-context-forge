@@ -1684,6 +1684,10 @@ class ResourceService(BaseService):
         'using template: /template'
 
         """
+        # CWE-400: Validate meta_data limits before any further processing; invoke_resource is
+        # a separate entry point that must enforce the same guards as read_resource.
+        _validate_meta_data(meta_data)
+
         uri = None
         if resource_uri and resource_template_uri:
             uri = resource_template_uri

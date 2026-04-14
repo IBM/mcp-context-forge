@@ -7595,6 +7595,22 @@ class TestValidateMetaData:
         with pytest.raises(ValueError, match="maximum nesting depth"):
             _validate_meta_data(deeply_nested)
 
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # A list at depth 1 containing a dict that itself contains a dict = 3 levels total
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_list_of_scalars_at_max_depth_is_accepted(self):
+        """A list of scalar values at depth 1 must not be rejected (CWE-400 guard is not over-broad)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # List of scalars at first level is fine
+        _validate_meta_data({"tags": ["a", "b", "c"]})
+
     def test_exact_max_depth_is_accepted(self):
         """meta_data with exactly _META_MAX_DEPTH levels must be allowed."""
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
@@ -7609,6 +7625,16 @@ class TestValidateMetaData:
         large_value = "x" * (META_MAX_BYTES + 1)
         with pytest.raises(ValueError, match="maximum size"):
             _validate_meta_data({"k": large_value})
+
+    def test_non_serializable_value_raises(self):
+        """meta_data containing a non-JSON-serializable value must raise ValueError (CWE-20/Finding 6)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
 
 
 class TestBuildReadResourceRequest:
@@ -7657,4 +7683,34 @@ class TestReadResourceMetaDataValidationIntegration:
             await service.read_resource(db, resource_uri="file:///test.txt", meta_data=oversized)
 
         # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_oversized_meta_data(self):
+        """invoke_resource must raise ValueError for oversized meta_data before DB access (Finding 2 / CWE-400)."""
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=oversized)
+
+        # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_list_of_dicts_depth_bypass(self):
+        """invoke_resource must reject _meta with list-of-dicts depth bypass (Finding 2/3 / CWE-400)."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=hidden_depth)
+
         db.execute.assert_not_called()
