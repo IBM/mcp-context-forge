@@ -1678,23 +1678,31 @@ class ToolService(BaseService):
         # indicates an upstream whose shape the heuristic ought to learn
         # to recognise).
         logger.debug("Coercing %s payload to opaque text content", type(payload).__name__)
-        # orjson cannot natively serialise arbitrary Pydantic ``BaseModel``
-        # instances. A BaseModel reaching this branch means it either
-        # failed the earlier ``ToolResult.model_validate`` step *or* did
-        # not expose a ``content`` attribute at all — dump it first so
-        # we don't raise ``TypeError`` and break the "always returns a
-        # valid ``ToolResult``" invariant.
-        serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
+        # Both ``BaseModel.model_dump`` and ``orjson.dumps`` can raise on
+        # pathological inputs: a BaseModel with a custom field serialiser
+        # that throws, a ``PydanticSerializationError`` (``ValueError``
+        # subclass, not ``TypeError``), or a plain Python object that
+        # isn't JSON-representable. Wrap the whole dump + serialise
+        # sequence so the helper's "always returns a valid ``ToolResult``"
+        # invariant holds even in the presence of upstream bugs.
         try:
+            serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
             serialized = orjson.dumps(serializable_payload, option=orjson.OPT_INDENT_2)
-        except TypeError:
-            # Very last resort — something non-JSON-serialisable slipped
-            # through (e.g. ``set``, datetime without isoformat, a custom
-            # object without ``__json__``). Fall back to ``str(payload)``
-            # so the caller still sees *something* and the pipeline stays
-            # on contract.
-            logger.warning("Payload of type %s is not JSON-serialisable; using str() fallback", type(payload).__name__, exc_info=True)
-            return ToolResult(content=[TextContent(type="text", text=str(payload))])
+        except Exception:  # pylint: disable=broad-except
+            # Last-resort ``str(payload)`` so callers still see *something*.
+            # ``str()`` on a pathological object could itself raise, but
+            # ``repr()`` on an arbitrary Python object is effectively
+            # guaranteed by the runtime — keep the fallback defensive.
+            logger.warning(
+                "Payload of type %s could not be JSON-serialised; using str() fallback",
+                type(payload).__name__,
+                exc_info=True,
+            )
+            try:
+                text = str(payload)
+            except Exception:  # pylint: disable=broad-except
+                text = repr(payload)
+            return ToolResult(content=[TextContent(type="text", text=text)])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
     async def register_tool(

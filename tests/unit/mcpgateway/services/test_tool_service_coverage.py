@@ -2332,6 +2332,55 @@ class TestCoerceToToolResult:
         roundtripped = orjson.loads(result.content[0].text)
         assert roundtripped == payload
 
+    def test_basemodel_whose_model_dump_raises_falls_back_to_str(self, tool_service, caplog):
+        """``BaseModel.model_dump`` raising is caught by the last-resort handler.
+
+        Regression guard for a real failure mode: a Pydantic ``BaseModel``
+        whose ``model_dump(mode="json")`` raises (custom field serialiser
+        that throws, ``PydanticSerializationError`` — a ``ValueError``
+        subclass, not ``TypeError`` — fields holding non-representable
+        objects). Before this fix the ``model_dump`` call lived *outside*
+        the ``try/except`` block, so any such failure escaped the helper
+        and broke the "always returns a valid ``ToolResult``" invariant.
+
+        The current implementation wraps the entire dump-plus-serialise
+        sequence, catches any ``Exception``, logs at WARNING with
+        ``exc_info=True``, and falls back to ``str(payload)``.
+        """
+        # Third-Party
+        from pydantic import BaseModel  # pylint: disable=import-outside-toplevel
+
+        class RaisingDumpModel(BaseModel):
+            """BaseModel whose ``model_dump`` always raises.
+
+            Simulates a third-party model with a broken custom serialiser.
+            Must NOT expose a ``content`` attribute so the earlier
+            BaseModel-with-content branch doesn't handle it — this test
+            targets the opaque-JSON-fallback branch specifically.
+            """
+
+            # A benign field; the model_dump override is where the failure lives.
+            placeholder: str = "ignored"
+
+            def model_dump(self, *_args, **_kwargs):  # type: ignore[override]
+                raise ValueError("simulated custom-serialiser failure")
+
+            def __str__(self) -> str:
+                return "RaisingDumpModel<str-fallback>"
+
+        payload = RaisingDumpModel()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        assert result.content[0].text == "RaisingDumpModel<str-fallback>"
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
+        assert relevant, "Expected a WARNING-level log from the str() fallback"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None
+
     def test_non_json_serialisable_payload_falls_back_to_str(self, tool_service, caplog):
         """``orjson.dumps`` TypeError is caught and we fall back to ``str(payload)``.
 
@@ -2361,7 +2410,7 @@ class TestCoerceToToolResult:
         assert result.content[0].type == "text"
         # ``str(payload)`` should be visible in the fallback text.
         assert "NotJSONSerialisable" in result.content[0].text
-        relevant = [r for r in caplog.records if "not JSON-serialisable" in r.message]
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
         assert relevant, "Expected a WARNING-level log from the str() fallback"
         assert relevant[-1].levelname == "WARNING"
         assert relevant[-1].exc_info is not None
