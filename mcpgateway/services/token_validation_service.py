@@ -162,7 +162,43 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
         return
 
     aud_list = token_aud if isinstance(token_aud, list) else [token_aud]
-    if expected_audience in aud_list:
+
+    # Build set of acceptable audiences:
+    # 1. The configured resource or gateway URL
+    # 2. The OAuth client_id (Azure AD v1 tokens use client_id as audience
+    #    when scopes are requested with {client_id}/.default)
+    # 3. api://{client_id} (Azure AD app ID URI convention)
+    # 4. Resource IDs derived from {resource_id}/.default scope patterns
+    #    (Azure AD issues tokens with aud={resource_id} for these scopes)
+    acceptable = {expected_audience}
+    client_id = oauth_config.get("client_id")
+    if client_id:
+        acceptable.add(client_id)
+        acceptable.add(f"api://{client_id}")
+
+    # Extract resource IDs from Azure AD scope patterns.
+    # Pattern 1: "{resource_id}/.default" — token aud = resource_id
+    # Pattern 2: "api://{resource_id}/{permission}" — token aud = resource_id
+    # In both cases Entra ID issues the token with aud set to the
+    # resource application's client_id (a GUID), not the URI.
+    for scope in oauth_config.get("scopes", []):
+        if not isinstance(scope, str):
+            continue
+        if scope.endswith("/.default"):
+            resource_id = scope.removesuffix("/.default")
+            if resource_id:
+                acceptable.add(resource_id)
+                acceptable.add(f"api://{resource_id}")
+        elif scope.startswith("api://"):
+            # api://{resource_id}/{permission} — extract the resource_id
+            without_scheme = scope[len("api://"):]
+            slash_pos = without_scheme.find("/")
+            if slash_pos > 0:
+                resource_id = without_scheme[:slash_pos]
+                acceptable.add(resource_id)
+                acceptable.add(f"api://{resource_id}")
+
+    if any(a in acceptable for a in aud_list):
         result.audience_match = True
     else:
         result.audience_match = False
@@ -184,6 +220,11 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
     if not configured_scopes:
         return
 
+    # OIDC meta-scopes control the authorization request behavior but never
+    # appear in the access token's scope/scp claim.  Exclude them from the
+    # validation check to avoid false-positive "missing scope" errors.
+    _OIDC_META_SCOPES = {"openid", "offline_access", "profile", "email"}
+
     # Entra ID uses 'scp' claim; standard OAuth uses 'scope'
     token_scope_str = claims.get("scope") or claims.get("scp") or ""
     if not token_scope_str:
@@ -193,6 +234,14 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
     granted_scopes = _normalize_scope(token_scope_str)
     missing = []
     for cfg_scope in configured_scopes:
+        if cfg_scope.lower() in _OIDC_META_SCOPES:
+            continue
+        # Azure AD /.default is a request-time directive meaning "all
+        # configured permissions for this app".  The actual granted
+        # permissions appear individually in the scp claim, never as
+        # "{client_id}/.default".  Skip it.
+        if cfg_scope.endswith("/.default"):
+            continue
         short = cfg_scope.rsplit("/", 1)[-1] if "/" in cfg_scope else cfg_scope
         if cfg_scope not in granted_scopes and short not in granted_scopes:
             missing.append(cfg_scope)
@@ -223,13 +272,31 @@ def _validate_issuer(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
         logger.debug("OAuth token for gateway %s has no 'iss' claim", gateway_name)
         return
 
-    if token_iss.rstrip("/") == expected_issuer.rstrip("/"):
+    # Normalize both to compare without trailing slashes
+    norm_iss = token_iss.rstrip("/")
+    norm_expected = expected_issuer.rstrip("/")
+
+    if norm_iss == norm_expected:
         result.issuer_match = True
-    else:
-        result.issuer_match = False
-        safe_iss = str(token_iss)[:80]
-        safe_expected = str(expected_issuer)[:80]
-        result.warnings.append(f"Token issuer mismatch: token iss='{safe_iss}', expected '{safe_expected}'")
+        return
+
+    # Azure AD v1/v2 duality: v1 tokens use iss=https://sts.windows.net/{tenant}
+    # while v2 tokens use iss=https://login.microsoftonline.com/{tenant}/v2.0.
+    # Both are valid for the same tenant — accept either when the tenant matches.
+    entra_v1_prefix = "https://sts.windows.net/"
+    entra_v2_prefix = "https://login.microsoftonline.com/"
+    v1_tenant = norm_iss.removeprefix(entra_v1_prefix) if norm_iss.startswith(entra_v1_prefix) else None
+    v2_tenant = norm_expected.removeprefix(entra_v2_prefix).removesuffix("/v2.0") if norm_expected.startswith(entra_v2_prefix) else None
+
+    if v1_tenant and v2_tenant and v1_tenant == v2_tenant:
+        result.issuer_match = True
+        logger.debug("Azure AD v1/v2 issuer duality accepted for gateway %s (tenant %s)", gateway_name, v1_tenant)
+        return
+
+    result.issuer_match = False
+    safe_iss = str(token_iss)[:80]
+    safe_expected = str(expected_issuer)[:80]
+    result.warnings.append(f"Token issuer mismatch: token iss='{safe_iss}', expected '{safe_expected}'")
 
 
 def validate_oauth_token_claims(
