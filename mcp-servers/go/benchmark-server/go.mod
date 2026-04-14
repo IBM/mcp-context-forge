@@ -1,4 +1,4 @@
-module github.com/cmihai/mcp-context-forge/mcp-servers/go/benchmark-server
+module github.com/ibm/mcp-context-forge/mcp-servers/go/benchmark-server
 
 go 1.23.0
 

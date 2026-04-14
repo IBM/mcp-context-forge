@@ -1,4 +1,4 @@
-module github.com/cmihai/mcp-context-forge/a2a-agents/go/a2a-echo-agent
+module github.com/ibm/mcp-context-forge/a2a-agents/go/a2a-echo-agent
 
 go 1.25.0
 
