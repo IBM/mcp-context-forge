@@ -388,6 +388,7 @@ class PromptService(BaseService):
             prompt: Gateway-backed prompt record from the catalog.
             arguments: Optional prompt-rendering arguments.
             user_identity: Effective requester email for session-pool isolation.
+            meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
 
         Returns:
             Prompt result normalized into ContextForge models.
