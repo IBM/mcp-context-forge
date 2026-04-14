@@ -2247,6 +2247,162 @@ class TestCoerceToToolResult:
         assert result.structured_content == {"recognitionId": "rec-1"}
         assert result.content[0].text == "ok"
 
+    def test_accepts_dict_with_structured_content_marker_only(self, tool_service):
+        """Dict with ``structuredContent`` (camelCase) but no ``isError`` is an envelope.
+
+        Covers the ``structuredContent`` branch of ``_looks_like_mcp_envelope``'s
+        layer-2 positive-marker check (search the helper for ``"structuredContent" in keys"``).
+        This exercises the camelCase wire form; the snake-case sibling is
+        covered by the next test.
+        """
+        # No ``isError`` — so the heuristic must admit via structuredContent.
+        payload = {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"recognitionId": "rec-42"},
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.structured_content == {"recognitionId": "rec-42"}
+        assert result.content[0].text == "ok"
+        # ToolResult.is_error defaults to False when unset in the payload.
+        assert result.is_error is False
+
+    def test_accepts_dict_with_snake_case_structured_content_marker(self, tool_service):
+        """Dict with ``structured_content`` (snake_case, gateway-internal) is an envelope.
+
+        Covers the ``structured_content`` half of the layer-2 check. Both
+        spellings live in ``_MCP_ENVELOPE_KEYS`` because forwarded-worker
+        responses and internal serialisations may emit either form.
+        """
+        payload = {
+            "content": [{"type": "text", "text": "ok"}],
+            "structured_content": {"recognitionId": "rec-99"},
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.structured_content == {"recognitionId": "rec-99"}
+
+    def test_accepts_dict_with_only_typed_content_items(self, tool_service):
+        """Dict whose only MCP signal is typed ``content`` items is still admitted.
+
+        Covers the weakest positive marker in ``_looks_like_mcp_envelope`` —
+        ``content`` as a non-empty list of dicts each carrying a string
+        ``type`` field (MCP ``ContentBlock`` shape). No ``isError``,
+        no ``structuredContent``, no ``_meta`` — this test exists so a
+        future tightening that accidentally drops the typed-content branch
+        is caught.
+        """
+        payload = {
+            "content": [
+                {"type": "text", "text": "line 1"},
+                {"type": "text", "text": "line 2"},
+            ],
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert len(result.content) == 2
+        assert result.content[0].text == "line 1"
+        assert result.content[1].text == "line 2"
+
+    def test_rejects_dict_with_only_meta_marker(self, tool_service):
+        """Dict with only ``_meta`` and no positive signal is not an MCP envelope.
+
+        Covers the final ``return False`` branch of
+        ``_looks_like_mcp_envelope`` — all keys are in the envelope set
+        (layer 1 passes) but no positive marker fires (``isError`` /
+        ``structuredContent`` / typed content items). ``_meta`` alone
+        doesn't make a payload MCP-shaped. The payload is therefore
+        coerced via the opaque-JSON fallback so the caller can inspect
+        the ``_meta`` contents without them being reinterpreted as
+        protocol metadata.
+        """
+        payload = {"_meta": {"trace_id": "abc"}, "content": []}
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        # Falls through to text-serialisation; ``_meta`` preserved as data.
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == payload
+
+    def test_non_json_serialisable_payload_falls_back_to_str(self, tool_service, caplog):
+        """``orjson.dumps`` TypeError is caught and we fall back to ``str(payload)``.
+
+        ``_coerce_to_tool_result``'s contract is to always return a valid
+        ``ToolResult``, even for payloads that aren't natively JSON-
+        serialisable (e.g. sets, circular references, custom objects
+        without a ``__json__`` method). The last-resort ``TypeError``
+        fallback at the end of the helper catches the ``orjson.dumps``
+        failure, logs at WARNING with ``exc_info=True``, and wraps
+        ``str(payload)`` into a single ``TextContent``. Without this
+        guard the helper would raise and break the pipeline's
+        "always-produces-a-ToolResult" invariant.
+        """
+
+        class NotJSONSerialisable:
+            """Plain Python class with no JSON representation."""
+
+            def __repr__(self) -> str:
+                return "NotJSONSerialisable(opaque)"
+
+        payload = NotJSONSerialisable()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # ``str(payload)`` should be visible in the fallback text.
+        assert "NotJSONSerialisable" in result.content[0].text
+        relevant = [r for r in caplog.records if "not JSON-serialisable" in r.message]
+        assert relevant, "Expected a WARNING-level log from the str() fallback"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None
+
+    def test_basemodel_with_content_that_fails_validation_falls_back(self, tool_service, caplog):
+        """Pydantic ``BaseModel`` path that fails ``ToolResult`` validation falls back to text.
+
+        Covers the ``except ValidationError`` branch inside
+        ``_coerce_to_tool_result``'s BaseModel dispatch. A caller could
+        conceivably pass a non-MCP Pydantic model that happens to expose
+        a ``content`` attribute but whose ``model_dump(by_alias=True)``
+        produces a shape that ``ToolResult.model_validate`` refuses
+        (e.g. ``content`` is a scalar rather than a list).
+
+        The helper must not raise — it must log at WARNING (so operators
+        see the protocol/schema drift) and fall through to the opaque
+        JSON-serialisation path so the rest of the pipeline still gets
+        a valid ``ToolResult``.
+        """
+        # Third-Party
+        from pydantic import BaseModel  # pylint: disable=import-outside-toplevel
+
+        class BadUpstreamModel(BaseModel):
+            """Stand-in for a third-party model that has ``content`` but wrong shape."""
+
+            content: int = 42  # ``ToolResult.content`` requires ``list[ContentBlock]``
+
+        bad_model = BadUpstreamModel()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(bad_model)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # The WARNING-severity reshape log must have fired (see #4202 egress
+        # review round — user-visible reshapes promoted from DEBUG).
+        relevant = [r for r in caplog.records if "did not validate as ToolResult" in r.message]
+        assert relevant, "Expected a WARNING-level reshape log from the BaseModel ValidationError branch"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None, "Expected exc_info=True for post-mortem diagnosis"
+
     def test_validation_error_falls_back_to_text_serialization(self, tool_service, caplog):
         """Dicts admitted by the heuristic but rejected by Pydantic fall back to text.
 

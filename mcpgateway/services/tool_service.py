@@ -1678,7 +1678,23 @@ class ToolService(BaseService):
         # indicates an upstream whose shape the heuristic ought to learn
         # to recognise).
         logger.debug("Coercing %s payload to opaque text content", type(payload).__name__)
-        serialized = orjson.dumps(payload, option=orjson.OPT_INDENT_2)
+        # orjson cannot natively serialise arbitrary Pydantic ``BaseModel``
+        # instances. A BaseModel reaching this branch means it either
+        # failed the earlier ``ToolResult.model_validate`` step *or* did
+        # not expose a ``content`` attribute at all — dump it first so
+        # we don't raise ``TypeError`` and break the "always returns a
+        # valid ``ToolResult``" invariant.
+        serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
+        try:
+            serialized = orjson.dumps(serializable_payload, option=orjson.OPT_INDENT_2)
+        except TypeError:
+            # Very last resort — something non-JSON-serialisable slipped
+            # through (e.g. ``set``, datetime without isoformat, a custom
+            # object without ``__json__``). Fall back to ``str(payload)``
+            # so the caller still sees *something* and the pipeline stays
+            # on contract.
+            logger.warning("Payload of type %s is not JSON-serialisable; using str() fallback", type(payload).__name__, exc_info=True)
+            return ToolResult(content=[TextContent(type="text", text=str(payload))])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
     async def register_tool(
