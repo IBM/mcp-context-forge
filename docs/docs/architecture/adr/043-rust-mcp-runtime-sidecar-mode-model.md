@@ -194,5 +194,5 @@ the documented operator model is the high-level mode switch above.
 
 - [Rust MCP Runtime Architecture](../rust-mcp-runtime.md)
 - [Performance Architecture](../performance-architecture.md)
-- `tools_rust/mcp_runtime/TESTING-DESIGN.md` in the repository
-- `tools_rust/mcp_runtime/README.md` in the repository
+- `crates/mcp_runtime/TESTING-DESIGN.md` in the repository
+- `crates/mcp_runtime/README.md` in the repository

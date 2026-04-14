@@ -30,7 +30,7 @@ Make targets are grouped by functionality. Use `make help` to see them all in yo
 | Target               | Description |
 |----------------------|-------------|
 | `make serve`         | Run the MCP server locally (e.g., `mcp-time-server`). |
-| `make test`          | Run all unit and integration tests with `pytest`. |
+| `make test`          | Run all unit and integration tests with `pytest`. Use `pytest -k "<name>" tests/unit/` for targeted runs. |
 | `make test-curl`     | Run public API integration tests using a `curl` script. |
 
 #### 📚 DOCUMENTATION & SBOM

@@ -125,4 +125,4 @@ Making Rust mandatory in the build affects **new and existing contributors** who
 - [Open PRs with `rust` label](https://github.com/IBM/mcp-context-forge/pulls?q=is%3Aopen+is%3Apr+label%3Arust) — examples of main Rust components being implemented
 - ADR-0020: Multi-Format Packaging Strategy (wheels, containers, Helm)
 - ADR-0038: Experimental Rust Transport Backend (Streamable HTTP) — first main Rust component in the gateway
-- Plugin crates (e.g. `plugins_rust/`) are out of scope for this ADR; they have their own packaging and optional/required policy.
+- Plugin crates and Rust MCP servers with their own packaging lifecycle are out of scope for this ADR; they keep their own optional/required policy.
