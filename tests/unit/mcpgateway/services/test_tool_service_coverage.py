@@ -3546,6 +3546,39 @@ class TestRegisterToolBranches:
         tool.tags = []
         tool.team_id = "team-1"
 
+        existing = MagicMock()
+        existing.name = "my_tool"
+        existing.enabled = True
+        existing.id = "existing-id"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(db, tool, visibility="team", team_id="team-1", owner_email="user@test.com")
+
+    @pytest.mark.asyncio
+    async def test_defaults_visibility_from_tool_object(self, tool_service):
+        """When visibility is None, defaults from tool.visibility then checks name conflict."""
+        tool = MagicMock()
+        tool.name = "dup_tool_defaults"
+        tool.team_id = "team-99"
+        tool.owner_email = "default@test.com"
+        tool.visibility = "team"  # will be used as default since visibility=None
+
+        existing = MagicMock()
+        existing.name = "dup_tool_defaults"
+        existing.enabled = True
+        existing.id = "existing-id"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
+
+        # visibility=None => uses tool.visibility="team", team_id defaults from tool.team_id
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(db, tool, visibility=None, owner_email=None)
 
     def test_skip_validation_for_error_response_is_error(self, tool_service):
         """Skip output schema validation when is_error=True per MCP spec."""
@@ -3644,66 +3677,6 @@ class TestRegisterToolBranches:
         assert tool_result.is_error is True
         # Content should be replaced with validation error details
         assert "recognitionId" in tool_result.content[0].text or "required" in tool_result.content[0].text.lower()
-
-
-# ---------------------------------------------------------------------------
-# register_tool — team name conflict (lines 1075-1078) + defaults (1059-1062)
-# ---------------------------------------------------------------------------
-
-
-class TestRegisterToolBranches:
-    @pytest.mark.asyncio
-    async def test_team_name_conflict(self, tool_service):
-        """Raises ToolNameConflictError when team tool with same name exists."""
-        tool = MagicMock()
-        tool.name = "my_tool"
-        tool.displayName = "My Tool"
-        tool.url = "http://example.com"
-        tool.description = "desc"
-        tool.integration_type = "REST"
-        tool.request_type = "GET"
-        tool.headers = {}
-        tool.input_schema = {}
-        tool.output_schema = None
-        tool.annotations = {}
-        tool.jsonpath_filter = None
-        tool.auth = None
-        tool.tags = []
-        tool.team_id = "team-1"
-
-        existing = MagicMock()
-        existing.name = "my_tool"
-        existing.enabled = True
-        existing.id = "existing-id"
-        existing.visibility = "team"
-
-        db = MagicMock()
-        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
-
-        with pytest.raises(ToolNameConflictError):
-            await tool_service.register_tool(db, tool, visibility="team", team_id="team-1", owner_email="user@test.com")
-
-    @pytest.mark.asyncio
-    async def test_defaults_visibility_from_tool_object(self, tool_service):
-        """When visibility is None, defaults from tool.visibility then checks name conflict."""
-        tool = MagicMock()
-        tool.name = "dup_tool_defaults"
-        tool.team_id = "team-99"
-        tool.owner_email = "default@test.com"
-        tool.visibility = "team"  # will be used as default since visibility=None
-
-        existing = MagicMock()
-        existing.name = "dup_tool_defaults"
-        existing.enabled = True
-        existing.id = "existing-id"
-        existing.visibility = "team"
-
-        db = MagicMock()
-        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
-
-        # visibility=None => uses tool.visibility="team", team_id defaults from tool.team_id
-        with pytest.raises(ToolNameConflictError):
-            await tool_service.register_tool(db, tool, visibility=None, owner_email=None)
 
 
 # ---------------------------------------------------------------------------

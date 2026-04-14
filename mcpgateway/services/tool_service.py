@@ -1298,7 +1298,7 @@ class ToolService(BaseService):
             # Reference: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling
             is_error = getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False)
             if is_error:
-                logger.debug(f"Skipping output schema validation for error response from tool {getattr(tool, 'name', '<unknown>')}")
+                logger.debug(f"Skipping output schema validation for error response from tool {SecurityValidator.sanitize_log_message(getattr(tool, 'name', '<unknown>'))}")
                 return True
 
             output_schema = getattr(tool, "output_schema", None)
