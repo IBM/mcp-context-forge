@@ -41,7 +41,7 @@ from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -293,6 +293,137 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     if not isinstance(headers, dict):
         return {}
     return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
+
+
+#: Top-level keys that the MCP ``CallToolResult`` envelope admits (including
+#: the gateway's internal snake-case aliases). Any dict with keys outside
+#: this set is treated as a business payload rather than an MCP envelope.
+#: See :func:`_looks_like_mcp_envelope`.
+_MCP_ENVELOPE_KEYS: frozenset[str] = frozenset(
+    {
+        "content",
+        "isError",
+        "is_error",
+        "structuredContent",
+        "structured_content",
+        "_meta",
+        "meta",
+    }
+)
+
+
+def _looks_like_mcp_envelope(payload: dict) -> bool:
+    """Return ``True`` when a dict strongly resembles an MCP ``CallToolResult`` envelope.
+
+    Used by :meth:`ToolService._coerce_to_tool_result` to decide whether a
+    raw dict should be promoted to a ``ToolResult`` via
+    ``ToolResult.model_validate``. The check has two layers:
+
+    1. **No unknown top-level keys.** ``ToolResult`` inherits
+       ``BaseModelWithConfigDict``, which uses Pydantic's default
+       ``extra="ignore"`` — any sibling field not declared on the model
+       is **silently dropped** at validation time. Without this first
+       check, a REST payload like
+       ``{"content": [{"type": "text", "text": "ok"}], "isError": false,
+       "recognitionId": "rec-1"}`` would model-validate cleanly and lose
+       ``recognitionId`` without warning (Codex-flagged regression).
+       So we reject any dict whose keys aren't a subset of
+       :data:`_MCP_ENVELOPE_KEYS`.
+
+    2. **At least one positive MCP signal.** Even when the key set is a
+       valid subset, we require at least one MCP-specific marker —
+       either ``isError``/``is_error``, ``structuredContent``/
+       ``structured_content``, or ``content`` holding MCP ``ContentBlock``-
+       shaped items (dicts with a string ``type``). This stops a
+       minimal ``{"content": "plain text"}`` shape, which *could* be a
+       REST payload that coincidentally uses an allowed key name, from
+       being interpreted as MCP.
+
+    Both checks must pass. A REST business payload like
+    ``{"content": [{"widget": "x"}], "id": 1}`` fails check (1) (``id`` is
+    not an MCP envelope key); a minimal ``{"content": "hello"}`` fails
+    check (2) (no positive marker); both are therefore correctly treated
+    as opaque JSON by the caller.
+
+    Args:
+        payload: The dict candidate.
+
+    Returns:
+        ``True`` if the dict is confidently an MCP envelope and safe to
+        round-trip through ``ToolResult.model_validate`` without losing
+        sibling fields, else ``False``.
+    """
+    keys = payload.keys()
+    # Layer 1: reject if there are any keys outside the envelope schema.
+    # This is what guards against silent field-dropping for business payloads
+    # that happen to include ``content`` / ``isError`` among other fields.
+    if not keys <= _MCP_ENVELOPE_KEYS:
+        return False
+    # Layer 2: require a positive MCP signal so we don't misclassify
+    # anonymous REST bodies that merely happen to use a subset of allowed keys.
+    if "isError" in keys or "is_error" in keys:
+        return True
+    if "structuredContent" in keys or "structured_content" in keys:
+        return True
+    content = payload.get("content")
+    if isinstance(content, list) and content and all(isinstance(item, dict) and isinstance(item.get("type"), str) for item in content):
+        return True
+    return False
+
+
+def _safe_type_name(obj: Any) -> str:
+    """Return ``type(obj).__name__``, or a sentinel if that itself raises.
+
+    Used inside :meth:`ToolService._coerce_to_tool_result`'s last-resort
+    fallback so logging and diagnostic text on a pathological object
+    (broken proxy, ``__class__`` descriptor that raises, etc.) cannot
+    themselves raise and escape the "always returns a valid
+    ``ToolResult``" invariant.
+    """
+    try:
+        return type(obj).__name__
+    except Exception:  # pylint: disable=broad-except
+        return "<untypeable>"
+
+
+def _safe_text_repr(obj: Any, fallback_type: str) -> str:
+    """Coerce an arbitrary object to a non-raising text representation.
+
+    Tries ``str(obj)``, then ``repr(obj)``, then ``f"<{fallback_type}
+    object>"``, and finally a fixed sentinel. Used by the opaque-JSON
+    last-resort branch of
+    :meth:`ToolService._coerce_to_tool_result` — neither ``str`` nor
+    ``repr`` is guaranteed to succeed on arbitrary Python objects (a
+    class can override either to raise), and without this staged
+    fallback a malicious or simply buggy payload could escape the
+    helper and break the "never raises" contract downstream code relies
+    on.
+
+    Args:
+        obj: The payload to stringify.
+        fallback_type: Pre-computed type name used in the third-tier
+            sentinel; keeps ``type().__name__`` out of this function's
+            hot path since it has its own :func:`_safe_type_name`
+            guard upstream.
+
+    Returns:
+        A ``str``. Never raises.
+    """
+    try:
+        text = str(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # pylint: disable=broad-except
+        pass
+    try:
+        text = repr(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # pylint: disable=broad-except
+        pass
+    # ``fallback_type`` came from ``_safe_type_name`` so it's
+    # guaranteed to be a ``str`` already.
+    return f"<{fallback_type} object (unrepresentable)>"
 
 
 def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
@@ -1225,18 +1356,121 @@ class ToolService(BaseService):
                 error_message=error_message,
             )
 
-    def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
+    def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult") -> bool:
         """
         Extract structured content (if any) and validate it against ``tool.output_schema``.
+
+        This method is one of **three** output-schema validation layers the
+        gateway relies on. Understanding where each fires — and, crucially,
+        where each is *skipped* — is essential when reasoning about
+        ContextForge #4202 (https://github.com/IBM/mcp-context-forge/issues/4202)
+        and its successors. See
+        ``docs/docs/architecture/tool-invocation-and-validation.md`` for the
+        full flow diagram; a summary follows.
+
+        Tool invocation flow (downstream client → gateway → upstream tool → back):
+
+        1. **Downstream ingress (server SDK, inbound request)** — not a
+           validator; just decodes the ``tools/call`` JSON-RPC into
+           ``CallToolRequestParam`` and dispatches to the gateway's
+           handler at
+           ``mcpgateway/transports/streamablehttp_transport.py::call_tool``.
+
+        2. **Gateway dispatch** — ``call_tool`` routes based on the tool's
+           ``integration_type`` in the DB. Federation-backed MCP tools take
+           the MCP client SDK path (step 3). REST, OpenAPI, A2A and
+           admin-registered tools take the direct HTTP path (step 4).
+
+        3. **Validator A — MCP Python client SDK (federation only)**.
+           Upstream MCP calls go through ``mcp.ClientSession``, whose
+           ``ClientSession._validate_tool_result`` in the installed
+           ``mcp`` package
+           validates ``structuredContent`` against the *upstream-advertised*
+           output schema. Rules: (a) **skipped when ``isError=True``** —
+           this is what the MCP spec's "Error Handling" section mandates,
+           and why #4202 only surfaced on the gateway's own layer;
+           (b) raises ``RuntimeError`` on violation, which the gateway
+           catches at ``tool_service.py::invoke_tool`` and re-wraps as a
+           ``Tool invocation failed: ...`` error.
+
+        4. **Validator B — this method, ``_extract_and_validate_structured_content``**.
+           Currently invoked **only** from the REST branch of
+           ``invoke_tool`` (search for ``_extract_and_validate_structured_content(``).
+           The MCP federation branch relies on Validator A; the A2A
+           branch has **no gateway-side output-schema enforcement today**
+           — a known gap tracked alongside the option-B pipeline unification
+           refactor (see the issue below). Rules when Validator B does run:
+           - Skip when ``is_error=True`` or ``isError=True`` — the
+             ContextForge #4202 fix. Without this early return the gateway
+             would clobber the upstream's original error message with a
+             schema-mismatch dict.
+           - Require ``structured_content`` to be a JSON object when
+             explicitly set; reject lists, scalars and other shapes with a
+             structured ``invalid_structured_content_type`` error (per MCP
+             2025-11-25 "Output Schema").
+           - Otherwise best-effort promote the first parseable
+             ``TextContent`` item to ``structured_content`` (tolerates
+             both dict and Pydantic shapes, which matters because
+             ``_coerce_to_tool_result`` wraps REST JSON bodies into
+             Pydantic ``TextContent``).
+           - When no schema is declared, or no structured data can be
+             obtained and ``is_error=False``, return ``True`` — currently a
+             *lenient* deviation from the spec's "servers MUST provide
+             conforming structured output" rule, tracked in
+             https://github.com/IBM/mcp-context-forge/issues/4208.
+           - On schema violation, mutate ``tool_result`` in place:
+             replace ``content`` with a deterministic validation-error
+             TextContent and set ``is_error=True``.
+
+        5. **Validator C — MCP Python server SDK (downstream egress)**.
+           The gateway's ``call_tool`` handler in
+           ``mcpgateway/transports/streamablehttp_transport.py`` returns
+           either a raw ``list``/``tuple`` shape (success path) or a
+           fully-formed ``types.CallToolResult`` (``isError=True`` path).
+           The server SDK (``mcp.server.lowlevel.server``)
+           validates the list/tuple shape against the gateway's *own*
+           advertised output schema, but **short-circuits when the
+           handler returns a ``CallToolResult`` directly** (via the
+           ``isinstance(results, types.CallToolResult)`` check in its
+           ``_call_tool`` dispatch). We
+           exploit that short-circuit to preserve #4202 on the egress —
+           otherwise the server SDK's "Output validation error:
+           outputSchema defined but no structured output returned" message
+           would re-clobber the payload after Validator B had correctly
+           preserved it.
+
+        Net effect across paths:
+
+        - MCP-federated tool, success: Validators A + C both run; this
+          method does not.
+        - MCP-federated tool, error (``isError=True``): Validators A and C
+          both skip; this method does not run (no ingress invocation for
+          MCP branch).
+        - **REST** (incl. OpenAPI-imported) tool, success: this method
+          runs (B); Validator C runs on the way out.
+        - **REST** tool, error: this method skips (B early-return per
+          #4202); Validator C short-circuits because the egress handler
+          returns ``CallToolResult``.
+        - **A2A** tool, any outcome: this method is **not invoked**
+          today; Validator C runs (success) or short-circuits (error).
+          Wiring A2A through the unified post-invoke pipeline is part of
+          the option-B refactor and the A2A-specific validation gap.
+
+        End-to-end coverage for non-MCP paths (REST/OpenAPI/A2A) is
+        tracked in https://github.com/IBM/mcp-context-forge/issues/4207.
+        The A2A Validator B gap and the broader "single post-invoke
+        pipeline" refactor (option B) are tracked as a separate chore
+        issue — see ``docs/docs/architecture/tool-invocation-and-validation.md``
+        for the current per-path table.
 
         Args:
             tool: The tool with an optional output schema to validate against.
             tool_result: The tool result containing content to validate.
-            candidate: Optional structured payload to validate. If not provided, will attempt
-                      to parse the first TextContent item as JSON.
 
         Behavior:
-        - If ``candidate`` is provided it is used as the structured payload to validate.
+        - Per MCP specification, validation is skipped for error responses (isError: true).
+          Error responses with isError=true do not require structured content.
+        - When ``tool_result.structured_content`` is present it must be a JSON object and is used as the structured payload.
         - Otherwise the method will try to parse the first ``TextContent`` item in
             ``tool_result.content`` as JSON and use that as the candidate.
         - If no output schema is declared on the tool the method returns True (nothing to validate).
@@ -1269,7 +1503,8 @@ class ToolService(BaseService):
                 ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
                 ... )()
                 >>> r = ToolResult(content=[])
-                >>> service._extract_and_validate_structured_content(tool, r, candidate={"foo": "bar"})
+                >>> r = ToolResult(content=[], structured_content={"foo": "bar"})
+                >>> service._extract_and_validate_structured_content(tool, r)
                 True
                 >>> r.structured_content == {"foo": "bar"}
                 True
@@ -1281,7 +1516,8 @@ class ToolService(BaseService):
                 ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
                 ... )()
                 >>> r = ToolResult(content=[])
-                >>> ok = service._extract_and_validate_structured_content(tool, r, candidate={"foo": 123})
+                >>> r = ToolResult(content=[], structured_content={"foo": 123})
+                >>> ok = service._extract_and_validate_structured_content(tool, r)
                 >>> ok
                 False
                 >>> r.is_error
@@ -1291,21 +1527,60 @@ class ToolService(BaseService):
                 True
         """
         try:
+            # Error responses do not require structured content per MCP spec:
+            # https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling
+            is_error = getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False)
+            if is_error:
+                # Lazy %-formatting + SecurityValidator.sanitize_log_message to
+                # prevent log injection via tool names containing control
+                # characters. ``or "<unknown>"`` guards against explicit
+                # ``tool.name = None`` on partially-hydrated ORM rows — plain
+                # ``getattr(..., "<unknown>")`` would return ``None`` and the
+                # sanitizer would collapse it to an empty string, losing the
+                # diagnostic signal.
+                logger.debug(
+                    "Skipping output schema validation for error response from tool %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                )
+                return True
+
             output_schema = getattr(tool, "output_schema", None)
             # Nothing to do if the tool doesn't declare a schema
             if not output_schema:
                 return True
 
             structured: Optional[Any] = None
-            # Prefer explicit candidate
-            if candidate is not None:
-                structured = candidate
-            else:
-                # Try to parse first TextContent text payload as JSON
+            # Prefer normalized structured content already attached to the result
+            structured = getattr(tool_result, "structured_content", None)
+            if structured is None:
+                structured = getattr(tool_result, "structuredContent", None)
+
+            if structured is not None and not isinstance(structured, dict):
+                details = {
+                    "code": "invalid_structured_content_type",
+                    "expected": "object",
+                    "received": type(structured).__name__.lower(),
+                    "path": [],
+                    "message": "structured_content must be a JSON object",
+                }
+                try:
+                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
+                except Exception:
+                    tool_result.content = [TextContent(type="text", text=str(details))]
+                tool_result.is_error = True
+                return False
+
+            if structured is None:
+                # Try to parse first TextContent text payload as JSON. Content
+                # items may be raw dicts (MCP wire shape) or pydantic objects
+                # (e.g. TextContent synthesized by _coerce_to_tool_result
+                # for REST responses); support both.
                 for c in getattr(tool_result, "content", []) or []:
                     try:
-                        if isinstance(c, dict) and "type" in c and c.get("type") == "text" and "text" in c:
-                            structured = orjson.loads(c.get("text") or "null")
+                        c_type = c.get("type") if isinstance(c, dict) else getattr(c, "type", None)
+                        c_text = c.get("text") if isinstance(c, dict) else getattr(c, "text", None)
+                        if c_type == "text" and c_text is not None:
+                            structured = orjson.loads(c_text)
                             break
                     except (orjson.JSONDecodeError, TypeError, ValueError):
                         # ignore JSON parse errors and continue
@@ -1315,32 +1590,19 @@ class ToolService(BaseService):
             if structured is None:
                 return True
 
-            # Try to normalize common wrapper shapes to match schema expectations
-            schema_type = None
-            try:
-                if isinstance(output_schema, dict):
-                    schema_type = output_schema.get("type")
-            except Exception:
-                schema_type = None
-
-            # Unwrap single-element list wrappers when schema expects object
-            if isinstance(structured, list) and len(structured) == 1 and schema_type == "object":
-                inner = structured[0]
-                # If inner is a TextContent-like dict with 'text' JSON string, parse it
-                if isinstance(inner, dict) and "text" in inner and "type" in inner and inner.get("type") == "text":
-                    try:
-                        structured = orjson.loads(inner.get("text") or "null")
-                    except Exception:
-                        # leave as-is if parsing fails
-                        structured = inner
-                else:
-                    structured = inner
-
-            # Attach structured content
+            # Attach structured content. A frozen or slotted ``tool_result``
+            # that refuses the assignment is a genuine contract violation —
+            # downstream code relies on ``structured_content`` being
+            # populated — so surface at WARNING with a stack trace rather
+            # than swallowing silently at DEBUG.
             try:
                 setattr(tool_result, "structured_content", structured)
             except Exception:
-                logger.debug("Failed to set structured_content on ToolResult")
+                logger.warning(
+                    "Failed to set structured_content on ToolResult for tool %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                    exc_info=True,
+                )
 
             # Validate using cached schema validator
             try:
@@ -1359,11 +1621,135 @@ class ToolService(BaseService):
                 except Exception:
                     tool_result.content = [TextContent(type="text", text=str(details))]
                 tool_result.is_error = True
-                logger.debug(f"structured_content validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+                logger.debug(
+                    "structured_content validation failed for tool %s: %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                    details,
+                )
                 return False
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error(f"Error extracting/validating structured_content: {exc}")
+            # Defensive catch for unexpected validator failures (schema
+            # compilation crash, attribute errors on malformed ``tool_result``,
+            # orjson edge cases). Log with exc_info=True so the stack trace
+            # reaches ops — without it, the method just returns False with no
+            # diagnostic trail, which is a six-months-from-now debugging
+            # nightmare.
+            logger.error(
+                "Error extracting/validating structured_content for tool %s: %s",
+                SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                exc,
+                exc_info=True,
+            )
             return False
+
+    def _coerce_to_tool_result(self, payload: Any) -> ToolResult:
+        """Coerce any tool-result-shaped payload into the gateway's canonical ``ToolResult``.
+
+        Single source of truth for turning heterogeneous upstream
+        responses into one canonical internal type. Funnelling every
+        integration branch through here gives us uniform ``is_error`` and
+        ``structured_content`` semantics regardless of source, which is
+        the foundation of #4202's fix across multiple integration types
+        (see https://github.com/IBM/mcp-context-forge/issues/4202) and
+        the first structural step toward the option-B "single
+        canonical-ToolResult pipeline" refactor tracked separately.
+
+        Accepted inputs:
+
+        - ``ToolResult`` → returned as-is (fast path).
+        - MCP SDK ``CallToolResult`` (or any other Pydantic model whose
+          ``model_dump(by_alias=True)`` emits an MCP-shaped envelope) →
+          round-tripped through ``ToolResult.model_validate`` so
+          camelCase ``isError`` / ``structuredContent`` map cleanly onto
+          the gateway's snake-cased aliases. This path is what closes the
+          direct-proxy egress regression Codex flagged: previously the
+          egress ``is_error`` check only recognised snake-case and
+          silently re-clobbered error responses coming back from
+          ``session.call_tool(...)``.
+        - A raw dict that looks *strongly* like an MCP envelope —
+          presence of ``isError`` / ``is_error`` / ``structuredContent`` /
+          ``structured_content`` keys, or a ``content`` list whose items
+          carry a string ``type`` field (i.e. MCP ``ContentBlock`` shape).
+          A dict with merely a top-level ``content`` key is **not**
+          enough: a REST business payload like
+          ``{"content": [{"widget": "x"}], "recognitionId": "rec-1"}``
+          must not be reinterpreted as an MCP envelope with its sibling
+          fields silently discarded (Codex P2).
+        - Anything else → JSON-serialised into a single ``TextContent``.
+
+        Args:
+            payload: The upstream response in whatever shape the
+                integration branch happens to produce.
+
+        Returns:
+            A canonical ``ToolResult`` instance.
+        """
+        # Fast path — already canonical.
+        if isinstance(payload, ToolResult):
+            return payload
+
+        # MCP SDK CallToolResult (or any Pydantic model exposing
+        # MCP-shaped fields via by-alias dump). The MCP SDK emits
+        # ``isError`` / ``structuredContent`` in camelCase; our
+        # ``ToolResult`` declares those as aliases, so the dump feeds
+        # straight into ``model_validate`` without a bespoke mapper.
+        if isinstance(payload, BaseModel) and hasattr(payload, "content"):
+            try:
+                return ToolResult.model_validate(payload.model_dump(by_alias=True, mode="json"))
+            except ValidationError:
+                # User-visible reshape: an MCP-looking Pydantic upstream
+                # result is about to be downgraded to an opaque text blob.
+                # Log at WARNING so operators notice protocol or schema
+                # drift between the gateway and the upstream SDK.
+                logger.warning(
+                    "%s did not validate as ToolResult; falling back to text serialisation",
+                    type(payload).__name__,
+                    exc_info=True,
+                )
+
+        # Raw dict — only treat as MCP-shaped when strong markers are
+        # present. Without this guard a REST payload that coincidentally
+        # contains a top-level ``content`` field would be misread as an
+        # MCP envelope and its sibling business fields silently dropped
+        # (Codex P2 regression).
+        if isinstance(payload, dict) and _looks_like_mcp_envelope(payload):
+            try:
+                return ToolResult.model_validate(payload)
+            except ValidationError:
+                # User-visible reshape: the heuristic admitted a dict as
+                # an MCP envelope but the strict ToolResult model then
+                # rejected it. Surface at WARNING so the non-conforming
+                # upstream gets flagged in ops logs rather than silently
+                # downgraded to text.
+                logger.warning(
+                    "Dict payload matched MCP-envelope heuristics but failed ToolResult validation; falling back to text serialisation",
+                    exc_info=True,
+                )
+
+        # Last resort — opaque JSON body. Preserves the payload for the
+        # caller to inspect while keeping the rest of the pipeline on a
+        # uniform ``ToolResult`` contract. The helper's invariant is
+        # "always returns a valid ``ToolResult``, never raises", so every
+        # step below must be guarded — both ``BaseModel.model_dump`` and
+        # ``orjson.dumps`` can raise on pathological inputs (custom
+        # serialisers that throw, ``PydanticSerializationError`` —
+        # ``ValueError`` subclass, not ``TypeError`` — fields holding
+        # non-representable objects), and even ``str()`` / ``repr()`` /
+        # ``type().__name__`` can fail on sufficiently broken proxy
+        # objects.
+        payload_type = _safe_type_name(payload)
+        logger.debug("Coercing %s payload to opaque text content", payload_type)
+        try:
+            serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
+            serialized = orjson.dumps(serializable_payload, option=orjson.OPT_INDENT_2)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Payload of type %s could not be JSON-serialised; using textual fallback",
+                payload_type,
+                exc_info=True,
+            )
+            return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
+        return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
     async def register_tool(
         self,
@@ -4430,14 +4816,19 @@ class ToolService(BaseService):
                                 tool_result = ToolResult(content=filtered_response, is_error=True)
                                 success = False
                             else:
-                                # Success case - serialize the filtered response
-                                serialized = orjson.dumps(filtered_response, option=orjson.OPT_INDENT_2)
-                                tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
-                                success = True
-                            # If output schema is present, validate and attach structured content
+                                tool_result = self._coerce_to_tool_result(filtered_response)
+                            # If output schema is present, validate and attach structured content.
+                            # The validator skips for isError=true (per #4202) and, on validation
+                            # failure, mutates tool_result in place with is_error=True, so the
+                            # single post-validation read below covers all cases uniformly.
                             if tool_output_schema:
-                                valid = self._extract_and_validate_structured_content(tool_for_validation, tool_result, candidate=filtered_response)
-                                success = bool(valid)
+                                self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                            # ``success`` must reflect both upstream ``isError`` *and* any
+                            # validator-imposed error state. Previously this path set
+                            # ``success = bool(valid)``, which clobbered an upstream
+                            # ``is_error=True`` back to ``success=True`` because the
+                            # validator skips (returns True) for error responses.
+                            success = not getattr(tool_result, "is_error", False)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
 
@@ -5011,10 +5402,15 @@ class ToolService(BaseService):
                         elif transport == "streamablehttp":
                             tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
 
-                        # In direct proxy mode, use the tool result as-is without splitting content
+                        # In direct proxy mode, preserve the upstream response verbatim
+                        # (no jsonpath filtering, no structured/unstructured split) but
+                        # still route through the canonical coercion so the egress sees
+                        # a ``ToolResult`` with snake-case ``is_error`` rather than a
+                        # raw MCP SDK ``CallToolResult`` with camelCase ``isError``
+                        # (#4202 egress regression on the direct-proxy path).
                         if is_direct_proxy:
-                            tool_result = tool_call_result
-                            success = not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False)
+                            tool_result = self._coerce_to_tool_result(tool_call_result)
+                            success = not tool_result.is_error
                             logger.debug(f"Direct proxy mode: using tool result as-is: {tool_result}")
                         else:
                             dump = tool_call_result.model_dump(by_alias=True, mode="json")

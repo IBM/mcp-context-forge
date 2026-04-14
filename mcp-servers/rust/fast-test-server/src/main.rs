@@ -12,7 +12,7 @@
 
 use axum::serve::ListenerExt;
 use axum::Router;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use rand::Rng;
 use rand_distr::Normal;
 use rmcp::{
@@ -59,6 +59,28 @@ pub struct GetTimeRequest {
     /// IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC.
     #[serde(default)]
     pub timezone: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConvertTimeRequest {
+    /// Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'
+    pub time: String,
+    /// Source IANA timezone name
+    pub source_timezone: String,
+    /// Target IANA timezone name
+    pub target_timezone: String,
+}
+
+/// Shape advertised by schema_* validation fixtures. `recognitionId` is the
+/// only required field; the handlers deliberately return payloads that match
+/// or violate this schema to exercise both branches of the gateway's output
+/// schema validator (including the error-response skip path from #4202).
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaFixtureResponse {
+    pub recognition_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 // ============================================================================
@@ -147,6 +169,87 @@ impl FastTestServer {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
+    /// Convert a time value between two IANA timezones
+    #[tool(
+        description = "Convert a time value from a source IANA timezone to a target IANA timezone. Accepts RFC3339 or common formats like '2006-01-02 15:04:05'."
+    )]
+    async fn convert_time(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
+            ConvertTimeRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        let mut count = self.request_count.lock().await;
+        *count += 1;
+
+        let source_offset = match parse_timezone(&req.source_timezone) {
+            Ok(o) => o,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "invalid source timezone: {}",
+                    e
+                ))]));
+            }
+        };
+        let target_offset = match parse_timezone(&req.target_timezone) {
+            Ok(o) => o,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "invalid target timezone: {}",
+                    e
+                ))]));
+            }
+        };
+
+        let parsed = parse_time_in_offset(&req.time, source_offset).map_err(|e| {
+            // Surface as isError=true so the gateway forwards the message as-is.
+            McpError::invalid_params(e, None)
+        });
+        let parsed = match parsed {
+            Ok(p) => p,
+            Err(_) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "invalid time format: {}",
+                    req.time
+                ))]));
+            }
+        };
+
+        let converted = parsed.with_timezone(&target_offset).to_rfc3339();
+        Ok(CallToolResult::success(vec![Content::text(converted)]))
+    }
+
+    /// Always returns isError=true while declaring an outputSchema.
+    /// Exercises the gateway's schema-validation skip path for error
+    /// responses (MCP specification #4202).
+    #[tool(
+        description = "Always returns isError=true. Declares an outputSchema the error text intentionally does not satisfy.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
+    )]
+    async fn schema_error(&self) -> Result<CallToolResult, McpError> {
+        let mut count = self.request_count.lock().await;
+        *count += 1;
+        Ok(CallToolResult::error(vec![Content::text(
+            "You cannot send more than 200 points",
+        )]))
+    }
+
+    /// Returns a success payload that conforms to the declared outputSchema,
+    /// surfaced as both text and structured content. Exercises the positive
+    /// branch of output-schema validation (MCP SDK + gateway both pass).
+    #[tool(
+        description = "Returns a JSON payload that conforms to the declared outputSchema.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
+    )]
+    async fn schema_success(&self) -> Result<CallToolResult, McpError> {
+        let mut count = self.request_count.lock().await;
+        *count += 1;
+        Ok(CallToolResult::structured(json!({
+            "recognitionId": "rec-123",
+            "message": "ok",
+        })))
+    }
+
     /// Get server statistics
     #[tool(description = "Get server statistics including request count and uptime.")]
     async fn get_stats(&self) -> Result<CallToolResult, McpError> {
@@ -174,7 +277,7 @@ impl ServerHandler for FastTestServer {
                 .build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Ultra-fast MCP test server. Tools: echo (echoes message), get_system_time (returns time in timezone), get_stats (server stats).".to_string()
+                "Ultra-fast MCP test server. Tools: echo, get_system_time, convert_time, get_stats, plus schema_error and schema_success validation fixtures.".to_string()
             ),
         }
     }
@@ -275,6 +378,29 @@ fn parse_timezone(tz: &str) -> Result<FixedOffset, String> {
 
     FixedOffset::east_opt(offset_hours * 3600)
         .ok_or_else(|| format!("Invalid offset for timezone: {}", tz))
+}
+
+/// Parse an input time string in the given offset, accepting RFC3339 and a
+/// handful of common formats used by the Go fast-time-server port.
+fn parse_time_in_offset(time_str: &str, offset: FixedOffset) -> Result<DateTime<FixedOffset>, String> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(time_str) {
+        return Ok(parsed.with_timezone(&offset));
+    }
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"] {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, fmt) {
+            if let Some(dt) = offset.from_local_datetime(&naive).single() {
+                return Ok(dt);
+            }
+        }
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, fmt) {
+            if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+                if let Some(dt) = offset.from_local_datetime(&naive).single() {
+                    return Ok(dt);
+                }
+            }
+        }
+    }
+    Err(format!("unrecognized time format: {}", time_str))
 }
 
 /// Parse an offset string like "+05:30" or "-08:00"
