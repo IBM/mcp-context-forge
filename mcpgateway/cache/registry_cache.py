@@ -340,16 +340,16 @@ class RegistryCache:
                         logger.debug("RegistryCache: Redis client available")
 
                     return client
-                else:
-                    # Ping failed or circuit is open
-                    self._redis_available = False
-                    return None
-            else:
-                if not self._redis_checked:
-                    self._redis_checked = True
-                    self._redis_available = False
-                    logger.debug("RegistryCache: Redis unavailable, using in-memory cache")
+
+                # Ping failed or circuit is open
+                self._redis_available = False
                 return None
+
+            if not self._redis_checked:
+                self._redis_checked = True
+                self._redis_available = False
+                logger.debug("RegistryCache: Redis unavailable, using in-memory cache")
+            return None
 
         except Exception as e:
             if not self._redis_checked:
