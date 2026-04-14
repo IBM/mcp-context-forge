@@ -1603,6 +1603,14 @@ class Settings(BaseSettings):
     max_tool_retries: int = 3
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
+    rest_response_text_max_length: int = Field(
+        default=5000,
+        ge=1000,
+        le=100000,
+        description="Maximum length of response text to return for non-JSON REST API responses. "
+        "Longer responses are truncated to prevent exposing excessive sensitive data. "
+        "Default: 5000 characters. Range: 1000-100000.",
+    )
 
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
