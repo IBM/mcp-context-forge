@@ -150,6 +150,27 @@ def _normalize_origin(scheme: str, host: str, port: int | None) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+def _is_safe_local_path(path: str) -> bool:
+    """Validate that a path is a safe local redirect target (no open redirect).
+
+    Args:
+        path: The path to validate.
+
+    Returns:
+        True if the path is a safe relative path starting with ``/``.
+    """
+    if not path or not isinstance(path, str):
+        return False
+    if not path.startswith("/"):
+        return False
+    if path.startswith("//") or "@" in path or "\\" in path:
+        return False
+    parsed = urlparse(path)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return True
+
+
 def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) -> bool:
     """Validate redirect_uri to prevent open redirect attacks.
 
@@ -396,8 +417,24 @@ async def handle_sso_callback(
     if not access_token:
         return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
-    # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    # Create redirect response — check for post-login destination cookie
+    post_login_next = request.cookies.get("post_login_next") if request else None
+    if post_login_next and _is_safe_local_path(post_login_next):
+        redirect_url = f"{root_path}{post_login_next}"
+    else:
+        redirect_url = f"{root_path}/admin"
+    redirect_response = RedirectResponse(url=redirect_url, status_code=302)
+
+    # Clear the post_login_next cookie regardless
+    if post_login_next:
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        redirect_response.delete_cookie(
+            "post_login_next",
+            path=settings.app_root_path or "/",
+            secure=use_secure,
+            httponly=True,
+            samesite=settings.cookie_samesite,
+        )
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party

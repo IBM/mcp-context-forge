@@ -3928,9 +3928,10 @@ class ToolService(BaseService):
 
                     with fresh_db_session() as token_db:
                         token_storage = TokenStorageService(token_db)
-                        if not app_user_email:
+                        effective_email = app_user_email or user_email
+                        if not effective_email:
                             raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
-                        access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+                        access_token = await token_storage.get_user_token(gateway_id_str, effective_email)
 
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
@@ -5064,10 +5065,11 @@ class ToolService(BaseService):
                                     token_storage = TokenStorageService(token_db)
 
                                     # Get user-specific OAuth token
-                                    if not app_user_email:
+                                    effective_email = app_user_email or user_email
+                                    if not effective_email:
                                         raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
 
-                                    access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+                                    access_token = await token_storage.get_user_token(gateway_id_str, effective_email)
 
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}

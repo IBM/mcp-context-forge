@@ -379,14 +379,6 @@ class MetricsResponse(BaseModelWithConfigDict):
 
     @model_serializer(mode="wrap")
     def _exclude_none_a2a(self, handler):
-        """Omit the A2A metrics field when that feature is disabled.
-
-        Args:
-            handler: Pydantic serializer callback for the wrapped model.
-
-        Returns:
-            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
-        """
         result = handler(self)
         if self.a2a_agents is None:
             result.pop("a2aAgents", None)
@@ -4071,6 +4063,19 @@ class ServerCreate(BaseModel):
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'. Meta servers expose meta-tools instead of real tools.")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden from tool listing endpoints")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema). Only applicable when server_type is 'meta'.")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server (MetaToolScope schema).")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: str) -> str:
+        if v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -4232,6 +4237,19 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
 
+    # Meta-server configuration (optional update fields)
+    server_type: Optional[str] = Field(None, description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: Optional[bool] = Field(None, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -4363,6 +4381,12 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
@@ -8212,8 +8236,6 @@ class PerformanceHistoryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Tool Plugin Binding Schemas
-# ---------------------------------------------------------------------------
 
 
 class PluginBindingMode(str, Enum):
@@ -8349,3 +8371,22 @@ class ToolPluginBindingListResponse(BaseModelWithConfigDict):
 
     bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")
+
+
+class ToolSearchResult(BaseModelWithConfigDict):
+    """Response schema for a single tool search result with relevance score."""
+
+    tool_name: str = Field(..., description="Tool name")
+    description: Optional[str] = Field(None, description="Tool description")
+    similarity_score: float = Field(..., ge=0.0, le=1.0, description="Similarity score (0-1)")
+    server_id: Optional[str] = Field(None, description="Server ID the tool belongs to")
+    server_name: Optional[str] = Field(None, description="Server name the tool belongs to")
+    tags: List[str] = Field(default_factory=list, description="Tool tags")
+
+
+class SemanticSearchResponse(BaseModelWithConfigDict):
+    """Response schema for semantic tool search."""
+
+    results: List[ToolSearchResult] = Field(..., description="Ranked list of matching tools")
+    query: str = Field(..., description="Original search query")
+    total_results: int = Field(0, description="Number of results returned")

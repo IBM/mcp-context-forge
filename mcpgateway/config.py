@@ -410,9 +410,6 @@ class Settings(BaseSettings):
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
-    meta_max_keys: int = Field(default=16, description="Maximum number of keys in user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
-    meta_max_depth: int = Field(default=2, description="Maximum nesting depth for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
-    meta_max_bytes: int = Field(default=4096, description="Maximum JSON-encoded byte size for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
     dangerous_patterns: List[str] = Field(
         default_factory=lambda: [
             r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
@@ -1725,6 +1722,7 @@ class Settings(BaseSettings):
         "Longer responses are truncated to prevent exposing excessive sensitive data. "
         "Default: 5000 characters. Range: 1000-100000.",
     )
+    semantic_search_rate_limit: int = 30  # requests per minute for semantic search
 
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
