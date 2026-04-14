@@ -3365,46 +3365,46 @@ class TestValidateMetaDataPrompt:
     """Unit tests for _validate_meta_data in prompt_service (CWE-400 guards)."""
 
     def test_none_is_accepted(self):
-        from mcpgateway.services.prompt_service import _validate_meta_data
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data(None)
 
     def test_empty_dict_is_accepted(self):
-        from mcpgateway.services.prompt_service import _validate_meta_data
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data({})
 
     def test_valid_small_dict_is_accepted(self):
-        from mcpgateway.services.prompt_service import _validate_meta_data
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
 
     def test_too_many_keys_raises(self):
         """meta_data with more than _META_MAX_KEYS keys must be rejected."""
-        from mcpgateway.services.prompt_service import _META_MAX_KEYS, _validate_meta_data
+        from mcpgateway.common.validators import META_MAX_KEYS, validate_meta_data as _validate_meta_data
 
-        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
         with pytest.raises(ValueError, match="maximum key count"):
             _validate_meta_data(oversized)
 
     def test_excessive_nesting_depth_raises(self):
         """meta_data with depth > _META_MAX_DEPTH must be rejected."""
-        from mcpgateway.services.prompt_service import _validate_meta_data
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         deeply_nested = {"level1": {"level2": {"level3": "value"}}}
         with pytest.raises(ValueError, match="maximum nesting depth"):
             _validate_meta_data(deeply_nested)
 
     def test_exact_max_depth_is_accepted(self):
-        from mcpgateway.services.prompt_service import _validate_meta_data
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         two_levels = {"outer": {"inner": "value"}}
         _validate_meta_data(two_levels)
 
     def test_oversized_bytes_raises(self):
-        from mcpgateway.services.prompt_service import _META_MAX_BYTES, _validate_meta_data
+        from mcpgateway.common.validators import META_MAX_BYTES, validate_meta_data as _validate_meta_data
 
-        large_value = "x" * (_META_MAX_BYTES + 1)
+        large_value = "x" * (META_MAX_BYTES + 1)
         with pytest.raises(ValueError, match="maximum size"):
             _validate_meta_data({"k": large_value})
 
@@ -3443,7 +3443,8 @@ class TestGetPromptMetaDataValidationIntegration:
     @pytest.mark.asyncio
     async def test_fetch_gateway_prompt_rejects_oversized_meta_data(self):
         """_fetch_gateway_prompt_result must raise ValueError for oversized meta_data."""
-        from mcpgateway.services.prompt_service import _META_MAX_KEYS, PromptService
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.prompt_service import PromptService
 
         service = PromptService()
 

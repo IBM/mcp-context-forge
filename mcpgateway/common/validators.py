@@ -50,12 +50,13 @@ Examples:
 # Standard
 from html.parser import HTMLParser
 import ipaddress
+import json
 import logging
 from pathlib import Path
 import re
 import shlex
 import socket
-from typing import Any, Iterable, List, Optional, Pattern
+from typing import Any, Dict, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -1813,3 +1814,34 @@ def validate_core_url(value: str, field_name: str = "URL") -> str:
         The validated URL string.
     """
     return SecurityValidator.validate_url(value, field_name)
+
+
+# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
+# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
+META_MAX_KEYS: int = 16
+META_MAX_DEPTH: int = 2
+META_MAX_BYTES: int = 4096
+
+
+def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    Args:
+        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
+
+    Raises:
+        ValueError: if any limit is exceeded.
+    """
+    if not meta_data:
+        return
+    if len(meta_data) > META_MAX_KEYS:
+        raise ValueError(f"meta_data exceeds maximum key count ({META_MAX_KEYS}): got {len(meta_data)}")
+    for v in meta_data.values():
+        if isinstance(v, dict) and any(isinstance(vv, dict) for vv in v.values()):
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({META_MAX_DEPTH})")
+    try:
+        size = len(json.dumps(meta_data, default=str))
+        if size > META_MAX_BYTES:
+            raise ValueError(f"meta_data exceeds maximum size ({META_MAX_BYTES} bytes): got {size}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"meta_data is not serializable: {exc}") from exc

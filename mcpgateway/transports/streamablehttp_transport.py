@@ -1157,6 +1157,21 @@ async def _validate_streamable_session_access(
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
 
 
+def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestParams]:
+    """Build a ``PaginatedRequestParams`` carrying ``_meta`` when provided.
+
+    Args:
+        meta: Request metadata (_meta) from the original MCP request, or ``None``.
+
+    Returns:
+        A ``PaginatedRequestParams`` instance with ``_meta`` set, or ``None`` when *meta* is falsy.
+    """
+    if not meta:
+        return None
+    logger.debug("Forwarding _meta to remote gateway: %s", meta)
+    return PaginatedRequestParams(_meta=meta)
+
+
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
@@ -1194,14 +1209,8 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # Prepare params with _meta if provided
-                params = None
-                if meta:
-                    params = PaginatedRequestParams(_meta=meta)
-                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
-
                 # List tools with _meta forwarded
-                result = await session.list_tools(params=params)
+                result = await session.list_tools(params=_build_paginated_params(meta))
                 return result.tools
 
     except Exception as e:
@@ -1250,14 +1259,8 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # Prepare params with _meta if provided
-                params = None
-                if meta:
-                    params = PaginatedRequestParams(_meta=meta)
-                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
-
                 # List resources with _meta forwarded
-                result = await session.list_resources(params=params)
+                result = await session.list_resources(params=_build_paginated_params(meta))
 
                 logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
                 return result.resources

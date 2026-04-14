@@ -24,7 +24,6 @@ Examples:
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
-import json
 import mimetypes
 import os
 import re
@@ -49,6 +48,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
@@ -111,36 +111,6 @@ logger = logging_service.get_logger(__name__)
 structured_logger = get_structured_logger("resource_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
-
-# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
-# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
-_META_MAX_KEYS: int = 16
-_META_MAX_DEPTH: int = 2
-_META_MAX_BYTES: int = 4096
-
-
-def _validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
-    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
-
-    Args:
-        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
-
-    Raises:
-        ValueError: if any limit is exceeded.
-    """
-    if not meta_data:
-        return
-    if len(meta_data) > _META_MAX_KEYS:
-        raise ValueError(f"meta_data exceeds maximum key count ({_META_MAX_KEYS}): got {len(meta_data)}")
-    for v in meta_data.values():
-        if isinstance(v, dict) and any(isinstance(vv, dict) for vv in v.values()):
-            raise ValueError(f"meta_data exceeds maximum nesting depth ({_META_MAX_DEPTH})")
-    try:
-        size = len(json.dumps(meta_data, default=str))
-        if size > _META_MAX_BYTES:
-            raise ValueError(f"meta_data exceeds maximum size ({_META_MAX_BYTES} bytes): got {size}")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"meta_data is not serializable: {exc}") from exc
 
 
 def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
