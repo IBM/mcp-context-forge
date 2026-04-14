@@ -1998,9 +1998,7 @@ class Settings(BaseSettings):
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
 
     redis_operation_timeout: float = Field(
-        default=0.5,
-        gt=0.0,
-        description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
+        default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
     )
 
     # Redis Leader Election - Multi-Node Deployments
