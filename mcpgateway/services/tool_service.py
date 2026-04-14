@@ -1311,9 +1311,27 @@ class ToolService(BaseService):
                         # ignore JSON parse errors and continue
                         continue
 
-            # If no structured data found, treat as valid (nothing to validate)
+            # If no structured data found, treat as validation failure per MCP spec
+            # "If an output schema is provided: Servers MUST provide structured results that conform to this schema."
             if structured is None:
-                return True
+                # Skip for error responses — errors don't need structured content
+                is_error = getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False)
+                if is_error:
+                    return True
+                schema_type_str = output_schema.get("type", "object") if isinstance(output_schema, dict) else "object"
+                details = {
+                    "code": "missing_structured_output",
+                    "expected": schema_type_str,
+                    "received": "null",
+                    "message": "outputSchema declared but no structuredContent was returned",
+                }
+                try:
+                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
+                except Exception:
+                    tool_result.content = [TextContent(type="text", text=str(details))]
+                tool_result.is_error = True
+                logger.debug(f"structured_content validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+                return False
 
             # Try to normalize common wrapper shapes to match schema expectations
             schema_type = None

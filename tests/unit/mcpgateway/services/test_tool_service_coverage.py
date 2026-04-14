@@ -659,12 +659,49 @@ class TestExtractAndValidateStructuredContent:
         ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is True
 
-    def test_no_structured_data_found_returns_true(self, tool_service):
-        """No structured data found should return True."""
-        tool = SimpleNamespace(output_schema={"type": "object"})
+    def test_no_structured_data_with_schema_fails_validation(self, tool_service):
+        """When outputSchema is declared but no structured content is returned, should fail validation."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
         result = ToolResult(content=[])
         ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "missing_structured_output"
+        assert details["message"] == "outputSchema declared but no structuredContent was returned"
+
+    def test_no_structured_data_error_response_skips_validation(self, tool_service):
+        """Error responses (is_error=True) should skip structured content validation."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
+        result = ToolResult(content=[], is_error=True)
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is True
+
+    def test_no_structured_data_error_response_alias_skips_validation(self, tool_service):
+        """Error responses (isError=True) should skip structured content validation."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
+        result = ToolResult(content=[])
+        result.isError = True
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is True
+
+    def test_no_structured_data_non_text_content_fails(self, tool_service):
+        """Non-text content with no structured data should fail validation when schema is declared."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
+        result = ToolResult(content=[{"type": "image", "data": "base64data"}])
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "missing_structured_output"
+
+    def test_no_structured_data_null_text_fails(self, tool_service):
+        """TextContent with 'null' text and schema declared should fail validation."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
+        result = ToolResult(content=[{"type": "text", "text": "null"}])
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is False
+        assert result.is_error is True
 
     def test_unwrap_single_element_list(self, tool_service):
         """Single-element list wrapping a TextContent-like dict should be unwrapped."""
@@ -1893,14 +1930,17 @@ class TestStructuredContentAdditional:
         assert isinstance(ok, bool)
 
     def test_content_with_null_text_parses_to_none(self, tool_service):
-        """Content with text=None should parse to null and be treated as no structured data."""
-        tool = SimpleNamespace(output_schema={"type": "object"})
-        # text=None -> orjson.loads("null") -> None -> treated as no structured data
+        """Content with text='null' should parse to None and fail validation when schema is declared."""
+        tool = SimpleNamespace(output_schema={"type": "object"}, name="test_tool")
+        # text="null" -> orjson.loads("null") -> None -> treated as no structured data
         content = [{"type": "text", "text": "null"}]
         result = ToolResult(content=content)
         ok = tool_service._extract_and_validate_structured_content(tool, result)
-        # null parse -> structured=None -> treat as valid (nothing to validate)
-        assert ok is True
+        # null parse -> structured=None -> should fail per MCP spec
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "missing_structured_output"
 
     def test_validation_error_orjson_fallback(self, tool_service):
         """When orjson.dumps fails for error details, fall back to str()."""
