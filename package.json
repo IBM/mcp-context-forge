@@ -41,6 +41,7 @@
         "vite:preview": "vite preview"
     },
     "dependencies": {
-        "alpinejs": "^3.15.8"
+        "alpinejs": "^3.15.8",
+        "htmx.org": "^2.0.3"
     }
 }
