@@ -101,7 +101,7 @@ def verify_migration():
 
             for resource_name, resource_model in resource_types:
                 total_count = db.query(resource_model).count()
-                assigned_count = db.query(resource_model).filter(resource_model.team_id != None, resource_model.owner_email != None, resource_model.visibility != None).count()
+                assigned_count = db.query(resource_model).filter(resource_model.team_id is not None, resource_model.owner_email is not None, resource_model.visibility is not None).count()
                 unassigned_count = total_count - assigned_count
 
                 print(f"   {resource_name}:")
@@ -114,7 +114,7 @@ def verify_migration():
                     success = False
 
                     # Show details of unassigned resources
-                    unassigned = db.query(resource_model).filter((resource_model.team_id == None) | (resource_model.owner_email == None) | (resource_model.visibility == None)).limit(3).all()
+                    unassigned = db.query(resource_model).filter((resource_model.team_id is None) | (resource_model.owner_email is None) | (resource_model.visibility is None)).limit(3).all()
 
                     for resource in unassigned:
                         name = getattr(resource, "name", "Unknown")
