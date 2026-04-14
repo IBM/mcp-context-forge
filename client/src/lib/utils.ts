@@ -1,12 +1,6 @@
-type ClassValue = string | undefined | null | false | ClassValue[];
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
 
-/** Joins class names, deduplicating exact duplicates. No external dep needed. */
-export function cn(...classes: ClassValue[]): string {
-  return [
-    ...new Set(
-      classes
-        .flat(Infinity as 10)
-        .filter(Boolean) as string[],
-    ),
-  ].join(" ");
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
 }
