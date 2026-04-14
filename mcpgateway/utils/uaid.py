@@ -89,16 +89,10 @@ def parse_uaid(uaid: str) -> UaidComponents:
 
     # Safety check: catch misconfigurations
     if settings.uaid_max_length > DB_UAID_COLUMN_LENGTH:
-        logger.warning(
-            f"UAID_MAX_LENGTH ({settings.uaid_max_length}) exceeds database column limit "
-            f"({DB_UAID_COLUMN_LENGTH}). Using database limit for safety."
-        )
+        logger.warning(f"UAID_MAX_LENGTH ({settings.uaid_max_length}) exceeds database column limit " f"({DB_UAID_COLUMN_LENGTH}). Using database limit for safety.")
 
     if len(uaid) > max_length:
-        raise ValueError(
-            f"UAID exceeds maximum length of {max_length} characters. "
-            f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID."
-        )
+        raise ValueError(f"UAID exceeds maximum length of {max_length} characters. " f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID.")
 
     # Existing validation continues...
     if not is_uaid(uaid):
