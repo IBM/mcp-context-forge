@@ -57,7 +57,7 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
     docker run -i --rm --network=host \
       -e MCP_SERVER_URL=$MCP_SERVER_URL \
       -e MCP_AUTH=$MCP_AUTH \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
+      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
       python3 -m mcpgateway.wrapper
     ```
 
@@ -269,7 +269,7 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
         "resources":{"subscribe":false,"listChanged":false},
         "tools":{"listChanged":false}
       },
-      "serverInfo":{"name":"mcpgateway-wrapper","version":"1.0.0-RC-2"}
+      "serverInfo":{"name":"mcpgateway-wrapper","version":"1.0.0-RC-3"}
     }}
 
     # Empty tool list

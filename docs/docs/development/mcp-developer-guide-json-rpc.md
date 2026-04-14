@@ -123,7 +123,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     },
     "serverInfo": {
       "name": "ContextForge",
-      "version": "1.0.0-RC-2"
+      "version": "1.0.0-RC-3"
     },
     "instructions": "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
   }

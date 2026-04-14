@@ -20,10 +20,10 @@ RUN npm run vite:build
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1776071394
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="1.0.0-RC-2" \
+      version="1.0.0-RC-3" \
       description="ContextForge: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12

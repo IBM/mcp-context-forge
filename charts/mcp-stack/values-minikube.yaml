@@ -11,7 +11,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.0-RC-2"
+    tag: "1.0.0-RC-3"
     pullPolicy: Never              # image is pre-loaded via minikube image load
 
   ingress:
@@ -61,7 +61,7 @@ mcpContextForge:
 migration:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.0-RC-2"
+    tag: "1.0.0-RC-3"
     pullPolicy: Never
 
 # Disable TLS on fast-time-server ingress for minikube
@@ -118,7 +118,7 @@ testing:
   registration:
     image:
       repository: ghcr.io/ibm/mcp-context-forge
-      tag: "1.0.0-RC-2"
+      tag: "1.0.0-RC-3"
       pullPolicy: Never
     jwt:
       secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret

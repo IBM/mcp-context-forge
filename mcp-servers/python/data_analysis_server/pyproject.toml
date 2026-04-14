@@ -10,31 +10,31 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3.10.8",
-    "mcp>=1.26.0",
-    "numpy>=2.4.2",
+    "mcp>=1.27.0",
+    "numpy>=2.4.4",
     "openpyxl>=3.1.5",
-    "orjson>=3.11.7",
-    "pandas>=3.0.1",
-    "plotly>=6.6.0",
+    "orjson>=3.11.8",
+    "pandas>=3.0.2",
+    "plotly>=6.7.0",
     "pyarrow>=23.0.1",
-    "pydantic>=2.12.5",
+    "pydantic>=2.13.0",
     "pyyaml>=6.0.3",
-    "requests>=2.32.5",
+    "requests>=2.33.1",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
-    "sqlalchemy>=2.0.48",
+    "sqlalchemy>=2.0.49",
     "statsmodels>=0.14.6",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "black>=26.3.0",
-    "mypy>=1.19.1",
-    "pytest>=9.0.2",
+    "black>=26.3.1",
+    "mypy>=1.20.1",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
-    "pytest-cov>=7.0.0",
-    "ruff>=0.15.5",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.10",
 ]
 
 [build-system]
