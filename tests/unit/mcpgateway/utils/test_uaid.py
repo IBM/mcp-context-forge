@@ -458,3 +458,17 @@ class TestUaidDoSProtection:
 
         with pytest.raises(ValueError, match="Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:'"):
             parse_uaid(short_uaid)
+
+    def test_parse_uaid_normal_config_length(self, monkeypatch):
+        """Test UAID parsing uses settings when within DB limit (covers lines 84, 88)."""
+        from mcpgateway.config import settings
+
+        # Set config to value within DB limit (normal case)
+        monkeypatch.setattr(settings, "uaid_max_length", 1024)  # Within 2048 DB limit
+
+        valid_uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+        result = parse_uaid(valid_uaid)
+
+        # Should succeed without warning
+        assert result.method == "aid"
+        assert result.registry == "context-forge"

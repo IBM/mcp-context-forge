@@ -5296,3 +5296,55 @@ async def test_invoke_agent_access_denied_by_team(module_service, module_mock_db
         )
 
 
+async def test_invoke_remote_agent_unsupported_protocol(module_service, monkeypatch):
+    """Test _invoke_remote_agent with unsupported protocol (covers line 1839)."""
+    from mcpgateway.services.a2a_service import A2AAgentError
+
+    # UAID with unsupported protocol
+    uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=grpc;nativeId=grpc.example.com"
+
+    # Mock settings
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+    # Should raise A2AAgentError (ValueError is caught and re-raised)
+    with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed"):
+        await module_service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+
+
+async def test_invoke_remote_agent_no_correlation_id(module_service, monkeypatch):
+    """Test _invoke_remote_agent when correlation_id is None (covers line 1892-1893)."""
+    uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+    # Mock HTTP client
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"result": "success"}
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    async def mock_get_http_client():
+        return mock_client
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    # Mock get_correlation_id to return None
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_correlation_id", lambda: None)
+
+    result = await module_service._invoke_remote_agent(
+        uaid=uaid,
+        parameters={"test": "data"},
+        interaction_type="request",
+    )
+
+    assert result == {"result": "success"}
+    # Verify that X-Correlation-ID was NOT added to headers
+    call_args = mock_client.post.call_args
+    headers = call_args.kwargs.get("headers", {})
+    assert "X-Correlation-ID" not in headers
+
+
