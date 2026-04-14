@@ -56,8 +56,7 @@
 //! ```
 
 use crate::config::RuntimeConfig;
-use hickory_resolver::TokioAsyncResolver;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioResolver;
 use ipnetwork::IpNetwork;
 use regex::Regex;
 use std::collections::HashMap;
@@ -66,7 +65,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 use url::Url;
 
 /// Errors that can occur during URL validation.
@@ -169,7 +168,7 @@ pub struct UrlValidator {
     allowed_schemes: Vec<String>,
 
     /// DNS resolver (async)
-    resolver: Arc<TokioAsyncResolver>,
+    resolver: Arc<TokioResolver>,
 
     /// DNS result cache (hostname -> (IPs, expiry_time))
     /// TTL: 5 minutes to balance performance and security (DNS rebinding attacks)
@@ -229,8 +228,9 @@ impl UrlValidator {
             .collect();
 
         // Create DNS resolver (async)
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver = TokioResolver::builder_tokio()
+            .map_err(|e| format!("Failed to create DNS resolver builder: {}", e))?
+            .build();
 
         // Compile regex patterns (at creation time for performance)
         let dangerous_url_pattern =
@@ -383,7 +383,7 @@ impl UrlValidator {
 
         // Validate port number
         if let Some(port) = parsed_url.port() {
-            if port == 0 || port > 65535 {
+            if port == 0 {
                 return Err(ValidationError::InvalidPort {
                     field: field_name.to_string(),
                 });
