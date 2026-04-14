@@ -510,7 +510,7 @@ export const editGateway = async function (gatewayId) {
             oauthClientIdField.value = config.client_id || "";
           }
           if (oauthClientSecretField) {
-            oauthClientSecretField.value = ""; // Don't populate secret for security
+            oauthClientSecretField.value = config.client_secret ? MASKED_AUTH_VALUE : "";
           }
           if (oauthTokenUrlField) {
             oauthTokenUrlField.value = config.token_url || "";
