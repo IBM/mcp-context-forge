@@ -8014,18 +8014,18 @@ class OutputLengthGuardConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    min_chars: int = Field(0, ge=0, description="Minimum character count, must be >= 0")
-    max_chars: Optional[int] = Field(None, description="Maximum character count; None or 0 disables the check")
-    min_tokens: int = Field(0, ge=0, description="Minimum token count; 0 disables")
-    max_tokens: Optional[int] = Field(None, description="Maximum token count; None or 0 disables")
-    chars_per_token: int = Field(4, ge=1, le=10, description="Characters per token ratio for estimation")
-    limit_mode: Literal["character", "token"] = Field("character", description="Enforcement mode: 'character' or 'token'")
-    strategy: Literal["truncate", "block"] = Field("truncate", description="Action when limit exceeded")
-    ellipsis: str = Field("\u2026", max_length=20, description="Suffix appended on truncation")
-    word_boundary: bool = Field(False, description="Truncate at word boundaries to avoid mid-word cuts")
-    max_text_length: int = Field(1_000_000, ge=1, description="Maximum text size to process; prevents memory exhaustion")
-    max_structure_size: int = Field(10_000, ge=1, description="Maximum items in list/dict; prevents DoS")
-    max_recursion_depth: int = Field(100, ge=1, description="Maximum nesting depth; prevents stack overflow")
+    min_chars: int = Field(..., ge=0, description="Minimum character count, must be >= 0")
+    max_chars: Optional[int] = Field(..., description="Maximum character count; None or 0 disables the check")
+    min_tokens: int = Field(..., ge=0, description="Minimum token count; 0 disables")
+    max_tokens: Optional[int] = Field(..., description="Maximum token count; None or 0 disables")
+    chars_per_token: int = Field(..., ge=1, le=10, description="Characters per token ratio for estimation")
+    limit_mode: Literal["character", "token"] = Field(..., description="Enforcement mode: 'character' or 'token'")
+    strategy: Literal["truncate", "block"] = Field(..., description="Action when limit exceeded")
+    ellipsis: str = Field(..., max_length=20, description="Suffix appended on truncation")
+    word_boundary: bool = Field(..., description="Truncate at word boundaries to avoid mid-word cuts")
+    max_text_length: int = Field(..., ge=1, description="Maximum text size to process; prevents memory exhaustion")
+    max_structure_size: int = Field(..., ge=1, description="Maximum items in list/dict; prevents DoS")
+    max_recursion_depth: int = Field(..., ge=1, description="Maximum nesting depth; prevents stack overflow")
 
     @model_validator(mode="after")
     def min_less_than_max(self) -> "OutputLengthGuardConfig":
@@ -8063,14 +8063,14 @@ class RateLimiterConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    by_user: Optional[str] = Field(None, description="Rate limit per user, e.g. '60/m' or '10/s'")
-    by_tenant: Optional[str] = Field(None, description="Rate limit per tenant, e.g. '600/m'")
-    by_tool: Optional[Dict[str, str]] = Field(None, description="Per-tool rate limits, e.g. {'search': '10/m'}")
-    algorithm: Literal["fixed_window", "sliding_window", "token_bucket"] = Field("fixed_window", description="Counting algorithm")
-    backend: Literal["memory", "redis"] = Field("memory", description="Storage backend")
-    redis_url: Optional[str] = Field(None, description="Redis URL, e.g. 'redis://localhost:6379/0'; required when backend='redis'")
-    redis_key_prefix: str = Field("rl", description="Prefix for all Redis keys")
-    redis_fallback: bool = Field(True, description="Fall back to memory if Redis is unavailable")
+    by_user: Optional[str] = Field(..., description="Rate limit per user, e.g. '60/m' or '10/s'; null disables")
+    by_tenant: Optional[str] = Field(..., description="Rate limit per tenant, e.g. '600/m'; null disables")
+    by_tool: Optional[Dict[str, str]] = Field(..., description="Per-tool rate limits, e.g. {'search': '10/m'}; null disables")
+    algorithm: Literal["fixed_window", "sliding_window", "token_bucket"] = Field(..., description="Counting algorithm")
+    backend: Literal["memory", "redis"] = Field(..., description="Storage backend")
+    redis_url: Optional[str] = Field(..., description="Redis URL, e.g. 'redis://localhost:6379/0'; required when backend='redis', null otherwise")
+    redis_key_prefix: str = Field(..., description="Prefix for all Redis keys")
+    redis_fallback: bool = Field(..., description="Fall back to memory if Redis is unavailable")
 
     @field_validator("by_user", "by_tenant", mode="before")
     @classmethod
@@ -8127,11 +8127,11 @@ class SecretsDetectionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
-    redact: bool = Field(True, description="Whether to redact detected secrets")
-    redaction_text: str = Field("[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
-    block_on_detection: bool = Field(False, description="Whether to block the response when secrets are detected")
-    min_findings_to_block: int = Field(1, ge=1, description="Minimum number of findings required to block")
+    enabled: Dict[str, bool] = Field(..., description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
+    redact: bool = Field(..., description="Whether to redact detected secrets")
+    redaction_text: str = Field(..., max_length=50, description="Text to replace secrets with when redacting")
+    block_on_detection: bool = Field(..., description="Whether to block the response when secrets are detected")
+    min_findings_to_block: int = Field(..., ge=1, description="Minimum number of findings required to block")
 
 
 # Map of plugin_id → config schema class for validation
