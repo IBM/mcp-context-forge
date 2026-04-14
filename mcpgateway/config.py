@@ -586,6 +586,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    uaid_max_length: int = Field(
+        default=2048,
+        ge=512,  # Minimum: accommodate shortest valid UAID
+        le=2048,  # Maximum: MUST match database column length (a2a_agents.uaid String(2048))
+        description=(
+            "Maximum allowed length for UAID strings. Used to prevent DoS attacks via "
+            "excessively long UAID parsing. Must not exceed database column limit (2048). "
+            "Default 2048 matches database capacity. Operators can reduce for stricter DoS "
+            "protection but cannot exceed database schema limit."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")

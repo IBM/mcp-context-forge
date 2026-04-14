@@ -407,3 +407,50 @@ class TestUaidRoundTrip:
         assert routing["protocol"] == original_data["protocol"]
         assert routing["endpoint"] == original_data["native_id"]
         assert routing["registry"] == original_data["registry"]
+
+
+class TestUaidDoSProtection:
+    """Test UAID DoS protection via length limits."""
+
+    def test_parse_uaid_exceeds_max_length(self, monkeypatch):
+        """Test UAID parsing rejects strings exceeding UAID_MAX_LENGTH."""
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "uaid_max_length", 2048)
+
+        # Create UAID exceeding limit (3000 chars)
+        long_uaid = "uaid:aid:" + "x" * 3000
+
+        with pytest.raises(ValueError, match="exceeds maximum length of 2048"):
+            parse_uaid(long_uaid)
+
+    def test_parse_uaid_config_exceeds_db_limit(self, monkeypatch, caplog):
+        """Test parsing warns when UAID_MAX_LENGTH exceeds database limit."""
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "uaid_max_length", 5000)  # Exceeds DB limit of 2048
+
+        valid_uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+
+        result = parse_uaid(valid_uaid)  # Should succeed but warn
+
+        assert "exceeds database column limit" in caplog.text
+        assert result.method == "aid"
+
+    def test_parse_uaid_invalid_method_dos_context(self):
+        """Test UAID parsing rejects invalid methods in DoS context."""
+        # Edge case: malformed UAID with invalid method
+        # Caught by is_uaid() check at line 104-105
+        invalid_uaid = "uaid:invalid:hash123;uid=0;registry=test;proto=a2a;nativeId=example.com"
+
+        with pytest.raises(ValueError, match="Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:'"):
+            parse_uaid(invalid_uaid)
+
+    def test_parse_uaid_too_short_dos_context(self):
+        """Test UAID parsing rejects incomplete UAID strings in DoS context."""
+        # Edge case: UAID missing hash and parameters
+        # Caught by is_uaid() check at line 104-105
+        short_uaid = "uaid:aid"  # Missing colon, hash, and parameters
+
+        with pytest.raises(ValueError, match="Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:'"):
+            parse_uaid(short_uaid)

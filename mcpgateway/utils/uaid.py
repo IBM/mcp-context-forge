@@ -20,10 +20,13 @@ References:
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from typing import Optional
 
 # Third-Party
 import base58
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,6 +78,29 @@ def parse_uaid(uaid: str) -> UaidComponents:
     Raises:
         ValueError: If UAID format is invalid or required components are missing
     """
+    # DoS Protection: Reject excessively long UAIDs before parsing
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    # Database column hard limit (source of truth)
+    DB_UAID_COLUMN_LENGTH = 2048
+
+    max_length = min(settings.uaid_max_length, DB_UAID_COLUMN_LENGTH)
+
+    # Safety check: catch misconfigurations
+    if settings.uaid_max_length > DB_UAID_COLUMN_LENGTH:
+        logger.warning(
+            f"UAID_MAX_LENGTH ({settings.uaid_max_length}) exceeds database column limit "
+            f"({DB_UAID_COLUMN_LENGTH}). Using database limit for safety."
+        )
+
+    if len(uaid) > max_length:
+        raise ValueError(
+            f"UAID exceeds maximum length of {max_length} characters. "
+            f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID."
+        )
+
+    # Existing validation continues...
     if not is_uaid(uaid):
         raise ValueError(f"Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:', got: {uaid}")
 

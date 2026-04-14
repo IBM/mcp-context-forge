@@ -10,7 +10,7 @@ routing. Stores UAID in a separate field from the UUID primary key for optimal
 database performance and clean URL routing.
 
 Changes:
-- Add uaid (String(512), nullable, unique): Full UAID string for cross-gateway routing
+- Add uaid (String(2048), nullable, unique): Full UAID string for cross-gateway routing
 - Add uaid_registry (String(255), nullable): Registry name extracted from UAID
 - Add uaid_proto (String(50), nullable): Protocol from UAID (a2a, mcp, rest, grpc)
 - Add uaid_native_id (String(767), nullable): Native endpoint URL for routing
@@ -50,7 +50,7 @@ def upgrade() -> None:
 
     # Add uaid column if it doesn't exist
     if "uaid" not in existing_columns:
-        op.add_column("a2a_agents", sa.Column("uaid", sa.String(512), nullable=True, comment="Full UAID string for UAID-based agents"))
+        op.add_column("a2a_agents", sa.Column("uaid", sa.String(2048), nullable=True, comment="Full UAID string for UAID-based agents (max 2048 chars)"))
         # Create unique index on uaid
         op.create_index("ix_a2a_agents_uaid", "a2a_agents", ["uaid"], unique=True)
 
