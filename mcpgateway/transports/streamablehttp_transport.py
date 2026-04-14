@@ -2353,7 +2353,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
-                    # CWE-532: log only the meta_data key names (never the values which may carry PII/tokens)
+                    # SECURITY: CWE-532 protection - Log only meta_data key names, NEVER values
+                    # Metadata may contain PII, authentication tokens, or sensitive context that
+                    # MUST NOT be written to logs. This is a critical security control.
                     logger.debug(
                         "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta keys: %s",
                         resource_uri,
