@@ -2060,8 +2060,40 @@ class A2AAgentService(BaseService):
             client = await get_http_client()
             headers = {"Content-Type": "application/json"}
 
-            # NOTE: Authentication for cross-gateway calls is future work.
-            # Will support bearer token forwarding and mutual TLS in future release.
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
+            #
+            # Current Behavior:
+            #   Cross-gateway HTTP calls (UAID-based routing) do NOT forward authentication
+            #   credentials. Remote gateways receive unauthenticated requests with no bearer
+            #   token or session context.
+            #
+            # Security Implications:
+            #   1. Remote Gateway MUST Authenticate: The target gateway MUST enforce its own
+            #      authentication layer (AUTH_REQUIRED=true). If disabled, public agents
+            #      are accessible without any authentication.
+            #
+            #   2. No Authorization Context: Remote gateway cannot enforce RBAC based on
+            #      originating user. All cross-gateway calls execute with target gateway's
+            #      public access level.
+            #
+            #   3. Trust Boundary: This gateway trusts the remote gateway's access control.
+            #      If remote gateway is compromised or misconfigured, this becomes a
+            #      security vector.
+            #
+            # Future Work (Roadmap):
+            #   - Bearer token forwarding (requires gateway-to-gateway trust establishment)
+            #   - Mutual TLS authentication (gateway certificates)
+            #   - Trusted gateway registry with signature verification
+            #   - Per-UAID access policies (allowlist/denylist)
+            #
+            # Current Mitigations:
+            #   - UAID_ALLOWED_DOMAINS: Restricts outbound calls to trusted domains
+            #   - Correlation ID logging: Enables cross-gateway request tracing
+            #   - Operator guidance: Documentation warns about unauthenticated cross-gateway calls
+            #
+            # Operators: Set UAID_ALLOWED_DOMAINS to a restrictive allowlist of trusted domains only.
+            # ═══════════════════════════════════════════════════════════════════════════
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()

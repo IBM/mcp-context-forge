@@ -5179,3 +5179,120 @@ class TestCrossGatewayRoutingCoverage:
             )
 
 
+# Module-level fixtures for cross-gateway routing tests
+@pytest.fixture
+def module_service():
+    """Create A2A agent service instance for module-level tests."""
+    return A2AAgentService()
+
+
+@pytest.fixture
+def module_mock_db():
+    """Create mock database session for module-level tests."""
+    db = MagicMock(spec=Session)
+    # Set up query mock to return empty results by default
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.first.return_value = None
+    mock_query.all.return_value = []
+    db.query.return_value = mock_query
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.commit = MagicMock()
+    db.add = MagicMock()
+    return db
+
+
+# Test 1: Cross-Gateway HTTP Error Handling
+async def test_invoke_agent_cross_gateway_routing_http_error(module_service, module_mock_db, monkeypatch):
+    """Test cross-gateway routing handles HTTP errors gracefully."""
+    from mcpgateway.services.a2a_service import A2AAgentError
+
+    # Covers lines 1839, 1861: error handling in _invoke_remote_agent
+
+    def mock_extract_routing(*args, **kwargs):
+        return {"protocol": "a2a", "endpoint": "remote.example.com", "registry": "test"}
+
+    monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
+
+    # Allow all domains (empty list means no restrictions)
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+    # Mock HTTP client to return 500 error
+    async def mock_post(*args, **kwargs):
+        class MockResponse:
+            status_code = 500
+            def json(self):
+                return {"error": "Internal server error"}
+        return MockResponse()
+
+    mock_client = type('obj', (object,), {'post': mock_post})()
+    async def mock_get_client():
+        return mock_client
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_client)
+
+    uaid = "uaid:aid:hash;uid=0;registry=test;proto=a2a;nativeId=remote.example.com"
+
+    with pytest.raises(A2AAgentError, match="Cross-gateway routing failed"):
+        await module_service.invoke_agent(
+            db=module_mock_db,
+            agent_name="test",
+            agent_id=uaid,
+            parameters={"query": "test"}
+        )
+
+
+# Test 2: Disallowed Domain Rejection
+async def test_invoke_agent_uaid_disallowed_domain(module_service, module_mock_db, monkeypatch):
+    """Test cross-gateway routing rejects disallowed domains."""
+    from mcpgateway.config import settings
+    from mcpgateway.services.a2a_service import A2AAgentError
+
+    monkeypatch.setattr(settings, "uaid_allowed_domains", ["trusted.com"])
+
+    def mock_extract_routing(*args, **kwargs):
+        return {"protocol": "a2a", "endpoint": "untrusted.example.com", "registry": "test"}
+
+    monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
+
+    uaid = "uaid:aid:hash;uid=0;registry=test;proto=a2a;nativeId=untrusted.example.com"
+
+    with pytest.raises(A2AAgentError, match="endpoint not allowed.*not in UAID_ALLOWED_DOMAINS"):
+        await module_service.invoke_agent(
+            db=module_mock_db,
+            agent_name="test",
+            agent_id=uaid,
+            parameters={"query": "test"}
+        )
+
+
+# Test 3: Team Access Control
+async def test_invoke_agent_access_denied_by_team(module_service, module_mock_db):
+    """Test agent invocation respects team visibility."""
+    from mcpgateway.db import A2AAgent as DbA2AAgent
+    from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+    # Covers lines 1566, 1578: access check edge cases
+
+    # Create team-scoped agent
+    agent = DbA2AAgent(
+        id="test-agent-id",
+        name="team-agent",
+        endpoint_url="https://example.com",
+        visibility="team",
+        team_id="team-123",
+        enabled=True
+    )
+    module_mock_db.add(agent)
+    module_mock_db.commit()
+
+    # Invoke with different team (should fail with 404, not 403)
+    with pytest.raises(A2AAgentNotFoundError):
+        await module_service.invoke_agent(
+            db=module_mock_db,
+            agent_name="team-agent",
+            parameters={"query": "test"},
+            token_teams=["different-team"]  # Wrong team
+        )
+
+
