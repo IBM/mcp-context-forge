@@ -1190,6 +1190,41 @@ class TestOAuthManager:
             # This should reach the final fallback error on line 492
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_with_ca_certificate(self):
+        """Test _exchange_code_for_tokens with CA certificate (lines 1271-1277)."""
+        manager = OAuthManager()
+        credentials = {
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri": "https://gateway.example.com/callback",
+        }
+        code = "auth_code_123"
+        ca_cert = "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
+        client_cert = "-----BEGIN CERTIFICATE-----\nCLIENT...\n-----END CERTIFICATE-----"
+        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"  # pragma: allowlist secret
+
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.get = MagicMock(return_value="application/json")
+        mock_response.json = MagicMock(return_value={"access_token": "ssl_token_123", "token_type": "Bearer"})
+        mock_response.raise_for_status = MagicMock()
+
+        # Mock SSL context and client
+        mock_ssl_context = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager._exchange_code_for_tokens(credentials, code, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
+                assert result["access_token"] == "ssl_token_123"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
+
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_decryption_success(self):
@@ -1408,7 +1443,7 @@ class TestOAuthManager:
 
         ca_cert = "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
         client_cert = "-----BEGIN CERTIFICATE-----\nCLIENT...\n-----END CERTIFICATE-----"
-        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"
+        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1439,7 +1474,7 @@ class TestOAuthManager:
 
         ca_cert = "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
         client_cert = "-----BEGIN CERTIFICATE-----\nCLIENT...\n-----END CERTIFICATE-----"
-        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"
+        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1459,8 +1494,6 @@ class TestOAuthManager:
                 result = await manager.refresh_token("old_refresh_token", credentials, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
                 assert result["access_token"] == "refreshed_token"
                 assert result["refresh_token"] == "new_refresh_token"
-                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
-
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
 
 

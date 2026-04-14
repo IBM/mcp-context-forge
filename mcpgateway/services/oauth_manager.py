@@ -184,7 +184,7 @@ class OAuthManager:
             Client credentials flow:
             >>> import asyncio
             >>> class TestMgr(OAuthManager):
-            ...     async def _client_credentials_flow(self, credentials):
+            ...     async def _client_credentials_flow(self, credentials, ca_certificate=None, client_cert=None, client_key=None):
             ...         return 'tok'
             >>> mgr = TestMgr()
             >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
@@ -422,7 +422,7 @@ class OAuthManager:
 
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data)
+                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 else:
                     client = await self._get_client()
                     response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -502,7 +502,7 @@ class OAuthManager:
 
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data)
+                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 else:
                     client = await self._get_client()
                     response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -1441,7 +1441,7 @@ class OAuthManager:
 
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data)
+                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 else:
                     client = await self._get_client()
                     response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -1540,7 +1540,7 @@ class OAuthManager:
 
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data)
+                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 else:
                     client = await self._get_client()
                     response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
