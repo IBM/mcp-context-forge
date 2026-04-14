@@ -573,13 +573,18 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
+            # Use provider's expires_in if present; None means the provider
+            # does not specify token expiration (e.g. GitHub OAuth Apps).
+            raw_expires = token_response.get("expires_in")
+            expires_in = int(raw_expires) if raw_expires is not None else None
+
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
                 app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
-                expires_in=token_response.get("expires_in", self.settings.oauth_default_timeout),
+                expires_in=expires_in,
                 scopes=token_response.get("scope", "").split(),
             )
 

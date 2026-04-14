@@ -74,7 +74,7 @@ class TokenStorageService:
             logger.warning("OAuth encryption not available, using plain text storage")
             self.encryption = None
 
-    async def store_tokens(self, gateway_id: str, user_id: str, app_user_email: str, access_token: str, refresh_token: Optional[str], expires_in: int, scopes: List[str]) -> OAuthToken:
+    async def store_tokens(self, gateway_id: str, user_id: str, app_user_email: str, access_token: str, refresh_token: Optional[str], expires_in: Optional[int], scopes: List[str]) -> OAuthToken:
         """Store OAuth tokens for a gateway-user combination.
 
         Args:
@@ -83,7 +83,7 @@ class TokenStorageService:
             app_user_email: ContextForge user email (required)
             access_token: Access token from OAuth provider
             refresh_token: Refresh token from OAuth provider (optional)
-            expires_in: Token expiration time in seconds
+            expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
 
         Returns:
@@ -102,8 +102,12 @@ class TokenStorageService:
                 if refresh_token:
                     encrypted_refresh = await self.encryption.encrypt_secret_async(refresh_token)
 
-            # Calculate expiration
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+            # Calculate expiration (None if provider does not specify expires_in)
+            if expires_in is not None:
+                expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+            else:
+                logger.info(f"No expires_in from OAuth provider for gateway {SecurityValidator.sanitize_log_message(gateway_id)} — token will not auto-expire")
+                expires_at = None
             # Create or update token record - now scoped by app_user_email
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
