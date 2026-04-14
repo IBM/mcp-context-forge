@@ -12871,10 +12871,13 @@ async def admin_edit_gateway(
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
                     oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
+                if oauth_client_secret and oauth_client_secret != settings.masked_auth_value:
+                    # Encrypt the new client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                elif oauth_client_id:
+                    # client_id present but secret left blank or masked — preserve existing secret
+                    oauth_config["client_secret"] = settings.masked_auth_value
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -16347,10 +16350,13 @@ async def admin_edit_a2a_agent(
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
                     oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
+                if oauth_client_secret and oauth_client_secret != settings.masked_auth_value:
+                    # Encrypt the new client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                elif oauth_client_id:
+                    # client_id present but secret left blank or masked — preserve existing secret
+                    oauth_config["client_secret"] = settings.masked_auth_value
 
                 # Add username and password for password grant type
                 if oauth_username:
