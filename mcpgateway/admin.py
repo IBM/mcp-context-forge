@@ -12136,6 +12136,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     if scopes:
                         oauth_config["scopes"] = scopes
 
+                # Token endpoint auth method (RFC 6749 Section 2.3)
+                oauth_token_endpoint_auth_method = str(form.get("oauth_token_endpoint_auth_method", ""))
+                if oauth_token_endpoint_auth_method:
+                    oauth_config["token_endpoint_auth_method"] = oauth_token_endpoint_auth_method
+
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
 
@@ -12407,6 +12412,11 @@ async def admin_edit_gateway(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Token endpoint auth method (RFC 6749 Section 2.3)
+                oauth_token_endpoint_auth_method = str(form.get("oauth_token_endpoint_auth_method", ""))
+                if oauth_token_endpoint_auth_method:
+                    oauth_config["token_endpoint_auth_method"] = oauth_token_endpoint_auth_method
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 

@@ -400,6 +400,9 @@ export const editGateway = async function (gatewayId) {
     const oauthRedirectUriField = safeGetElement("oauth-redirect-uri-gw-edit");
     const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
     const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+    const oauthTokenEndpointAuthMethodField = safeGetElement(
+      "oauth-token-endpoint-auth-method-gw-edit"
+    );
     const oauthAuthCodeFields = safeGetElement(
       "oauth-auth-code-fields-gw-edit"
     );
@@ -525,6 +528,13 @@ export const editGateway = async function (gatewayId) {
             oauthScopesField.value = Array.isArray(config.scopes)
               ? config.scopes.join(" ")
               : "";
+          }
+          if (
+            oauthTokenEndpointAuthMethodField &&
+            config.token_endpoint_auth_method
+          ) {
+            oauthTokenEndpointAuthMethodField.value =
+              config.token_endpoint_auth_method;
           }
         }
         break;
