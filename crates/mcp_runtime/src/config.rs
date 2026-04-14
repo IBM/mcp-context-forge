@@ -211,11 +211,7 @@ pub struct RuntimeConfig {
     #[arg(long, env = "SSRF_ALLOW_PRIVATE_NETWORKS", default_value_t = false)]
     pub ssrf_allow_private_networks: bool,
 
-    #[arg(
-        long,
-        env = "SSRF_ALLOWED_NETWORKS",
-        value_delimiter = ','
-    )]
+    #[arg(long, env = "SSRF_ALLOWED_NETWORKS", value_delimiter = ',')]
     pub ssrf_allowed_networks: Vec<String>,
 
     #[arg(long, env = "SSRF_DNS_FAIL_CLOSED", default_value_t = true)]

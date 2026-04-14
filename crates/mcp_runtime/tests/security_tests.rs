@@ -67,7 +67,10 @@ async fn test_blocks_gcp_metadata_hostname() {
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
     let result = validator
-        .validate_url("http://metadata.google.internal/computeMetadata/v1/", "test")
+        .validate_url(
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "test",
+        )
         .await;
 
     assert!(
@@ -96,9 +99,7 @@ async fn test_blocks_link_local_ipv4() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("http://169.254.1.1/", "test")
-        .await;
+    let result = validator.validate_url("http://169.254.1.1/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::BlockedNetwork { .. })),
@@ -128,9 +129,7 @@ async fn test_blocks_private_network_172() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("http://172.16.0.1/", "test")
-        .await;
+    let result = validator.validate_url("http://172.16.0.1/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::BlockedPrivateNetwork { .. })),
@@ -143,9 +142,7 @@ async fn test_blocks_private_network_192() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("http://192.168.1.1/", "test")
-        .await;
+    let result = validator.validate_url("http://192.168.1.1/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::BlockedPrivateNetwork { .. })),
@@ -190,9 +187,7 @@ async fn test_blocks_localhost_127_0_0_1() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("http://127.0.0.1/", "test")
-        .await;
+    let result = validator.validate_url("http://127.0.0.1/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::BlockedLocalhost { .. })),
@@ -205,9 +200,7 @@ async fn test_blocks_localhost_127_0_0_2() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("http://127.0.0.2/", "test")
-        .await;
+    let result = validator.validate_url("http://127.0.0.2/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::BlockedLocalhost { .. })),
@@ -270,10 +263,7 @@ async fn test_allows_websocket_urls() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let ws_urls = vec![
-        "ws://example.com/ws",
-        "wss://example.com/secure-ws",
-    ];
+    let ws_urls = vec!["ws://example.com/ws", "wss://example.com/secure-ws"];
 
     for url in ws_urls {
         let result = validator.validate_url(url, "test").await;
@@ -332,9 +322,7 @@ async fn test_rejects_invalid_scheme_file() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("file:///etc/passwd", "test")
-        .await;
+    let result = validator.validate_url("file:///etc/passwd", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::InvalidScheme { .. })),
@@ -351,9 +339,7 @@ async fn test_blocks_javascript_protocol() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("javascript:alert(1)", "test")
-        .await;
+    let result = validator.validate_url("javascript:alert(1)", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::InvalidScheme { .. })),
@@ -381,9 +367,7 @@ async fn test_blocks_vbscript_protocol() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("vbscript:alert(1)", "test")
-        .await;
+    let result = validator.validate_url("vbscript:alert(1)", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::InvalidScheme { .. })),
@@ -400,9 +384,7 @@ async fn test_blocks_ipv6_loopback() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("https://[::1]:8080/", "test")
-        .await;
+    let result = validator.validate_url("https://[::1]:8080/", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::IPv6NotSupported { .. })),
@@ -515,9 +497,7 @@ async fn test_blocks_protocol_relative_url() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
-    let result = validator
-        .validate_url("//example.com/path", "test")
-        .await;
+    let result = validator.validate_url("//example.com/path", "test").await;
 
     assert!(
         matches!(result, Err(ValidationError::ProtocolRelativeUrl { .. })),

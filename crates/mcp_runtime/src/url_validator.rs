@@ -56,8 +56,8 @@
 //! ```
 
 use crate::config::RuntimeConfig;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use ipnetwork::IpNetwork;
 use regex::Regex;
 use std::collections::HashMap;
@@ -229,22 +229,21 @@ impl UrlValidator {
             .collect();
 
         // Create DNS resolver (async)
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
         // Compile regex patterns (at creation time for performance)
-        let dangerous_url_pattern = Regex::new(
-            r"(?i)(javascript|data|file|vbscript|about|chrome|mailto):",
-        )
-        .map_err(|e| format!("Failed to compile dangerous_url_pattern regex: {}", e))?;
+        let dangerous_url_pattern =
+            Regex::new(r"(?i)(javascript|data|file|vbscript|about|chrome|mailto):")
+                .map_err(|e| format!("Failed to compile dangerous_url_pattern regex: {}", e))?;
 
         let dangerous_html_pattern = Regex::new(
             r"(?i)<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
         ).map_err(|e| format!("Failed to compile dangerous_html_pattern regex: {}", e))?;
 
-        let dangerous_js_pattern = Regex::new(
-            r"(?i)(javascript:|vbscript:|on\w+\s*=|data:.*script)",
-        )
-        .map_err(|e| format!("Failed to compile dangerous_js_pattern regex: {}", e))?;
+        let dangerous_js_pattern =
+            Regex::new(r"(?i)(javascript:|vbscript:|on\w+\s*=|data:.*script)")
+                .map_err(|e| format!("Failed to compile dangerous_js_pattern regex: {}", e))?;
 
         Ok(Self {
             ssrf_protection_enabled: config.ssrf_protection_enabled,
@@ -509,7 +508,11 @@ impl UrlValidator {
                 for ip in lookup.iter() {
                     ip_addresses.push(ip);
                 }
-                debug!("DNS resolved {} to {} addresses", hostname, ip_addresses.len());
+                debug!(
+                    "DNS resolved {} to {} addresses",
+                    hostname,
+                    ip_addresses.len()
+                );
             }
             Err(e) => {
                 debug!("DNS resolution failed for {}: {}", hostname, e);
@@ -532,7 +535,11 @@ impl UrlValidator {
     /// # Errors
     ///
     /// Returns `ValidationError` if the IP address is blocked by any SSRF protection rule.
-    fn validate_ip_address(&self, ip_addr: IpAddr, field_name: &str) -> Result<(), ValidationError> {
+    fn validate_ip_address(
+        &self,
+        ip_addr: IpAddr,
+        field_name: &str,
+    ) -> Result<(), ValidationError> {
         // Check against blocked networks (always blocked regardless of other settings)
         for network in &self.blocked_networks {
             if network.contains(ip_addr) {
