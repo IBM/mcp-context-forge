@@ -1,0 +1,53 @@
+[package]
+name = "contextforge_mcp_runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Experimental Rust MCP runtime edge for ContextForge"
+
+[features]
+default = []
+rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
+
+[dependencies]
+async-stream = "0.3.6"
+axum = "0.8.8"
+base64.workspace = true
+bytes = "1.11.1"
+clap.workspace = true
+deadpool-postgres = "0.14.1"
+futures-util.workspace = true
+opentelemetry = "0.31.0"
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }
+opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
+rand.workspace = true
+regex.workspace = true
+redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
+reqwest.workspace = true
+reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"], optional = true }
+rmcp = { workspace = true, optional = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rustls = "0.23.37"
+rustls-native-certs = "0.8.3"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1"] }
+tokio-postgres-rustls = "0.13.0"
+tonic = { version = "0.14.1", default-features = false }
+tracing.workspace = true
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber.workspace = true
+url = "2.5.7"
+uuid.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

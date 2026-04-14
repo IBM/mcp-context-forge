@@ -272,6 +272,12 @@ install-db: venv
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
+	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
+	else \
+		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
+	fi
 	@$(MAKE) build-ui
 
 # help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
@@ -4962,14 +4968,32 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
 	@$(UV_BIN) build
+	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
+		echo '🦀 Rust wheels built successfully'; \
+	else \
+		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
+	fi
 	@echo '🛠  Python wheel & sdist written to ./dist'
+	@echo ''
+	@echo '💡 To publish both Python and Rust packages:'
+	@echo '   make publish         # Publish Python package'
+	@echo '   make rust-release-publish  # Publish Rust wheels (if configured)'
 
-wheel: uv                    ## Build wheel only
+wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
 	@$(UV_BIN) build --wheel
+	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+		echo "🦀 Building Rust wheels..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
+		echo '🦀 Rust wheels built successfully'; \
+	else \
+		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
+	fi
 	@echo '🛠  Python wheel written to ./dist'
 
 sdist: uv                    ## Build source distribution only
