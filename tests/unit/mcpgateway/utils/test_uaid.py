@@ -426,8 +426,12 @@ class TestUaidDoSProtection:
 
     def test_parse_uaid_config_exceeds_db_limit(self, monkeypatch, caplog):
         """Test parsing warns when UAID_MAX_LENGTH exceeds database limit."""
+        import logging
+
         from mcpgateway.config import settings
 
+        # Explicitly set log level for the uaid module logger to ensure capture in CI/CD
+        caplog.set_level(logging.WARNING, logger="mcpgateway.utils.uaid")
         monkeypatch.setattr(settings, "uaid_max_length", 5000)  # Exceeds DB limit of 2048
 
         valid_uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
