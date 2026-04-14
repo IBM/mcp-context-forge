@@ -14,6 +14,6 @@ export default defineConfig({
     outDir: "../mcpgateway/static/app",
     emptyOutDir: true,
     manifest: true,
-    sourcemap: true,  // Enable sourcemaps for development debugging
+    sourcemap: false,
   },
 });

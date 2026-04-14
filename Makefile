@@ -338,13 +338,11 @@ check-env-dev:
 # help: certs-mcp-all        - Generate complete MCP mTLS infrastructure (reads plugins from config.yaml)
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
-# help: dev                  - Run both React (port 5173) and Python (port 8000) dev servers
-# help: dev-backend          - Run Python backend dev server only (port 8000)
-# help: dev-frontend         - Run React frontend dev server only (port 5173)
+# help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
 # help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
 # help: stop                 - Stop all mcpgateway server processes
-# help: stop-dev             - Stop both React and Python dev servers
+# help: stop-dev             - Stop uvicorn dev server (port 8000)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
@@ -376,48 +374,8 @@ serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
 serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
-dev:
-	@echo "🚀 Starting development servers..."
-	@# Check if npm is available
-	@if command -v npm >/dev/null 2>&1; then \
-		echo ""; \
-		echo "   🌐 React App: http://localhost:8000/app"; \
-		echo "   🐍 Python API: http://localhost:8000"; \
-		echo ""; \
-		echo "   💡 Vite will watch and rebuild on file changes"; \
-		echo ""; \
-		(cd client && npm install --no-audit --no-fund 2>/dev/null || true); \
-		(cd client && npx vite build --watch > /tmp/react-dev.log 2>&1 & echo $$! > /tmp/react-dev.pid); \
-		echo "✅ Vite watch mode started (PID: $$(cat /tmp/react-dev.pid))"; \
-		echo "   Logs: tail -f /tmp/react-dev.log"; \
-		echo ""; \
-		trap 'echo ""; echo "🛑 Stopping Vite watch..."; kill $$(cat /tmp/react-dev.pid) 2>/dev/null || true; rm -f /tmp/react-dev.pid /tmp/react-dev.log' EXIT INT TERM; \
-		sleep 2; \
-		echo "✅ Python backend starting..."; \
-		TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'; \
-	else \
-		echo "⚠️  npm not found — starting Python backend only"; \
-		echo "   Install Node.js (https://nodejs.org) to enable React dev server"; \
-		echo "   Python backend (uvicorn): http://localhost:8000"; \
-		echo ""; \
-		echo "✅ Python backend starting..."; \
-		TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'; \
-	fi
-
-.PHONY: dev-backend
-dev-backend:                     ## Run Python backend dev server only (port 8000)
-	@echo "🐍 Starting Python backend dev server..."
+dev: js-build
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
-
-.PHONY: dev-frontend
-dev-frontend:                    ## Run React frontend dev server only (port 5173)
-	@echo "⚛️  Starting React frontend dev server..."
-	@if command -v npm >/dev/null 2>&1; then \
-		cd client && npm install --no-audit --no-fund && npm run dev; \
-	else \
-		echo "❌ npm not found — install Node.js to run React dev server"; \
-		exit 1; \
-	fi
 
 .PHONY: dev-echo
 dev-echo: js-build               ## Run dev server with SQL query logging enabled
@@ -442,20 +400,8 @@ stop:                            ## Stop all mcpgateway server processes
 	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
 	@echo "Done."
 
-stop-dev:                        ## Stop both Vite watch and Python dev servers
-	@echo "🛑 Stopping development servers..."
-	@# Stop Vite watch process
-	@if [ -f /tmp/react-dev.pid ]; then \
-		kill -15 $$(cat /tmp/react-dev.pid) 2>/dev/null || true; \
-		sleep 1; \
-		kill -9 $$(cat /tmp/react-dev.pid) 2>/dev/null || true; \
-		rm -f /tmp/react-dev.pid /tmp/react-dev.log; \
-		echo "   ✅ Vite watch stopped"; \
-	fi
-	@# Stop Python dev server (uvicorn on port 8000)
-	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
-	@echo "   ✅ Python dev server stopped"
-	@echo "Done."
+stop-dev:                        ## Stop uvicorn dev server (port 8000)
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
 
 stop-serve:                      ## Stop gunicorn production server (port 4444)
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
