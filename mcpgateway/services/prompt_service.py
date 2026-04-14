@@ -30,7 +30,6 @@ from jinja2.sandbox import SandboxedEnvironment
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -39,7 +38,6 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
@@ -55,6 +53,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -64,7 +63,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, resolve_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -141,55 +140,6 @@ logger = logging_service.get_logger(__name__)
 structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
-
-
-def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a GetPrompt ClientRequest that carries _meta (CWE-20, CWE-284).
-
-    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
-    key written into the dict so the subsequent ``model_validate`` call
-    resolves it correctly regardless of ``populate_by_name`` settings.
-
-    ``send_request`` is used instead of ``session.get_prompt()`` because the
-    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
-    updated if the SDK later adds that capability.
-
-    Args:
-        name: The prompt name.
-        arguments: Optional prompt arguments.
-        meta_data: Validated metadata dict to inject as ``_meta``.
-
-    Returns:
-        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
-    """
-    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
-    _gp_dict["_meta"] = meta_data
-    return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
-
-
-async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]]) -> Any:
-    """Dispatch a get_prompt call, injecting ``_meta`` when meta_data is provided.
-
-    Eliminates the repeated ``if meta_data: send_request … else: get_prompt``
-    pattern across every transport/pool branch in this module.
-
-    Args:
-        session: An active MCP :class:`ClientSession`.
-        name: The prompt name.
-        arguments: Optional prompt-rendering arguments.
-        meta_data: Optional validated metadata dict. When ``None`` the standard
-            SDK helper is used; when non-empty the low-level ``send_request``
-            path is taken to carry ``_meta``.
-
-    Returns:
-        The raw MCP result object (caller extracts ``.messages``).
-    """
-    if meta_data:
-        return await session.send_request(
-            _build_get_prompt_request(name, arguments, meta_data),
-            types.GetPromptResult,
-        )
-    return await session.get_prompt(name, arguments=arguments)
 
 
 class PromptError(Exception):
@@ -365,13 +315,13 @@ class PromptService(BaseService):
         """
         return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
 
-    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str]) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
         Args:
             prompt: Gateway-backed prompt record from the catalog.
             arguments: Optional prompt-rendering arguments.
-            meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
+            user_identity: Effective requester email for session-pool isolation.
 
         Returns:
             Prompt result normalized into ContextForge models.
@@ -384,7 +334,10 @@ class PromptService(BaseService):
             raise PromptError(f"Prompt '{prompt.name}' is gateway-backed but missing gateway metadata")
 
         gateway_url = str(gateway.url)
-        headers = build_gateway_auth_headers(gateway)
+        # Resolve per-user credentials (falls back to gateway defaults)
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        with SessionLocal() as db:
+            headers = await resolve_gateway_auth_headers(gateway, app_user_email=user_identity, db=db)
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
 
         if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
@@ -399,32 +352,27 @@ class PromptService(BaseService):
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
         remote_name = getattr(prompt, "original_name", None) or prompt.name
+        pool_user_identity = (user_identity or "anonymous").strip() or "anonymous"
         gateway_id = str(getattr(gateway, "id", ""))
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
-        registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+        pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
         prompt_arguments = arguments or None
-        # CWE-400: Validate meta_data limits before forwarding to upstream
-        _validate_meta_data(meta_data)
 
         try:
-            # #4205: Use the upstream session registry when a downstream Mcp-Session-Id
-            # is in scope; this binds the upstream session 1:1 to the downstream
-            # session and preserves connection reuse across its tool/prompt calls.
-            downstream_session_id = _downstream_session_id_from_request()
-            if downstream_session_id and gateway_id:
+            if settings.mcp_session_pool_enabled:
                 try:
-                    registry = get_upstream_session_registry()
-                except RegistryNotInitializedError:
-                    registry = None
-                if registry is not None:
-                    async with registry.acquire(
-                        downstream_session_id=downstream_session_id,
-                        gateway_id=gateway_id,
+                    pool = get_mcp_session_pool()
+                except RuntimeError:
+                    pool = None
+                if pool is not None:
+                    async with pool.session(
                         url=gateway_url,
                         headers=headers,
-                        transport_type=registry_transport_type,
-                    ) as upstream:
-                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data)
+                        transport_type=pool_transport_type,
+                        user_identity=pool_user_identity,
+                        gateway_id=gateway_id,
+                    ) as pooled:
+                        remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -437,12 +385,12 @@ class PromptService(BaseService):
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
                     async with ClientSession(*streams) as session:
                         await session.initialize()
-                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
+                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
             else:
                 async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
+                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
 
             return PromptResult(
                 messages=[
@@ -1906,7 +1854,7 @@ class PromptService(BaseService):
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
-            _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
+            _meta_data: Optional metadata for prompt retrieval (not used currently).
 
         Returns:
             Prompt result with rendered messages
@@ -2067,7 +2015,7 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data)
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user)
                 elif not arguments:
                     result = PromptResult(
                         messages=[
