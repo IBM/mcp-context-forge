@@ -78,6 +78,9 @@ conditions:
 
 ### Changed
 
+#### **🖥️ Admin UI**
+* Replaced per-row action buttons across all admin tables with a fixed-positioned overflow (three-dot) menu — first introduced on the Gateways table, then rolled out to Tools, Servers, Resources, Prompts, Agents, and Roots — and extracted the shared Alpine state and scroll-lock logic into a reusable `Admin.overflowMenu()` factory component (`admin_ui/components/overflow-menu.js`). ([#3519](https://github.com/IBM/mcp-context-forge/pull/3519))
+
 #### **👥 RBAC / Teams**
 * Added `tools.execute` permission to team-scoped `viewer` role, enabling team members to execute MCP tools without requiring `developer` role (which grants full CRUD permissions). `platform_viewer` (global scope) remains read-only. ([#3882](https://github.com/IBM/mcp-context-forge/pull/3882), [#3881](https://github.com/IBM/mcp-context-forge/issues/3881))
 

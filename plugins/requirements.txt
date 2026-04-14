@@ -1,0 +1,16 @@
+# Runtime plugin package overrides.
+# This file is NOT used during container build (see pyproject.toml [plugins] extra).
+# It is used by docker-entrypoint.sh when RELOAD_PLUGIN_REQUIREMENTS_TXT=true
+# to re-install or override plugin packages at container startup without rebuilding.
+#
+# IMPORTANT — upgrade semantics:
+#   The entrypoint runs `pip install -r` (without --upgrade). pip will:
+#     - INSTALL packages that are not already present in the venv
+#     - SKIP packages whose installed version already satisfies the constraint here
+#   To force an upgrade of a package that is already baked into the image
+#   (e.g. bumping cpex-rate-limiter from the version pinned in pyproject.toml),
+#   pin a version higher than the installed one — pip will then upgrade because
+#   the existing version no longer satisfies the constraint.
+#
+# Example (force upgrade past the baked-in version):
+#   cpex-rate-limiter>=0.0.4

@@ -1,5 +1,6 @@
 import { AppState } from "./appState.js";
 import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import { escapeAttrValue } from "./security.js";
 import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateways.js";
 import { closeModal, openModal } from "./modals.js";
@@ -1416,7 +1417,7 @@ export const testTool = async function (toolId) {
 
     // 3. BUTTON STATE: Immediate feedback with better state management
     const testButton = document.querySelector(
-      `[onclick*="testTool('${toolId}')"]`
+      `[data-test-tool-id="${escapeAttrValue(toolId)}"]`
     );
     if (testButton) {
       if (testButton.disabled) {
@@ -1746,7 +1747,7 @@ export const testTool = async function (toolId) {
   } finally {
     // 8. ALWAYS RESTORE BUTTON STATE
     const testButton = document.querySelector(
-      `[onclick*="testTool('${toolId}')"]`
+      `[data-test-tool-id="${escapeAttrValue(toolId)}"]`
     );
     if (testButton) {
       testButton.disabled = false;

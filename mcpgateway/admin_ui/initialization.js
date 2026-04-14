@@ -61,6 +61,7 @@ import {
   navigateToGlobalSearchResult,
   openGlobalSearchModal,
   queueSearchablePanelReload,
+  renderGlobalSearchMessage,
   runGlobalSearch,
   serverSideEditPromptsSearch,
   serverSideEditResourcesSearch,
@@ -767,6 +768,12 @@ export const initializeGlobalSearch = function () {
         return;
       }
       if (event.key === "Enter") {
+        const currentValue = (input.value || "").trim();
+        if (!currentValue) {
+          renderGlobalSearchMessage("Please enter a search term.");
+          event.preventDefault();
+          return;
+        }
         const firstResult = document.querySelector(
           "#global-search-results .global-search-result-item"
         );

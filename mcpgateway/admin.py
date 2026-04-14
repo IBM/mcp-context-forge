@@ -55,7 +55,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -136,6 +136,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -154,6 +155,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -1404,29 +1406,6 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
-def _resolve_root_path(request: Request) -> str:
-    """Resolve the application root path from the request scope with fallback.
-
-    Some embedded/proxy deployments do not populate ``scope["root_path"]``
-    consistently.  This helper checks the ASGI scope first and falls back
-    to ``settings.app_root_path`` when the scope value is empty.
-
-    Args:
-        request: Incoming request used to read ASGI ``root_path``.
-
-    Returns:
-        Normalized root path (leading ``/``, no trailing ``/``), or empty
-        string when no root path is configured.
-    """
-    root_path = request.scope.get("root_path", "") or ""
-    if not root_path or not str(root_path).strip():
-        root_path = settings.app_root_path or ""
-    root_path = str(root_path).strip()
-    if root_path:
-        root_path = "/" + root_path.lstrip("/")
-    return root_path.rstrip("/")
-
-
 def _admin_cookie_path(request: Request) -> str:
     """Build admin cookie path honoring ASGI root_path.
 
@@ -2674,8 +2653,8 @@ async def admin_servers_partial_html(
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
+    user: dict = Depends(get_current_user_with_permissions),
+) -> Response:
     """Return paginated servers HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -2717,11 +2696,16 @@ async def admin_servers_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query with eager loading to avoid N+1 queries
+    # Filter out deactivated tools, resources, prompts, and agents at query level
     query = select(DbServer).options(
         selectinload(DbServer.tools),
+        with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
         selectinload(DbServer.resources),
+        with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
         selectinload(DbServer.prompts),
+        with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
         selectinload(DbServer.a2a_agents),
+        with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
         joinedload(DbServer.email_team),
     )
 
@@ -4269,8 +4253,9 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> asyncio.run(test_login_handler())
         True
     """
+    root_path = _resolve_root_path(request)
+
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4281,7 +4266,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         password = password_val if isinstance(password_val, str) else None
 
         if not email or not password:
-            root_path = _resolve_root_path(request)
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
@@ -4298,12 +4282,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
-                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
-                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
@@ -4350,14 +4332,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 token, _ = await create_access_token(user)
 
                 # Create redirect response to password change page
-                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
-                    root_path = _resolve_root_path(request)
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
@@ -4370,7 +4350,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            root_path = _resolve_root_path(request)
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
@@ -4392,12 +4371,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if settings.secure_cookies and settings.environment == "development":
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
@@ -4879,8 +4856,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         >>> asyncio.run(test_password_change_handler())
         True
     """
+    root_path = _resolve_root_path(request)
+
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4894,11 +4872,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
 
         if not all([current_password, new_password, confirm_password]):
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
@@ -4913,7 +4889,6 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
 
         if not current_user:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
@@ -4943,19 +4918,16 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
-                            root_path = _resolve_root_path(request)
                             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
-                    root_path = _resolve_root_path(request)
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
@@ -4970,24 +4942,19 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
 
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
@@ -11123,7 +11090,7 @@ async def admin_unified_search(
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     entity_types: Optional[str] = Query(
         None,
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users)",
+        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
     ),
     include_inactive: bool = False,
     limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
@@ -11140,10 +11107,15 @@ async def admin_unified_search(
 ):
     """Unified search across primary admin entities.
 
+    Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
+    and optionally users (when the caller has ``admin.user_management`` permission).
+
     Args:
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
+            Supported values: servers, gateways, tools, resources, prompts,
+            agents, teams, users, roots.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -11163,8 +11135,8 @@ async def admin_unified_search(
     normalized_entity_types = _normalize_tags_query(entity_types)
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users"]
-    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams"]
+    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots"]
+    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "roots"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
         for raw_entity_type in normalized_entity_types.split(","):
@@ -11209,8 +11181,10 @@ async def admin_unified_search(
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
         """Execute entity search and return empty results on auth denials.
 
-        This keeps unified search resilient when one entity type is not visible
-        to the caller due to authorization boundaries.
+        Intentional silent 401/403 suppression: unified search spans entity types
+        with heterogeneous permission gates (e.g. roots require admin.system_config
+        with no admin bypass), and a single denial must not fail the whole search
+        or leak existence of restricted entities to unprivileged callers.
 
         Args:
             search_callable: Async entity search function to execute.
@@ -11352,6 +11326,17 @@ async def admin_unified_search(
             user=user,
         )
         grouped_results["users"] = typing_cast(list[dict[str, Any]], users_result.get("users", users_result.get("items", [])))
+
+    # Roots do not support tag filtering; only include when a text query exists.
+    if "roots" in selected_entity_types and search_query:
+        roots_result = await _safe_entity_search(
+            admin_search_roots,
+            "roots",
+            q=search_query,
+            limit=effective_limit,
+            user=user,
+        )
+        grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
 
     groups = []
     flat_items: list[dict[str, Any]] = []
@@ -11786,6 +11771,124 @@ async def admin_edit_tool(
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+
+@admin_router.post("/tools/generate-schemas-from-openapi")
+# tools.create — this endpoint makes outbound HTTP requests to user-supplied
+# URLs to fetch OpenAPI specs.  tools.read would let viewers probe internal
+# services; tools.create scopes it to users who can already register tools.
+@require_permission("tools.create", allow_admin_bypass=False)
+async def generate_schemas_from_openapi(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """
+    Generate input_schema and output_schema from OpenAPI specification URL.
+
+    Expects JSON body with:
+      - url: The tool URL (e.g., http://localhost:8100/calculate)
+      - request_type: HTTP method (GET, POST, etc.)
+      - openapi_url: (optional) Direct OpenAPI spec URL
+
+    Args:
+        request: FastAPI Request object containing JSON body
+
+    Returns:
+        JSONResponse with generated schemas or error message.
+    """
+    try:
+        body = await _read_request_json(request)
+    except Exception:
+        return ORJSONResponse(
+            content={"message": "Invalid JSON in request body", "success": False},
+            status_code=400,
+        )
+
+    if not isinstance(body, dict):
+        return ORJSONResponse(
+            content={"message": "Request body must be a JSON object", "success": False},
+            status_code=400,
+        )
+
+    tool_url = body.get("url", "")
+    request_type = body.get("request_type", "GET")
+    openapi_url = body.get("openapi_url", "")
+
+    if not isinstance(tool_url, str) or not isinstance(request_type, str) or not isinstance(openapi_url, str):
+        return ORJSONResponse(
+            content={"message": "'url', 'request_type', and 'openapi_url' must be strings", "success": False},
+            status_code=400,
+        )
+
+    tool_url = tool_url.strip()
+    request_type = request_type.strip()
+    openapi_url = openapi_url.strip()
+
+    if not tool_url:
+        return ORJSONResponse(
+            content={"message": "'url' is required to identify the API path and base URL", "success": False},
+            status_code=400,
+        )
+
+    try:
+        SecurityValidator.validate_url(tool_url, "Tool URL")
+    except ValueError as e:
+        return ORJSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=400,
+        )
+
+    parsed = urllib.parse.urlparse(tool_url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    tool_path = parsed.path
+
+    try:
+        input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
+            base_url=base_url,
+            path=tool_path,
+            method=request_type,
+            openapi_url=openapi_url,
+            timeout=10.0,
+        )
+    except ValueError as e:
+        return ORJSONResponse(
+            content={"message": f"Security validation failed: {str(e)}", "success": False},
+            status_code=400,
+        )
+    except KeyError as e:
+        return ORJSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=404,
+        )
+    except httpx.HTTPStatusError as e:
+        LOGGER.warning("OpenAPI spec server returned HTTP %s", e.response.status_code, exc_info=True)
+        return ORJSONResponse(
+            content={"message": f"OpenAPI spec server returned HTTP {e.response.status_code}", "success": False},
+            status_code=502,
+        )
+    except httpx.HTTPError:
+        LOGGER.warning("Failed to fetch OpenAPI spec", exc_info=True)
+        return ORJSONResponse(
+            content={"message": "Failed to fetch OpenAPI spec from the provided URL", "success": False},
+            status_code=502,
+        )
+    except Exception:
+        LOGGER.error("Error fetching OpenAPI spec", exc_info=True)
+        return ORJSONResponse(
+            content={"message": "An unexpected error occurred while processing the OpenAPI spec", "success": False},
+            status_code=500,
+        )
+
+    return ORJSONResponse(
+        content={
+            "message": "Schemas generated successfully from OpenAPI spec",
+            "success": True,
+            "input_schema": input_schema,
+            "output_schema": output_schema,
+            "spec_url": spec_url,
+        },
+        status_code=200,
+    )
 
 
 @admin_router.post("/tools/{tool_id}/delete")
@@ -13245,6 +13348,54 @@ async def admin_set_prompt_state(
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
+
+
+@admin_router.get("/roots/search", response_class=JSONResponse)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_search_roots(
+    q: str = Query("", description="Search query"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    user=Depends(get_current_user_with_permissions),
+) -> dict:
+    """Search roots by name or URI.
+
+    Roots are held in-memory by :class:`~mcpgateway.services.root_service.RootService`,
+    so this function fetches the full list before filtering. Registered roots are
+    typically a small set, making the in-memory scan negligible. If root counts grow
+    substantially, consider adding filtering support directly to
+    :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
+
+    Args:
+        q (str): Free-text search query matched against root name and URI.
+        limit (int): Maximum number of results to return.
+        user: Authenticated user context.
+
+    Returns:
+        dict: Unified search payload containing matching roots.
+
+    Examples:
+        >>> callable(admin_search_roots)
+        True
+        >>> admin_search_roots.__name__
+        'admin_search_roots'
+    """
+    search_query = _normalize_search_query(q)
+    # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
+    # Python calls (e.g. from admin_unified_search) bypass that validation.
+    limit = max(1, min(limit, settings.pagination_max_page_size))
+    all_roots = await root_service.list_roots()
+
+    results: list[dict[str, Any]] = []
+    for r in all_roots:
+        if len(results) >= limit:
+            break
+        uri_str = str(r.uri)
+        name_str = r.name or uri_str
+        if not search_query or search_query in uri_str.lower() or search_query in name_str.lower():
+            results.append({"id": uri_str, "name": name_str, "uri": uri_str})
+
+    LOGGER.debug(f"User {get_user_email(user)} searched roots with query '{search_query}': {len(results)} results")
+    return _build_search_response(entity_key="roots", entity_type="roots", items=results, query=search_query, tags="", tag_groups=[])
 
 
 @admin_router.get("/roots/export")

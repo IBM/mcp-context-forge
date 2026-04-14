@@ -317,6 +317,11 @@ import { paginationData } from "./pagination.js";
 
 Admin.paginationData = paginationData;
 
+// Alpine components
+import { overflowMenu } from "./components/overflow-menu.js";
+
+Admin.overflowMenu = overflowMenu;
+
 // Plugins
 import {
   closePluginDetails,

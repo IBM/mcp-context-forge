@@ -95,17 +95,14 @@ def test_content_types():
     assert resource.text == "Sample content"
 
 
-def test_content_type_model_form_urlencoded():
+def test_content_type_model_form_urlencoded(main_app_with_admin_api):
     """
     Test that the system can parse/accept application/x-www-form-urlencoded.
     """
     # Third-Party
     from fastapi.testclient import TestClient
 
-    # First-Party
-    from mcpgateway.main import app
-
-    client = TestClient(app)
+    client = TestClient(main_app_with_admin_api)
     data = {"type": "text", "text": "Form encoded content"}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     response = client.post("/admin/tools", data=data, headers=headers)

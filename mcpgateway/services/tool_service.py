@@ -20,6 +20,7 @@ import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
+import logging
 import os
 import re
 import ssl
@@ -158,6 +159,14 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     # non-secret tracing/idempotency headers (e.g. X-Correlation-Token).
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    # Protocol-level and credential-bearing headers that must not be set via mapping.
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^host$", re.IGNORECASE),
+    re.compile(r"^transfer-encoding$", re.IGNORECASE),
+    re.compile(r"^content-length$", re.IGNORECASE),
+    re.compile(r"^connection$", re.IGNORECASE),
+    re.compile(r"^upgrade$", re.IGNORECASE),
 )
 
 
@@ -438,6 +447,66 @@ def extract_using_jq(data, jq_filter=""):
     return result
 
 
+_VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
+
+
+_INVALID_HEADER_VALUE_CHARS = re.compile(r"[\r\n\x00]")
+
+
+def _validate_mapping_contents(mapping: dict, label: str, tool_name: str) -> dict[str, str]:
+    """Validate that a mapping dict contains only string keys and string values.
+
+    Raises:
+        ToolInvocationError: If the mapping contains non-string keys or values.
+    """
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
+        raise ToolInvocationError(f"Tool '{tool_name}' has invalid {label}: non-string keys or values. Check the tool's {label} configuration.")
+    return mapping
+
+
+def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) -> None:
+    """Validate that header mapping target names are safe and well-formed.
+
+    Raises:
+        ToolInvocationError: If any target header name is sensitive or malformed.
+    """
+    for target_header in mapping.values():
+        if _is_sensitive_tool_header_name(target_header):
+            raise ToolInvocationError(f"header_mapping for tool '{tool_name}' targets sensitive header {repr(target_header[:64])}")
+        if not _VALID_HTTP_HEADER_NAME.match(target_header):
+            raise ToolInvocationError(f"header_mapping for tool '{tool_name}' contains invalid header name {repr(target_header[:64])}")
+
+
+def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_obj: dict | None = None) -> dict:
+    """Map fields from data_obj whose keys appear in mapping_obj, renaming them per mapping_obj's values, and merge into target_obj.
+
+    Only data_obj keys present in mapping_obj are included; unmapped keys are excluded from the result.
+    If mapping_obj is None or empty, returns target_obj unchanged.
+    If no target_obj is provided, an empty dict is used as the base.
+
+    Args:
+        data_obj: Source data whose keys may be mapped.
+        mapping_obj: Key-renaming map (old_key -> new_key), or None/empty to skip mapping.
+        target_obj: Base dict to merge mapped entries into. Mapped entries overwrite on collision.
+
+    Returns:
+        A new dict containing all entries from target_obj plus renamed entries from data_obj.
+    """
+
+    if target_obj is None:
+        target_obj = {}
+
+    if not mapping_obj:
+        return target_obj
+
+    if logger.isEnabledFor(logging.DEBUG):
+        dropped = {k for k in data_obj if k not in mapping_obj}
+        if dropped:
+            structured_logger.log(level="DEBUG", message=f"apply_mapping_into_target: unmapped keys excluded: {sorted(dropped)}", component="tool_service")
+
+    return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
+
+
 class ToolError(Exception):
     """Base class for tool-related errors.
 
@@ -560,6 +629,77 @@ class ToolTimeoutError(ToolInvocationError):
         """
         super().__init__(message)
         self.retry_delay_ms = retry_delay_ms
+
+
+def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> int:
+    """Normalize retry policy integer settings from plugin config."""
+    if raw_value is None:
+        return default
+    value = int(raw_value)
+    if value < minimum:
+        raise ValueError(f"Retry policy integer must be >= {minimum}")
+    return value
+
+
+def _coerce_retry_policy_statuses(raw_value: Any) -> List[int]:
+    """Normalize retryable status codes from plugin config."""
+    if raw_value is None:
+        return [429, 500, 502, 503, 504]
+    if isinstance(raw_value, (str, bytes)) or not isinstance(raw_value, (list, tuple, set)):
+        raise ValueError("Retry policy retry_on_status must be a sequence of integers")
+    return [int(code) for code in raw_value]
+
+
+def _coerce_retry_policy_bool(raw_value: Any, *, default: bool) -> bool:
+    """Normalize retry policy booleans using explicit string parsing."""
+    if raw_value is None:
+        return default
+    if isinstance(raw_value, bool):
+        return raw_value
+    if isinstance(raw_value, (int, float)) and raw_value in (0, 1):
+        return bool(raw_value)
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off"}:
+            return False
+    raise ValueError("Retry policy boolean must be a bool-like value")
+
+
+def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str) -> Dict[str, Any]:
+    """Build a gateway-owned retry policy view from plugin config."""
+    cfg = raw_cfg or {}
+    if not isinstance(cfg, dict):
+        raise ValueError("Retry policy config must be a mapping")
+    effective_cfg: Dict[str, Any] = {
+        "max_retries": _coerce_retry_policy_int(cfg.get("max_retries"), default=2, minimum=0),
+        "backoff_base_ms": _coerce_retry_policy_int(cfg.get("backoff_base_ms"), default=200, minimum=1),
+        "max_backoff_ms": _coerce_retry_policy_int(cfg.get("max_backoff_ms"), default=5000, minimum=1),
+        "retry_on_status": _coerce_retry_policy_statuses(cfg.get("retry_on_status")),
+        "jitter": _coerce_retry_policy_bool(cfg.get("jitter"), default=True),
+        "check_text_content": _coerce_retry_policy_bool(cfg.get("check_text_content"), default=False),
+    }
+
+    tool_overrides = cfg.get("tool_overrides") or {}
+    if not isinstance(tool_overrides, dict):
+        raise ValueError("Retry policy tool_overrides must be a mapping")
+
+    overrides = tool_overrides.get(tool_name)
+    if overrides:
+        if not isinstance(overrides, dict):
+            raise ValueError("Retry policy tool override must be a mapping")
+        effective_cfg.update({key: value for key, value in overrides.items() if key in effective_cfg})
+        effective_cfg["max_retries"] = _coerce_retry_policy_int(effective_cfg.get("max_retries"), default=2, minimum=0)
+        effective_cfg["backoff_base_ms"] = _coerce_retry_policy_int(effective_cfg.get("backoff_base_ms"), default=200, minimum=1)
+        effective_cfg["max_backoff_ms"] = _coerce_retry_policy_int(effective_cfg.get("max_backoff_ms"), default=5000, minimum=1)
+        effective_cfg["retry_on_status"] = _coerce_retry_policy_statuses(effective_cfg.get("retry_on_status"))
+        effective_cfg["jitter"] = _coerce_retry_policy_bool(effective_cfg.get("jitter"), default=True)
+        effective_cfg["check_text_content"] = _coerce_retry_policy_bool(effective_cfg.get("check_text_content"), default=False)
+
+    effective_cfg["max_retries"] = min(effective_cfg["max_retries"], settings.max_tool_retries)
+
+    return effective_cfg
 
 
 class ToolService(BaseService):
@@ -702,6 +842,8 @@ class ToolService(BaseService):
             "team_id": tool.team_id,
             "owner_email": tool.owner_email,
             "visibility": tool.visibility,
+            "query_mapping": tool.query_mapping,
+            "header_mapping": tool.header_mapping,
         }
 
         gateway_payload = None
@@ -2861,7 +3003,7 @@ class ToolService(BaseService):
             # Look up the tool's original_name from the DB; fall back to the prefixed name if not found
             # (e.g. when calling a tool that exists on the remote but hasn't been cached locally).
             remote_name = name
-            tool_row = db.execute(select(DbTool).where(DbTool.name == name, DbTool.gateway_id == gateway_id)).scalar_one_or_none()
+            tool_row = db.execute(select(DbTool).where(DbTool.name == name, DbTool.gateway_id == gateway_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
             if tool_row and tool_row.original_name:
                 remote_name = tool_row.original_name
             else:
@@ -3360,10 +3502,6 @@ class ToolService(BaseService):
         from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
         from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
-        # First-Party
-        # Third-Party/Local
-        from plugins.retry_with_backoff.retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
-
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
         hook_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
@@ -3383,31 +3521,22 @@ class ToolService(BaseService):
             return (None, True)
 
         retry_hook = active_hook_refs[0]
-        effective_cfg = RetryConfig(**(retry_hook.plugin_ref.plugin.config.config or {}))
-        ceiling = settings.max_tool_retries
-        if effective_cfg.max_retries > ceiling:
-            effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
+        try:
+            effective_cfg = _build_retry_policy_config(retry_hook.plugin_ref.plugin.config.config or {}, tool_name)
+        except (TypeError, ValueError):
+            return (None, True)
 
-        overrides = effective_cfg.tool_overrides.get(tool_name)
-        if overrides:
-            merged_cfg = effective_cfg.model_dump()
-            merged_cfg.update(overrides)
-            merged_cfg.pop("tool_overrides", None)
-            effective_cfg = RetryConfig(**merged_cfg)
-            if effective_cfg.max_retries > ceiling:
-                effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
-
-        if effective_cfg.check_text_content:
+        if effective_cfg["check_text_content"]:
             return (None, True)
 
         return (
             {
                 "kind": "retry_with_backoff",
-                "maxRetries": int(effective_cfg.max_retries),
-                "backoffBaseMs": int(effective_cfg.backoff_base_ms),
-                "maxBackoffMs": int(effective_cfg.max_backoff_ms),
-                "retryOnStatus": list(effective_cfg.retry_on_status),
-                "jitter": bool(effective_cfg.jitter),
+                "maxRetries": effective_cfg["max_retries"],
+                "backoffBaseMs": effective_cfg["backoff_base_ms"],
+                "maxBackoffMs": effective_cfg["max_backoff_ms"],
+                "retryOnStatus": effective_cfg["retry_on_status"],
+                "jitter": effective_cfg["jitter"],
             },
             False,
         )
@@ -3423,7 +3552,7 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()
@@ -3801,6 +3930,12 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
+        if tool_query_mapping is not None:
+            tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
+        tool_header_mapping = tool_payload.get("header_mapping") if isinstance(tool_payload.get("header_mapping"), dict) else None
+        if tool_header_mapping is not None:
+            tool_header_mapping = _validate_mapping_contents(tool_header_mapping, "header_mapping", name)
 
         # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
         # timeout_ms is stored in milliseconds, convert to seconds
@@ -4097,10 +4232,10 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path parameter substitution (using local variable)
+                    # Handle URL path and query parameter substitution (using local variable)
                     final_url = tool_url
                     if "{" in tool_url and "}" in tool_url:
-                        # Extract path parameters from URL template and arguments
+                        # Extract ALL parameters (path and query) from URL template
                         url_params = re.findall(r"\{(\w+)\}", tool_url)
                         url_substitutions = {}
 
@@ -4111,14 +4246,30 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL ---
+                    # --- Extract query params from URL (after substitution) ---
                     parsed = urlparse(final_url)
                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    # Merge leftover payload + query params
-                    payload.update(query_params)
+                    if tool_query_mapping:
+                        # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
+                        # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
+                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                        # Reject non-scalar values that would be inappropriate as query parameters.
+                        for qk, qv in payload.items():
+                            if isinstance(qv, (dict, list)):
+                                raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
+
+                    # Headers are mapped from the original arguments (not the path-param-reduced payload)
+                    # to preserve all available data for header injection.
+                    if tool_header_mapping:
+                        _validate_header_mapping_targets(tool_header_mapping, name)
+                        headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
+                        # Reject header values containing CRLF or null bytes to prevent header injection.
+                        for hdr_name, hdr_val in headers.items():
+                            if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
+                                raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
@@ -4126,8 +4277,15 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
+                                # For GET: merge extracted URL query params into payload; everything sent as query string
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
+                                # For POST/PUT/PATCH/DELETE: merge query params into the JSON body
+                                # (preserves backward compatibility with existing tool configurations)
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000

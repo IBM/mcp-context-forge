@@ -150,6 +150,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_search_gateways,
     admin_search_prompts,
     admin_search_resources,
+    admin_search_roots,
     admin_search_servers,
     admin_search_teams,
     admin_search_tokens,
@@ -1585,7 +1586,7 @@ class TestAdminToolRoutes:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.headers == {}
-        assert tool_update.input_schema == {}
+        assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
@@ -5151,6 +5152,32 @@ class TestGlobalConfigurationEndpoints:
 
 class TestA2AAgentManagement:
     """Test A2A agent management endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def _force_a2a_enabled(self, monkeypatch):
+        """Force ``mcpgateway.admin.a2a_service`` + ``mcpgateway_a2a_enabled``.
+
+        ``admin.a2a_service`` is initialised at module-import time based on
+        ``settings.mcpgateway_a2a_enabled``. If admin.py was first imported
+        while A2A was disabled (possible under xdist if another file had
+        already set the env var), the module-level ``a2a_service`` is
+        ``None`` and every handler in this class short-circuits with a
+        403 JSON response before exercising the code path under test.
+        Force a real ``A2AAgentService`` instance and the flag so each
+        test in this class runs deterministically regardless of
+        collection order. A real instance (not a ``MagicMock``) is used
+        because several tests patch service methods at the class level
+        via ``@patch.object(A2AAgentService, "method")``, and class-level
+        patches only intercept calls routed through an actual
+        ``A2AAgentService`` instance. Tests that want to exercise the
+        disabled branch override these monkeypatches themselves (e.g.
+        ``test_admin_list_a2a_agents_disabled``).
+        """
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService
+
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", A2AAgentService(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
     @patch.object(A2AAgentService, "list_agents")
     async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
@@ -12020,6 +12047,328 @@ async def test_admin_unified_search_empty_query_and_tags_returns_empty(mock_db, 
     assert result["count"] == 0
     assert result["items"] == []
     assert result["results"]["tools"] == []
+
+
+# ---------------------------------------------------------------------------
+# admin_search_roots tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_returns_matching_by_name(allow_permission, monkeypatch):
+    """admin_search_roots returns roots whose name contains the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root_tmp = Root(uri="file:///tmp", name="tmp")
+    root_home = Root(uri="file:///home", name="home")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root_tmp, root_home])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "file:///tmp"
+    assert result["items"][0]["name"] == "tmp"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_matches_by_uri(allow_permission, monkeypatch):
+    """admin_search_roots returns roots whose URI contains the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///project/data", name="data")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="project", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    assert result["items"][0]["uri"] == "file:///project/data"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_empty_query_returns_all(allow_permission, monkeypatch):
+    """admin_search_roots with empty query returns all roots."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri="file:///tmp", name="tmp"), Root(uri="file:///home", name="home")]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_no_match_returns_empty(allow_permission, monkeypatch):
+    """admin_search_roots returns empty list when no roots match the query."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri="file:///tmp", name="tmp")]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="xyz12345", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 0
+    assert result["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_respects_limit(allow_permission, monkeypatch):
+    """admin_search_roots respects the limit parameter."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    roots = [Root(uri=f"file:///dir{i}", name=f"dir{i}") for i in range(10)]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="dir", limit=3, user={"email": "admin@example.com"})
+
+    assert result["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_case_insensitive(allow_permission, monkeypatch):
+    """admin_search_roots performs case-insensitive matching on both name and URI."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///TMP", name="MyRoot")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+    assert result["count"] == 1
+
+    result2 = await admin_search_roots(q="myroot", limit=10, user={"email": "admin@example.com"})
+    assert result2["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_null_name_falls_back_to_uri(allow_permission, monkeypatch):
+    """admin_search_roots returns the URI as name when root.name is None."""
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    root = Root(uri="file:///tmp")
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[root])))
+
+    result = await admin_search_roots(q="tmp", limit=10, user={"email": "admin@example.com"})
+
+    assert result["count"] == 1
+    item = result["items"][0]
+    # name must never be None or empty – falls back to the URI string
+    assert item["name"]
+    assert item["uri"] == item["id"]
+
+
+# ---------------------------------------------------------------------------
+# admin_unified_search — roots integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_includes_roots_by_default(monkeypatch, mock_db, allow_permission):
+    """Roots are included in the default entity_types for unified search."""
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert "roots" in result["entity_types"]
+    assert result["results"]["roots"][0]["id"] == "file:///tmp"
+    roots_search.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_only(monkeypatch, mock_db, allow_permission):
+    """Unified search with entity_types=roots returns only root results."""
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["roots"]
+    assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_swallows_http_exception(monkeypatch, mock_db, allow_permission):
+    """Unified search falls back to empty roots when admin_search_roots raises 401/403.
+
+    This is the intentional silent-suppression contract in _safe_entity_search:
+    unified search must not fail or leak existence of restricted entities when a
+    single entity type is gated by a stricter permission than the caller holds.
+    """
+    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    roots_search = AsyncMock(side_effect=HTTPException(status_code=403, detail="forbidden"))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="tools,roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    assert result["results"]["roots"] == []
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_denies_without_system_config_permission(monkeypatch, mock_db):
+    # First-Party
+    from mcpgateway.common.models import Root
+
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=[Root(uri="file:///tmp", name="tmp")])))
+    deny_service = MagicMock()
+    deny_service.check_permission = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: deny_service)
+    monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: deny_service)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_search_roots(q="tmp", limit=10, user={"email": "dev@example.com", "db": mock_db})
+
+    assert exc_info.value.status_code == 403
+
+
+def test_admin_search_roots_disables_admin_bypass():
+    """The decorator must enforce admin.system_config even for platform admins.
+
+    The roots catalog is a system-wide resource and must not be readable via the
+    generic admin bypass; this regression guard fires if the decorator argument
+    is ever changed.
+    """
+    assert getattr(admin_search_roots, "_allow_admin_bypass", True) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_db):
+    """Non-admin user without admin.system_config sees roots=[] while other entity types populate.
+
+    Exercises the real permission decorator path through _safe_entity_search rather
+    than a mocked HTTPException, proving the silent-suppression contract end-to-end.
+    """
+    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_users", AsyncMock(return_value={"users": [], "count": 0}))
+
+    async def _check_permission(**kwargs):
+        return kwargs.get("permission") != "admin.system_config"
+
+    perm_service = MagicMock()
+    perm_service.check_permission = AsyncMock(side_effect=_check_permission)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: perm_service)
+    monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: perm_service)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags=None,
+        entity_types="tools,roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "dev@example.com", "db": mock_db},
+    )
+
+    assert result["results"]["roots"] == []
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_limit", [0, -5, 1_000_000])
+async def test_admin_search_roots_clamps_out_of_range_limit(raw_limit, allow_permission, monkeypatch):
+    """Defense-in-depth clamp: direct Python callers bypass FastAPI ge/le validation."""
+    # First-Party
+    from mcpgateway.common.models import Root
+    from mcpgateway.config import settings
+
+    roots = [Root(uri=f"file:///r{i}", name=f"root{i}") for i in range(3)]
+    monkeypatch.setattr("mcpgateway.admin.root_service", MagicMock(list_roots=AsyncMock(return_value=roots)))
+
+    result = await admin_search_roots(q="", limit=raw_limit, user={"email": "admin@example.com"})
+
+    assert 1 <= result["count"] <= settings.pagination_max_page_size
+    assert result["count"] <= len(roots)
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_roots_ignores_tag_filter(monkeypatch, mock_db, allow_permission):
+    """Roots lack tag metadata; a tag filter must not suppress the roots branch."""
+    roots_search = AsyncMock(return_value={"roots": [{"id": "file:///tmp", "name": "tmp", "uri": "file:///tmp"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_roots", roots_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+
+    result = await admin_unified_search(
+        q="tmp",
+        tags="nonexistent",
+        entity_types="roots",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+
+    roots_search.assert_called_once()
+    call_kwargs = roots_search.call_args.kwargs
+    assert "tags" not in call_kwargs
+    assert result["results"]["roots"][0]["id"] == "file:///tmp"
 
 
 class TestAdminAdditionalCoverage:
@@ -21759,6 +22108,15 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_add_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        # ``mcpgateway.admin.a2a_service`` is initialised at module import
+        # time based on ``settings.mcpgateway_a2a_enabled``. If an earlier
+        # test (or test file collection order) ran with A2A disabled, the
+        # module-level ``a2a_service`` is None and ``admin_add_a2a_agent``
+        # short-circuits with a 403 JSON response instead of reaching the
+        # visibility guard. Force a truthy stub so the visibility check
+        # is always exercised.
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:
@@ -21768,6 +22126,8 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_edit_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", MagicMock(), raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
         form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:

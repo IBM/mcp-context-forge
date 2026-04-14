@@ -73,8 +73,28 @@ jobs:
         working-directory: tools_rust/wrapper
         run: make test
 
+      - name: Check formatting (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: cargo fmt --check
+
+      - name: Run cargo check (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: make check
+
+      - name: Run clippy (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: make clippy
+
+      - name: Run tests (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: make test
+
       - name: Build release
         working-directory: tools_rust/wrapper
+        run: make build-release
+
+      - name: Build release (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
         run: make build-release
 
   security-audit:

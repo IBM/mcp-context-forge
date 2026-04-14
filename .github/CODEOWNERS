@@ -1,12 +1,11 @@
 # All files in the repo
-* @crivetimihai
-/.github/workflows/ @crivetimihai
+* @crivetimihai @brian-hussey
+/.github/workflows/ @crivetimihai @brian-hussey
 
 # Plugin framework
 /mcpgateway/plugins @araujof @terylt @jonpspri
 
 # Rust projects
-/plugins_rust/ @lucarlig @dima-zakharov
 /tools_rust/ @lucarlig @dima-zakharov
 /mcp-servers/rust/ @lucarlig @dima-zakharov
 

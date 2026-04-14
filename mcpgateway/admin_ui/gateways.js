@@ -1855,6 +1855,7 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
     showErrorMessage(
       `Failed to refresh tools for ${gatewayName}: ${err.message}`
     );
+  } finally {
     if (buttonEl) {
       buttonEl.disabled = false;
       buttonEl.textContent = origText;

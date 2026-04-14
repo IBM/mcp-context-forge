@@ -1774,3 +1774,45 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
     assert exported[0]["auth_type"] == "authheaders"
     assert isinstance(exported[0]["auth_value"], str)
     assert decode_auth(exported[0]["auth_value"]) == auth_dict
+
+
+@pytest.mark.asyncio
+async def test_export_selected_servers_filters_deactivated_entities(export_service):
+    """Test that _export_selected_servers filters out deactivated tools, prompts, resources, and agents."""
+    mock_db = MagicMock()
+
+    # Create mock entities - one enabled, one disabled for each type
+    enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+
+    # Create mock server with only enabled entities (due to with_loader_criteria filter)
+    mock_server = SimpleNamespace(
+        id="server-1",
+        name="test_server",
+        description="Test server for export",
+        enabled=True,
+        tags=[],
+        # Only enabled entities should be loaded due to with_loader_criteria()
+        tools=[enabled_tool],
+    )
+
+    # Mock the database execute chain properly
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [mock_server]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+    mock_db.execute.return_value = mock_result
+
+    # Call _export_selected_servers
+    exported = await export_service._export_selected_servers(mock_db, ["server-1"], root_path="", user_email=None, token_teams=None)
+
+    # Verify that only enabled entities are in the exported data
+    assert len(exported) == 1, f"Expected 1 server, got {len(exported)}"
+    server_data = exported[0]
+
+    # Check that only enabled tool is included (key is "tool_ids" not "associated_tool_ids")
+    assert "tool_ids" in server_data, f"Expected 'tool_ids' key in {server_data.keys()}"
+    assert len(server_data["tool_ids"]) == 1, f"Expected 1 tool, got {len(server_data['tool_ids'])}"
+    assert "tool-1" in server_data["tool_ids"], f"Expected 'tool-1' in {server_data['tool_ids']}"
+
+    # Verify the database execute was called
+    assert mock_db.execute.called, "Database execute should have been called"

@@ -105,6 +105,9 @@ class TestAPIIntegration:
         test_btn = first_tool.locator('button:has-text("Test")')
         if test_btn.count() == 0:
             pytest.skip("No Test button available on first tool")
+        # Row actions live inside an Alpine overflow menu — open the ⋮ trigger first.
+        first_tool.locator("button[aria-expanded]").click()
+        first_tool.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         test_btn.click()
 
         # Wait for tool test modal and dynamic form field generation
@@ -144,6 +147,9 @@ class TestAPIIntegration:
 
         tool_row = page.locator(f'#tools-table-body tr:has-text("{json_param_tool}")')
         tool_row.wait_for(state="visible", timeout=10000)
+        # Row actions live inside an Alpine overflow menu — open the ⋮ trigger first.
+        tool_row.locator("button[aria-expanded]").click()
+        tool_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         test_btn = tool_row.locator('button:has-text("Test")')
         test_btn.click()
 
@@ -167,9 +173,9 @@ class TestAPIIntegration:
         # Test invalid inputs — each should show an error toast
         invalid_cases = [
             '{"invalid": json}',  # malformed JSON
-            '[1, 2, 3]',          # array (not object)
-            '"just a string"',    # string primitive
-            'null',               # null (typeof null === "object" in JS)
+            "[1, 2, 3]",  # array (not object)
+            '"just a string"',  # string primitive
+            "null",  # null (typeof null === "object" in JS)
         ]
         for invalid_value in invalid_cases:
             _close_and_reopen_test_modal(page, test_btn)

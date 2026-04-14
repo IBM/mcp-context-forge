@@ -141,7 +141,7 @@ def advisory_lock(conn: Connection):
 
             # Exponential backoff with jitter
             delay = min(base_delay * (1.5**attempt), max_delay)
-            jitter = delay * random.uniform(-0.1, 0.1)  # nosec B311  # noqa: DUO102
+            jitter = delay * random.uniform(-0.1, 0.1)  # nosec B311
             sleep_time = delay + jitter
 
             logger.info(f"Lock held by another instance, retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{max_retries})")

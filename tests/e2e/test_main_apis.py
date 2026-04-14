@@ -62,7 +62,6 @@ from sqlalchemy.pool import StaticPool
 
 # Standard
 # Patch bootstrap_db to prevent it from running during tests
-
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
     from mcpgateway.config import settings
@@ -110,13 +109,20 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {generate_test_jwt()}"}
 # Fixtures
 # -------------------------
 @pytest_asyncio.fixture
-async def temp_db():
+async def temp_db(main_app_with_admin_api):
     """
     Create a temporary SQLite database for testing.
 
     This fixture creates a fresh database for each test, ensuring complete
     isolation between tests. The database is automatically cleaned up after
     the test completes.
+
+    Depending on ``main_app_with_admin_api`` flips the admin API + UI
+    flags on and dynamically mounts the admin router on the existing
+    ``main.app`` (no reload, so module-level references stay valid).
+    A handful of tests in this file exercise ``/admin/...`` endpoints
+    and the root-path redirect, which both need the admin router
+    mounted.
     """
     # Create temporary file for SQLite database
     db_fd, db_path = tempfile.mkstemp(suffix=".db")
@@ -1837,10 +1843,12 @@ class TestErrorHandling:
             # UI is enabled, check redirect
             assert "/admin" in response.headers.get("location", "")
         else:
-            # UI is disabled, check API info
+            # UI is disabled, check API info. ``root_info()`` returns
+            # ``{"name": <app_name>, "description": f"{app_name} API"}``.
             assert response.status_code == 200
             result = response.json()
-            assert "app" in result or "api" in result
+            assert "name" in result
+            assert "description" in result
 
 
 # -------------------------

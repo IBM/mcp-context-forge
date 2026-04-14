@@ -262,11 +262,6 @@ uv.lock
 .uv-cache/
 .uv-tmp/
 
-# ========================================
-# Rust (plugins_rust)
-# ========================================
-plugins_rust/target/
-plugins_rust/*/target/
 *.rs.bk
 
 # ========================================
@@ -277,8 +272,10 @@ plugins_rust/*/target/
 certs/
 jwt/
 
-# Static assets (downloaded during container build)
+# Static assets (downloaded or built during container build)
 mcpgateway/static/vendor/
+mcpgateway/static/bundle-*.js
+mcpgateway/static/.vite/
 public/
 
 # Export & SBOM files

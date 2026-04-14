@@ -9,14 +9,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z" }
+exclude-newer-package = { "cpex" = "2026-04-13T23:59:59Z", "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.0-RC-2"
+version = "1.0.0-rc3"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -53,7 +53,8 @@ maintainers = [
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.5",
+    "cpex>=0.1.0.dev11,<0.2.0",
+    "cryptography>=46.0.6",
     "fastapi>=0.135.1",
     "filelock>=3.25.2",
     "gunicorn>=25.1.0",
@@ -76,12 +77,12 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
+    "requests==2.33.0", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.48",
     "sse-starlette>=3.3.3",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "cpex>=0.1.0.dev11,<0.2.0",
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
@@ -93,25 +94,21 @@ dependencies = [
 [dependency-groups]
 dev = [
     "a2a-sdk[http-server]",
-    "aiohttp>=3.13.3",
+    "aiohttp>=3.13.4",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
-    "black>=26.3.1",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.7",
-    "detect-secrets @ git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976", # equates to Tag "0.13.1+ibm.64.dss"
     "diff-cover>=9.0.0",
     "dodgy>=0.2.1",
     "faker>=20.0.0",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.140.3",
-    "interrogate>=1.7.0",
-    "isort>=6.1.0",
     "locust>=2.35.0",
     "mypy>=1.18.2",
     "pexpect>=4.9.0",
@@ -120,8 +117,6 @@ dev = [
     "pre-commit>=4.5.1",
     "prospector[with_everything]>=1.17.3",
     "pydocstyle>=6.3.0",
-    "pylint>=3.3.9,<4",
-    "pylint-pydantic>=0.3.5",
     "pyrefly>=0.35.0",
     "pyright>=1.1.406",
     "pyroma>=5.0",
@@ -141,14 +136,11 @@ dev = [
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
-    "radon>=6.0.1",
     "redis>=6.4.0",
     "rich>=13.0.0",
-    "ruff>=0.13.3",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
-    "tomlcheck>=0.2.3",
     "tomlkit>=0.13.3",
     "tox>=4.34.1",
     "tox-uv>=1.29.0",
@@ -156,10 +148,8 @@ dev = [
     "ty>=0.0.1a21",
     "types-tabulate>=0.9.0.20241207",
     "url-normalize>=2.2.1",
-    "uv>=0.8.23",
-    "vulture>=2.14",
+    "uv>=0.11.6",
     "websockets>=15.0.1",
-    "yamllint>=1.37.1",
     "pyasn1>=0.6.3", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     "tornado>=6.5.5",  # transitive via jupyter; CVE-2026-31958
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
@@ -170,7 +160,7 @@ dev = [
     "setuptools>=82.0.0",
     "debugpy>=1.8.20",
     "maturin>=1.12.6",
-    "tornado>=6.5.5",
+    "Pygments>=2.20.0",
 ]
 
 # ----------------------------------------------------------------
@@ -198,7 +188,7 @@ postgres = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.19",
+    "langchain-core>=1.2.28",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.11",
@@ -259,6 +249,17 @@ templating = [
     "cookiecutter>=2.7.1",
 ]
 
+# External plugin packages (optional)
+# Install with: pip install mcp-contextforge-gateway[plugins]
+plugins = [
+    "cpex-rate-limiter>=0.0.3",
+    "cpex-encoded-exfil-detection>=0.2.0",
+    "cpex-pii-filter>=0.2.0",
+    "cpex-retry-with-backoff>=0.1.0",
+    "cpex-secrets-detection>=0.1.0",
+    "cpex-url-reputation>=0.1.1",
+]
+
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
@@ -283,7 +284,7 @@ all = [
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=0.9.0",
 ]
 
 # --------------------------------------------------------------------
@@ -619,10 +620,19 @@ filterwarnings = [
   "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
 ]
 
-# Set environment variables for all tests
+# Set environment variables for all tests.
+# Heavy optional features (admin API, admin UI, LLM chat) are disabled by
+# default so `import mcpgateway.main` stays cheap. `tests/conftest.py` also
+# force-sets these at bootstrap time in case a host env flipped them on.
+# Tests that exercise the admin API via main.app use the
+# `main_app_with_admin_api` session fixture (tests/conftest.py), which
+# clears the Settings lru_cache and reloads mcpgateway.main with the flags
+# flipped back on. LLM chat unit tests import the router module directly,
+# so they do not need it mounted on main.app.
 env = [
-    "MCPGATEWAY_ADMIN_API_ENABLED=true",
-    "MCPGATEWAY_UI_ENABLED=true",
+    "D:MCPGATEWAY_ADMIN_API_ENABLED=false",
+    "D:MCPGATEWAY_UI_ENABLED=false",
+    "D:LLMCHAT_ENABLED=false",
     "DATABASE_URL=sqlite:///:memory:",
     "TEST_DATABASE_URL=sqlite:///:memory:"
 ]
@@ -685,7 +695,6 @@ ignore_unused = [
   "autoflake",
   "argparse-manpage",
   "bandit",
-  "black",
   "bump2version",
   "check-manifest",
   "code2flow",
@@ -695,17 +704,13 @@ ignore_unused = [
   "fawltydeps",
   "gprof2dot",
   "gunicorn",
-  "isort",
   "ty",
-  "tomlcheck",
   "mypy",
   "pexpect",
   "pip-licenses",
   "pip_audit",
   "pre-commit",
   "pydocstyle",
-  "pylint",
-  "pylint-pydantic",
   "pyre-check",
   "pyright",
   "pyroma",
@@ -718,8 +723,6 @@ ignore_unused = [
   "pytest-rerunfailures",
   "pytest-xdist",
   "pytype",
-  "radon",
-  "ruff",
   "settings-doc",
   "snakeviz",
   "types-tabulate",

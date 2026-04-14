@@ -181,7 +181,7 @@ is below. It contains two main sections: `plugins` and `plugin_settings`.
 plugins:
 
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
+    kind: "cpex_pii_filter.PIIFilterPlugin"  # Plugin class path
     description: "Detects and masks PII"       # Human-readable description
     version: "1.0.0"                          # Plugin version
     author: "Security Team"                   # Plugin author
@@ -205,7 +205,7 @@ plugins:
     config:                                   # Plugin-specific configuration
       detect_ssn: true
       detect_credit_card: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       redaction_text: "[REDACTED]"
 
 # Global plugin settings
@@ -218,7 +218,13 @@ plugin_settings:
 
 ## Getting Started (Native Plugins)
 
-Use the native plugins out of the box:
+Use the packaged native plugins after installing the optional plugin extra:
+
+```bash
+uv sync --extra plugins
+```
+
+Or install the published plugin wheels with `pip install 'mcp-contextforge-gateway[plugins]'`.
 
 1. Copy and adapt the example config (enable any subset):
 
@@ -227,7 +233,7 @@ Use the native plugins out of the box:
 plugins:
 
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "transform"
     priority: 50
@@ -292,7 +298,7 @@ are defined as follows:
 | Field | Type | Required | Default | Description | Example Values |
 |-------|------|----------|---------|-------------|----------------|
 | `name` | `string` | Yes | - | Unique plugin identifier within the configuration | `"PIIFilterPlugin"`, `"OpenAIModeration"` |
-| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"`, `"external"` |
+| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"cpex_pii_filter.PIIFilterPlugin"`, `"external"` |
 | `description` | `string` |  | `null` | Human-readable description of plugin functionality | `"Detects and masks PII in requests"` |
 | `author` | `string` |  | `null` | Plugin author or team responsible for maintenance | `"Security Team"`, `"AI Safety Group"` |
 | `version` | `string` |  | `null` | Plugin version for tracking and compatibility | `"1.0.0"`, `"2.3.1-beta"` |
@@ -301,7 +307,7 @@ are defined as follows:
 | `mode` | `string` |  | `"sequential"` | Plugin execution mode controlling behavior on violations | `"sequential"`, `"transform"`, `"disabled"` |
 | `priority` | `integer` |  | `null` | Execution priority (lower number = higher priority) | `10`, `50`, `100` |
 | `conditions` | `object[]` |  | `[]` | Conditional execution rules for targeting specific contexts | See [Condition Fields](#condition-fields) below |
-| `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "mask_strategy": "partial"}` |
+| `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "default_mask_strategy": "partial"}` |
 | `mcp` | `object` |  | `null` | External MCP server configuration (required for external plugins) | See [MCP Configuration](#mcp-configuration-fields) below |
 
 #### Hook Types
@@ -1252,7 +1258,7 @@ Plugin management endpoints are not exposed in the gateway at this time.
 plugins:
   # Step 1: PII Detection and Masking (Highest Priority)
   - name: "PIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "sequential"
     priority: 10
@@ -1260,7 +1266,7 @@ plugins:
       detect_ssn: true
       detect_credit_card: true
       detect_email: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       block_on_detection: false
 
   # Step 2: External AI Safety Service (LlamaGuard)
@@ -1339,14 +1345,14 @@ plugins:
 plugins:
 
   - name: "DevPIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     mode: "transform"  # Don't block in dev
     priority: 50
     config:
       detect_ssn: true
       log_detections: true
-      mask_strategy: "partial"
+      default_mask_strategy: "partial"
       whitelist_patterns:
 
         - "test@example.com"
@@ -1357,7 +1363,7 @@ plugins:
 plugins:
 
   - name: "ProdPIIFilter"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     mode: "sequential"  # Block in production
     priority: 10
@@ -1368,8 +1374,8 @@ plugins:
       detect_email: true
       detect_api_keys: true
       block_on_detection: true
-      audit_detections: true
-      compliance_mode: "strict"
+      log_detections: true
+      include_detection_details: true
 ```
 
 ## Performance and Scalability
