@@ -6046,6 +6046,32 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if request_headers:
                 pre_auth_headers = get_passthrough_headers(request_headers, {}, db, gateway)
 
+            # For Authorization Code OAuth gateways, retrieve the stored user token
+            # so that _initialize_gateway() can connect instead of early-returning.
+            if (
+                user_email
+                and gateway.auth_type == "oauth"
+                and isinstance(gateway.oauth_config, dict)
+                and gateway.oauth_config.get("grant_type") == "authorization_code"
+                and "Authorization" not in pre_auth_headers
+            ):
+                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                token_service = TokenStorageService(db)
+                access_token = await token_service.get_user_token(gateway_id, user_email)
+                if access_token:
+                    pre_auth_headers["Authorization"] = f"Bearer {access_token}"
+                    logger.debug(
+                        "Injected stored OAuth token for auth_code gateway %s (user %s)",
+                        gateway_name, user_email,
+                    )
+                else:
+                    logger.info(
+                        "No stored OAuth token for auth_code gateway %s (user %s) — "
+                        "refresh will return empty; user must complete /oauth/authorize/%s first",
+                        gateway_name, user_email, gateway_id,
+                    )
+
         lock = self._get_refresh_lock(gateway_id)
 
         # Check if lock is already held (concurrent refresh in progress)
