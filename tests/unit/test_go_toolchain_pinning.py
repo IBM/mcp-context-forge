@@ -18,7 +18,7 @@ def test_linting_full_uses_patched_go_and_module_cache_paths():
     steps = workflow["jobs"]["linting-full"]["steps"]
 
     setup_go_step = next(step for step in steps if step.get("name") == "Set up Go")
-    assert setup_go_step["with"]["go-version"] == "1.25.8"
+    assert setup_go_step["with"]["go-version"] == "1.26.2"
     assert setup_go_step["with"]["cache-dependency-path"].strip().splitlines() == [
         "a2a-agents/go/a2a-echo-agent/go.sum",
         "mcp-servers/go/benchmark-server/go.sum",
@@ -29,4 +29,4 @@ def test_linting_full_uses_patched_go_and_module_cache_paths():
 
 def test_linting_go_toolchain_is_patched_in_makefile():
     makefile = MAKEFILE_PATH.read_text(encoding="utf-8")
-    assert "LINT_GO_TOOLCHAIN ?= go1.25.8" in makefile
+    assert "LINT_GO_TOOLCHAIN ?= go1.26.2" in makefile

@@ -5,7 +5,9 @@ build-backend = "maturin"
 [project]
 name = "request-logging-masking-native-extension"
 version = "0.1.0"
+description = "Rust (PyO3) native extension that masks sensitive fields before request logging."
 requires-python = ">=3.11"
+license = "Apache-2.0"
 
 [tool.maturin]
 module-name = "request_logging_masking_native_extension"

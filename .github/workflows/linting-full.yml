@@ -39,7 +39,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.25.8"
+          go-version: "1.26.2"
           cache-dependency-path: |
             a2a-agents/go/a2a-echo-agent/go.sum
             mcp-servers/go/benchmark-server/go.sum

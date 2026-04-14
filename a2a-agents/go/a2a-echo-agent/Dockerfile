@@ -1,6 +1,6 @@
 # This build supports multi-platform builds through standard Docker Buildx
 # techniques, including the $TARGETPLATFORM environment variable.
-FROM golang:1.24.4 AS builder
+FROM golang:1.26.2 AS builder
 ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /src
 COPY go.mod ./

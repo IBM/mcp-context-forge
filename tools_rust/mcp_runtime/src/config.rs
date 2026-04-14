@@ -261,7 +261,7 @@ impl RuntimeConfig {
 mod tests {
     use super::{ListenTarget, RuntimeConfig};
     use clap::Parser;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn config_from<I, T>(args: I) -> RuntimeConfig
     where
@@ -311,7 +311,7 @@ mod tests {
 
         assert!(matches!(
             config.listen_target().expect("uds target"),
-            ListenTarget::Uds(path) if path == PathBuf::from("/tmp/contextforge.sock")
+            ListenTarget::Uds(path) if path == Path::new("/tmp/contextforge.sock")
         ));
     }
 

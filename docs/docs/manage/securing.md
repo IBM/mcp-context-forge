@@ -4,7 +4,7 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**ContextForge is currently in beta (v1.0.0-RC-2)** and requires careful security configuration for production use:
+**ContextForge is currently in beta (v1.0.0-RC-3)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release

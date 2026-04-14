@@ -55,8 +55,13 @@ def owasp_anon_api(playwright: Playwright) -> Generator[APIRequestContext, None,
 
 @pytest.fixture(scope="module")
 def owasp_admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
-    """Admin-authenticated API context for OWASP A01 tests (admin bypass via teams=null)."""
-    token = _make_jwt("admin@example.com", is_admin=True)
+    """Admin-authenticated API context for OWASP A01 tests (admin bypass via teams=null).
+
+    Prefers the ``MCP_AUTH`` env var (set by the Makefile from a token signed with
+    the running gateway's secret) so signatures match the deployed instance. Falls
+    back to a locally-signed JWT only when ``MCP_AUTH`` is unset.
+    """
+    token = os.getenv("MCP_AUTH", "") or _make_jwt("admin@example.com", is_admin=True)
     ctx = playwright.request.new_context(
         base_url=BASE_URL,
         extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
