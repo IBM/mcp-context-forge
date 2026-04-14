@@ -1,0 +1,181 @@
+---
+# OCP Setup — NFS dynamic storage provisioner
+# Equivalent to: make ocp-setup-nfs NFS_SERVER=<infra-ip>
+#
+# Sets up the nfs-subdir-external-provisioner on the cluster so that PVCs
+# with storageClassName: nfs-client are dynamically provisioned via NFS.
+#
+# Requires:
+#   - SSH access to the NFS server (infra node) as root
+#   - cluster-admin access on the OCP cluster
+#   - Helm CLI installed locally
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/setup-nfs-provisioner.yml \
+#     -i ansible/ocp/inventory/cluster.yml \
+#     -e nfs_server=<infra-node-ip>
+
+- name: Setup NFS dynamic storage provisioner
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Fail if nfs_server is not set
+      ansible.builtin.fail:
+        msg: "nfs_server is required. Pass it with -e nfs_server=<infra-node-ip>"
+      when: nfs_server is not defined or nfs_server == ''
+
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Setup: NFS dynamic storage provisioner
+          ========================================
+
+          NFS server:     {{ nfs_server }}
+          NFS path:       {{ nfs_path }}
+          SSH user:       {{ nfs_ssh_user }}
+          Namespace:      {{ nfs_namespace }}
+          StorageClass:   {{ storage_class_name }}
+
+          This will:
+            1. Create {{ nfs_path }} on the NFS server and configure /etc/exports
+            2. Deploy nfs-subdir-external-provisioner via Helm
+            3. Apply the hostmount-anyuid SCC to the provisioner service account
+            4. Verify the {{ storage_class_name }} StorageClass is available
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Continue? (yes/no)"
+      register: confirm
+      failed_when: confirm.user_input | lower not in ['yes', 'y']
+      when: not (skip_confirm | default(false) | bool)
+
+    # -----------------------------------------------------------------------
+    # Part 1: NFS server setup (delegated to infra node via SSH)
+    # -----------------------------------------------------------------------
+
+    - name: Register infra node in inventory with SSH options
+      ansible.builtin.add_host:
+        name: "{{ nfs_server }}"
+        ansible_user: "{{ nfs_ssh_user }}"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+    - name: Create NFS export directory on infra node
+      ansible.builtin.file:
+        path: "{{ nfs_path }}"
+        state: directory
+        mode: '0777'
+      delegate_to: "{{ nfs_server }}"
+      remote_user: "{{ nfs_ssh_user }}"
+
+    - name: Add export entry to /etc/exports
+      ansible.builtin.lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_path }} *(rw,sync,insecure,no_subtree_check,no_root_squash)"
+        state: present
+      delegate_to: "{{ nfs_server }}"
+      remote_user: "{{ nfs_ssh_user }}"
+
+    - name: Reload NFS exports
+      ansible.builtin.command:
+        cmd: exportfs -ra
+      delegate_to: "{{ nfs_server }}"
+      remote_user: "{{ nfs_ssh_user }}"
+      changed_when: false
+
+    - name: Verify NFS exports
+      ansible.builtin.command:
+        cmd: exportfs -v
+      delegate_to: "{{ nfs_server }}"
+      remote_user: "{{ nfs_ssh_user }}"
+      register: exports_output
+      changed_when: false
+
+    - name: Report NFS exports
+      ansible.builtin.debug:
+        msg: "Active NFS exports:\n{{ exports_output.stdout }}"
+
+    # -----------------------------------------------------------------------
+    # Part 2: Cluster setup — deploy provisioner and configure StorageClass
+    # -----------------------------------------------------------------------
+
+    - name: Create nfs-provisioner namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ nfs_namespace }}"
+
+    - name: Add nfs-subdir-external-provisioner Helm repo
+      ansible.builtin.command:
+        cmd: helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+      changed_when: false
+      failed_when: false
+
+    - name: Update Helm repos
+      ansible.builtin.command:
+        cmd: helm repo update
+      changed_when: false
+
+    - name: Deploy nfs-subdir-external-provisioner
+      ansible.builtin.command:
+        cmd: >
+          helm upgrade --install nfs-subdir-external-provisioner
+          nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+          -n {{ nfs_namespace }}
+          --set nfs.server={{ nfs_server }}
+          --set nfs.path={{ nfs_path }}
+          --set storageClass.name={{ storage_class_name }}
+          --set storageClass.defaultClass=false
+      register: helm_result
+      changed_when: true
+
+    - name: Apply hostmount-anyuid SCC to provisioner service account
+      ansible.builtin.command:
+        cmd: >
+          oc adm policy add-scc-to-user hostmount-anyuid
+          -z nfs-subdir-external-provisioner
+          -n {{ nfs_namespace }}
+      changed_when: false
+
+    - name: Wait for provisioner pod to be Running
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ nfs_namespace }}"
+        label_selectors:
+          - "app=nfs-subdir-external-provisioner"
+      register: provisioner_pods
+      until: >
+        provisioner_pods.resources | length > 0 and
+        provisioner_pods.resources[0].status.phase == 'Running'
+      retries: 18
+      delay: 10
+
+    - name: Verify StorageClass exists
+      kubernetes.core.k8s_info:
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ storage_class_name }}"
+      register: sc_check
+      failed_when: sc_check.resources | length == 0
+
+    - name: Setup complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          NFS provisioner ready
+          ========================================
+          StorageClass:  {{ storage_class_name }}
+          Namespace:     {{ nfs_namespace }}
+          NFS server:    {{ nfs_server }}
+          NFS path:      {{ nfs_path }}
+
+          PVCs with storageClassName: {{ storage_class_name }} will now be
+          dynamically provisioned. Next: make ocp-setup OCP_NS=<namespace>

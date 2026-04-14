@@ -89,7 +89,10 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
   pip install ansible
   ansible-galaxy collection install kubernetes.core
   ```
-- **`nfs-client` StorageClass** available on the cluster (dynamic NFS provisioner for Postgres and Redis PVCs)
+- **`nfs-client` StorageClass** available on the cluster (dynamic NFS provisioner for Postgres and Redis PVCs). Run once per cluster after it is provisioned — the person running this command must have SSH access to the infra node (i.e. their SSH public key was registered when the Fyre cluster was built):
+  ```bash
+  make ocp-setup-nfs NFS_SERVER=<infra-node-ip>
+  ```
 - **Docker Hub pull secret** in your namespace (required to pull `redis:7` without hitting anonymous rate limits):
   ```bash
   oc create secret docker-registry dockerhub-pull \

@@ -2988,6 +2988,15 @@ ocp-install-operator:                        ## Install CrunchyData PGO operator
 		-i $(OCP_INVENTORY) \
 		-e skip_confirm=true
 
+ocp-setup-nfs:                               ## Deploy NFS dynamic storage provisioner (one-time per cluster, requires NFS_SERVER)
+	$(check_ansible)
+	@if [ -z "$(NFS_SERVER)" ]; then echo "Usage: make ocp-setup-nfs NFS_SERVER=<infra-node-ip>"; echo "Example: make ocp-setup-nfs NFS_SERVER=9.60.224.26"; exit 1; fi
+	@/bin/bash -c 'read -p "Setup NFS provisioner on $(NFS_SERVER)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/setup-nfs-provisioner.yml \
+		-i $(OCP_INVENTORY) \
+		-e nfs_server=$(NFS_SERVER) \
+		-e skip_confirm=true
+
 ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
 	$(check_ansible)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi

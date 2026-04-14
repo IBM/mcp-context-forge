@@ -29,3 +29,9 @@ pg_secret_name: "{{ pg_cluster_name }}-pguser-{{ pg_admin_user }}"
 locust_workers: 3
 locust_worker_wait_timeout: 90
 locust_worker_poll_interval: 10
+
+# NFS provisioner settings
+nfs_path: /data/dynamic-storage
+nfs_namespace: nfs-provisioner
+nfs_ssh_user: root
+storage_class_name: nfs-client
