@@ -50,12 +50,13 @@ Examples:
 # Standard
 from html.parser import HTMLParser
 import ipaddress
+import json
 import logging
 from pathlib import Path
 import re
 import shlex
 import socket
-from typing import Any, Iterable, List, Optional, Pattern
+from typing import Any, Dict, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -76,9 +77,7 @@ logger = logging.getLogger(__name__)
 _HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
-_MIME_TYPE_RE: Pattern[str] = re.compile(
-    r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$'
-)
+_MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')
 _URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 _SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
 _ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
@@ -1815,3 +1814,60 @@ def validate_core_url(value: str, field_name: str = "URL") -> str:
         The validated URL string.
     """
     return SecurityValidator.validate_url(value, field_name)
+
+
+# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
+# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
+# These are now read from config (settings.meta_max_keys, etc.) but kept as
+# module-level aliases for backward-compatible imports.
+META_MAX_KEYS: int = settings.meta_max_keys
+META_MAX_DEPTH: int = settings.meta_max_depth
+META_MAX_BYTES: int = settings.meta_max_bytes
+
+
+def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    Args:
+        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
+
+    Raises:
+        ValueError: if any limit is exceeded.
+    """
+    max_keys = settings.meta_max_keys
+    max_depth = settings.meta_max_depth
+    max_bytes = settings.meta_max_bytes
+
+    if not meta_data:
+        return
+    if len(meta_data) > max_keys:
+        raise ValueError(f"meta_data exceeds maximum key count ({max_keys}): got {len(meta_data)}")
+
+    def _check_depth(obj: Any, depth: int) -> None:
+        """Recursively enforce nesting depth, traversing both dicts and lists (CWE-400).
+
+        Lists are traversed without incrementing the depth counter so that a
+        list-of-dicts does not hide an extra level of dict nesting — e.g.
+        ``{"k": [{"l2": {"l3": "x"}}]}`` is correctly caught as depth 3.
+        """
+        if depth > max_depth:
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({max_depth})")
+        if isinstance(obj, dict):
+            for v in obj.values():
+                _check_depth(v, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                _check_depth(item, depth)
+
+    for v in meta_data.values():
+        _check_depth(v, 1)
+
+    try:
+        # CWE-20: Use strict json.dumps (no default=str) so non-serializable objects
+        # raise TypeError rather than being silently coerced — keeps the byte limit
+        # meaningful and matches the strict rejection behaviour used in prompt_service.
+        size = len(json.dumps(meta_data))
+        if size > max_bytes:
+            raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"meta_data is not serializable: {exc}") from exc

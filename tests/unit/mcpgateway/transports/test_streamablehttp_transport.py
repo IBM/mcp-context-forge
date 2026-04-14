@@ -9480,6 +9480,7 @@ class TestDirectProxyMode:
             yield mock_db
 
         mock_meta = MagicMock()
+        mock_meta.model_dump.return_value = {"trace_id": "test-meta"}
         mock_request_ctx = MagicMock()
         mock_request_ctx.meta = mock_meta
 
@@ -13550,3 +13551,63 @@ async def test_handle_streamable_http_initialize_span_exits_with_exception(monke
     assert exc_type is ValueError
     assert isinstance(exc_val, ValueError)
     assert str(exc_val) == "initialize failed"
+
+
+# --------------------------------------------------------------------------- #
+# Security regression tests for _meta handling in direct-proxy (CWE-400/CWE-20)#
+# --------------------------------------------------------------------------- #
+
+
+class TestProxyReadResourceMetaInjection:
+    """Tests for _proxy_read_resource_to_gateway meta injection (Finding 7 / CWE-20)."""
+
+    @pytest.mark.asyncio
+    async def test_model_dump_uses_by_alias_so_meta_is_not_dropped(self, monkeypatch):
+        """_meta must survive the model_dump(by_alias=True)+model_validate round-trip (CWE-20).
+
+        Regression for Finding 7: model_dump() without by_alias=True produces {"uri": ..., "meta": None}
+        causing the alias key "_meta" not to be the primary key written. Using by_alias=True ensures
+        the output dict has "_meta" as the field key, which is then correctly overwritten with the
+        caller-supplied metadata before model_validate is called.
+        """
+        from mcp.types import ReadResourceRequestParams
+
+        meta_data = {"trace_id": "abc", "request_id": "123"}
+
+        # The fixed path: model_dump(by_alias=True) then overwrite _meta
+        params = ReadResourceRequestParams(uri="file:///test.txt")
+        dump_with_alias = params.model_dump(by_alias=True)
+
+        # With by_alias=True the field appears under its alias "_meta" (not "meta")
+        assert "_meta" in dump_with_alias
+
+        # Overwrite with our metadata and validate
+        dump_with_alias["_meta"] = meta_data
+        validated = ReadResourceRequestParams.model_validate(dump_with_alias)
+        assert validated.meta is not None
+        # All injected keys must survive round-trip
+        as_dict = validated.meta.model_dump()
+        assert meta_data.items() <= as_dict.items()
+
+
+class TestDirectProxyValidatesMeta:
+    """Validate that the direct-proxy branch in read_resource applies CWE-400 guards (Finding 1)."""
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_rejects_oversized_meta(self, monkeypatch):
+        """meta_data must be validated before _proxy_read_resource_to_gateway is called (Finding 1 / CWE-400)."""
+        from mcpgateway.common.validators import META_MAX_KEYS
+        from mcpgateway.transports.streamablehttp_transport import _validate_meta_data
+
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(oversized)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_rejects_list_of_dicts_depth_bypass(self, monkeypatch):
+        """List-of-dicts depth bypass must be caught before _proxy_read_resource_to_gateway (Finding 1/3 / CWE-400)."""
+        from mcpgateway.transports.streamablehttp_transport import _validate_meta_data
+
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
