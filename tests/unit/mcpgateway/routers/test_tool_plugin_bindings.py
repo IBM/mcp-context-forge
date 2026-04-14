@@ -32,6 +32,7 @@ from sqlalchemy.pool import StaticPool
 from mcpgateway.db import Base
 from mcpgateway.routers.tool_plugin_bindings import (
     delete_tool_plugin_binding,
+    delete_tool_plugin_bindings_by_reference,
     list_tool_plugin_bindings,
     list_tool_plugin_bindings_for_team,
     upsert_tool_plugin_bindings,
@@ -85,6 +86,23 @@ def user_ctx(db_session):
     }
 
 
+# ---------------------------------------------------------------------------
+# Canonical full-field configs (must include all schema fields)
+# ---------------------------------------------------------------------------
+
+_OLG: dict = {
+    "min_chars": 0, "max_chars": 2000, "min_tokens": 0, "max_tokens": None,
+    "chars_per_token": 4, "limit_mode": "character", "strategy": "truncate",
+    "ellipsis": "\u2026", "word_boundary": False, "max_text_length": 1_000_000,
+    "max_structure_size": 10_000, "max_recursion_depth": 100,
+}
+_RL: dict = {
+    "by_user": None, "by_tenant": None, "by_tool": None,
+    "algorithm": "fixed_window", "backend": "memory",
+    "redis_url": None, "redis_key_prefix": "rl", "redis_fallback": True,
+}
+
+
 def _simple_request() -> ToolPluginBindingRequest:
     """Minimal single-team single-tool POST payload."""
     return ToolPluginBindingRequest(
@@ -96,7 +114,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
-                        config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                        config=dict(_OLG),
                     )
                 ]
             )
@@ -115,7 +133,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
-                        config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                        config=dict(_OLG),
                     )
                 ]
             ),
@@ -126,7 +144,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         plugin_id=PluginId.RATE_LIMITER,
                         mode=PluginBindingMode.PERMISSIVE,
                         priority=30,
-                        config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
+                        config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
                     )
                 ]
             ),
@@ -189,7 +207,7 @@ class TestToolPluginBindingsRouter:
                             plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=99,
-                            config={"min_chars": 0, "max_chars": 500, "strategy": "block", "ellipsis": "..."},
+                            config={**_OLG, "max_chars": 500, "strategy": "block"},
                         )
                     ]
                 )
@@ -335,7 +353,7 @@ class TestToolPluginBindingsRouter:
         assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
         assert team_a.mode == "enforce"
         assert team_a.priority == 50
-        assert team_a.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert team_a.config == _OLG
         assert team_a.created_by == "admin@example.com"
 
         team_b = by_team["team-b"]
@@ -343,7 +361,7 @@ class TestToolPluginBindingsRouter:
         assert team_b.plugin_id == "RATE_LIMITER"
         assert team_b.mode == "permissive"
         assert team_b.priority == 30
-        assert team_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
+        assert team_b.config == {**_RL, "by_user": "60/m", "by_tenant": "600/m"}
         assert team_b.created_by == "admin@example.com"
 
     # ------------------------------------------------------------------
@@ -372,7 +390,7 @@ class TestToolPluginBindingsRouter:
         assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
         assert binding.mode == "enforce"
         assert binding.priority == 50
-        assert binding.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert binding.config == _OLG
         assert binding.created_by == "admin@example.com"
 
     @pytest.mark.asyncio
@@ -516,3 +534,222 @@ class TestToolPluginBindingsRouter:
             )
 
         mock_reload.assert_awaited_once_with("team-a::tool_x")
+
+    # ------------------------------------------------------------------
+    # DELETE / — delete_tool_plugin_bindings_by_reference
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_success_multiple_bindings(self, user_ctx, db_session):
+        """DELETE ?binding_reference_id= removes all bindings with that reference and returns them."""
+        ref_request = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x", "tool_y"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ext-ref-001",
+                        )
+                    ]
+                )
+            }
+        )
+        await upsert_tool_plugin_bindings(
+            request=ref_request,
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        result = await delete_tool_plugin_bindings_by_reference(
+            binding_reference_id="ext-ref-001",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert isinstance(result, ToolPluginBindingListResponse)
+        assert result.total == 2
+        assert all(b.binding_reference_id == "ext-ref-001" for b in result.bindings)
+        assert {b.tool_name for b in result.bindings} == {"tool_x", "tool_y"}
+
+        # Confirm both rows are gone
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_no_match_returns_empty(self, user_ctx, db_session):
+        """DELETE ?binding_reference_id= with no matching bindings is not an error — returns empty list."""
+        result = await delete_tool_plugin_bindings_by_reference(
+            binding_reference_id="nonexistent-ref",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert isinstance(result, ToolPluginBindingListResponse)
+        assert result.total == 0
+        assert result.bindings == []
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_only_deletes_matching_ref(self, user_ctx, db_session):
+        """DELETE ?binding_reference_id= only removes bindings with that specific reference ID."""
+        r1 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-alpha",
+                        )
+                    ]
+                )
+            }
+        )
+        r2 = ToolPluginBindingRequest(
+            teams={
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_y"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-beta",
+                        )
+                    ]
+                )
+            }
+        )
+        await upsert_tool_plugin_bindings(request=r1, current_user_ctx=user_ctx, db=db_session)
+        await upsert_tool_plugin_bindings(request=r2, current_user_ctx=user_ctx, db=db_session)
+
+        deleted = await delete_tool_plugin_bindings_by_reference(
+            binding_reference_id="ref-alpha",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert deleted.total == 1
+        assert deleted.bindings[0].binding_reference_id == "ref-alpha"
+
+        # ref-beta binding must still be present
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 1
+        assert after.bindings[0].binding_reference_id == "ref-beta"
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_calls_reload_plugin_context(self, user_ctx, db_session):
+        """DELETE ?binding_reference_id= calls reload_plugin_context for each deleted binding."""
+        from unittest.mock import AsyncMock
+
+        ref_request = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x", "tool_y"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-cache-test",
+                        )
+                    ]
+                )
+            }
+        )
+        await upsert_tool_plugin_bindings(
+            request=ref_request, current_user_ctx=user_ctx, db=db_session
+        )
+
+        with patch(
+            "mcpgateway.routers.tool_plugin_bindings.reload_plugin_context",
+            new_callable=AsyncMock,
+        ) as mock_reload:
+            await delete_tool_plugin_bindings_by_reference(
+                binding_reference_id="ref-cache-test",
+                current_user_ctx=user_ctx,
+                db=db_session,
+            )
+
+        called_ids = {call.args[0] for call in mock_reload.await_args_list}
+        assert called_ids == {"team-a::tool_x", "team-a::tool_y"}
+
+    # ------------------------------------------------------------------
+    # GET / and GET /{team_id} — binding_reference_id query filter
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_list_all_filtered_by_binding_reference_id(self, user_ctx, db_session):
+        """GET /?binding_reference_id= returns only bindings with that reference ID."""
+        r1 = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-001",
+                        )
+                    ]
+                )
+            }
+        )
+        r2 = ToolPluginBindingRequest(
+            teams={
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_y"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="ref-002",
+                        )
+                    ]
+                )
+            }
+        )
+        await upsert_tool_plugin_bindings(request=r1, current_user_ctx=user_ctx, db=db_session)
+        await upsert_tool_plugin_bindings(request=r2, current_user_ctx=user_ctx, db=db_session)
+
+        result = await list_tool_plugin_bindings(
+            binding_reference_id="ref-001",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert result.total == 1
+        assert result.bindings[0].binding_reference_id == "ref-001"
+        assert result.bindings[0].team_id == "team-a"
+
+    @pytest.mark.asyncio
+    async def test_list_by_team_binding_reference_id_takes_precedence(self, user_ctx, db_session):
+        """GET /{team_id}?binding_reference_id= uses reference ID and ignores team_id filter."""
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            config=dict(_OLG),
+                            binding_reference_id="cross-team-ref",
+                        )
+                    ]
+                )
+            }
+        )
+        await upsert_tool_plugin_bindings(request=r, current_user_ctx=user_ctx, db=db_session)
+
+        # Query with team_id="team-b" but binding_reference_id for team-a's binding —
+        # reference ID takes precedence so the team-a binding is still returned.
+        result = await list_tool_plugin_bindings_for_team(
+            team_id="team-b",
+            binding_reference_id="cross-team-ref",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert result.total == 1
+        assert result.bindings[0].team_id == "team-a"
+        assert result.bindings[0].binding_reference_id == "cross-team-ref"

@@ -8,17 +8,18 @@ Tool Plugin Bindings Router.
 Provides endpoints for configuring per-tool per-tenant plugin policies.
 
 Endpoints:
-    POST   /v1/tools/plugin_bindings          — Create or update bindings (upsert)
-    GET    /v1/tools/plugin_bindings           — List all bindings
-    GET    /v1/tools/plugin_bindings/{team_id} — List bindings for a specific team
-    DELETE /v1/tools/plugin_bindings/{id}      — Delete a binding by ID
+    POST   /v1/tools/plugin_bindings                              — Create or update bindings (upsert)
+    GET    /v1/tools/plugin_bindings                              — List all bindings
+    GET    /v1/tools/plugin_bindings/{team_id}                    — List bindings for a specific team
+    DELETE /v1/tools/plugin_bindings?binding_reference_id={ref}   — Delete all bindings by external reference ID
+    DELETE /v1/tools/plugin_bindings/{id}                         — Delete a binding by UUID
 """
 
 # Standard
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -107,12 +108,14 @@ async def upsert_tool_plugin_bindings(
 @router.get("/", response_model=ToolPluginBindingListResponse)
 @require_permission("tools.read")
 async def list_tool_plugin_bindings(
+    binding_reference_id: Optional[str] = None,
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> ToolPluginBindingListResponse:
     """List all tool plugin bindings across all teams.
 
     Args:
+        binding_reference_id: Optional filter — return only bindings with this reference ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
@@ -124,7 +127,7 @@ async def list_tool_plugin_bindings(
         >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings)
         True
     """
-    bindings = _service.list_bindings(db, team_id=None)
+    bindings = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id)
     return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
 
 
@@ -137,6 +140,7 @@ async def list_tool_plugin_bindings(
 @require_permission("tools.read")
 async def list_tool_plugin_bindings_for_team(
     team_id: str,
+    binding_reference_id: Optional[str] = None,
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> ToolPluginBindingListResponse:
@@ -144,6 +148,7 @@ async def list_tool_plugin_bindings_for_team(
 
     Args:
         team_id: Team identifier to filter by.
+        binding_reference_id: Optional filter — return only bindings with this reference ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
@@ -155,8 +160,49 @@ async def list_tool_plugin_bindings_for_team(
         >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
         True
     """
-    bindings = _service.list_bindings(db, team_id=team_id)
+    bindings = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id)
     return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+
+
+# ---------------------------------------------------------------------------
+# DELETE / — remove all bindings by external reference ID
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/", response_model=ToolPluginBindingListResponse, status_code=status.HTTP_200_OK)
+@require_permission("tools.manage_plugins")
+async def delete_tool_plugin_bindings_by_reference(
+    binding_reference_id: str = Query(..., min_length=1, description="External reference ID whose bindings to delete"),
+    current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ToolPluginBindingListResponse:
+    """Delete all bindings associated with an external reference ID.
+
+    Intended for use by external systems that need to remove all ContextForge
+    bindings tied to one of their own reference objects without knowing the
+    internal ContextForge UUIDs.
+
+    Returns the deleted records (empty list if none matched — not an error).
+
+    Args:
+        binding_reference_id: The external reference ID whose bindings to delete.
+        current_user_ctx: Authenticated user context.
+        db: Database session.
+
+    Returns:
+        ToolPluginBindingListResponse: All deleted binding records.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(delete_tool_plugin_bindings_by_reference)
+        True
+    """
+    deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id)
+    db.commit()
+    # Invalidate cache for every affected (team_id, tool_name) pair.
+    for ctx_id in {make_context_id(b.team_id, b.tool_name) for b in deleted}:
+        await reload_plugin_context(ctx_id)
+    return ToolPluginBindingListResponse(bindings=deleted, total=len(deleted))
 
 
 # ---------------------------------------------------------------------------

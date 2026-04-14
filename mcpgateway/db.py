@@ -6578,6 +6578,7 @@ class ToolPluginBinding(Base):
         mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
         priority (int): Execution priority — lower numbers run first.
         config (dict): Plugin-specific JSON configuration blob.
+        binding_reference_id (str): Optional external reference ID for bulk delete and stale-tool pruning.
         created_at (datetime): Row creation timestamp (UTC).
         created_by (str): Email of the user who created the binding.
         updated_at (datetime): Last update timestamp (UTC).
@@ -6608,6 +6609,7 @@ class ToolPluginBinding(Base):
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -6620,6 +6622,7 @@ class ToolPluginBinding(Base):
         UniqueConstraint("team_id", "tool_name", "plugin_id", name="uq_tool_plugin_binding"),
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
+        Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
     )
 
     def __repr__(self) -> str:

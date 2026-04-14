@@ -7999,30 +7999,48 @@ class OutputLengthGuardConfig(BaseModel):
 
     Attributes:
         min_chars: Minimum character count (>= 0).
-        max_chars: Maximum character count (> 1).
+        max_chars: Maximum character count. None disables the check.
+        min_tokens: Minimum token count (0 disables).
+        max_tokens: Maximum token count. None disables the check.
+        chars_per_token: Characters per token ratio for estimation (1-10).
+        limit_mode: Enforcement mode — 'character' or 'token'.
         strategy: What to do when limit is exceeded.
         ellipsis: Suffix appended when truncating.
+        word_boundary: Truncate at word boundaries to avoid mid-word cuts.
+        max_text_length: Maximum text size to process (bytes). Prevents memory exhaustion.
+        max_structure_size: Maximum items in list/dict. Prevents DoS attacks.
+        max_recursion_depth: Maximum nesting depth. Prevents stack overflow.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    min_chars: int = Field(0, ge=0, description="Minimum character count, must be >= 0")
-    max_chars: int = Field(2000, gt=1, description="Maximum character count, must be > 1")
-    strategy: Literal["truncate", "block"] = Field("truncate", description="Action when limit exceeded")
-    ellipsis: str = Field("...", max_length=20, description="Suffix appended on truncation")
+    min_chars: int = Field(default=0, ge=0, description="Minimum character count, must be >= 0")
+    max_chars: Optional[int] = Field(default=None, description="Maximum character count; None or 0 disables the check")
+    min_tokens: int = Field(default=0, ge=0, description="Minimum token count; 0 disables")
+    max_tokens: Optional[int] = Field(default=None, description="Maximum token count; None or 0 disables")
+    chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation")
+    limit_mode: Literal["character", "token"] = Field(default="character", description="Enforcement mode: 'character' or 'token'")
+    strategy: Literal["truncate", "block"] = Field(default="truncate", description="Action when limit exceeded")
+    ellipsis: str = Field(default="\u2026", max_length=20, description="Suffix appended on truncation")
+    word_boundary: bool = Field(default=False, description="Truncate at word boundaries to avoid mid-word cuts")
+    max_text_length: int = Field(default=1_000_000, ge=1, description="Maximum text size to process; prevents memory exhaustion")
+    max_structure_size: int = Field(default=10_000, ge=1, description="Maximum items in list/dict; prevents DoS")
+    max_recursion_depth: int = Field(default=100, ge=1, description="Maximum nesting depth; prevents stack overflow")
 
     @model_validator(mode="after")
     def min_less_than_max(self) -> "OutputLengthGuardConfig":
-        """Validate min_chars < max_chars.
+        """Validate min < max for both chars and tokens when the max is set.
 
         Returns:
             self after validation.
 
         Raises:
-            ValueError: If min_chars >= max_chars.
+            ValueError: If min_chars >= max_chars or min_tokens >= max_tokens.
         """
-        if self.min_chars >= self.max_chars:
+        if self.max_chars is not None and self.max_chars > 0 and self.min_chars >= self.max_chars:
             raise ValueError("min_chars must be less than max_chars")
+        if self.max_tokens is not None and self.max_tokens > 0 and self.min_tokens >= self.max_tokens:
+            raise ValueError("min_tokens must be less than max_tokens")
         return self
 
 
@@ -8035,16 +8053,26 @@ class RateLimiterConfig(BaseModel):
     Attributes:
         by_user: Rate limit per user.
         by_tenant: Rate limit per tenant.
-        by_tool: Rate limit per tool.
+        by_tool: Per-tool rate limits as a dict of tool_name to rate string.
+        algorithm: Counting algorithm.
+        backend: Storage backend.
+        redis_url: Redis connection URL (required when backend='redis').
+        redis_key_prefix: Prefix for all Redis keys.
+        redis_fallback: Fall back to memory if Redis is unavailable.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    by_user: Optional[str] = Field(None, description="Rate limit per user, e.g. '60/m' or '10/s'")
-    by_tenant: Optional[str] = Field(None, description="Rate limit per tenant, e.g. '600/m'")
-    by_tool: Optional[str] = Field(None, description="Rate limit per tool, e.g. '10/m'")
+    by_user: Optional[str] = Field(default=None, description="Rate limit per user, e.g. '60/m' or '10/s'; null disables")
+    by_tenant: Optional[str] = Field(default=None, description="Rate limit per tenant, e.g. '600/m'; null disables")
+    by_tool: Optional[Dict[str, str]] = Field(default=None, description="Per-tool rate limits, e.g. {'search': '10/m'}; null disables")
+    algorithm: Literal["fixed_window", "sliding_window", "token_bucket"] = Field(default="fixed_window", description="Counting algorithm")
+    backend: Literal["memory", "redis"] = Field(default="memory", description="Storage backend")
+    redis_url: Optional[str] = Field(default=None, description="Redis URL, e.g. 'redis://localhost:6379/0'; required when backend='redis', null otherwise")
+    redis_key_prefix: str = Field(default="rl", description="Prefix for all Redis keys")
+    redis_fallback: bool = Field(default=True, description="Fall back to memory if Redis is unavailable")
 
-    @field_validator("by_user", "by_tenant", "by_tool", mode="before")
+    @field_validator("by_user", "by_tenant", mode="before")
     @classmethod
     def validate_rate_string(cls, v: Optional[str]) -> Optional[str]:
         """Validate rate string format <count>/<s|m>.
@@ -8064,6 +8092,27 @@ class RateLimiterConfig(BaseModel):
             raise ValueError(f"Rate string '{v}' is invalid. Use format '<count>/s' or '<count>/m'")
         return v
 
+    @field_validator("by_tool", mode="before")
+    @classmethod
+    def validate_by_tool_rate_strings(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Validate each per-tool rate string.
+
+        Args:
+            v: Dict of tool_name to rate string.
+
+        Returns:
+            Validated dict or None.
+
+        Raises:
+            ValueError: If any rate string is invalid.
+        """
+        if v is None:
+            return v
+        for tool_name, rate in v.items():
+            if not re.match(r"^\d+/[sm]$", rate):
+                raise ValueError(f"Rate string '{rate}' for tool '{tool_name}' is invalid. Use format '<count>/s' or '<count>/m'")
+        return v
+
 
 class SecretsDetectionConfig(BaseModel):
     """Config schema for SECRETS_DETECTION plugin.
@@ -8079,10 +8128,10 @@ class SecretsDetectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
-    redact: bool = Field(True, description="Whether to redact detected secrets")
-    redaction_text: str = Field("[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
-    block_on_detection: bool = Field(False, description="Whether to block the response when secrets are detected")
-    min_findings_to_block: int = Field(1, ge=1, description="Minimum number of findings required to block")
+    redact: bool = Field(default=True, description="Whether to redact detected secrets")
+    redaction_text: str = Field(default="[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
+    block_on_detection: bool = Field(default=False, description="Whether to block the response when secrets are detected")
+    min_findings_to_block: int = Field(default=1, ge=1, description="Minimum number of findings required to block")
 
 
 # Map of plugin_id → config schema class for validation
@@ -8114,7 +8163,13 @@ class PluginPolicyItem(BaseModel):
     mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
-        ..., description="Plugin-specific configuration; always provide all fields you care about — on upsert the config is fully replaced, so any key you omit reverts to the plugin's default value"
+        ..., description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config."
+    )
+    binding_reference_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+        description="Optional external reference ID for correlating this binding with an upstream system",
     )
 
     @model_validator(mode="after")
@@ -8214,6 +8269,7 @@ class ToolPluginBindingResponse(BaseModelWithConfigDict):
     mode: str = Field(..., description="Execution mode")
     priority: int = Field(..., description="Execution priority")
     config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID for correlating with an upstream system")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="Email of creator")
     updated_at: datetime = Field(..., description="Last update timestamp")
