@@ -300,7 +300,7 @@ def _mask_json_payload_for_logging(payload: bytes, max_depth: int = 10) -> str:
                     return masked_payload.decode("utf-8", errors="ignore")
                 return str(masked_payload)
             except Exception:
-                pass
+                logger.exception("Failed in processing the payload")
 
     json_payload = orjson.loads(payload)
     payload_to_log = mask_sensitive_data(json_payload, max_depth)

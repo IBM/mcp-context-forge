@@ -1236,6 +1236,8 @@ class ToolService(BaseService):
                       to parse the first TextContent item as JSON.
 
         Behavior:
+        - Per MCP specification, validation is skipped for error responses (isError: true).
+          Error responses with isError=true do not require structured content.
         - If ``candidate`` is provided it is used as the structured payload to validate.
         - Otherwise the method will try to parse the first ``TextContent`` item in
             ``tool_result.content`` as JSON and use that as the candidate.
@@ -1291,6 +1293,14 @@ class ToolService(BaseService):
                 True
         """
         try:
+            # CRITICAL: Skip validation for error responses per MCP spec
+            # Error responses with isError=true do not require structured content
+            # Reference: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling
+            is_error = getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False)
+            if is_error:
+                logger.debug(f"Skipping output schema validation for error response from tool {getattr(tool, 'name', '<unknown>')}")
+                return True
+
             output_schema = getattr(tool, "output_schema", None)
             # Nothing to do if the tool doesn't declare a schema
             if not output_schema:

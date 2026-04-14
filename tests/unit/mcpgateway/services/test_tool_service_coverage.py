@@ -3546,6 +3546,131 @@ class TestRegisterToolBranches:
         tool.tags = []
         tool.team_id = "team-1"
 
+
+    def test_skip_validation_for_error_response_is_error(self, tool_service):
+        """Skip output schema validation when is_error=True per MCP spec."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "You cannot send more than 200 points"}],
+            is_error=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should return True (skip validation) for error responses
+        assert result is True
+        # Error content should be preserved, not overwritten with validation error
+        assert tool_result.content[0]["text"] == "You cannot send more than 200 points"
+        assert tool_result.is_error is True
+
+    def test_skip_validation_for_error_response_isError(self, tool_service):
+        """Skip output schema validation when isError=True (alias) per MCP spec."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "Tool execution failed"}],
+            isError=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["data"], "properties": {"data": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should return True (skip validation) for error responses
+        assert result is True
+        # Error content should be preserved
+        assert tool_result.content[0]["text"] == "Tool execution failed"
+        assert tool_result.isError is True
+
+    def test_skip_validation_both_error_flags(self, tool_service):
+        """Skip validation when both is_error and isError are present."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "Error message"}],
+            is_error=True,
+            isError=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["field"], "properties": {"field": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True
+        assert tool_result.content[0]["text"] == "Error message"
+
+    def test_validate_success_response_normally(self, tool_service):
+        """Successful responses (is_error=False) still validate against output schema."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"recognitionId": "123", "message": "Success"}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId", "message"],
+                "properties": {
+                    "recognitionId": {"type": "string"},
+                    "message": {"type": "string"}
+                }
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should validate and succeed
+        assert result is True
+        assert hasattr(tool_result, "structured_content")
+        assert tool_result.structured_content["recognitionId"] == "123"
+
+    def test_validate_success_response_fails_validation(self, tool_service):
+        """Successful responses that fail validation are marked as errors."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"wrong": "field"}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId"],
+                "properties": {"recognitionId": {"type": "string"}}
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should fail validation
+        assert result is False
+        assert tool_result.is_error is True
+        # Content should be replaced with validation error details
+        assert "recognitionId" in tool_result.content[0].text or "required" in tool_result.content[0].text.lower()
+
+
+# ---------------------------------------------------------------------------
+# register_tool — team name conflict (lines 1075-1078) + defaults (1059-1062)
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterToolBranches:
+    @pytest.mark.asyncio
+    async def test_team_name_conflict(self, tool_service):
+        """Raises ToolNameConflictError when team tool with same name exists."""
+        tool = MagicMock()
+        tool.name = "my_tool"
+        tool.displayName = "My Tool"
+        tool.url = "http://example.com"
+        tool.description = "desc"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.output_schema = None
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+        tool.auth = None
+        tool.tags = []
+        tool.team_id = "team-1"
+
         existing = MagicMock()
         existing.name = "my_tool"
         existing.enabled = True
