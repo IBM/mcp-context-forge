@@ -130,6 +130,17 @@ fn test_runtime_config() -> RuntimeConfig {
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
         exit_after_startup_ms: None,
+        ssrf_protection_enabled: true,
+        ssrf_blocked_networks: vec![
+            "169.254.0.0/16".to_string(),
+            "fe80::/10".to_string(),
+        ],
+        ssrf_blocked_hosts: vec!["metadata.google.internal".to_string()],
+        ssrf_allow_localhost: true,
+        ssrf_allow_private_networks: false,
+        ssrf_allowed_networks: vec![],
+        ssrf_dns_fail_closed: true,
+        max_url_length: 2048,
     }
 }
 

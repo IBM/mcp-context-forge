@@ -13,6 +13,7 @@
 //! These tests verify that the security remediations for Issue #4110
 //! (Mend SAST scan findings) are working correctly.
 
+use clap::Parser;
 use contextforge_mcp_runtime::{
     config::RuntimeConfig,
     url_validator::{UrlValidator, ValidationError},
@@ -26,19 +27,14 @@ fn create_strict_config() -> RuntimeConfig {
 
 /// Helper to create a permissive config that allows localhost and private networks
 fn create_permissive_config() -> RuntimeConfig {
-    let args = vec![
-        "test",
-        "--ssrf-allow-localhost",
-        "true",
-        "--ssrf-allow-private-networks",
-        "true",
-    ];
+    let args = vec!["test", "--ssrf-allow-private-networks"];
     RuntimeConfig::try_parse_from(args).expect("Failed to create permissive config")
 }
 
 /// Helper to create a config that only allows localhost (for local development)
 fn create_localhost_allowed_config() -> RuntimeConfig {
-    let args = vec!["test", "--ssrf-allow-localhost", "true"];
+    // Default already allows localhost, just use default config
+    let args = vec!["test"];
     RuntimeConfig::try_parse_from(args).expect("Failed to create localhost config")
 }
 
