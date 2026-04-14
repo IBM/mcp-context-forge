@@ -7236,7 +7236,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
-        """meta_data is accepted but not forwarded to session.read_resource (SDK doesn't support _meta)."""
+        """meta_data is forwarded to the upstream via send_request (SDK read_resource lacks _meta support)."""
         # Standard
         from contextlib import asynccontextmanager
 
@@ -7250,6 +7250,8 @@ class TestReadResourceDirectProxy:
         result_mock.contents = [first_content]
 
         client_session_cm, session_mock = self._make_session_mock(result_mock)
+        # send_request is used instead of read_resource when meta_data is provided
+        session_mock.send_request = AsyncMock(return_value=result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
@@ -7275,10 +7277,9 @@ class TestReadResourceDirectProxy:
                 meta_data=meta,
             )
 
-        # MCP SDK read_resource() only accepts uri; _meta is not forwarded
-        session_mock.read_resource.assert_awaited_once_with(
-            uri="http://example.com/dp-resource",
-        )
+        # _meta is forwarded via send_request; read_resource is not called when meta_data is set
+        session_mock.send_request.assert_awaited_once()
+        session_mock.read_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
@@ -7552,3 +7553,164 @@ class TestListResourcesGatewayIdFilter:
         assert mock_create_span.call_args[0][0] == "resource_template.list"
         attrs = mock_create_span.call_args[0][1]
         assert attrs["server_id"] == "server-1"
+
+
+# --------------------------------------------------------------------------- #
+# Security regression tests for meta_data handling (CWE-400, CWE-20, CWE-284)#
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMetaData:
+    """Unit tests for _validate_meta_data (CWE-400 guards)."""
+
+    def test_none_is_accepted(self):
+        """None meta_data must always pass without raising."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data(None)
+
+    def test_empty_dict_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({})
+
+    def test_valid_small_dict_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
+
+    def test_too_many_keys_raises(self):
+        """meta_data with more than _META_MAX_KEYS keys must be rejected (DoS guard)."""
+        from mcpgateway.common.validators import META_MAX_KEYS, validate_meta_data as _validate_meta_data
+
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(oversized)
+
+    def test_excessive_nesting_depth_raises(self):
+        """meta_data with depth > _META_MAX_DEPTH must be rejected."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deeply_nested = {"level1": {"level2": {"level3": "value"}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(deeply_nested)
+
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # A list at depth 1 containing a dict that itself contains a dict = 3 levels total
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_list_of_scalars_at_max_depth_is_accepted(self):
+        """A list of scalar values at depth 1 must not be rejected (CWE-400 guard is not over-broad)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # List of scalars at first level is fine
+        _validate_meta_data({"tags": ["a", "b", "c"]})
+
+    def test_exact_max_depth_is_accepted(self):
+        """meta_data with exactly _META_MAX_DEPTH levels must be allowed."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        two_levels = {"outer": {"inner": "value"}}
+        _validate_meta_data(two_levels)
+
+    def test_oversized_bytes_raises(self):
+        """meta_data whose JSON encoding exceeds _META_MAX_BYTES must be rejected."""
+        from mcpgateway.common.validators import META_MAX_BYTES, validate_meta_data as _validate_meta_data
+
+        large_value = "x" * (META_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"k": large_value})
+
+    def test_non_serializable_value_raises(self):
+        """meta_data containing a non-JSON-serializable value must raise ValueError (CWE-20/Finding 6)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
+
+
+class TestBuildReadResourceRequest:
+    """Unit tests for _build_read_resource_request (CWE-20 and CWE-284 guards)."""
+
+    def test_meta_is_injected_under_alias_key(self):
+        """_meta must be present and meta (non-alias) must not shadow it (CWE-20)."""
+        from mcpgateway.services.resource_service import _build_read_resource_request
+
+        meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
+        request = _build_read_resource_request("file:///test.txt", meta_data)
+        # Unwrap to the inner params model
+        inner_params = request.root.params
+        assert inner_params is not None
+        assert inner_params.meta is not None
+        dumped = inner_params.meta.model_dump()
+        # All meta_data keys must survive; MCP SDK may add progressToken alongside
+        assert meta_data.items() <= dumped.items()
+
+    def test_returns_client_request_type(self):
+        """Return value must be a ClientRequest wrapping ReadResourceRequest."""
+        from mcp import types
+        from mcp.types import ReadResourceRequest
+
+        from mcpgateway.services.resource_service import _build_read_resource_request
+
+        req = _build_read_resource_request("file:///test.txt", {"k": "v"})
+        assert isinstance(req, types.ClientRequest)
+        assert isinstance(req.root, ReadResourceRequest)
+
+
+class TestReadResourceMetaDataValidationIntegration:
+    """Integration tests: _validate_meta_data is called by read_resource (CWE-400)."""
+
+    @pytest.mark.asyncio
+    async def test_read_resource_rejects_oversized_meta_data(self):
+        """read_resource must raise ValueError for oversized meta_data before DB access."""
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service.read_resource(db, resource_uri="file:///test.txt", meta_data=oversized)
+
+        # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_oversized_meta_data(self):
+        """invoke_resource must raise ValueError for oversized meta_data before DB access (Finding 2 / CWE-400)."""
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=oversized)
+
+        # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_list_of_dicts_depth_bypass(self):
+        """invoke_resource must reject _meta with list-of-dicts depth bypass (Finding 2/3 / CWE-400)."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=hidden_depth)
+
+        db.execute.assert_not_called()

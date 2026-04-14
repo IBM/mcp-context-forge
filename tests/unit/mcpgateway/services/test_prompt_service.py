@@ -520,6 +520,7 @@ class TestPromptService:
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
             "user@test.com",
+            meta_data=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"
@@ -3353,3 +3354,130 @@ class TestListPromptsGatewayIdFilter:
         attrs = mock_create_span.call_args[0][1]
         assert attrs["server_id"] == "server-1"
         assert attrs["team.scope"] == "team-1"
+
+
+# --------------------------------------------------------------------------- #
+# Security regression tests for meta_data handling (CWE-400, CWE-20, CWE-284)#
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMetaDataPrompt:
+    """Unit tests for _validate_meta_data in prompt_service (CWE-400 guards)."""
+
+    def test_none_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data(None)
+
+    def test_empty_dict_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({})
+
+    def test_valid_small_dict_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
+
+    def test_too_many_keys_raises(self):
+        """meta_data with more than _META_MAX_KEYS keys must be rejected."""
+        from mcpgateway.common.validators import META_MAX_KEYS, validate_meta_data as _validate_meta_data
+
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(oversized)
+
+    def test_excessive_nesting_depth_raises(self):
+        """meta_data with depth > _META_MAX_DEPTH must be rejected."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deeply_nested = {"level1": {"level2": {"level3": "value"}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(deeply_nested)
+
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400 / Finding 4)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_non_serializable_value_raises(self):
+        """meta_data with non-JSON-serializable value must raise ValueError (CWE-20 / Finding 6)."""
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
+
+    def test_exact_max_depth_is_accepted(self):
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        two_levels = {"outer": {"inner": "value"}}
+        _validate_meta_data(two_levels)
+
+    def test_oversized_bytes_raises(self):
+        from mcpgateway.common.validators import META_MAX_BYTES, validate_meta_data as _validate_meta_data
+
+        large_value = "x" * (META_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"k": large_value})
+
+
+class TestBuildGetPromptRequest:
+    """Unit tests for _build_get_prompt_request (CWE-20 and CWE-284 guards)."""
+
+    def test_meta_is_injected_under_alias_key(self):
+        """_meta must be present on the inner params model after build (CWE-20)."""
+        from mcpgateway.services.prompt_service import _build_get_prompt_request
+
+        meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
+        request = _build_get_prompt_request("my-prompt", None, meta_data)
+        inner_params = request.root.params
+        assert inner_params is not None
+        assert inner_params.meta is not None
+        dumped = inner_params.meta.model_dump()
+        # All meta_data keys must survive; MCP SDK may add progressToken alongside
+        assert meta_data.items() <= dumped.items()
+
+    def test_returns_client_request_type(self):
+        """Return value must be a ClientRequest wrapping GetPromptRequest."""
+        from mcp import types
+        from mcp.types import GetPromptRequest
+
+        from mcpgateway.services.prompt_service import _build_get_prompt_request
+
+        req = _build_get_prompt_request("my-prompt", {"arg": "val"}, {"k": "v"})
+        assert isinstance(req, types.ClientRequest)
+        assert isinstance(req.root, GetPromptRequest)
+
+
+class TestGetPromptMetaDataValidationIntegration:
+    """Integration tests: _validate_meta_data is called by _fetch_gateway_prompt_result."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_rejects_oversized_meta_data(self):
+        """_fetch_gateway_prompt_result must raise ValueError for oversized meta_data."""
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.prompt_service import PromptService
+
+        service = PromptService()
+
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+        gateway.auth_type = None
+
+        prompt = _build_db_prompt(template="", name="gw-prompt")
+        prompt.gateway_id = "gw-1"
+        prompt.gateway = gateway
+        prompt.original_name = "gw-prompt"
+
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service._fetch_gateway_prompt_result(prompt, {}, "user@example.com", meta_data=oversized)

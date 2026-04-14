@@ -360,6 +360,9 @@ class Settings(BaseSettings):
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
+    meta_max_keys: int = Field(default=16, description="Maximum number of keys in user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
+    meta_max_depth: int = Field(default=2, description="Maximum nesting depth for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
+    meta_max_bytes: int = Field(default=4096, description="Maximum JSON-encoded byte size for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
     dangerous_patterns: List[str] = Field(
         default_factory=lambda: [
             r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
