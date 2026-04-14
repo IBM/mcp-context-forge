@@ -744,7 +744,12 @@ mod tests {
 
         for url in public_urls {
             let result = validator.validate_url(url, "test").await;
-            assert!(result.is_ok(), "Should allow public URL: {} - Error: {:?}", url, result.err());
+            assert!(
+                result.is_ok(),
+                "Should allow public URL: {} - Error: {:?}",
+                url,
+                result.err()
+            );
         }
     }
 
@@ -757,7 +762,11 @@ mod tests {
 
         for url in localhost_urls {
             let result = validator.validate_url(url, "test").await;
-            assert!(result.is_err(), "Should block localhost URL when disabled: {}", url);
+            assert!(
+                result.is_err(),
+                "Should block localhost URL when disabled: {}",
+                url
+            );
         }
     }
 
@@ -769,7 +778,11 @@ mod tests {
         let result = validator
             .validate_url("http://localhost:4444/rpc", "test")
             .await;
-        assert!(result.is_ok(), "Should allow localhost when configured - Error: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should allow localhost when configured - Error: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
