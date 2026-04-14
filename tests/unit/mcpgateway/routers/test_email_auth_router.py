@@ -644,6 +644,7 @@ async def test_admin_get_update_delete_user():
             full_name="Updated2",
             is_admin=True,
             is_active=None,
+            email_verified=None,
             password_change_required=None,
             password="newPassword123!",
             admin_origin_source="api",
