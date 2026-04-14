@@ -29,9 +29,11 @@ RUN mkdir -p ${APP_HOME} && \
 
 USER 1001
 
+# explicitly install the gateway from source before the plugin install:
+RUN pip install --no-cache-dir uv && python -m uv pip install "mcp-contextforge-gateway @ git+https://github.com/IBM/mcp-context-forge.git@main"
 # Install plugin package
 COPY . .
-RUN pip install --no-cache-dir uv && python -m uv pip install .
+RUN python -m uv pip install .
 RUN pip install "cryptography>=44.0.3"
 
 
@@ -40,6 +42,8 @@ RUN pip install "cryptography>=44.0.3"
 RUN mkdir -p -m 0776 ${HOME}/.cache
 
 # download tokenizers
+# env is a workaround for issue: https://github.com/pytorch/pytorch/issues/140765
+ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor
 COPY --chmod=0776 ./cache_tokenizers.py ${HOME}/cache_tokenizers.py
 RUN python ${HOME}/cache_tokenizers.py
 RUN ln -s ${HOME}/* ${APP_HOME}
@@ -56,6 +60,7 @@ ENTRYPOINT ["sh", "-c", "${HOME}/run-server.sh"]
 
 FROM builder as testing
 
-COPY tests .
+# do NOT copy tests into the root.  It causes the test py files to be included in coverage
+# COPY tests .
 RUN python3 -m uv pip install -e .[dev]
 ENTRYPOINT ["sh", "-c", "pytest tests"]
