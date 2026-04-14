@@ -206,6 +206,114 @@ For fresh databases or production (this PR not yet merged):
 - Migration runs cleanly
 - Creates all tables with correct schema from db.py
 
+## Security Considerations
+
+### Cross-Gateway Authentication Gap
+
+⚠️ **Critical Security Warning:** UAID-based cross-gateway routing in v1.0 does NOT implement authentication for outbound HTTP calls to remote gateways.
+
+**Current Behavior:**
+- Cross-gateway HTTP calls (via `extract_routing_info()` and `a2a_service.invoke_agent()`) do NOT forward bearer tokens or session context
+- Remote gateways receive completely unauthenticated requests
+- No user identity or authorization context is passed to target gateway
+
+**Security Implications:**
+
+1. **Remote Gateway Must Authenticate:** Target gateway MUST enforce `AUTH_REQUIRED=true`. If disabled, public agents are accessible without any authentication barrier.
+
+2. **No Authorization Context:** Remote gateway cannot enforce RBAC based on the originating user. All cross-gateway calls execute with the target gateway's public access level (no team scoping, no role checks).
+
+3. **Trust Boundary:** This gateway implicitly trusts the remote gateway's access control implementation. A compromised or misconfigured remote gateway becomes a security vector for your federation.
+
+**Code Locations:**
+- `mcpgateway/services/a2a_service.py` lines 1855-1888: Comprehensive security comment block
+- `mcpgateway/services/a2a_service.py` lines 1828-1831: `UAID_ALLOWED_DOMAINS` validation logic
+- `mcpgateway/utils/uaid.py` lines 78-95: DoS protection (UAID length validation)
+
+### DoS Protection
+
+**UAID Length Validation:**
+- Maximum UAID length: configurable via `UAID_MAX_LENGTH` (default 2048, matches database column limit)
+- Validation occurs at parse entry point (`parse_uaid()` in `mcpgateway/utils/uaid.py`)
+- Prevents resource exhaustion attacks via excessively long UAID strings
+- Configuration constraint: `512 <= UAID_MAX_LENGTH <= 2048` (cannot exceed database schema limit)
+
+**Configuration:**
+```bash
+# .env or environment variable
+UAID_MAX_LENGTH=2048  # Default, matches database column capacity
+```
+
+**Safety Features:**
+- Database column hard limit: `String(2048)` in `a2a_agents.uaid` column
+- Runtime validation logs warning if `UAID_MAX_LENGTH > 2048` and uses database limit
+- Parse rejection throws `ValueError` with detailed message for monitoring
+
+### Domain Allowlist (Cross-Gateway Trust Control)
+
+**Configuration:**
+```bash
+# .env or environment variable
+UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]
+```
+
+**Behavior:**
+- **Empty list `[]` (default):** Allow cross-gateway routing to ANY domain (least secure)
+- **Non-empty list:** Only allow routing to endpoints ending in specified domain suffixes (more secure)
+- Validation occurs in `mcpgateway/services/a2a_service.py` lines 1828-1831
+
+**Recommended Production Configuration:**
+```bash
+# Option 1: Allowlist trusted gateways only (recommended)
+UAID_ALLOWED_DOMAINS=["production-gateway.internal", "trusted-partner.com"]
+
+# Option 2: If no trusted external gateways, leave empty to prevent cross-gateway routing
+# Note: Empty list allows ALL domains by code design. To prevent cross-gateway routing,
+# ensure no UAID agents are registered, or implement network-level controls.
+```
+
+### Current Mitigations
+
+1. **UAID_ALLOWED_DOMAINS:** Restricts outbound calls to operator-specified trusted domains
+2. **Correlation ID Logging:** Every cross-gateway call logs a correlation ID for distributed tracing and security audit
+3. **Operator Guidance:** Documentation (README.md, .env.example, code comments) clearly warns about authentication gap
+4. **DoS Protection:** UAID length validation prevents resource exhaustion attacks
+
+### Future Security Enhancements (Roadmap)
+
+The following security features are planned for future releases:
+
+1. **Bearer Token Forwarding:** Pass originating user's authentication token to remote gateway (requires gateway-to-gateway trust establishment protocol)
+2. **Mutual TLS (mTLS):** Gateway-to-gateway authentication via X.509 certificates
+3. **Trusted Gateway Registry:** Cryptographic signature verification for gateway identity (prevents MITM and gateway impersonation)
+4. **Per-UAID Access Policies:** Fine-grained allowlist/denylist at the individual UAID level (beyond domain-level control)
+
+### Security Testing
+
+**Test Coverage:**
+- `tests/unit/mcpgateway/utils/test_uaid.py` - DoS protection tests (lines added in Task 5)
+- `tests/unit/mcpgateway/services/test_a2a_service.py` - Cross-gateway routing HTTP error handling, domain allowlist enforcement, team-based access control (lines 3520-3609)
+
+**Manual Testing Checklist:**
+1. Verify `UAID_MAX_LENGTH` rejects UAIDs exceeding configured limit
+2. Verify `UAID_ALLOWED_DOMAINS` blocks disallowed domains
+3. Verify cross-gateway calls log correlation IDs for tracing
+4. Verify remote gateway authentication enforcement (external test with partner gateway)
+
+### Operator Recommendations
+
+**Production Deployment:**
+1. Set `UAID_ALLOWED_DOMAINS` to a restrictive allowlist of trusted gateway domains
+2. Ensure `AUTH_REQUIRED=true` on ALL gateways in your federation
+3. Enable observability logging to monitor cross-gateway calls via correlation IDs
+4. Document your gateway federation topology and trust relationships
+5. Regularly audit `UAID_ALLOWED_DOMAINS` allowlist for stale or compromised domains
+
+**Risk Assessment:**
+- **Low Risk:** Internal-only deployment with no external UAID agents (no cross-gateway routing)
+- **Medium Risk:** Federated deployment with trusted partner gateways using `UAID_ALLOWED_DOMAINS` allowlist
+- **High Risk:** Open federation with `UAID_ALLOWED_DOMAINS=[]` (empty, allows all domains) - **NOT RECOMMENDED for production**
+
 ## Documentation
 
 See also:
