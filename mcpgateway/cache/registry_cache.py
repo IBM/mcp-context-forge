@@ -180,12 +180,22 @@ class RegistryCache:
         self._redis_circuit_open_duration = 30.0  # Seconds to wait before retry
         self._redis_last_failure_time = 0.0
         self._redis_circuit_open = False
+        self._circuit_breaker_lock = asyncio.Lock()  # Async lock for circuit breaker state
+
+        # Cache Redis operation timeout to avoid repeated imports in hot path
+        try:
+            # First-Party
+            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+            self._redis_operation_timeout = settings.redis_operation_timeout
+        except (ImportError, AttributeError):
+            self._redis_operation_timeout = 0.5  # Default fallback
 
         logger.info(
             f"RegistryCache initialized: enabled={self._enabled}, "
             f"tools_ttl={self._tools_ttl}s, prompts_ttl={self._prompts_ttl}s, "
             f"resources_ttl={self._resources_ttl}s, agents_ttl={self._agents_ttl}s, "
-            f"catalog_ttl={self._catalog_ttl}s"
+            f"catalog_ttl={self._catalog_ttl}s, redis_timeout={self._redis_operation_timeout}s"
         )
 
     def _get_redis_key(self, cache_type: str, filters_hash: str = "") -> str:
@@ -246,52 +256,59 @@ class RegistryCache:
             ...     return "result"
             >>> result = asyncio.run(cache._redis_operation_with_timeout(mock_op, operation_name="test"))
         """
-        # Check circuit breaker
-        if self._redis_circuit_open:
-            if time.time() - self._redis_last_failure_time < self._redis_circuit_open_duration:
-                logger.debug(f"Redis circuit open, skipping {operation_name}")
-                return None
-            # Half-open: try one operation
-            logger.info("Redis circuit half-open, attempting recovery")
-            self._redis_circuit_open = False
+        # Use cached timeout value (set at init)
+        timeout = self._redis_operation_timeout
+
+        # Check circuit breaker with lock to prevent TOCTOU race
+        async with self._circuit_breaker_lock:
+            if self._redis_circuit_open:
+                if time.time() - self._redis_last_failure_time < self._redis_circuit_open_duration:
+                    logger.debug(f"Redis circuit open, skipping {operation_name}")
+                    return None
+                # Half-open: try one operation
+                logger.info("Redis circuit half-open, attempting recovery")
+                self._redis_circuit_open = False
 
         try:
-            # Get timeout from config
-            # First-Party
-            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-            timeout = settings.redis_operation_timeout
-
             # Execute with timeout
             result = await asyncio.wait_for(operation(*args, **kwargs), timeout=timeout)
 
-            # Success: reset failure count
-            if self._redis_failure_count > 0:
-                logger.info(f"Redis recovered after {self._redis_failure_count} failures")
-                self._redis_failure_count = 0
+            # Success: reset failure count with lock
+            async with self._circuit_breaker_lock:
+                if self._redis_failure_count > 0:
+                    logger.info(f"Redis recovered after {self._redis_failure_count} failures")
+                    self._redis_failure_count = 0
 
             return result
 
         except asyncio.TimeoutError:
-            self._redis_failure_count += 1
-            self._redis_last_failure_time = time.time()
-            logger.warning(f"Redis {operation_name} timeout after {timeout}s " f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})")
+            async with self._circuit_breaker_lock:
+                self._redis_failure_count += 1
+                self._redis_last_failure_time = time.time()
+                logger.warning(f"Redis {operation_name} timeout after {timeout}s " f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})")
 
-            # Open circuit if threshold reached
-            if self._redis_failure_count >= self._redis_failure_threshold:
-                self._redis_circuit_open = True
-                logger.error(f"Redis circuit opened after {self._redis_failure_count} failures. " f"Will retry in {self._redis_circuit_open_duration}s")
+                # Open circuit if threshold reached
+                if self._redis_failure_count >= self._redis_failure_threshold:
+                    self._redis_circuit_open = True
+                    logger.error(f"Redis circuit opened after {self._redis_failure_count} failures. " f"Will retry in {self._redis_circuit_open_duration}s")
+
+            return None
+
+        except (ConnectionError, OSError) as e:
+            # Redis-specific connection errors
+            async with self._circuit_breaker_lock:
+                self._redis_failure_count += 1
+                self._redis_last_failure_time = time.time()
+                logger.warning(f"Redis {operation_name} connection error: {e}")
+
+                if self._redis_failure_count >= self._redis_failure_threshold:
+                    self._redis_circuit_open = True
 
             return None
 
         except Exception as e:
-            self._redis_failure_count += 1
-            self._redis_last_failure_time = time.time()
-            logger.warning(f"Redis {operation_name} failed: {e}")
-
-            if self._redis_failure_count >= self._redis_failure_threshold:
-                self._redis_circuit_open = True
-
+            # Unexpected errors (programming bugs) - log but don't count as Redis failures
+            logger.exception(f"Unexpected error in Redis {operation_name}: {e}")
             return None
 
     async def _get_redis_client(self):
@@ -300,39 +317,31 @@ class RegistryCache:
         Returns:
             Redis client or None if unavailable.
         """
-        # If circuit is open, don't attempt connection
-        if self._redis_circuit_open:
-            current_time = time.time()
-            if current_time - self._redis_last_failure_time < self._redis_circuit_open_duration:
-                return None
-            # Circuit timeout expired, allow retry
-            logger.info("Redis circuit timeout expired, attempting reconnection")
-            self._redis_circuit_open = False
-
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             client = await get_redis_client()
             if client:
-                # Test connection with ping
-                try:
-                    await asyncio.wait_for(client.ping(), timeout=1.0)
+                # Test connection with ping using configured timeout and circuit breaker
+                async def ping_operation():
+                    return await client.ping()
 
+                ping_result = await self._redis_operation_with_timeout(ping_operation, operation_name="ping")
+
+                if ping_result:
                     # Success: update state
                     if not self._redis_available:
                         logger.info("Redis connection restored")
                         self._redis_available = True
-                        self._redis_failure_count = 0
 
                     if not self._redis_checked:
                         self._redis_checked = True
                         logger.debug("RegistryCache: Redis client available")
 
                     return client
-
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.debug(f"Redis ping failed: {e}")
+                else:
+                    # Ping failed or circuit is open
                     self._redis_available = False
                     return None
             else:

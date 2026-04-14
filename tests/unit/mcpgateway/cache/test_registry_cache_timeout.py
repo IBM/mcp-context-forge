@@ -281,12 +281,12 @@ async def test_redis_ping_timeout_in_get_client():
 
 @pytest.mark.asyncio
 async def test_exception_in_redis_operation_increments_failure_count():
-    """Test that exceptions in Redis operations increment failure count."""
+    """Test that Redis connection errors increment failure count."""
     cache = RegistryCache()
 
-    # Mock Redis client that raises exception
+    # Mock Redis client that raises ConnectionError
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(side_effect=Exception("Connection error"))
+    mock_redis.get = AsyncMock(side_effect=ConnectionError("Connection error"))
 
     with patch.object(cache, '_get_redis_client', return_value=mock_redis):
         result = await cache.get("tools", "test_hash")
@@ -459,14 +459,14 @@ async def test_get_redis_client_exception_handling():
 
 @pytest.mark.asyncio
 async def test_redis_operation_non_timeout_exception():
-    """Test that non-timeout exceptions are handled properly (covers line 303-310 including 309)."""
+    """Test that Redis connection errors are handled properly and increment failure count."""
     cache = RegistryCache()
     cache._redis_failure_count = 0
     cache._redis_failure_threshold = 3
 
-    # Create operation that raises a non-timeout exception
+    # Create operation that raises a Redis connection error
     async def failing_operation(redis_client):
-        raise ValueError("Non-timeout error")
+        raise ConnectionError("Redis connection error")
 
     mock_redis = AsyncMock()
     with patch.object(cache, '_get_redis_client', return_value=mock_redis):
@@ -481,3 +481,26 @@ async def test_redis_operation_non_timeout_exception():
 
         assert cache._redis_failure_count >= 3
         assert cache._redis_circuit_open is True
+
+
+
+
+@pytest.mark.asyncio
+async def test_redis_operation_unexpected_exception_does_not_increment_failure():
+    """Test that unexpected exceptions (programming bugs) don't increment failure count."""
+    cache = RegistryCache()
+    cache._redis_failure_count = 0
+    cache._redis_failure_threshold = 3
+
+    # Create operation that raises an unexpected exception (programming bug)
+    async def buggy_operation(redis_client):
+        raise ValueError("Programming bug - not a Redis error")
+
+    mock_redis = AsyncMock()
+    with patch.object(cache, '_get_redis_client', return_value=mock_redis):
+        result = await cache._redis_operation_with_timeout(buggy_operation, "test_op")
+
+        assert result is None
+        # Failure count should NOT increment for programming bugs
+        assert cache._redis_failure_count == 0
+        assert cache._redis_circuit_open is False
