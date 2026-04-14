@@ -258,7 +258,7 @@ infrastructure_profiles:
   development:
     description: Development environment - minimal resources
     gateway_instances: 1
-    postgres_version: 17-alpine
+    postgres_version: 17-bookworm
     postgres_shared_buffers: 128MB
     postgres_effective_cache_size: 512MB
     postgres_max_connections: 50
@@ -272,7 +272,7 @@ infrastructure_profiles:
   staging:
     description: Staging environment - moderate resources
     gateway_instances: 2
-    postgres_version: 17-alpine
+    postgres_version: 17-bookworm
     postgres_shared_buffers: 512MB
     postgres_effective_cache_size: 2GB
     postgres_max_connections: 100
@@ -288,7 +288,7 @@ infrastructure_profiles:
   production:
     description: Production environment - optimized resources
     gateway_instances: 4
-    postgres_version: 17-alpine
+    postgres_version: 17-bookworm
     postgres_shared_buffers: 2GB
     postgres_effective_cache_size: 6GB
     postgres_max_connections: 200
@@ -308,7 +308,7 @@ infrastructure_profiles:
   production_ha:
     description: Production HA - high availability configuration
     gateway_instances: 6
-    postgres_version: 17-alpine
+    postgres_version: 17-bookworm
     postgres_shared_buffers: 4GB
     postgres_effective_cache_size: 12GB
     postgres_max_connections: 300
@@ -328,11 +328,11 @@ infrastructure_profiles:
 database_comparison:
   enabled: false
   versions:
-  - version: 15-alpine
+  - version: 15-bookworm
     label: PostgreSQL 15
-  - version: 16-alpine
+  - version: 16-bookworm
     label: PostgreSQL 16
-  - version: 17-alpine
+  - version: 17-bookworm
     label: PostgreSQL 17
   common_config:
     shared_buffers: 512MB
@@ -378,10 +378,10 @@ configuration_matrix:
       default: 20
     postgres_version:
       values:
-      - 15-alpine
-      - 16-alpine
-      - 17-alpine
-      default: 17-alpine
+      - 15-bookworm
+      - 16-bookworm
+      - 17-bookworm
+      default: 17-bookworm
   sample_size: 20
 comparison:
   save_baseline: false

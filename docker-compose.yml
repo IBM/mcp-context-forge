@@ -2483,7 +2483,7 @@ services:
   # Supports passphrase-protected keys via KEY_FILE_PASSWORD
   # ──────────────────────────────────────────────────────────────────────
   cert_init:
-    image: alpine/openssl:latest
+    image: debian:bookworm-slim
     volumes:
       - ./certs:/certs
     environment:
@@ -2491,6 +2491,9 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        apt-get update
+        apt-get install -y --no-install-recommends openssl
+        rm -rf /var/lib/apt/lists/*
         # Check if we have an encrypted key that needs decryption
         if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
           # Validate: encrypted key requires matching certificate
