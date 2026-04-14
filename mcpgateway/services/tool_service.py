@@ -371,6 +371,61 @@ def _looks_like_mcp_envelope(payload: dict) -> bool:
     return False
 
 
+def _safe_type_name(obj: Any) -> str:
+    """Return ``type(obj).__name__``, or a sentinel if that itself raises.
+
+    Used inside :meth:`ToolService._coerce_to_tool_result`'s last-resort
+    fallback so logging and diagnostic text on a pathological object
+    (broken proxy, ``__class__`` descriptor that raises, etc.) cannot
+    themselves raise and escape the "always returns a valid
+    ``ToolResult``" invariant.
+    """
+    try:
+        return type(obj).__name__
+    except Exception:  # pylint: disable=broad-except
+        return "<untypeable>"
+
+
+def _safe_text_repr(obj: Any, fallback_type: str) -> str:
+    """Coerce an arbitrary object to a non-raising text representation.
+
+    Tries ``str(obj)``, then ``repr(obj)``, then ``f"<{fallback_type}
+    object>"``, and finally a fixed sentinel. Used by the opaque-JSON
+    last-resort branch of
+    :meth:`ToolService._coerce_to_tool_result` — neither ``str`` nor
+    ``repr`` is guaranteed to succeed on arbitrary Python objects (a
+    class can override either to raise), and without this staged
+    fallback a malicious or simply buggy payload could escape the
+    helper and break the "never raises" contract downstream code relies
+    on.
+
+    Args:
+        obj: The payload to stringify.
+        fallback_type: Pre-computed type name used in the third-tier
+            sentinel; keeps ``type().__name__`` out of this function's
+            hot path since it has its own :func:`_safe_type_name`
+            guard upstream.
+
+    Returns:
+        A ``str``. Never raises.
+    """
+    try:
+        text = str(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # pylint: disable=broad-except
+        pass
+    try:
+        text = repr(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # pylint: disable=broad-except
+        pass
+    # ``fallback_type`` came from ``_safe_type_name`` so it's
+    # guaranteed to be a ``str`` already.
+    return f"<{fallback_type} object (unrepresentable)>"
+
+
 def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
     """Handle JSON parsing failures with graceful fallback to raw text.
 
@@ -1673,36 +1728,27 @@ class ToolService(BaseService):
 
         # Last resort — opaque JSON body. Preserves the payload for the
         # caller to inspect while keeping the rest of the pipeline on a
-        # uniform ``ToolResult`` contract. Log at DEBUG so operators can
-        # spot integrations regularly hitting this branch (which usually
-        # indicates an upstream whose shape the heuristic ought to learn
-        # to recognise).
-        logger.debug("Coercing %s payload to opaque text content", type(payload).__name__)
-        # Both ``BaseModel.model_dump`` and ``orjson.dumps`` can raise on
-        # pathological inputs: a BaseModel with a custom field serialiser
-        # that throws, a ``PydanticSerializationError`` (``ValueError``
-        # subclass, not ``TypeError``), or a plain Python object that
-        # isn't JSON-representable. Wrap the whole dump + serialise
-        # sequence so the helper's "always returns a valid ``ToolResult``"
-        # invariant holds even in the presence of upstream bugs.
+        # uniform ``ToolResult`` contract. The helper's invariant is
+        # "always returns a valid ``ToolResult``, never raises", so every
+        # step below must be guarded — both ``BaseModel.model_dump`` and
+        # ``orjson.dumps`` can raise on pathological inputs (custom
+        # serialisers that throw, ``PydanticSerializationError`` —
+        # ``ValueError`` subclass, not ``TypeError`` — fields holding
+        # non-representable objects), and even ``str()`` / ``repr()`` /
+        # ``type().__name__`` can fail on sufficiently broken proxy
+        # objects.
+        payload_type = _safe_type_name(payload)
+        logger.debug("Coercing %s payload to opaque text content", payload_type)
         try:
             serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
             serialized = orjson.dumps(serializable_payload, option=orjson.OPT_INDENT_2)
         except Exception:  # pylint: disable=broad-except
-            # Last-resort ``str(payload)`` so callers still see *something*.
-            # ``str()`` on a pathological object could itself raise, but
-            # ``repr()`` on an arbitrary Python object is effectively
-            # guaranteed by the runtime — keep the fallback defensive.
             logger.warning(
-                "Payload of type %s could not be JSON-serialised; using str() fallback",
-                type(payload).__name__,
+                "Payload of type %s could not be JSON-serialised; using textual fallback",
+                payload_type,
                 exc_info=True,
             )
-            try:
-                text = str(payload)
-            except Exception:  # pylint: disable=broad-except
-                text = repr(payload)
-            return ToolResult(content=[TextContent(type="text", text=text)])
+            return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
     async def register_tool(

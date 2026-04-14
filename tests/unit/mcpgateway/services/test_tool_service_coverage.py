@@ -2332,6 +2332,50 @@ class TestCoerceToToolResult:
         roundtripped = orjson.loads(result.content[0].text)
         assert roundtripped == payload
 
+    def test_payload_with_broken_str_and_repr_still_produces_toolresult(self, tool_service, caplog):
+        """Even objects whose ``__str__`` *and* ``__repr__`` raise yield a ToolResult.
+
+        The helper's hardest invariant is "never raises, always returns
+        a valid ``ToolResult``". This test exercises the extreme tail of
+        the opaque-JSON last-resort branch: a payload that (1) is not a
+        BaseModel with MCP-shaped fields, (2) isn't JSON-serialisable
+        (so ``orjson.dumps`` raises), (3) whose ``__str__`` raises when
+        the helper tries ``str(payload)``, and (4) whose ``__repr__``
+        also raises. Without ``_safe_text_repr``'s third-tier
+        ``f"<{type_name} object>"`` sentinel, either of those would
+        escape the helper.
+
+        Pairs with ``test_non_json_serialisable_payload_falls_back_to_str``
+        (normal ``str()`` path) and
+        ``test_basemodel_whose_model_dump_raises_falls_back_to_str``
+        (BaseModel.model_dump raising).
+        """
+
+        class AdversarialPayload:
+            """Payload whose textual representations both raise."""
+
+            def __str__(self) -> str:  # pragma: no cover - intentionally explodes
+                raise RuntimeError("__str__ is broken")
+
+            def __repr__(self) -> str:  # pragma: no cover - intentionally explodes
+                raise RuntimeError("__repr__ is also broken")
+
+        payload = AdversarialPayload()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        # Contract held — we got a ``ToolResult`` rather than an exception.
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # Third-tier sentinel used; must be a non-empty string.
+        assert "AdversarialPayload" in result.content[0].text
+        assert "unrepresentable" in result.content[0].text
+        # WARNING-severity reshape log should still have fired.
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
+        assert relevant, "Expected a WARNING-level log from the last-resort fallback"
+        assert relevant[-1].levelname == "WARNING"
+
     def test_basemodel_whose_model_dump_raises_falls_back_to_str(self, tool_service, caplog):
         """``BaseModel.model_dump`` raising is caught by the last-resort handler.
 
