@@ -237,6 +237,7 @@ observability = [
     "opentelemetry-api>=1.40.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
     "opentelemetry-exporter-otlp-proto-http>=1.40.0",
+    "opentelemetry-instrumentation-httpx>=0.51b0",
     "opentelemetry-sdk>=1.40.0",
 ]
 
