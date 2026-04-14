@@ -11,6 +11,7 @@ import {
   isInactiveChecked,
   makeCopyIdButton,
   parseUriTemplate,
+  populateTeamSelect,
   safeGetElement,
   showErrorMessage,
 } from "./utils.js";
@@ -627,6 +628,9 @@ export const editResource = async function (resourceId) {
       ? resource.visibility.toLowerCase()
       : null;
 
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-resource-team-id", resource.teamId || "");
+
     const publicRadio = safeGetElement("edit-resource-visibility-public");
     const teamRadio = safeGetElement("edit-resource-visibility-team");
     const privateRadio = safeGetElement("edit-resource-visibility-private");
@@ -645,11 +649,11 @@ export const editResource = async function (resourceId) {
     if (visibility) {
       // When public visibility is disabled and we're in a team-scoped view,
       // coerce legacy-public records to team.
-      const _teamId = new URL(window.location.href).searchParams.get("team_id");
+      const _urlTeamId = new URL(window.location.href).searchParams.get("team_id");
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&
-        _teamId
+        (resource.teamId || _urlTeamId)
           ? "team"
           : visibility;
       if (effectiveVisibility === "public" && publicRadio) {
