@@ -52,10 +52,18 @@ interface RequestOptions {
   headers?: Record<string, string>;
   /** Pass `true` to skip adding the Authorization header (e.g. login). */
   unauthenticated?: boolean;
+  /**
+   * Pass `true` to throw ApiError on 401 instead of redirecting to login.
+   * Use only for auth-flow endpoints (login, token refresh, SSO callback,
+   * password reset) where a 401 is an expected error, not an expired session.
+   * Misuse on regular authenticated calls will leave the app in an
+   * inconsistent state if the session expires.
+   */
+  skipRedirectOn401?: boolean;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, headers: extraHeaders = {}, unauthenticated = false } = options;
+  const { method = "GET", body, headers: extraHeaders = {}, unauthenticated = false, skipRedirectOn401 = false } = options;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -81,11 +89,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   });
 
   if (response.status === 401) {
-    clearToken();
-    // replace() rather than href= so the failed page is not added to history
-    // (the user can't hit Back into an unauthenticated state).
-    window.location.replace(LOGIN_PATH);
-    throw new ApiError(401, null, "Session expired — redirecting to login");
+    if (!skipRedirectOn401) {
+      clearToken();
+      // replace() rather than href= so the failed page is not added to history
+      // (the user can't hit Back into an unauthenticated state).
+      window.location.replace(LOGIN_PATH);
+    }
+    throw new ApiError(401, null, skipRedirectOn401 ? "HTTP 401" : "Session expired — redirecting to login");
   }
 
   if (!response.ok) {

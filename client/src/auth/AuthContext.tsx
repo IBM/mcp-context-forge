@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await api.post<LoginResponse>(
       "/auth/login",
       { email, password },
-      { unauthenticated: true }
+      { unauthenticated: true, skipRedirectOn401: true }
     );
 
     setToken(data.access_token);
