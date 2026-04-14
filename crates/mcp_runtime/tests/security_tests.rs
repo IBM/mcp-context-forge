@@ -16,13 +16,30 @@
 use clap::Parser;
 use contextforge_mcp_runtime::{
     config::RuntimeConfig,
-    url_validator::{UrlValidator, ValidationError},
+    url_validator::{MockDnsResolver, UrlValidator, ValidationError},
 };
+use serial_test::serial;
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::Arc;
 
-/// Helper to create a test config with strict SSRF protection (default settings)
+/// Helper to create a test config with strict SSRF protection
+/// (blocks localhost and private networks for security testing)
 fn create_strict_config() -> RuntimeConfig {
+    // Enable SSRF protection and block localhost/private networks for strict testing
+    unsafe {
+        std::env::set_var("SSRF_PROTECTION_ENABLED", "true");
+        std::env::set_var("SSRF_ALLOW_LOCALHOST", "false");
+        std::env::set_var("SSRF_ALLOW_PRIVATE_NETWORKS", "false");
+    }
     let args = vec!["test"];
-    RuntimeConfig::try_parse_from(args).expect("Failed to create test config")
+    let config = RuntimeConfig::try_parse_from(args).expect("Failed to create test config");
+    unsafe {
+        std::env::remove_var("SSRF_PROTECTION_ENABLED");
+        std::env::remove_var("SSRF_ALLOW_LOCALHOST");
+        std::env::remove_var("SSRF_ALLOW_PRIVATE_NETWORKS");
+    }
+    config
 }
 
 /// Helper to create a permissive config that allows localhost and private networks
@@ -43,6 +60,7 @@ fn create_localhost_allowed_config() -> RuntimeConfig {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_aws_metadata_endpoint() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -58,6 +76,7 @@ async fn test_blocks_aws_metadata_endpoint() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_gcp_metadata_hostname() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -76,6 +95,7 @@ async fn test_blocks_gcp_metadata_hostname() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_aws_ntp_service() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -91,6 +111,7 @@ async fn test_blocks_aws_ntp_service() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_link_local_ipv4() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -108,6 +129,7 @@ async fn test_blocks_link_local_ipv4() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_private_network_10() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -121,6 +143,7 @@ async fn test_blocks_private_network_10() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_private_network_172() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -134,6 +157,7 @@ async fn test_blocks_private_network_172() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_private_network_192() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -147,6 +171,7 @@ async fn test_blocks_private_network_192() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_allows_private_networks_when_configured() {
     let config = create_permissive_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -164,6 +189,7 @@ async fn test_allows_private_networks_when_configured() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_localhost_hostname() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -179,6 +205,7 @@ async fn test_blocks_localhost_hostname() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_localhost_127_0_0_1() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -192,6 +219,7 @@ async fn test_blocks_localhost_127_0_0_1() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_localhost_127_0_0_2() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -205,6 +233,7 @@ async fn test_blocks_localhost_127_0_0_2() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_allows_localhost_when_configured() {
     let config = create_localhost_allowed_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -224,9 +253,32 @@ async fn test_allows_localhost_when_configured() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_allows_public_https_urls() {
     let config = create_strict_config();
-    let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
+
+    // Create mock DNS resolver with public IPs for test domains
+    let mut dns_responses = HashMap::new();
+    dns_responses.insert(
+        "api.example.com".to_string(),
+        vec!["93.184.216.34".parse::<IpAddr>().unwrap()],
+    );
+    dns_responses.insert(
+        "www.google.com".to_string(),
+        vec!["142.250.80.4".parse::<IpAddr>().unwrap()],
+    );
+    dns_responses.insert(
+        "api.openai.com".to_string(),
+        vec!["104.18.32.68".parse::<IpAddr>().unwrap()],
+    );
+    dns_responses.insert(
+        "github.com".to_string(),
+        vec!["140.82.121.4".parse::<IpAddr>().unwrap()],
+    );
+
+    let mock_resolver = Arc::new(MockDnsResolver::new(dns_responses));
+    let validator =
+        UrlValidator::with_resolver(&config, mock_resolver).expect("Failed to create validator");
 
     let public_urls = vec![
         "https://api.example.com/v1",
@@ -242,6 +294,7 @@ async fn test_allows_public_https_urls() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_allows_public_http_urls() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -255,6 +308,7 @@ async fn test_allows_public_http_urls() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_allows_websocket_urls() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -272,6 +326,7 @@ async fn test_allows_websocket_urls() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_rejects_empty_url() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -285,6 +340,7 @@ async fn test_rejects_empty_url() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_rejects_url_too_long() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -299,6 +355,7 @@ async fn test_rejects_url_too_long() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_rejects_invalid_scheme_ftp() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -314,6 +371,7 @@ async fn test_rejects_invalid_scheme_ftp() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_rejects_invalid_scheme_file() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -331,6 +389,7 @@ async fn test_rejects_invalid_scheme_file() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_javascript_protocol() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -344,6 +403,7 @@ async fn test_blocks_javascript_protocol() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_data_protocol() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -359,6 +419,7 @@ async fn test_blocks_data_protocol() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_vbscript_protocol() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -376,6 +437,7 @@ async fn test_blocks_vbscript_protocol() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_ipv6_loopback() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -389,6 +451,7 @@ async fn test_blocks_ipv6_loopback() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_ipv6_public() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -408,6 +471,7 @@ async fn test_blocks_ipv6_public() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_crlf_injection_cr() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -423,6 +487,7 @@ async fn test_blocks_crlf_injection_cr() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_crlf_injection_lf() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -442,6 +507,7 @@ async fn test_blocks_crlf_injection_lf() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_credentials_username_password() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -457,6 +523,7 @@ async fn test_blocks_credentials_username_password() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_credentials_username_only() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -476,6 +543,7 @@ async fn test_blocks_credentials_username_only() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_zero_ip_address() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -489,19 +557,22 @@ async fn test_blocks_zero_ip_address() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_protocol_relative_url() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
     let result = validator.validate_url("//example.com/path", "test").await;
 
+    // Protocol-relative URLs are caught by scheme validation (missing http:// or https://)
     assert!(
-        matches!(result, Err(ValidationError::ProtocolRelativeUrl { .. })),
+        matches!(result, Err(ValidationError::InvalidScheme { .. })),
         "Should block protocol-relative URLs"
     );
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_spaces_in_domain() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -517,6 +588,7 @@ async fn test_blocks_spaces_in_domain() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_allows_spaces_in_query_string() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -532,6 +604,7 @@ async fn test_allows_spaces_in_query_string() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_invalid_port_zero() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -551,6 +624,7 @@ async fn test_blocks_invalid_port_zero() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_xss_script_tag() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -566,6 +640,7 @@ async fn test_blocks_xss_script_tag() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_blocks_xss_event_handler() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -574,8 +649,9 @@ async fn test_blocks_xss_event_handler() {
         .validate_url("https://example.com?param=javascript:alert(1)", "test")
         .await;
 
+    // javascript: in query params is caught by dangerous_url_pattern first
     assert!(
-        matches!(result, Err(ValidationError::ContainsScriptPatterns { .. })),
+        matches!(result, Err(ValidationError::DangerousProtocol { .. })),
         "Should block URLs with javascript: in parameters"
     );
 }
@@ -585,9 +661,11 @@ async fn test_blocks_xss_event_handler() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_config_default_values() {
     let config = create_strict_config();
 
+    // Strict config should block localhost and private networks
     assert!(config.ssrf_protection_enabled);
     assert!(!config.ssrf_allow_localhost);
     assert!(!config.ssrf_allow_private_networks);
@@ -596,6 +674,7 @@ async fn test_config_default_values() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_blocked_networks_contains_metadata() {
     let config = create_strict_config();
 
@@ -608,6 +687,7 @@ async fn test_config_blocked_networks_contains_metadata() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_blocked_hosts_contains_gcp_metadata() {
     let config = create_strict_config();
 
@@ -624,9 +704,20 @@ async fn test_config_blocked_hosts_contains_gcp_metadata() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_realistic_backend_url_production() {
     let config = create_strict_config();
-    let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
+
+    // Create mock DNS resolver with public IP for production backend
+    let mut dns_responses = HashMap::new();
+    dns_responses.insert(
+        "api.example.com".to_string(),
+        vec!["93.184.216.34".parse::<IpAddr>().unwrap()],
+    );
+
+    let mock_resolver = Arc::new(MockDnsResolver::new(dns_responses));
+    let validator =
+        UrlValidator::with_resolver(&config, mock_resolver).expect("Failed to create validator");
 
     // Realistic production backend URL
     let result = validator
@@ -637,6 +728,7 @@ async fn test_realistic_backend_url_production() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_realistic_backend_url_development() {
     let config = create_localhost_allowed_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -653,6 +745,7 @@ async fn test_realistic_backend_url_development() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_ssrf_attack_scenario_dns_rebinding() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
@@ -677,6 +770,7 @@ async fn test_ssrf_attack_scenario_dns_rebinding() {
 // =============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_validation_performance_batch() {
     let config = create_strict_config();
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");

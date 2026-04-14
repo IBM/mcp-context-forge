@@ -346,7 +346,7 @@ mod tests {
 
         assert!(matches!(
             config.listen_target().expect("uds target"),
-            ListenTarget::Uds(path) if path == Path::new("/tmp/contextforge.sock")
+            ListenTarget::Uds(path) if path.as_path() == std::path::Path::new("/tmp/contextforge.sock")
         ));
     }
 

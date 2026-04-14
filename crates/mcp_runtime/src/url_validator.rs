@@ -56,6 +56,7 @@
 //! ```
 
 use crate::config::RuntimeConfig;
+use async_trait::async_trait;
 use hickory_resolver::TokioResolver;
 use ipnetwork::IpNetwork;
 use regex::Regex;
@@ -73,6 +74,100 @@ type DnsCacheEntry = (Vec<IpAddr>, Instant);
 
 /// Type alias for DNS cache: hostname -> cache entry
 type DnsCache = HashMap<String, DnsCacheEntry>;
+
+/// Trait for DNS resolution to allow mocking in tests.
+#[async_trait]
+pub trait DnsResolver: Send + Sync {
+    /// Lookup IP addresses for a hostname.
+    ///
+    /// # Arguments
+    ///
+    /// * `hostname` - The hostname to resolve
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<IpAddr>)` - List of resolved IP addresses (empty if no records found)
+    /// * `Err(String)` - DNS resolution error message
+    async fn lookup_ip(&self, hostname: &str) -> Result<Vec<IpAddr>, String>;
+}
+
+/// Real DNS resolver using hickory-resolver.
+pub struct HickoryDnsResolver {
+    resolver: Arc<TokioResolver>,
+}
+
+impl HickoryDnsResolver {
+    /// Create a new hickory DNS resolver.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DNS resolver cannot be initialized.
+    pub fn new() -> Result<Self, String> {
+        let resolver = TokioResolver::builder_tokio()
+            .map_err(|e| format!("Failed to create DNS resolver builder: {}", e))?
+            .build();
+        Ok(Self {
+            resolver: Arc::new(resolver),
+        })
+    }
+}
+
+#[async_trait]
+impl DnsResolver for HickoryDnsResolver {
+    async fn lookup_ip(&self, hostname: &str) -> Result<Vec<IpAddr>, String> {
+        match self.resolver.lookup_ip(hostname).await {
+            Ok(lookup) => {
+                let ips: Vec<IpAddr> = lookup.iter().collect();
+                Ok(ips)
+            }
+            Err(e) => Err(format!("DNS lookup failed: {}", e)),
+        }
+    }
+}
+
+/// Mock DNS resolver for testing.
+///
+/// Returns predefined IP addresses for hostnames, or an error if not configured.
+#[derive(Clone)]
+pub struct MockDnsResolver {
+    /// Map of hostname -> IP addresses
+    responses: Arc<HashMap<String, Vec<IpAddr>>>,
+}
+
+impl MockDnsResolver {
+    /// Create a new mock DNS resolver with predefined responses.
+    ///
+    /// # Arguments
+    ///
+    /// * `responses` - Map of hostname to IP addresses. Use empty vec for "no records found".
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut responses = HashMap::new();
+    /// responses.insert("example.com".to_string(), vec!["93.184.216.34".parse().unwrap()]);
+    /// responses.insert("api.example.com".to_string(), vec!["93.184.216.34".parse().unwrap()]);
+    /// let resolver = MockDnsResolver::new(responses);
+    /// ```
+    pub fn new(responses: HashMap<String, Vec<IpAddr>>) -> Self {
+        Self {
+            responses: Arc::new(responses),
+        }
+    }
+}
+
+#[async_trait]
+impl DnsResolver for MockDnsResolver {
+    async fn lookup_ip(&self, hostname: &str) -> Result<Vec<IpAddr>, String> {
+        // Normalize hostname: lowercase, strip trailing dots
+        let normalized = hostname.to_lowercase().trim_end_matches('.').to_string();
+
+        match self.responses.get(&normalized) {
+            Some(ips) => Ok(ips.clone()),
+            None => Err(format!("Mock DNS: no entry configured for {}", hostname)),
+        }
+    }
+}
 
 /// Errors that can occur during URL validation.
 #[derive(Debug, Error)]
@@ -173,8 +268,8 @@ pub struct UrlValidator {
     /// Allowed URL schemes
     allowed_schemes: Vec<String>,
 
-    /// DNS resolver (async)
-    resolver: Arc<TokioResolver>,
+    /// DNS resolver (async, trait-based for testability)
+    resolver: Arc<dyn DnsResolver>,
 
     /// DNS result cache (hostname -> (IPs, expiry_time))
     /// TTL: 5 minutes to balance performance and security (DNS rebinding attacks)
@@ -234,9 +329,7 @@ impl UrlValidator {
             .collect();
 
         // Create DNS resolver (async)
-        let resolver = TokioResolver::builder_tokio()
-            .map_err(|e| format!("Failed to create DNS resolver builder: {}", e))?
-            .build();
+        let resolver = HickoryDnsResolver::new()?;
 
         // Compile regex patterns (at creation time for performance)
         let dangerous_url_pattern =
@@ -248,7 +341,7 @@ impl UrlValidator {
         ).map_err(|e| format!("Failed to compile dangerous_html_pattern regex: {}", e))?;
 
         let dangerous_js_pattern =
-            Regex::new(r"(?i)(javascript:|vbscript:|on\w+\s*=|data:.*script)")
+            Regex::new(r"(?i)(javascript:|vbscript:|\bon[a-z]+\s*=|data:.*script)")
                 .map_err(|e| format!("Failed to compile dangerous_js_pattern regex: {}", e))?;
 
         Ok(Self {
@@ -267,6 +360,88 @@ impl UrlValidator {
                 "wss://".to_string(),
             ],
             resolver: Arc::new(resolver),
+            dns_cache: Arc::new(RwLock::new(HashMap::new())),
+            dns_cache_ttl: Duration::from_secs(300), // 5 minutes
+            dangerous_url_pattern,
+            dangerous_html_pattern,
+            dangerous_js_pattern,
+        })
+    }
+
+    /// Create a new URL validator with a custom DNS resolver (for testing).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if invalid CIDR ranges are provided.
+    #[allow(dead_code)]
+    pub fn with_resolver(
+        config: &RuntimeConfig,
+        resolver: Arc<dyn DnsResolver>,
+    ) -> Result<Self, String> {
+        // Parse blocked networks (fail-closed: reject invalid CIDR)
+        let mut blocked_networks = Vec::new();
+        for network_str in &config.ssrf_blocked_networks {
+            match network_str.parse::<IpNetwork>() {
+                Ok(network) => blocked_networks.push(network),
+                Err(e) => {
+                    return Err(format!(
+                        "Invalid CIDR in SSRF_BLOCKED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
+                }
+            }
+        }
+
+        // Parse allowed networks (fail-closed: reject invalid CIDR)
+        let mut allowed_networks = Vec::new();
+        for network_str in &config.ssrf_allowed_networks {
+            match network_str.parse::<IpNetwork>() {
+                Ok(network) => allowed_networks.push(network),
+                Err(e) => {
+                    return Err(format!(
+                        "Invalid CIDR in SSRF_ALLOWED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
+                }
+            }
+        }
+
+        // Normalize blocked hostnames (lowercase, strip trailing dots)
+        let blocked_hosts: Vec<String> = config
+            .ssrf_blocked_hosts
+            .iter()
+            .map(|host| host.to_lowercase().trim_end_matches('.').to_string())
+            .collect();
+
+        // Compile regex patterns (at creation time for performance)
+        let dangerous_url_pattern =
+            Regex::new(r"(?i)(javascript|data|file|vbscript|about|chrome|mailto):")
+                .map_err(|e| format!("Failed to compile dangerous_url_pattern regex: {}", e))?;
+
+        let dangerous_html_pattern = Regex::new(
+            r"(?i)<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+        ).map_err(|e| format!("Failed to compile dangerous_html_pattern regex: {}", e))?;
+
+        let dangerous_js_pattern =
+            Regex::new(r"(?i)(javascript:|vbscript:|\bon[a-z]+\s*=|data:.*script)")
+                .map_err(|e| format!("Failed to compile dangerous_js_pattern regex: {}", e))?;
+
+        Ok(Self {
+            ssrf_protection_enabled: config.ssrf_protection_enabled,
+            blocked_networks,
+            blocked_hosts,
+            allow_localhost: config.ssrf_allow_localhost,
+            allow_private_networks: config.ssrf_allow_private_networks,
+            allowed_networks,
+            dns_fail_closed: config.ssrf_dns_fail_closed,
+            max_url_length: config.max_url_length,
+            allowed_schemes: vec![
+                "http://".to_string(),
+                "https://".to_string(),
+                "ws://".to_string(),
+                "wss://".to_string(),
+            ],
+            resolver,
             dns_cache: Arc::new(RwLock::new(HashMap::new())),
             dns_cache_ttl: Duration::from_secs(300), // 5 minutes
             dangerous_url_pattern,
@@ -508,23 +683,17 @@ impl UrlValidator {
         }
 
         // Cache miss or expired - resolve hostname
-        let mut ip_addresses = Vec::new();
-        match self.resolver.lookup_ip(hostname).await {
-            Ok(lookup) => {
-                for ip in lookup.iter() {
-                    ip_addresses.push(ip);
-                }
-                debug!(
-                    "DNS resolved {} to {} addresses",
-                    hostname,
-                    ip_addresses.len()
-                );
+        let ip_addresses = match self.resolver.lookup_ip(hostname).await {
+            Ok(ips) => {
+                debug!("DNS resolved {} to {} addresses", hostname, ips.len());
+                ips
             }
             Err(e) => {
                 debug!("DNS resolution failed for {}: {}", hostname, e);
                 // Return empty vec - caller will handle fail-closed/fail-open
+                Vec::new()
             }
-        }
+        };
 
         // Cache the result (even if empty for fail-open behavior)
         {
@@ -619,21 +788,30 @@ mod tests {
     use clap::Parser;
 
     fn create_test_config() -> RuntimeConfig {
-        // Create a test config with default SSRF protection (allows localhost by default)
+        // Create a test config with SSRF protection disabled to avoid DNS resolution in tests
+        unsafe {
+            std::env::set_var("SSRF_PROTECTION_ENABLED", "false");
+        }
         let args = vec!["test"];
-        RuntimeConfig::try_parse_from(args).unwrap()
+        let config = RuntimeConfig::try_parse_from(args).unwrap();
+        unsafe {
+            std::env::remove_var("SSRF_PROTECTION_ENABLED");
+        }
+        config
     }
 
     fn create_strict_config() -> RuntimeConfig {
-        // Create a strict config that blocks localhost and private networks
+        // Create a strict config that blocks localhost and private networks with SSRF enabled
         // Use environment variables to override bool defaults
         unsafe {
+            std::env::set_var("SSRF_PROTECTION_ENABLED", "true");
             std::env::set_var("SSRF_ALLOW_LOCALHOST", "false");
             std::env::set_var("SSRF_ALLOW_PRIVATE_NETWORKS", "false");
         }
         let args = vec!["test"];
         let config = RuntimeConfig::try_parse_from(args).unwrap();
         unsafe {
+            std::env::remove_var("SSRF_PROTECTION_ENABLED");
             std::env::remove_var("SSRF_ALLOW_LOCALHOST");
             std::env::remove_var("SSRF_ALLOW_PRIVATE_NETWORKS");
         }

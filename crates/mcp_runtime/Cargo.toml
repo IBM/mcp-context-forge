@@ -49,6 +49,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+serial_test = "3.2.0"
 tokio.workspace = true
 
 [lints]
