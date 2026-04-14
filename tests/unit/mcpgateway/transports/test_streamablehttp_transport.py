@@ -532,6 +532,236 @@ async def test_call_tool_with_structured_content(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
+    """Egress regression guard for ContextForge #4202 — local (non-pooled) branch.
+
+    Issue: https://github.com/IBM/mcp-context-forge/issues/4202
+
+    The #4202 fix on the ingress side (see
+    ``mcpgateway/services/tool_service.py::_extract_and_validate_structured_content``)
+    stops the gateway's own validator from clobbering upstream error
+    responses. However, the gateway is itself an MCP *server* to its
+    downstream clients, and the MCP Python SDK ships a server-side
+    validator in ``mcp.server.lowlevel.server`` that re-runs the
+    same check on the way out. When the tool handler returns a bare list
+    or tuple and the tool declares an ``outputSchema``, that SDK validator
+    fabricates the error message ``"Output validation error: outputSchema
+    defined but no structured output returned"`` — re-clobbering the very
+    payload the ingress fix just preserved.
+
+    The fix for the egress side is to hand the SDK a fully-formed
+    ``types.CallToolResult`` on error responses so the SDK's
+    ``isinstance(results, types.CallToolResult)`` short-circuit in
+    ``mcp.server.lowlevel.server`` fires and skips validation, preventing
+    any re-clobbering. This test pins that contract for the local (non-pooled) branch
+    of ``call_tool`` in ``streamablehttp_transport.py``. Successful
+    responses intentionally continue to flow through as list/tuple so the
+    SDK still enforces ``outputSchema`` for them (tested by the other
+    ``test_call_tool_*`` tests in this file that use ``is_error=False``).
+
+    MCP spec references:
+    - 2025-11-25 "Error Handling" — error responses do not require
+      structured content and must not be cross-validated against
+      ``outputSchema``.
+    - 2025-11-25 "Output Schema" — governs only successful responses.
+
+    Complements:
+    - Ingress-side guard:
+      ``tests/unit/mcpgateway/services/test_tool_service_coverage.py::TestExtractAndValidateErrorResponses``
+    - Pooled/worker-forwarded branch:
+      ``test_call_tool_session_affinity_forwarded_preserves_is_error`` in
+      this file.
+    - End-to-end verification:
+      ``tests/e2e/test_mcp_cli_protocol.py::TestMcpStdioProtocol::test_tools_call_schema_error_preserves_payload``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "You cannot send more than 200 points"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = True
+    # Error responses typically carry no structured content, even when the
+    # tool declares an outputSchema (per MCP spec, see #4202).
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    assert result.structuredContent is None
+    # The original error text must be preserved verbatim.
+    assert result.content[0].text == "You cannot send more than 200 points"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_is_error_for_direct_proxy_egress(monkeypatch):
+    """Regression guard for Codex P1 — direct-proxy egress.
+
+    Before the ``_coerce_to_tool_result`` helper landed, the
+    ``is_direct_proxy`` branch at ``tool_service.py`` assigned the
+    upstream MCP SDK ``CallToolResult`` (camelCase ``isError``) directly
+    to the invocation result. The egress handler's snake-case-only
+    ``is_error is True`` check returned ``False`` for those objects and
+    error responses fell through to the success branch, where the MCP
+    server SDK's validator clobbered the original error text.
+
+    After the helper, ``invoke_tool`` always returns a canonical
+    ``ToolResult`` with snake-case ``is_error``, so the egress check
+    fires correctly even for direct-proxy error responses. This test
+    simulates the post-coercion contract end-to-end: mock
+    ``invoke_tool`` to return a ``ToolResult(is_error=True)``, and
+    assert the egress wraps in ``CallToolResult(isError=True)`` to
+    short-circuit server-side SDK validation (#4202 egress).
+
+    Complements ``test_call_tool_preserves_is_error_for_egress`` which
+    covers the same contract via a mock ``MagicMock`` rather than a
+    real ``ToolResult``; this variant pins the direct-proxy path
+    specifically.
+    """
+    # First-Party
+    from mcpgateway.common.models import TextContent, ToolResult
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    # Real ToolResult — after coercion this is what invoke_tool returns on
+    # the direct-proxy path; the egress must pick up its snake-case
+    # is_error attribute.
+    coerced_result = ToolResult(
+        content=[TextContent(type="text", text="You cannot send more than 200 points")],
+        is_error=True,
+    )
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=coerced_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert result.content[0].text == "You cannot send more than 200 points"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_header_direct_proxy_preserves_is_error(monkeypatch):
+    """Regression guard for #4202 on the header-path direct-proxy egress branch.
+
+    ``streamablehttp_transport.call_tool`` has **two** direct-proxy code
+    paths that differ in where the decision is made:
+
+    1. **Header path** — this test. When the inbound request carries an
+       ``X-Context-Forge-Gateway-Id`` header and the target gateway has
+       ``gateway_mode="direct_proxy"``, ``call_tool`` returns the result
+       from ``tool_service.invoke_tool_direct`` verbatim to the SDK. Early
+       return, no coercion, no egress `is_error` check. The SDK's
+       ``isinstance(result, CallToolResult)`` short-circuit at the server
+       framework is what preserves ``isError`` downstream.
+
+    2. **Internal flag path** — the existing
+       ``test_call_tool_preserves_is_error_for_direct_proxy_egress`` in
+       this file. When ``invoke_tool`` chooses direct-proxy *internally*
+       (``is_direct_proxy=True`` branch inside the MCP dispatch) it now
+       routes its raw ``CallToolResult`` through ``_coerce_to_tool_result``
+       so the egress sees a canonical ``ToolResult`` with snake-case
+       ``is_error``. That's the Codex P1 fix.
+
+    This test closes the coverage gap for path (1). Without it, a future
+    change to the SDK's server-framework short-circuit, or a transport
+    refactor that accidentally re-wraps the direct-proxy result before
+    returning it, would silently re-introduce the #4202 symptom (error
+    payload replaced with ``"Output validation error: outputSchema
+    defined but no structured output returned"``) for direct-proxy tools
+    with a declared ``outputSchema``. Asserts:
+
+    - ``call_tool`` returns the exact ``CallToolResult`` object produced
+      by ``invoke_tool_direct`` (so the SDK short-circuits correctly).
+    - ``isError=True`` survives unchanged.
+    - The verbatim upstream error text is preserved (no validation-error
+      substitution).
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
+        call_tool,
+        request_headers_var,
+        tool_service,
+        types,
+        user_context_var,
+    )
+
+    # Enable the feature flag that the direct-proxy code path gates on.
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_direct_proxy_enabled", True)
+
+    # Gateway lookup — return a gateway in direct_proxy mode.
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+    mock_gateway.url = "http://remote.example.com/mcp"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    # Upstream response: raw MCP SDK CallToolResult with isError=True and a
+    # verbatim error message that must not be clobbered on the way out.
+    upstream_error = types.CallToolResult(
+        content=[types.TextContent(type="text", text="You cannot send more than 200 points")],
+        isError=True,
+    )
+    mock_invoke_direct = AsyncMock(return_value=upstream_error)
+
+    # Request headers + user context — the header triggers the direct-proxy branch.
+    h_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+    u_token = user_context_var.set({"email": "user@example.com", "teams": ["team1"], "is_authenticated": True, "is_admin": False})
+
+    try:
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
+            patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "invoke_tool_direct", mock_invoke_direct),
+        ):
+            result = await call_tool("mytool", {"foo": "bar"})
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+    # invoke_tool_direct must have been called — proves we took the header path.
+    mock_invoke_direct.assert_called_once()
+    call_kwargs = mock_invoke_direct.call_args.kwargs
+    assert call_kwargs["gateway_id"] == "gw-direct"
+    assert call_kwargs["name"] == "mytool"
+    assert call_kwargs["arguments"] == {"foo": "bar"}
+
+    # Early return: the CallToolResult from invoke_tool_direct is returned by
+    # identity — the SDK's isinstance(result, CallToolResult) short-circuit is
+    # what preserves isError for the downstream client.
+    assert result is upstream_error
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    assert result.content[0].text == "You cannot send more than 200 points"
+
+
+@pytest.mark.asyncio
 async def test_call_tool_no_content(monkeypatch, caplog):
     """Test call_tool returns [] and logs warning if no content."""
     # First-Party
@@ -5422,6 +5652,78 @@ async def test_call_tool_session_affinity_forwarded_with_structured(monkeypatch)
             result = await call_tool("my_tool", {})
         assert isinstance(result, tuple)
         assert result[1] == {"key": "val"}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_preserves_is_error(monkeypatch):
+    """Egress regression guard for #4202 — pooled/worker-forwarded branch.
+
+    Issue: https://github.com/IBM/mcp-context-forge/issues/4202
+
+    ``streamablehttp_transport.call_tool`` has two return sites that need
+    identical #4202 treatment:
+
+    1. The local branch (covered by
+       ``test_call_tool_preserves_is_error_for_egress``), used in
+       single-worker setups and when session affinity is not triggered.
+    2. The session-affinity branch below, used when
+       ``mcpgateway_session_affinity_enabled`` is true and the request
+       carries a valid ``mcp-session-id`` header that resolves to another
+       worker. In this branch the result comes from
+       ``pool.forward_request_to_owner`` as a raw JSON-RPC ``result``
+       dict (camelCase ``isError``, not Pydantic), so the code has to
+       detect ``isError`` directly from that dict before wrapping.
+
+    Without this guard a multi-worker deployment that happens to route an
+    MCP error response through a forwarded worker would silently regress
+    #4202 even while the local branch test passes. The review raised this
+    as a P1 coverage gap
+    (https://github.com/IBM/mcp-context-forge/pull/4204 review comments).
+
+    MCP spec references:
+    - 2025-11-25 "Error Handling" — isError responses must bypass
+      outputSchema validation.
+    - 2025-11-25 "Output Schema" — only governs success responses.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [{"type": "text", "text": "You cannot send more than 200 points"}],
+                "isError": True,
+            }
+        }
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.isError is True
+        assert result.structuredContent is None
+        assert result.content[0].text == "You cannot send more than 200 points"
     finally:
         request_headers_var.reset(h_token)
         user_context_var.reset(u_token)

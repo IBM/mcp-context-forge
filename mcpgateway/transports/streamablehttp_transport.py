@@ -1349,6 +1349,40 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         return []
 
 
+def _truthy_is_error(result: Any) -> bool:
+    """Return ``True`` when ``result`` represents an MCP error response.
+
+    Centralises the #4202 egress check so both the local and pooled
+    branches of :func:`call_tool` read ``is_error`` identically, and so
+    the mitigation for MagicMock-attribute pollution in the test suite
+    lives in one place. Semantics:
+
+    - A real ``mcpgateway.common.models.ToolResult`` has ``is_error`` as a
+      typed ``bool`` with default ``False`` — ``result.is_error is True``
+      and ``bool(result.is_error)`` agree, so either form is correct in
+      production.
+    - A ``unittest.mock.MagicMock`` auto-materialises attributes as truthy
+      ``MagicMock`` objects. ``bool(mock.is_error)`` reports ``True``
+      even when the test author didn't explicitly set the attribute,
+      which used to silently route success-path transport tests into the
+      ``CallToolResult`` short-circuit branch. The ``is True`` identity
+      check rejects that shape.
+    - The identity check does silently coerce truthy non-``True`` values
+      (e.g. ``1``, ``"true"``) to ``False``. That's acceptable because
+      production ``ToolResult.is_error`` is typed ``bool`` and the
+      failure mode of a misbehaving upstream producing a truthy non-bool
+      is already caught at the ``_coerce_to_tool_result`` boundary.
+
+    Args:
+        result: Upstream tool result (ToolResult, MCP SDK CallToolResult,
+            MagicMock, or any duck-typed carrier).
+
+    Returns:
+        ``True`` only when ``result.is_error`` is literally ``True``.
+    """
+    return getattr(result, "is_error", False) is True
+
+
 @mcp_app.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
@@ -1559,6 +1593,25 @@ async def call_tool(name: str, arguments: dict) -> Union[
 
                 unstructured = _rehydrate_content_items(result_data.get("content", []))
                 structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                if not isinstance(structured, dict):
+                    structured = None
+                is_error = bool(result_data.get("isError") or result_data.get("is_error"))
+                if is_error:
+                    # Preserve the upstream error payload verbatim (#4202). Wrap
+                    # in CallToolResult so the MCP SDK's server-side
+                    # ``isinstance(results, types.CallToolResult)`` short-circuit
+                    # (in ``mcp.server.lowlevel.server``) skips re-validation
+                    # and doesn't clobber the message with "Output validation
+                    # error: outputSchema defined but no structured output
+                    # returned".
+                    return types.CallToolResult(
+                        content=unstructured,
+                        structuredContent=structured,
+                        isError=True,
+                    )
+                # Success path: return the list/tuple shape so the MCP SDK's
+                # server-side validator runs and enforces the tool's
+                # outputSchema against the structured payload.
                 if structured:
                     return (unstructured, structured)
                 return unstructured
@@ -1683,15 +1736,39 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 structured = None
 
             # Fallback to by-alias dump (in case the result is a pydantic model with alias fields)
-            if structured is None:
+            if not isinstance(structured, dict):
                 try:
-                    structured = result.model_dump(by_alias=True).get("structuredContent") if hasattr(result, "model_dump") else None
+                    dump = result.model_dump(by_alias=True) if hasattr(result, "model_dump") else {}
+                    structured = dump.get("structuredContent") if isinstance(dump, dict) else None
                 except Exception:
                     structured = None
 
+            # MCP CallToolResult.structuredContent accepts dict or None only;
+            # reject anything else (e.g. stray MagicMocks in tests, bad shapes).
+            if not isinstance(structured, dict):
+                structured = None
+
+            is_error = _truthy_is_error(result)
+
+            if is_error:
+                # Preserve the upstream error payload verbatim (#4202). Wrap
+                # in CallToolResult so the MCP SDK's server-side
+                # ``isinstance(results, types.CallToolResult)`` short-circuit
+                # (in ``mcp.server.lowlevel.server``) skips re-validation
+                # and doesn't clobber the message with "Output validation
+                # error: outputSchema defined but no structured output
+                # returned".
+                return types.CallToolResult(
+                    content=unstructured,
+                    structuredContent=structured,
+                    isError=True,
+                )
+
+            # Success path: return the list/tuple shape so the MCP SDK's
+            # server-side validator runs and enforces the tool's
+            # outputSchema against the structured payload.
             if structured:
                 return (unstructured, structured)
-
             return unstructured
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
