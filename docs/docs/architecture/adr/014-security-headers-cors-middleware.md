@@ -246,7 +246,7 @@ As part of the security enhancements, Subresource Integrity (SRI) has been imple
 
 All 15 external CDN resources are protected with SRI hashes:
 
-- **HTMX** (1.9.10) - Dynamic interactions
+- **HTMX** (2.0.3) - Dynamic interactions (bundled via npm/Vite)
 - **Alpine.js** (3.14.1) - Reactive framework
 - **Chart.js** (4.4.1) - Data visualization
 - **Marked** (11.1.1) - Markdown parser

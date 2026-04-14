@@ -84,7 +84,7 @@ docker build -f Containerfile.lite -t mcpgateway:airgapped .
 This downloads and bundles:
 
 - Tailwind CSS (~404KB)
-- HTMX (~52KB)
+- HTMX (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
 - Alpine.js (~48KB)
 - Chart.js (~208KB)
