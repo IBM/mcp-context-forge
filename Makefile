@@ -39,8 +39,7 @@ MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
 
 # Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+VENV_DIR ?= $(CURDIR)/.venv
 
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
@@ -276,7 +275,7 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@mkdir -p "$(VENV_DIR)"
 	@$(UV_BIN) venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
