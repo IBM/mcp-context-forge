@@ -539,22 +539,29 @@ def test_prepare_a2a_invocation_normalizes_task_states_between_protocol_versions
     assert legacy_prepared.request_data["params"]["status"] == "working"
 
 
-def test_prepare_a2a_invocation_skips_query_param_decrypt_failures(monkeypatch):
+def test_prepare_a2a_invocation_fails_closed_on_query_param_decrypt_failure(monkeypatch):
+    """Decrypt failure for a query_param credential must fail the invocation.
+
+    Silently dropping the credential and sending the request unauthenticated
+    can reach the agent as an anonymous call with unpredictable results. The
+    header-path equivalent (a2a_service.invoke_agent) already fails closed;
+    the query_param path must do the same.
+    """
     monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _value: (_ for _ in ()).throw(ValueError("bad")))
     apply_query_param_auth = MagicMock()
     monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", apply_query_param_auth)
 
-    prepared = prepare_a2a_invocation(
-        agent_type="generic",
-        endpoint_url="https://example.com/",
-        protocol_version="1.0.0",
-        parameters={"query": "hello"},
-        interaction_type="query",
-        auth_type="query_param",
-        auth_query_params={"api_key": "bad"},  # pragma: allowlist secret
-    )
+    with pytest.raises(ValueError, match="Failed to decrypt query_param"):
+        prepare_a2a_invocation(
+            agent_type="generic",
+            endpoint_url="https://example.com/",
+            protocol_version="1.0.0",
+            parameters={"query": "hello"},
+            interaction_type="query",
+            auth_type="query_param",
+            auth_query_params={"api_key": "bad"},  # pragma: allowlist secret
+        )
 
-    assert prepared.endpoint_url == "https://example.com/"
     apply_query_param_auth.assert_not_called()
 
 

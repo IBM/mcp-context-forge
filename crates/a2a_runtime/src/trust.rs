@@ -1,11 +1,18 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
-//! Loopback + HMAC trust validation and Python authz callouts.
+//! Loopback + shared-secret trust validation and Python authz callouts.
 //!
 //! Mirrors the MCP runtime trust model: the Rust sidecar proves identity
-//! to the Python gateway via a shared-secret-derived HMAC header, and the
-//! Python side performs authentication and RBAC authorization.
+//! to the Python gateway via a shared-secret tag (``SHA256(secret || ":" ||
+//! AUTH_CONTEXT_DERIVATION)``), and the Python side performs authentication
+//! and RBAC authorization.  Note: the tag is *not* a true HMAC — earlier
+//! comments incorrectly labelled it as such.  The construction is
+//! interoperable with the Python side (same digest), and because the
+//! suffix string is constant and not attacker-controlled, the resulting
+//! tag is not malleable in practice.  Switching to real HMAC-SHA256 would
+//! be a defence-in-depth upgrade requiring a coordinated Python-side
+//! change — tracked separately.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -21,9 +28,12 @@ const RUNTIME_AUTH_HEADER: &str = "x-contextforge-mcp-runtime-auth";
 const AUTH_CONTEXT_HEADER: &str = "x-contextforge-auth-context";
 const AUTH_CONTEXT_DERIVATION: &str = "contextforge-internal-mcp-runtime-v1";
 
-/// Compute the HMAC trust header value from the auth secret.
+/// Compute the shared-secret trust tag from the auth secret.
 ///
 /// Format: `SHA256("{secret}:{AUTH_CONTEXT_DERIVATION}").hex()`
+///
+/// Not an HMAC — see the module-level comment.  The Python side produces
+/// the same tag using the same construction.
 #[rustfmt::skip]
 pub fn compute_trust_header(auth_secret: &str) -> String { // pragma: allowlist secret
     let material = format!("{auth_secret}:{AUTH_CONTEXT_DERIVATION}");
@@ -49,8 +59,15 @@ pub fn build_trust_headers(
 }
 
 /// Encode an auth context JSON value as a base64url header value (no padding).
+///
+/// The `auth_context` is always a `serde_json::Value` produced by a
+/// successful `/_internal/a2a/authenticate` round-trip on the Python side,
+/// so serialization cannot fail in practice.  We `.expect()` rather than
+/// silently emitting an empty header: a blank `auth_context` would be
+/// interpreted by the Python side as an anonymous caller.
 pub fn encode_auth_context(auth_context: &serde_json::Value) -> String {
-    let json_bytes = serde_json::to_vec(auth_context).unwrap_or_default();
+    let json_bytes =
+        serde_json::to_vec(auth_context).expect("auth_context must be JSON-serializable");
     URL_SAFE_NO_PAD.encode(json_bytes)
 }
 

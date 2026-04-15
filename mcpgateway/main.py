@@ -411,7 +411,15 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     """
     runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
     client_host = getattr(getattr(request, "client", None), "host", None)
-    return runtime_marker == "rust" and _has_valid_internal_mcp_runtime_auth_header(request) and client_host in ("127.0.0.1", "::1")
+    if runtime_marker != "rust" or not _has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
+        return False
+    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
+    # A2A support is disabled, even from an otherwise-trusted local sidecar.
+    # A legitimate sidecar should not be running when the feature is off.
+    path = getattr(getattr(request, "url", None), "path", "") or ""
+    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return True
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -8912,6 +8920,7 @@ async def _authorize_internal_a2a_method(
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
     except Exception:
+        logger.exception("Internal A2A authz error for method=%s permission=%s", method, permission)
         try:
             db.rollback()
         except Exception:
@@ -8980,6 +8989,7 @@ async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
                 return ORJSONResponse(status_code=200, content=server_agent)
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
         if not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on resolve", agent_name, user_email, token_teams)
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
 
         result = {
@@ -9031,8 +9041,11 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         # sensitive relationship data for agents the caller cannot see.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
-        if agent is not None and service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
-            card = service.get_agent_card(db, agent_name)
+        if agent is not None:
+            if service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+                card = service.get_agent_card(db, agent_name)
+            else:
+                logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
         if card is None:
             a2a_server_service = A2AServerService()
             card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
@@ -9186,6 +9199,7 @@ async def handle_internal_a2a_push_create(request: Request):
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         if not service._check_agent_access_by_id(db, body["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A agent_id=%s visibility-denied for user=%s teams=%s on push/create", body["a2a_agent_id"], user_email, token_teams)
             return ORJSONResponse(status_code=404, content={"error": "agent not found"})
         cfg = service.create_push_config(db, validated.model_dump())
         return ORJSONResponse(status_code=200, content=cfg)
@@ -9224,6 +9238,7 @@ async def handle_internal_a2a_push_get(request: Request):
         if cfg is None:
             return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
         if not service._check_agent_access_by_id(db, cfg["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/get", task_id, cfg["a2a_agent_id"], user_email, token_teams)
             return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
         return ORJSONResponse(status_code=200, content=cfg)
     except Exception:
@@ -9255,10 +9270,18 @@ async def handle_internal_a2a_push_list(request: Request):
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        configs = service.list_push_configs(db, agent_id=agent_id, task_id=task_id)
-        # Filter configs to only those whose owning agent is visible to the caller.
-        visible = [c for c in configs if service._check_agent_access_by_id(db, c["a2a_agent_id"], user_email, token_teams)]  # pylint: disable=protected-access
-        return ORJSONResponse(status_code=200, content={"configs": visible})
+        # Use the dispatch-oriented listing so the Rust sidecar receives
+        # plaintext auth_token values decrypted from the encrypted DB column.
+        # Visibility is enforced in SQL via ``_visible_agent_ids`` — no
+        # Python-side post-filter needed.
+        configs = service.list_push_configs_for_dispatch(
+            db,
+            agent_id=agent_id,
+            task_id=task_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return ORJSONResponse(status_code=200, content={"configs": configs})
     except Exception:
         logger.exception("Internal A2A endpoint error")
         try:
@@ -9291,6 +9314,7 @@ async def handle_internal_a2a_push_delete(request: Request):
         service = A2AAgentService()
         cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
         if cfg and not service._check_agent_access_by_id(db, cfg.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/delete", config_id, cfg.a2a_agent_id, user_email, token_teams)
             return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
         deleted = service.delete_push_config(db, config_id)
         if not deleted:
@@ -9328,12 +9352,30 @@ async def handle_internal_a2a_events_flush(request: Request):
         service = A2AAgentService()
 
         # Verify the caller has access to the agents that own the referenced tasks.
+        # Unknown task_ids (no matching row) previously slipped past this
+        # check — a caller could flush events for a task_id that does not
+        # exist yet, bypassing visibility entirely.  Reject the batch when
+        # any referenced task_id has no owning agent row.
         task_ids = {e["task_id"] for e in events if "task_id" in e}
         if task_ids:
             tasks = db.query(DbA2ATask).filter(DbA2ATask.task_id.in_(task_ids)).all()
+            known_task_ids = {t.task_id for t in tasks}
+            unknown_task_ids = task_ids - known_task_ids
+            if unknown_task_ids:
+                logger.warning(
+                    "A2A events/flush denied: user=%s teams=%s references unknown task_id(s) %s",
+                    user_email,
+                    token_teams,
+                    sorted(unknown_task_ids),
+                )
+                return ORJSONResponse(
+                    status_code=400,
+                    content={"error": "events reference unknown task_ids", "unknown_task_ids": sorted(unknown_task_ids)},
+                )
             agent_ids = {t.a2a_agent_id for t in tasks}
             for agent_id in agent_ids:
                 if not service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
+                    logger.warning("A2A events/flush denied: user=%s teams=%s lacks access to agent_id=%s (referenced by a flushed event)", user_email, token_teams, agent_id)
                     return ORJSONResponse(status_code=403, content={"error": "access denied for one or more referenced tasks"})
 
         count = service.flush_events(db, events)
@@ -9374,6 +9416,7 @@ async def handle_internal_a2a_events_replay(request: Request):
         if task_row is None:
             return ORJSONResponse(status_code=404, content={"error": "task not found"})
         if not service._check_agent_access_by_id(db, task_row.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on events/replay", task_id, task_row.a2a_agent_id, user_email, token_teams)
             return ORJSONResponse(status_code=404, content={"error": "task not found"})
         events = service.replay_events(db, task_id, after_sequence, limit=limit)
         return ORJSONResponse(status_code=200, content={"events": events})

@@ -2977,7 +2977,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real_key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.example.com/?api_key=real_key"),
             patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.example.com/?api_key=***"),
         ):

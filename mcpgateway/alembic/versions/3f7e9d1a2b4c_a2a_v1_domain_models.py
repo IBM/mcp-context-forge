@@ -126,12 +126,18 @@ def upgrade() -> None:
         )
 
     # --- a2a_agents: add tenant and icon_url columns -------------------------
+    # Column lengths must match the ORM declarations in mcpgateway/db.py
+    # (``tenant=String(255)``, ``icon_url=String(767)``).  Without an
+    # explicit length, SQLAlchemy emits ``VARCHAR`` on PostgreSQL (which is
+    # unbounded), while fresh installs created from the ORM models get the
+    # bounded lengths — a schema drift we want to avoid between upgraded
+    # and fresh databases.
     if "a2a_agents" in existing_tables:
         columns = [col["name"] for col in inspector.get_columns("a2a_agents")]
         if "tenant" not in columns:
-            op.add_column("a2a_agents", sa.Column("tenant", sa.String(), nullable=True))
+            op.add_column("a2a_agents", sa.Column("tenant", sa.String(255), nullable=True))
         if "icon_url" not in columns:
-            op.add_column("a2a_agents", sa.Column("icon_url", sa.String(), nullable=True))
+            op.add_column("a2a_agents", sa.Column("icon_url", sa.String(767), nullable=True))
 
     # --- Backfill a2a_agent_auth from existing a2a_agents auth columns -------
     if "a2a_agent_auth" in inspector.get_table_names():

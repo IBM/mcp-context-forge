@@ -151,6 +151,82 @@ class TestRustA2ARuntimeClient:
             assert exc_info.value.is_timeout is True
 
     @pytest.mark.asyncio
+    async def test_invoke_connect_error_wraps_as_runtime_error(self, sample_prepared):
+        """Rust sidecar unreachable (process down, socket missing) surfaces as RustA2ARuntimeError.
+
+        Without the wrap, the caller's ``except RustA2ARuntimeError`` branch
+        is bypassed and an uncaught httpx exception propagates as an opaque
+        500 — making a missing sidecar indistinguishable from a Python-side
+        bug.  ``is_timeout=False`` so the caller does not retry as if it
+        were a transient slow response.
+        """
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ConnectError("Connection refused")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            with pytest.raises(RustA2ARuntimeError, match="unreachable") as exc_info:
+                await client.invoke(sample_prepared)
+            assert exc_info.value.is_timeout is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_connect_timeout_flags_is_timeout(self, sample_prepared):
+        """A ConnectTimeout is timeout-shaped and must set ``is_timeout=True``."""
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ConnectTimeout("Connect phase timed out")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            with pytest.raises(RustA2ARuntimeError, match="unreachable") as exc_info:
+                await client.invoke(sample_prepared)
+            assert exc_info.value.is_timeout is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_read_timeout_wraps_with_is_timeout(self, sample_prepared):
+        """ReadTimeout (slow sidecar response) surfaces as ``is_timeout=True``.
+
+        Callers rely on ``is_timeout`` to decide retry vs. fail-fast; an
+        uncaught ``httpx.ReadTimeout`` would bypass that signal.
+        """
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ReadTimeout("Read timed out")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            with pytest.raises(RustA2ARuntimeError, match="timed out") as exc_info:
+                await client.invoke(sample_prepared)
+            assert exc_info.value.is_timeout is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_pool_timeout_wraps_with_is_timeout(self, sample_prepared):
+        """PoolTimeout (exhausted connection pool) also surfaces as is_timeout."""
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.PoolTimeout("no connections available")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            with pytest.raises(RustA2ARuntimeError, match="timed out") as exc_info:
+                await client.invoke(sample_prepared)
+            assert exc_info.value.is_timeout is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_remote_protocol_error_wraps_as_transport_error(self, sample_prepared):
+        """Other httpx transport errors (ReadError, RemoteProtocolError, ...) also wrap.
+
+        Without this catch-all, sidecar crashes mid-response would propagate
+        as uncaught httpx exceptions — bypassing the caller's
+        ``except RustA2ARuntimeError`` branch entirely.
+        """
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.RemoteProtocolError("peer closed connection")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            with pytest.raises(RustA2ARuntimeError, match="transport error") as exc_info:
+                await client.invoke(sample_prepared)
+            assert exc_info.value.is_timeout is False
+
+    @pytest.mark.asyncio
     async def test_invoke_invalid_json_raises(self, sample_prepared):
         """Invalid JSON response raises RustA2ARuntimeError."""
         mock_response = MagicMock()

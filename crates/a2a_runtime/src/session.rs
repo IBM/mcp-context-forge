@@ -537,4 +537,83 @@ mod tests {
         assert!(manager.validate_fingerprint(&record, "match-me"));
         assert!(!manager.validate_fingerprint(&record, "different"));
     }
+
+    #[tokio::test]
+    async fn concurrent_lookup_and_invalidate_leaves_storage_consistent() {
+        // Simulate N concurrent invalidate+lookup pairs against the same
+        // session_id.  The final state must be deterministic (session
+        // absent) regardless of interleaving; no lookup may return a
+        // partially-deleted row, and crucially: across all concurrent
+        // tasks the lookup must observe either the full record or
+        // ``None`` — never a record with a partially-cleared field.
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = Arc::new(fake_manager(Arc::clone(&storage), "authorization"));
+
+        let sid = manager
+            .create(&serde_json::json!({"sub": "u", "roles": ["admin"]}), "fp-1")
+            .await
+            .expect("create session");
+
+        let mut handles = Vec::new();
+        for _ in 0..32 {
+            let mgr = Arc::clone(&manager);
+            let sid_clone = sid.clone();
+            handles.push(tokio::spawn(async move {
+                // Yield once before AND once between operations to widen
+                // the interleaving window — without yield_now, individual
+                // tasks tend to run their two ops back-to-back under the
+                // current-thread runtime, masking races.
+                tokio::task::yield_now().await;
+                let observed = mgr.lookup(&sid_clone).await;
+                tokio::task::yield_now().await;
+                mgr.invalidate(&sid_clone).await;
+                observed
+            }));
+        }
+
+        // Collect every observation; assert the invariant: each is either
+        // the full record (with both fields intact) or absent.  A
+        // partial/torn read would fail the integrity check.
+        for h in handles {
+            let observed = h.await.expect("task join");
+            if let Some(record) = observed {
+                assert_eq!(
+                    record.auth_context,
+                    serde_json::json!({"sub": "u", "roles": ["admin"]}),
+                    "lookup returned partial/torn record under concurrent invalidate"
+                );
+                assert_eq!(record.auth_fingerprint, "fp-1");
+            }
+        }
+
+        assert!(
+            manager.lookup(&sid).await.is_none(),
+            "session must be absent after concurrent invalidations"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_create_produces_distinct_session_ids() {
+        // Two concurrent create() calls must produce distinct session IDs
+        // — a shared counter or non-UUID scheme would break here.
+        let storage = Arc::new(FakeSessionStorage::default());
+        let manager = Arc::new(fake_manager(Arc::clone(&storage), "authorization"));
+
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let mgr = Arc::clone(&manager);
+            handles.push(tokio::spawn(async move {
+                mgr.create(&serde_json::json!({"sub": format!("u{i}")}), "fp")
+                    .await
+            }));
+        }
+        let mut ids: Vec<String> = Vec::new();
+        for h in handles {
+            if let Some(sid) = h.await.expect("task join") {
+                ids.push(sid);
+            }
+        }
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "session IDs must be unique");
+    }
 }

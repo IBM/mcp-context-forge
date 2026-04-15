@@ -7,10 +7,12 @@
 //! fire-and-forgets a POST to each matching webhook URL.  Errors are
 //! logged but never propagated to the caller.
 
+use crate::metrics::MetricsCollector;
 use crate::trust::{build_trust_headers, reqwest_headers};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -21,6 +23,16 @@ struct PushConfig {
     auth_token: Option<String>,
     events: Option<Vec<String>>,
     enabled: bool,
+}
+
+/// Envelope shape returned by `/_internal/a2a/push/list`.
+///
+/// The Python endpoint wraps the visible configs in ``{"configs": [...]}``
+/// so that future fields (pagination cursors, error summaries) can be added
+/// without a breaking change.
+#[derive(Debug, Deserialize)]
+struct PushConfigList {
+    configs: Vec<PushConfig>,
 }
 
 /// Check if a push config should fire for the given state change.
@@ -44,6 +56,7 @@ fn should_dispatch(config: &PushConfig, new_state: &str) -> bool {
 /// backoff starting at 1 s.
 ///
 /// All errors are logged; none are returned.
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_webhooks(
     client: &Client,
     backend_base_url: &str,
@@ -52,6 +65,7 @@ pub async fn dispatch_webhooks(
     agent_id: &str,
     new_state: &str,
     task_payload: &Value,
+    metrics: Arc<MetricsCollector>,
 ) {
     let list_url = format!(
         "{}/_internal/a2a/push/list",
@@ -76,6 +90,7 @@ pub async fn dispatch_webhooks(
                 agent_id,
                 "failed to contact push/list endpoint"
             );
+            metrics.record_webhook_list_aborted();
             return;
         }
     };
@@ -90,11 +105,12 @@ pub async fn dispatch_webhooks(
             detail = %detail,
             "push/list returned non-200"
         );
+        metrics.record_webhook_list_aborted();
         return;
     }
 
-    let configs: Vec<PushConfig> = match response.json().await {
-        Ok(c) => c,
+    let configs: Vec<PushConfig> = match response.json::<PushConfigList>().await {
+        Ok(envelope) => envelope.configs,
         Err(e) => {
             error!(
                 error = %e,
@@ -102,6 +118,7 @@ pub async fn dispatch_webhooks(
                 agent_id,
                 "failed to deserialize push/list response"
             );
+            metrics.record_webhook_list_aborted();
             return;
         }
     };
@@ -115,6 +132,7 @@ pub async fn dispatch_webhooks(
         let auth_token = config.auth_token.clone();
         let payload = task_payload.clone();
         let client_clone = client.clone();
+        let metrics_clone = Arc::clone(&metrics);
 
         info!(
             webhook_url = %webhook_url,
@@ -173,6 +191,7 @@ pub async fn dispatch_webhooks(
                                 webhook_url = %webhook_url,
                                 "webhook dispatch permanently failed (4xx)"
                             );
+                            metrics_clone.record_webhook_permanent_failure();
                             return;
                         }
                     }
@@ -191,6 +210,7 @@ pub async fn dispatch_webhooks(
                 webhook_url = %webhook_url,
                 "webhook dispatch exhausted all retries"
             );
+            metrics_clone.record_webhook_retry_exhausted();
         });
     }
 }
@@ -282,6 +302,7 @@ mod tests {
             "agent-1",
             "completed",
             &json!({"task_id": "task-1"}),
+            Arc::new(MetricsCollector::new(None)),
         )
         .await;
     }
@@ -306,6 +327,7 @@ mod tests {
             "agent-2",
             "completed",
             &json!({"task_id": "task-2"}),
+            Arc::new(MetricsCollector::new(None)),
         )
         .await;
 
@@ -327,6 +349,7 @@ mod tests {
             "agent-3",
             "completed",
             &json!({"task_id": "task-3"}),
+            Arc::new(MetricsCollector::new(None)),
         )
         .await;
 
@@ -340,14 +363,16 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/_internal/a2a/push/list"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                {
-                    "webhook_url": format!("{}/hook", mock_server.uri()),
-                    "auth_token": "secret-token",
-                    "events": ["completed"],
-                    "enabled": true
-                }
-            ])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "configs": [
+                    {
+                        "webhook_url": format!("{}/hook", mock_server.uri()),
+                        "auth_token": "secret-token",
+                        "events": ["completed"],
+                        "enabled": true
+                    }
+                ]
+            })))
             .expect(1)
             .mount(&mock_server)
             .await;
@@ -368,6 +393,7 @@ mod tests {
             "agent-4",
             "completed",
             &json!({"task_id": "task-4", "state": "completed"}),
+            Arc::new(MetricsCollector::new(None)),
         )
         .await;
 
@@ -382,20 +408,22 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/_internal/a2a/push/list"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                {
-                    "webhook_url": format!("{}/skip", mock_server.uri()),
-                    "auth_token": null,
-                    "events": ["failed"],
-                    "enabled": true
-                },
-                {
-                    "webhook_url": format!("{}/fail-once", mock_server.uri()),
-                    "auth_token": null,
-                    "events": ["completed"],
-                    "enabled": true
-                }
-            ])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "configs": [
+                    {
+                        "webhook_url": format!("{}/skip", mock_server.uri()),
+                        "auth_token": null,
+                        "events": ["failed"],
+                        "enabled": true
+                    },
+                    {
+                        "webhook_url": format!("{}/fail-once", mock_server.uri()),
+                        "auth_token": null,
+                        "events": ["completed"],
+                        "enabled": true
+                    }
+                ]
+            })))
             .expect(1)
             .mount(&mock_server)
             .await;
@@ -422,10 +450,187 @@ mod tests {
             "agent-5",
             "completed",
             &json!({"task_id": "task-5", "state": "completed"}),
+            Arc::new(MetricsCollector::new(None)),
         )
         .await;
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_increments_list_aborted_on_network_failure() {
+        let metrics = Arc::new(MetricsCollector::new(None));
+        assert_eq!(metrics.webhook_list_aborted_count(), 0);
+
+        dispatch_webhooks(
+            &Client::new(),
+            "http://127.0.0.1:1", // non-listening port
+            "secret",
+            "task-a",
+            "agent-a",
+            "completed",
+            &json!({"task_id": "task-a"}),
+            Arc::clone(&metrics),
+        )
+        .await;
+
+        assert_eq!(
+            metrics.webhook_list_aborted_count(),
+            1,
+            "list-unreachable must increment webhook_list_aborted"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_increments_list_aborted_on_non_200() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let metrics = Arc::new(MetricsCollector::new(None));
+        dispatch_webhooks(
+            &Client::new(),
+            &mock_server.uri(),
+            "secret",
+            "task-b",
+            "agent-b",
+            "completed",
+            &json!({"task_id": "task-b"}),
+            Arc::clone(&metrics),
+        )
+        .await;
+        assert_eq!(metrics.webhook_list_aborted_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_increments_list_aborted_on_bad_json() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("not-json", "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let metrics = Arc::new(MetricsCollector::new(None));
+        dispatch_webhooks(
+            &Client::new(),
+            &mock_server.uri(),
+            "secret",
+            "task-c",
+            "agent-c",
+            "completed",
+            &json!({"task_id": "task-c"}),
+            Arc::clone(&metrics),
+        )
+        .await;
+        assert_eq!(metrics.webhook_list_aborted_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_increments_permanent_failure_on_4xx() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "configs": [
+                    {
+                        "webhook_url": format!("{}/bad-req", mock_server.uri()),
+                        "auth_token": null,
+                        "events": ["completed"],
+                        "enabled": true
+                    }
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/bad-req"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let metrics = Arc::new(MetricsCollector::new(None));
+        dispatch_webhooks(
+            &Client::new(),
+            &mock_server.uri(),
+            "secret",
+            "task-d",
+            "agent-d",
+            "completed",
+            &json!({"task_id": "task-d"}),
+            Arc::clone(&metrics),
+        )
+        .await;
+
+        // Dispatch is spawned; wait for the single attempt.
+        for _ in 0..20 {
+            if metrics.webhook_permanent_failure_count() >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(metrics.webhook_permanent_failure_count(), 1);
+        assert_eq!(
+            metrics.webhook_retry_exhausted_count(),
+            0,
+            "4xx must not double-count as retry-exhausted"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_webhooks_increments_metric_on_retry_exhaustion() {
+        // 5xx that survives all retries; assert the metric counter moved.
+        let mock_server = MockServer::start().await;
+        let client = Client::new();
+
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "configs": [
+                    {
+                        "webhook_url": format!("{}/persistent-5xx", mock_server.uri()),
+                        "auth_token": null,
+                        "events": ["completed"],
+                        "enabled": true
+                    }
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/persistent-5xx"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let metrics = Arc::new(MetricsCollector::new(None));
+        assert_eq!(metrics.webhook_retry_exhausted_count(), 0);
+
+        dispatch_webhooks(
+            &client,
+            &mock_server.uri(),
+            "secret",
+            "task-6",
+            "agent-6",
+            "completed",
+            &json!({"task_id": "task-6"}),
+            Arc::clone(&metrics),
+        )
+        .await;
+
+        // Dispatch is spawned; wait for the retry loop to exhaust.
+        // Retries: attempt 0 (immediate) + 1s + 2s backoff ≈ 3s total.
+        for _ in 0..40 {
+            if metrics.webhook_retry_exhausted_count() >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(metrics.webhook_retry_exhausted_count(), 1);
     }
 }

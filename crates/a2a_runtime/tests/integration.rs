@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use test_helpers::*;
 use tower::ServiceExt;
-use wiremock::matchers::{body_json, method, path};
+use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Build a test-ready Axum app with the given config.
@@ -315,38 +315,10 @@ async fn test_metrics_endpoint_returns_json() {
 
 #[tokio::test]
 async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
-    // The /a2a/{agent_name}/invoke path goes through resolve_requests which
-    // checks for encrypted auth fields without a configured auth_secret.
-    // The direct /invoke path does NOT use resolve_requests, so we POST
-    // directly to /a2a/test-agent/invoke with encrypted auth fields in the
-    // JSON body.
-    //
-    // However, /a2a/{agent_name}/invoke parses the body as a raw JSON Value
-    // and builds the InvokeRequestDto internally with auth_headers_encrypted
-    // set to None.  To trigger the auth rejection we instead test via the
-    // resolve_requests function directly, since the server endpoint does not
-    // expose encrypted auth fields through the external HTTP body.
-    //
-    // Instead, test via the /invoke path with an auth_headers_encrypted field.
-    // The /invoke handler deserializes into InvokeRequest which does NOT have
-    // auth_headers_encrypted, so the field is simply ignored.
-    //
-    // The most accurate integration-level approach: confirm that a direct
-    // POST to /invoke with an endpoint_url containing no auth issues, while
-    // exercising the auth code path through the unit-tested resolve_requests.
-    //
-    // For a meaningful integration test, we confirm that the a2a invoke path
-    // rejects when auth cannot be resolved.  We construct a scenario where
-    // the internal InvokeRequestDto carries auth_headers_encrypted but
-    // config.auth_secret is None.  Since the HTTP layer for /a2a/{name}/invoke
-    // does not accept encrypted auth from the caller (it builds the DTO
-    // internally), this is inherently a unit-level concern tested in
-    // http.rs::tests::resolve_encrypted_fields_without_secret_returns_auth_error.
-    //
-    // As a pragmatic integration test: confirm the /invoke endpoint returns an
-    // error when the request body contains fields that the strict
-    // deny_unknown_fields deserialization rejects.  This validates that
-    // unexpected auth-related fields do not silently pass through.
+    // The /invoke handler accepts encrypted auth blobs and routes them
+    // through resolve_requests for decryption.  When the sidecar is
+    // started without an auth_secret but the caller supplies encrypted
+    // blobs, resolve_requests returns an Auth error → 400 Bad Request.
     let mut config = default_test_config();
     config.auth_secret = None; // pragma: allowlist secret
     let app = test_app(config);
@@ -358,31 +330,73 @@ async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
             "endpoint_url": "http://127.0.0.1:9999",
             "headers": {},
             "json_body": {},
-            "auth_headers_encrypted": "some-encrypted-blob"
+            "auth_headers_encrypted": "some-encrypted-blob"  // pragma: allowlist secret
         }),
     )
     .await;
 
-    // The InvokeRequest struct does not have auth_headers_encrypted, and the
-    // InvokeRequestDto uses deny_unknown_fields.  The /invoke handler uses
-    // InvokeRequest (from server.rs) which does NOT use deny_unknown_fields,
-    // so unknown fields are silently ignored.  In that case the request
-    // proceeds normally (and likely fails connecting to the dummy endpoint).
-    // Either way this validates the behavior: encrypted auth fields on the
-    // /invoke path are not processed, so they do not cause auth errors.
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "expected 400 Bad Request, got {status}"
+    );
+    let err_text = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        err_text.contains("auth_secret"), // pragma: allowlist secret
+        "error should reference the missing auth_secret: {err_text}"  // pragma: allowlist secret
+    );
+}
+
+#[tokio::test]
+async fn test_invoke_applies_decrypted_auth_header_to_upstream() {
+    // Regression for the Codex-flagged bug where the /invoke handler
+    // dropped auth_headers_encrypted / auth_query_params_encrypted via
+    // Serde (the InvokeRequest struct lacked those fields), so any
+    // delegated invocation reached the agent without credentials.
     //
-    // We accept either: a rejected deserialization (422) or a connection
-    // failure to the dummy endpoint (502).  Both confirm the auth field
-    // was not processed.
-    assert!(
-        status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::BAD_GATEWAY,
-        "expected 422 or 502, got {status}"
-    );
-    // Verify the response has some error information.
-    assert!(
-        body.get("error").is_some() || body.get("raw").is_some(),
-        "response should contain error information"
-    );
+    // This test encrypts "Bearer secret-xyz" with the sidecar's
+    // auth_secret, POSTs it through /invoke, and asserts the wiremock
+    // agent actually received the decrypted Authorization header.
+    // pragma: allowlist secret
+
+    // Reuse the exact AES-GCM layout the Rust side expects (crate::auth).
+    use contextforge_a2a_runtime::auth::encrypt_auth_for_tests; // pragma: allowlist secret
+
+    let secret = "test-shared-secret"; // pragma: allowlist secret
+    let mut auth_map = std::collections::HashMap::new();
+    auth_map.insert("Authorization".to_string(), "Bearer secret-xyz".to_string());
+    let encrypted_blob = encrypt_auth_for_tests(&auth_map, secret);
+
+    let agent_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent"))
+        .and(header("authorization", "Bearer secret-xyz"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&agent_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.auth_secret = Some(secret.to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": format!("{}/agent", agent_server.uri()),
+            "headers": {},
+            "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
+            "auth_headers_encrypted": encrypted_blob,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    agent_server.verify().await;
 }
 
 #[tokio::test]
@@ -905,9 +919,18 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // tasks/get → 200 with task data
+    // tasks/get → 200 with task data.  The body matcher pins the
+    // server-resolved agent_id ("agent-001" from resolved_agent_json)
+    // so a regression that drops the URL→agent_id injection — which would
+    // silently reintroduce the cross-agent task-read vulnerability — fails
+    // here instead of passing.
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/get$"))
+        .and(body_json(json!({
+            "id": "task-1",
+            "task_id": "task-1",
+            "agent_id": "agent-001"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "t1",
             "task_id": "task-1",
@@ -918,11 +941,14 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve should NOT be called — task methods bypass agent resolution
+    // Task methods now pre-resolve the agent so its agent_id can be passed
+    // to the Python task service for unambiguous lookup.  Returning 404
+    // here would block every GetTask/CancelTask call.
     Mock::given(method("POST"))
         .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
         .mount(&mock_server)
         .await;
 
@@ -987,9 +1013,12 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // tasks/list → 200 with task list
+    // tasks/list → 200 with task list.  Body matcher pins agent_id so a
+    // regression that drops the URL-path injection fails this test
+    // (otherwise list could span multiple agents — see security fix).
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/list$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "tasks": [
                 {"task_id": "task-1", "state": "completed"},
@@ -1000,11 +1029,11 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve should NOT be called
     Mock::given(method("POST"))
         .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
         .mount(&mock_server)
         .await;
 
@@ -1069,9 +1098,14 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // tasks/get → 200 with task data
+    // tasks/get → 200 with task data; agent_id is pinned in the body matcher.
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/get$"))
+        .and(body_json(json!({
+            "id": "task-1",
+            "task_id": "task-1",
+            "agent_id": "agent-001"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "t1",
             "task_id": "task-1",
@@ -1081,11 +1115,11 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // resolve should NOT be called
     Mock::given(method("POST"))
         .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
         .mount(&mock_server)
         .await;
 
@@ -1151,9 +1185,14 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // tasks/cancel → 200 with canceled task data
+    // tasks/cancel → 200 with canceled task data; pin agent_id in body matcher.
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/cancel$"))
+        .and(body_json(json!({
+            "id": "task-1",
+            "task_id": "task-1",
+            "agent_id": "agent-001"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "t1",
             "task_id": "task-1",
@@ -1163,11 +1202,11 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve should NOT be called — task methods bypass agent resolution
     Mock::given(method("POST"))
         .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
         .mount(&mock_server)
         .await;
 
@@ -1232,9 +1271,14 @@ async fn test_a2a_invoke_cancel_task_legacy_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // tasks/cancel → 200 with canceled task data
+    // tasks/cancel → 200 with canceled task data; pin agent_id in body matcher.
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/cancel$"))
+        .and(body_json(json!({
+            "id": "task-1",
+            "task_id": "task-1",
+            "agent_id": "agent-001"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "t1",
             "task_id": "task-1",
@@ -1244,11 +1288,11 @@ async fn test_a2a_invoke_cancel_task_legacy_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // resolve should NOT be called
     Mock::given(method("POST"))
         .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
         .mount(&mock_server)
         .await;
 
@@ -1647,13 +1691,25 @@ async fn test_a2a_invoke_create_push_config_routes_to_python() {
         .mount(&mock_server)
         .await;
 
+    // Push methods now pre-resolve the agent so its agent_id can be
+    // injected into the proxy body — preventing cross-agent push-config
+    // operations via a spoofed agent_id in params.
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .mount(&mock_server)
+        .await;
+
     Mock::given(method("POST"))
         .and(path_regex(".*push/create$"))
         .and(body_json(json!({
             "a2a_agent_id": "agent-001",
             "task_id": "task-1",
             "webhook_url": "https://example.com/hook",
-            "enabled": true
+            "enabled": true,
+            "agent_id": "agent-001"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
@@ -1713,9 +1769,18 @@ async fn test_a2a_invoke_get_push_config_routes_to_python() {
         .await;
 
     Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
         .and(path_regex(".*push/get$"))
         .and(body_json(json!({
-            "task_id": "task-1"
+            "task_id": "task-1",
+            "agent_id": "agent-001"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
@@ -1770,9 +1835,18 @@ async fn test_a2a_invoke_list_push_configs_routes_to_python() {
         .await;
 
     Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
         .and(path_regex(".*push/list$"))
         .and(body_json(json!({
-            "task_id": "task-1"
+            "task_id": "task-1",
+            "agent_id": "agent-001"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "configs": [{"config_id": "cfg-1"}, {"config_id": "cfg-2"}]
@@ -1826,9 +1900,18 @@ async fn test_a2a_invoke_delete_push_config_routes_to_python() {
         .await;
 
     Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
         .and(path_regex(".*push/delete$"))
         .and(body_json(json!({
-            "config_id": "cfg-1"
+            "config_id": "cfg-1",
+            "agent_id": "agent-001"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "deleted": true

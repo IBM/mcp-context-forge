@@ -53,6 +53,26 @@ fn build_http_client(config: &RuntimeConfig) -> Result<Client, reqwest::Error> {
 }
 
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
+    if config
+        .auth_secret
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        return Err(RuntimeError::Config(
+            "A2A_RUST_AUTH_SECRET is required: the runtime cannot build trust headers or decrypt \
+             encrypted auth blobs without a shared secret. Refusing to start."
+                .to_string(),
+        ));
+    }
+
+    // Surface cross-field config errors at startup rather than as silent
+    // runtime misbehaviour (timeouts that never trigger, retries that
+    // exceed their deadline, cache tiers that churn each other, etc.).
+    config
+        .validate_cross_field()
+        .map_err(RuntimeError::Config)?;
+
     let client = build_http_client(&config)?;
     let config_arc = Arc::new(config.clone());
 
@@ -131,7 +151,10 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
             rx,
             client.clone(),
             config.backend_base_url.clone(),
-            config.auth_secret.clone().unwrap_or_default(),
+            config
+                .auth_secret
+                .clone()
+                .expect("auth_secret validated non-empty in run()"),
             Duration::from_millis(config.event_flush_interval_ms),
             config.event_flush_batch_size,
         );
@@ -288,7 +311,7 @@ mod tests {
             max_response_body_bytes: 1024,
             max_retries: 0,
             retry_backoff_ms: 1,
-            auth_secret: None,
+            auth_secret: Some("test-shared-secret".to_string()),
             backend_base_url: "http://127.0.0.1:4444".to_string(),
             max_concurrent: 1,
             max_queued: Some(4),
@@ -351,6 +374,30 @@ mod tests {
         run(test_config())
             .await
             .expect("runtime should start and shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn run_rejects_missing_auth_secret() {
+        let mut config = test_config();
+        config.auth_secret = None; // pragma: allowlist secret
+        let err = run(config)
+            .await
+            .expect_err("missing auth_secret must fail");
+        assert!(
+            matches!(err, RuntimeError::Config(_)),
+            "expected Config error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_empty_auth_secret() {
+        let mut config = test_config();
+        config.auth_secret = Some(String::new());
+        let err = run(config).await.expect_err("empty auth_secret must fail");
+        assert!(
+            matches!(err, RuntimeError::Config(_)),
+            "expected Config error, got {err:?}"
+        );
     }
 
     #[tokio::test]

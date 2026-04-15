@@ -566,8 +566,11 @@ class A2AAgentService(BaseService):
                     loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
                 except RuntimeError:
                     pass  # No running event loop (e.g., in tests)
-                except Exception:
-                    pass  # Best-effort invalidation
+                except Exception as exc:
+                    # Best-effort, but log so a Redis outage stops being
+                    # invisible — stale Rust L1 caches silently serve old
+                    # agent data until TTL expires.
+                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", new_agent.name, exc)
 
                 # Automatically create a tool for the A2A agent if not already present
                 # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -1331,8 +1334,8 @@ class A2AAgentService(BaseService):
                 loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
             except RuntimeError:
                 pass  # No running event loop (e.g., in tests)
-            except Exception:
-                pass  # Best-effort invalidation
+            except Exception as exc:
+                logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent.name, exc)
 
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
@@ -1532,8 +1535,8 @@ class A2AAgentService(BaseService):
                     loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
                 except RuntimeError:
                     pass  # No running event loop (e.g., in tests)
-                except Exception:
-                    pass  # Best-effort invalidation
+                except Exception as exc:
+                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
 
                 logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
@@ -1658,6 +1661,8 @@ class A2AAgentService(BaseService):
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
                 raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}") from e
+            if agent_auth_type == "query_param" and agent_auth_query_params:
+                raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
             raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
 
         span_attributes = {
@@ -1750,10 +1755,19 @@ class A2AAgentService(BaseService):
                                     list(task_data.keys()),
                                 )
                     except Exception:
+                        # Rollback the failed persistence attempt; if rollback
+                        # itself fails, mark the connection invalid so the
+                        # pool discards it (matches main.py pattern).  A silent
+                        # rollback failure here has caused ``task stuck in
+                        # working`` with no operator-visible signal.
                         try:
                             db.rollback()
                         except Exception:
-                            pass  # nosec B110
+                            logger.error("Rollback failed after task persistence error for agent '%s'", agent_name, exc_info=True)
+                            try:
+                                db.invalidate()
+                            except Exception:
+                                logger.error("db.invalidate() also failed after rollback error for agent '%s'", agent_name, exc_info=True)
                         logger.warning("Failed to persist task state for agent '%s': task_id=%s", agent_name, locals().get("resp_task_id"), exc_info=True)
 
                     # Log successful A2A call
@@ -2117,10 +2131,7 @@ class A2AAgentService(BaseService):
         Returns:
             Task data as a dict, or None if not found or not visible.
         """
-        query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
-        if agent_id is not None:
-            query = query.filter(A2ATask.a2a_agent_id == agent_id)
-        task = query.first()
+        task = self._resolve_unique_task(db, task_id, agent_id)
         if task is None:
             return None
         # Enforce agent visibility on the owning agent.
@@ -2151,10 +2162,7 @@ class A2AAgentService(BaseService):
             If the task is already in a terminal state (completed/failed/canceled),
             returns it as-is without modification.
         """
-        query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
-        if agent_id is not None:
-            query = query.filter(A2ATask.a2a_agent_id == agent_id)
-        task = query.first()
+        task = self._resolve_unique_task(db, task_id, agent_id)
         if task is None:
             return None
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
@@ -2167,6 +2175,30 @@ class A2AAgentService(BaseService):
         db.commit()
         db.refresh(task)
         return self._task_to_wire(task)
+
+    @staticmethod
+    def _resolve_unique_task(db: Session, task_id: str, agent_id: Optional[str]) -> Optional[A2ATask]:
+        """Look up a task by ``task_id`` and refuse cross-agent ambiguity.
+
+        ``a2a_tasks`` is only unique on ``(a2a_agent_id, task_id)``, so two
+        agents may legitimately share the same agent-side ``task_id``.  When
+        the caller does not supply ``agent_id`` we must refuse to guess which
+        row they meant — returning an arbitrary ``.first()`` result would
+        let a request read or cancel the wrong agent's task.
+        """
+        query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
+        if agent_id is not None:
+            query = query.filter(A2ATask.a2a_agent_id == agent_id)
+        matches = query.limit(2).all()
+        if not matches:
+            return None
+        if len(matches) > 1:
+            logger.warning(
+                "Ambiguous task lookup for task_id=%s with no agent_id filter (matched across multiple agents); refusing to guess",
+                task_id,
+            )
+            return None
+        return matches[0]
 
     def list_tasks(
         self,
@@ -2211,26 +2243,79 @@ class A2AAgentService(BaseService):
     # ---------------------------------------------------------------------------
 
     def create_push_config(self, db: Session, config_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a push notification configuration, or return the existing one on duplicate.
+        """Create or update a push notification configuration (upsert on unique key).
 
-        The unique constraint on (a2a_agent_id, task_id, webhook_url) prevents
-        duplicate registrations.  If the exact same config already exists (e.g.,
-        client retry after a timeout), the existing row is returned instead of
-        raising a 500.
+        The unique constraint is ``(a2a_agent_id, task_id, webhook_url)``.  When a
+        row already exists for that key, the mutable fields (``auth_token``,
+        ``events``, ``enabled``) are updated **in place** so that re-registering a
+        webhook with a rotated bearer secret or a narrowed event set actually
+        takes effect — previously the stale row was returned verbatim, and a
+        client attempting to rotate a leaked secret would silently keep using the
+        old one.
+
+        Idempotent retries (same URL + same mutable fields) remain a no-op: the
+        existing row is returned unchanged and ``updated_at`` is not bumped.
 
         Args:
             db: Database session.
             config_data: Dict with fields for A2APushNotificationConfig.
 
         Returns:
-            Created or existing config as a dict.
+            Created, updated, or already-matching config as a dict.
         """
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
         from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
 
-        # Check for existing config with the same unique key.
-        existing = (
+        raw_auth_token = config_data.get("auth_token")
+        desired_events = config_data.get("events")
+        desired_enabled = config_data.get("enabled", True)
+
+        existing = self._find_push_config_by_unique_key(db, config_data)
+        if existing is not None:
+            if self._apply_push_config_mutations(existing, raw_auth_token, desired_events, desired_enabled):
+                db.commit()
+                db.refresh(existing)
+            return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
+
+        # Encrypt webhook bearer token at rest.  Rust push dispatch decrypts
+        # via the shared AES-GCM secret; anyone with raw DB access or a
+        # backup cannot recover webhook credentials.
+        stored_auth_token = encode_auth({"token": raw_auth_token}) if raw_auth_token else None
+
+        cfg = A2APushNotificationConfig(
+            a2a_agent_id=config_data["a2a_agent_id"],
+            task_id=config_data["task_id"],
+            webhook_url=config_data["webhook_url"],
+            auth_token=stored_auth_token,
+            events=desired_events,
+            enabled=desired_enabled,
+        )
+        db.add(cfg)
+        try:
+            db.commit()
+        except Exception:
+            # Race: another request inserted the same config between our
+            # check and this insert.  Roll back and apply the same upsert
+            # semantics to the winning row.
+            db.rollback()
+            existing = self._find_push_config_by_unique_key(db, config_data)
+            if existing is not None:
+                if self._apply_push_config_mutations(existing, raw_auth_token, desired_events, desired_enabled):
+                    db.commit()
+                    db.refresh(existing)
+                return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
+            raise
+        db.refresh(cfg)
+        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+
+    @staticmethod
+    def _find_push_config_by_unique_key(db: Session, config_data: Dict[str, Any]):
+        """Look up a push config row by the ``(agent, task, url)`` unique key."""
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+
+        return (
             db.query(A2APushNotificationConfig)
             .filter(
                 A2APushNotificationConfig.a2a_agent_id == config_data["a2a_agent_id"],
@@ -2239,38 +2324,53 @@ class A2AAgentService(BaseService):
             )
             .first()
         )
-        if existing is not None:
-            return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
 
-        cfg = A2APushNotificationConfig(
-            a2a_agent_id=config_data["a2a_agent_id"],
-            task_id=config_data["task_id"],
-            webhook_url=config_data["webhook_url"],
-            auth_token=config_data.get("auth_token"),
-            events=config_data.get("events"),
-            enabled=config_data.get("enabled", True),
-        )
-        db.add(cfg)
-        try:
-            db.commit()
-        except Exception:
-            # Race: another request inserted the same config between our
-            # check and this insert.  Roll back and return the winner.
-            db.rollback()
-            existing = (
-                db.query(A2APushNotificationConfig)
-                .filter(
-                    A2APushNotificationConfig.a2a_agent_id == config_data["a2a_agent_id"],
-                    A2APushNotificationConfig.task_id == config_data["task_id"],
-                    A2APushNotificationConfig.webhook_url == config_data["webhook_url"],
-                )
-                .first()
-            )
-            if existing is not None:
-                return A2APushNotificationConfigRead.model_validate(existing).model_dump(mode="json")
-            raise
-        db.refresh(cfg)
-        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+    @staticmethod
+    def _apply_push_config_mutations(existing, raw_auth_token: Optional[str], events, enabled: bool) -> bool:
+        """Apply incoming mutable fields to ``existing``; return True if anything changed.
+
+        ``auth_token`` is compared by plaintext (the stored value is encrypted
+        with a fresh nonce each time, so raw-string comparison would always
+        report a difference and force a re-encrypt on every retry).  When the
+        existing ciphertext cannot be decrypted (rotated key, legacy data),
+        we treat it as "different" and re-encrypt the incoming plaintext so
+        the caller's rotation takes effect — including the rotate-to-None
+        case where the caller wants to remove the token entirely.
+        """
+        changed = False
+
+        # ``decrypt_failed`` distinguishes "existing row has no token" from
+        # "existing row has an undecryptable token".  Without it, an incoming
+        # ``raw_auth_token=None`` (caller clearing the token) would compare
+        # equal to the ``None`` we fell back to on decrypt failure, and the
+        # stale ciphertext would silently stay in the row — producing a
+        # config that fails to dispatch bearer auth every time.
+        current_plaintext: Optional[str] = None
+        decrypt_failed = False
+        if existing.auth_token:
+            try:
+                decoded = decode_auth(existing.auth_token)
+                if isinstance(decoded, dict):
+                    candidate = decoded.get("token")
+                    current_plaintext = str(candidate) if candidate is not None else None
+                else:
+                    decrypt_failed = True
+            except Exception:
+                decrypt_failed = True
+
+        if decrypt_failed or raw_auth_token != current_plaintext:
+            existing.auth_token = encode_auth({"token": raw_auth_token}) if raw_auth_token else None
+            changed = True
+
+        if events != existing.events:
+            existing.events = events
+            changed = True
+
+        if bool(enabled) != bool(existing.enabled):
+            existing.enabled = bool(enabled)
+            changed = True
+
+        return changed
 
     def get_push_config(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieve a push notification config by task_id.
@@ -2290,9 +2390,18 @@ class A2AAgentService(BaseService):
         query = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.task_id == task_id)
         if agent_id is not None:
             query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
-        # Order by creation time so the result is deterministic when
-        # multiple webhooks are registered for the same task.
-        cfg = query.order_by(A2APushNotificationConfig.created_at).first()
+        # Without agent_id, two agents can share the same task_id.  Refuse to
+        # guess which row the caller meant; require agent_id to disambiguate.
+        matches = query.order_by(A2APushNotificationConfig.created_at).limit(2).all()
+        if not matches:
+            return None
+        if len(matches) > 1:
+            logger.warning(
+                "Ambiguous push-config lookup for task_id=%s with no agent_id filter (matched across multiple agents); refusing to guess",
+                task_id,
+            )
+            return None
+        cfg = matches[0]
         if cfg is None:
             return None
         return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
@@ -2306,7 +2415,10 @@ class A2AAgentService(BaseService):
             task_id: Optional task ID filter.
 
         Returns:
-            List of config data dicts.
+            List of config data dicts.  ``auth_token`` is omitted via the
+            read schema's ``exclude=True`` flag — use
+            :meth:`list_push_configs_for_dispatch` for the Rust sidecar's
+            webhook-dispatch path where the plaintext token is required.
         """
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
@@ -2318,6 +2430,92 @@ class A2AAgentService(BaseService):
         if task_id is not None:
             query = query.filter(A2APushNotificationConfig.task_id == task_id)
         return [A2APushNotificationConfigRead.model_validate(c).model_dump(mode="json") for c in query.all()]
+
+    def list_push_configs_for_dispatch(
+        self,
+        db: Session,
+        agent_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """List push configs with decrypted ``auth_token`` for webhook dispatch.
+
+        Used only by the trusted ``/_internal/a2a/push/list`` endpoint that
+        serves the Rust sidecar.  The token is decrypted on the fly and
+        returned in plaintext so the sidecar can sign outbound webhook
+        requests; at rest the DB column stays encrypted.
+
+        Visibility scoping is pushed into SQL via ``_visible_agent_ids`` —
+        the prior Python-side post-filter scanned every row regardless of
+        access.  Admin bypass (``token_teams=None`` AND ``user_email=None``)
+        returns all configs.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+
+        query = db.query(A2APushNotificationConfig)
+        if agent_id is not None:
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
+        if task_id is not None:
+            query = query.filter(A2APushNotificationConfig.task_id == task_id)
+
+        visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
+        if visible_agent_ids is not None:
+            # Non-admin caller: restrict to configs owned by visible agents.
+            # An empty visible set (e.g. public-only user with no public agents
+            # matching the filters) collapses to "no rows" without a scan.
+            if not visible_agent_ids:
+                return []
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id.in_(visible_agent_ids))
+
+        results: List[Dict[str, Any]] = []
+        decrypt_failed_ids: List[str] = []
+        for cfg in query.all():
+            auth_token_plain: Optional[str] = None
+            if cfg.auth_token:
+                try:
+                    decoded = decode_auth(cfg.auth_token)
+                    if isinstance(decoded, dict):
+                        candidate = decoded.get("token")
+                        auth_token_plain = str(candidate) if candidate is not None else None
+                    else:
+                        decrypt_failed_ids.append(cfg.id)
+                except Exception:
+                    # A decrypt failure means the column holds either a
+                    # legacy cleartext value or ciphertext encrypted with a
+                    # rotated key.  In either case we refuse to fall back to
+                    # the raw column value — sending ciphertext as a bearer
+                    # token would leak it to the webhook endpoint.
+                    logger.warning(
+                        "Failed to decrypt push-config auth_token for config_id=%s; dispatch will proceed without bearer auth",
+                        cfg.id,
+                    )
+                    auth_token_plain = None
+                    decrypt_failed_ids.append(cfg.id)
+            results.append(
+                {
+                    "id": cfg.id,
+                    "a2a_agent_id": cfg.a2a_agent_id,
+                    "task_id": cfg.task_id,
+                    "webhook_url": cfg.webhook_url,
+                    "auth_token": auth_token_plain,
+                    "events": cfg.events,
+                    "enabled": cfg.enabled,
+                }
+            )
+
+        # Surface an aggregate signal for ops dashboards: a misconfigured
+        # AUTH_ENCRYPTION_SECRET makes decrypt failures scale with total
+        # dispatches, so we log total-and-count rather than relying on log
+        # aggregation to count per-config warnings.
+        if decrypt_failed_ids:
+            logger.warning(
+                "A2A push-config dispatch listing: %d of %d configs had undecryptable auth_token (likely rotated AUTH_ENCRYPTION_SECRET or corrupted rows)",
+                len(decrypt_failed_ids),
+                len(results),
+            )
+        return results
 
     def delete_push_config(self, db: Session, config_id: str) -> bool:
         """Delete a push notification config by ID.

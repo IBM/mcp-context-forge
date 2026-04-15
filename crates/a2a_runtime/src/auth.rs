@@ -57,6 +57,44 @@ fn cipher_for(secret: &str) -> Aes256Gcm { // pragma: allowlist secret
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Encrypt an auth map with the same scheme `decrypt_auth` consumes.
+///
+/// Test helper that mirrors Python `services_auth.encode_auth` so
+/// integration tests can exercise the /invoke decryption path end-to-end
+/// without round-tripping through the Python gateway.  Always available
+/// (not gated on `#[cfg(test)]`) because Cargo integration-test targets
+/// link against the library crate's non-test build.
+///
+/// Uses a nanosecond-derived nonce: unique enough for tests, and nonce
+/// uniqueness only matters per-key; production paths never call this.
+#[doc(hidden)]
+pub fn encrypt_auth_for_tests(
+    value: &HashMap<String, String>,
+    secret: &str, // pragma: allowlist secret
+) -> String {
+    use aes_gcm::aead::Aead;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let json_bytes = serde_json::to_vec(value).expect("auth map is serializable");
+    // 96-bit nonce derived from the current nanosecond count.  Good enough
+    // for per-test uniqueness; never reused within a test process.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[..8].copy_from_slice(&(nanos as u64).to_le_bytes());
+    nonce_bytes[8..].copy_from_slice(&((nanos >> 64) as u32).to_le_bytes());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher_for(secret)
+        .encrypt(nonce, json_bytes.as_ref())
+        .expect("encryption never fails for in-memory payload");
+    let mut combined = Vec::with_capacity(12 + ciphertext.len());
+    combined.extend_from_slice(&nonce_bytes);
+    combined.extend_from_slice(&ciphertext);
+    URL_SAFE_NO_PAD.encode(combined)
+}
+
 /// Decrypt a single base64url-encoded AES-GCM ciphertext.
 ///
 /// The blob format (produced by Python `encode_auth`) is:
@@ -131,9 +169,13 @@ pub fn apply_invoke_auth(
     }
 
     // Merge auth query params (override existing keys).
+    //
+    // Use BTreeMap so the resulting query string is lexicographically
+    // ordered.  HashMap iteration order is randomized per-process, which
+    // would (a) break HMAC/signed-URL flows that require a canonical
+    // serialization and (b) make log/diff comparison non-deterministic.
     if !query_params.is_empty() {
-        // Collect existing pairs, then layer auth on top.
-        let mut merged: HashMap<String, String> = url
+        let mut merged: std::collections::BTreeMap<String, String> = url
             .query_pairs()
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();

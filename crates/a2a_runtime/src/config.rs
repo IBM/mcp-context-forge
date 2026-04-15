@@ -202,6 +202,61 @@ impl RuntimeConfig {
                 )
             })
     }
+
+    /// Cross-field validation invoked by [`crate::run`] at startup.
+    ///
+    /// Clap handles per-field parsing, but several invariants cross multiple
+    /// fields.  Catching these at startup beats surfacing them as strange
+    /// runtime behaviour (timeouts that can never trigger, retry budgets
+    /// that exceed the client timeout, etc.).
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        if self.max_concurrent == 0 {
+            return Err("A2A_RUST_MAX_CONCURRENT must be >= 1".to_string());
+        }
+        if self.agent_cache_max_entries == 0 {
+            return Err("A2A_RUST_AGENT_CACHE_MAX_ENTRIES must be >= 1".to_string());
+        }
+        if self.circuit_failure_threshold == 0 {
+            return Err("A2A_RUST_CIRCUIT_FAILURE_THRESHOLD must be >= 1".to_string());
+        }
+
+        // Retry budget: total backoff (sum of geometric series up to
+        // max_retries * retry_backoff_ms) should fit within the per-request
+        // timeout, or the circuit breaker will trip before retries even run.
+        // Use a conservative upper bound: max_retries * retry_backoff_ms.
+        let retry_budget_ms = self
+            .retry_backoff_ms
+            .saturating_mul(u64::from(self.max_retries));
+        if retry_budget_ms > self.request_timeout_ms {
+            return Err(format!(
+                "retry budget ({}ms = {} retries × {}ms backoff) exceeds request timeout ({}ms); \
+                 retries can never complete",
+                retry_budget_ms, self.max_retries, self.retry_backoff_ms, self.request_timeout_ms
+            ));
+        }
+
+        // Cache TTL sanity: L2 (Redis, shared) should outlive L1 (in-process)
+        // so a node restart does not reload a stale-by-comparison entry from
+        // L2.  Allow equality (both set to the same value) for simple
+        // deployments.
+        if self.l2_cache_ttl_secs > 0 && self.l2_cache_ttl_secs < self.agent_cache_ttl_secs {
+            return Err(format!(
+                "A2A_RUST_L2_CACHE_TTL_SECS ({}) must be >= A2A_RUST_AGENT_CACHE_TTL_SECS ({})",
+                self.l2_cache_ttl_secs, self.agent_cache_ttl_secs
+            ));
+        }
+
+        // Session TTL: when sessions are enabled, the session must outlive
+        // a typical request round-trip; otherwise fast-path cache hits will
+        // never trigger.
+        if self.session_enabled && self.session_ttl_secs == 0 {
+            return Err(
+                "A2A_RUST_SESSION_TTL_SECS must be > 0 when sessions are enabled".to_string(),
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -286,5 +341,59 @@ mod tests {
         assert_eq!(config.circuit_failure_threshold, 5);
         assert!(config.session_enabled);
         assert_eq!(config.event_store_max_events, 1000);
+    }
+
+    #[test]
+    fn validate_cross_field_accepts_defaults() {
+        let config = test_config();
+        assert!(config.validate_cross_field().is_ok());
+    }
+
+    #[test]
+    fn validate_cross_field_rejects_zero_max_concurrent() {
+        let mut config = test_config();
+        config.max_concurrent = 0;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("MAX_CONCURRENT"));
+    }
+
+    #[test]
+    fn validate_cross_field_rejects_retry_budget_exceeding_timeout() {
+        // 5 retries × 1000ms backoff = 5000ms retry budget,
+        // but request timeout is only 2000ms — retries cannot complete.
+        let mut config = test_config();
+        config.request_timeout_ms = 2_000;
+        config.retry_backoff_ms = 1_000;
+        config.max_retries = 5;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("retry budget"));
+        assert!(err.contains("exceeds request timeout"));
+    }
+
+    #[test]
+    fn validate_cross_field_rejects_l2_ttl_shorter_than_l1() {
+        // L2 (Redis, shared) should outlive L1 or node restarts reload stale data.
+        let mut config = test_config();
+        config.agent_cache_ttl_secs = 600;
+        config.l2_cache_ttl_secs = 60;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("L2_CACHE_TTL_SECS"));
+    }
+
+    #[test]
+    fn validate_cross_field_rejects_zero_session_ttl_when_sessions_enabled() {
+        let mut config = test_config();
+        config.session_enabled = true;
+        config.session_ttl_secs = 0;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("SESSION_TTL_SECS"));
+    }
+
+    #[test]
+    fn validate_cross_field_allows_zero_session_ttl_when_sessions_disabled() {
+        let mut config = test_config();
+        config.session_enabled = false;
+        config.session_ttl_secs = 0;
+        assert!(config.validate_cross_field().is_ok());
     }
 }

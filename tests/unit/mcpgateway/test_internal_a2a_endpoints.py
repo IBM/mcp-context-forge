@@ -328,30 +328,51 @@ class TestPushGetTrusted:
 
 
 class TestPushListTrusted:
-    """push/list returns 200 + configs array."""
+    """push/list returns 200 + configs array.
+
+    The internal endpoint uses ``list_push_configs_for_dispatch`` (not
+    ``list_push_configs``) so the Rust sidecar receives decrypted
+    ``auth_token`` values for webhook dispatch.
+    """
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs_for_dispatch")
     def test_returns_configs(self, mock_list, _mock_access, _mock_scope, _mock_trust, client):
-        mock_list.return_value = [{"id": "cfg1", "a2a_agent_id": "agent1"}, {"id": "cfg2", "a2a_agent_id": "agent1"}]
+        mock_list.return_value = [
+            {"id": "cfg1", "a2a_agent_id": "agent1", "auth_token": "plaintext-1"},  # pragma: allowlist secret
+            {"id": "cfg2", "a2a_agent_id": "agent1", "auth_token": None},
+        ]
         resp = client.post("/_internal/a2a/push/list", json={})
         assert resp.status_code == 200
-        assert len(resp.json()["configs"]) == 2
+        configs = resp.json()["configs"]
+        assert len(configs) == 2
+        # The dispatch listing must pass decrypted tokens through to Rust.
+        assert configs[0]["auth_token"] == "plaintext-1"
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs")
-    def test_filters_invisible_configs(self, mock_list, _mock_scope, _mock_trust, client):
-        mock_list.return_value = [{"id": "cfg1", "a2a_agent_id": "agent1"}, {"id": "cfg2", "a2a_agent_id": "agent2"}]
-        with patch(
-            "mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id",
-            side_effect=lambda _db, agent_id, *_args: agent_id == "agent1",
-        ):
-            resp = client.post("/_internal/a2a/push/list", json={})
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs_for_dispatch")
+    def test_forwards_scope_context_to_service(self, mock_list, _mock_scope, _mock_trust, client):
+        """Visibility is now enforced in SQL inside the service.
+
+        The endpoint must forward ``user_email``/``token_teams`` to the
+        dispatch listing method; the prior Python-side post-filter
+        (``_check_agent_access_by_id`` loop) has been removed in favour of
+        an ``IN (visible_agent_ids)`` clause pushed into the query.
+        """
+        mock_list.return_value = [
+            {"id": "cfg1", "a2a_agent_id": "agent1", "auth_token": None},
+        ]
+        resp = client.post("/_internal/a2a/push/list", json={"agent_id": "agent1"})
         assert resp.status_code == 200
-        assert resp.json()["configs"] == [{"id": "cfg1", "a2a_agent_id": "agent1"}]
+        configs = resp.json()["configs"]
+        assert configs == [{"id": "cfg1", "a2a_agent_id": "agent1", "auth_token": None}]
+        _, kwargs = mock_list.call_args
+        assert kwargs["user_email"] == "user@test.com"
+        assert kwargs["token_teams"] == ["team-a"]
+        assert kwargs["agent_id"] == "agent1"
 
 
 class TestPushDeleteTrusted:
@@ -424,6 +445,7 @@ class TestEventsFlushTrusted:
         mock_session_cls.return_value = mock_db
         # Simulate a task row that maps to an agent the caller cannot access.
         mock_task = MagicMock()
+        mock_task.task_id = "t1"
         mock_task.a2a_agent_id = "agent-123"
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
 
@@ -440,6 +462,7 @@ class TestEventsFlushTrusted:
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
         mock_task = MagicMock()
+        mock_task.task_id = "t1"
         mock_task.a2a_agent_id = "agent-123"
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
         mock_flush.return_value = 1
@@ -448,6 +471,21 @@ class TestEventsFlushTrusted:
             resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team1"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_rejects_events_for_unknown_task_ids(self, mock_session_cls, _mock_scope, _mock_trust, client):
+        """Unknown task_ids must 400 — previously they bypassed visibility entirely."""
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        # No matching rows — task_id is unknown.
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+
+        resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "nonexistent", "seq": 1}]})
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["unknown_task_ids"] == ["nonexistent"]
 
 
 class TestEventsReplayTrusted:
@@ -741,7 +779,7 @@ class TestInternalA2AExceptionHandling:
             (
                 "/_internal/a2a/push/list",
                 {},
-                "mcpgateway.services.a2a_service.A2AAgentService.list_push_configs",
+                "mcpgateway.services.a2a_service.A2AAgentService.list_push_configs_for_dispatch",
                 lambda mock_db: None,
             ),
             (
@@ -815,3 +853,174 @@ class TestInternalA2AExceptionHandling:
         assert resp.status_code == 500
         mock_db.rollback.assert_called_once()
         mock_db.invalidate.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 4.  Deny-path regression tests (CLAUDE.md security-sensitive-change policy)
+# ---------------------------------------------------------------------------
+#
+# These cover the three deny scenarios that CLAUDE.md requires for
+# security-sensitive changes: insufficient permissions (RBAC), wrong team
+# (token-scoping), and feature disabled.
+
+
+class TestInternalA2ADenyPaths:
+    """Deny-path regressions for /_internal/a2a/* endpoints."""
+
+    # --- RBAC: insufficient permissions ---------------------------------
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._authorize_internal_mcp_request",
+        new_callable=AsyncMock,
+        side_effect=JSONRPCError(-32003, "Access denied", {"method": "a2a/invoke", "permission": "a2a.invoke"}),
+    )
+    def test_invoke_authz_rbac_denied_returns_403(self, _mock_authorize, _mock_trust, client):
+        """Missing a2a.invoke permission must return 403 with a structured error."""
+        resp = client.post("/_internal/a2a/invoke/authz", json={})
+        assert resp.status_code == 403
+        body = resp.json()
+        assert body["message"] == "Access denied"
+        assert body["code"] == -32003
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._authorize_internal_mcp_request",
+        new_callable=AsyncMock,
+        side_effect=JSONRPCError(-32003, "Access denied", {"method": "a2a/get", "permission": "a2a.read"}),
+    )
+    def test_get_authz_rbac_denied_returns_403(self, _mock_authorize, _mock_trust, client):
+        """Missing a2a.read permission must return 403."""
+        resp = client.post("/_internal/a2a/get/authz", json={})
+        assert resp.status_code == 403
+        assert resp.json()["code"] == -32003
+
+    # --- Token scoping: wrong team --------------------------------------
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
+    def test_tasks_get_wrong_team_returns_404(self, mock_get_task, _mock_scope, _mock_trust, client):
+        """A caller scoped to team-other must not see a task owned by team-a.
+
+        The service's visibility filter (driven by user_email/token_teams)
+        returns ``None`` for resources outside the caller's scope; the
+        endpoint surfaces that as a 404 — enumeration-resistant and
+        indistinguishable from "not found".
+        """
+        mock_get_task.return_value = None
+        resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "t1"})
+        assert resp.status_code == 404
+        _, kwargs = mock_get_task.call_args
+        assert kwargs.get("user_email") == "user@test.com"
+        assert kwargs.get("token_teams") == ["team-other"]
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_agent_resolve_wrong_team_returns_404(self, mock_session_local, _mock_scope, _mock_trust, client):
+        """Wrong team on /agents/{name}/resolve must return 404 (not 403).
+
+        The scope context narrows visibility via ``_check_agent_access``.
+        When that check returns False the endpoint responds 404 — same shape
+        as "agent not found" — so callers cannot enumerate agents they
+        cannot see.
+        """
+        mock_db = MagicMock()
+        mock_agent = MagicMock()
+        mock_agent.enabled = True
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+        mock_session_local.return_value = mock_db
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=False):
+            with patch("mcpgateway.services.a2a_server_service.A2AServerService.resolve_server_agent", return_value=None):
+                resp = client.post("/_internal/a2a/agents/team-a-agent/resolve", json={})
+
+        assert resp.status_code == 404
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    def test_tasks_cancel_wrong_team_returns_404(self, mock_cancel, _mock_scope, _mock_trust, client):
+        """Cancel on a cross-team task must 404, and scope must be forwarded."""
+        mock_cancel.return_value = None
+        resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "t1"})
+        assert resp.status_code == 404
+        _, kwargs = mock_cancel.call_args
+        assert kwargs.get("token_teams") == ["team-other"]
+
+    # --- Feature disabled -----------------------------------------------
+
+    @pytest.mark.parametrize("url", _SIMPLE_ENDPOINTS + [_AUTHENTICATE_ENDPOINT])
+    def test_endpoints_reject_when_a2a_disabled(self, url, client, monkeypatch):
+        """With MCPGATEWAY_A2A_ENABLED=False, internal A2A endpoints must refuse.
+
+        The feature-flag check is wired into
+        ``_is_trusted_internal_mcp_runtime_request`` for ``/_internal/a2a/*``
+        paths: even a request with valid sidecar headers is treated as
+        untrusted when the feature is off (defense-in-depth — a legitimate
+        sidecar should not be running in that configuration).
+        """
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
+        # Provide the sidecar headers so the only thing that can cause
+        # rejection is the feature-flag branch.
+        headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
+        }
+        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+            resp = client.post(url, json={}, headers=headers)
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize("url", _AGENT_ENDPOINTS)
+    def test_agent_endpoints_reject_when_a2a_disabled(self, url, client, monkeypatch):
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
+        headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
+        }
+        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+            resp = client.post(url, json={}, headers=headers)
+        assert resp.status_code == 403
+
+    def test_mcp_runtime_endpoints_still_trusted_when_a2a_disabled(self, client, monkeypatch):
+        """Disabling A2A must NOT block ``/_internal/mcp/*`` trust.
+
+        The feature-flag gate in ``_is_trusted_internal_mcp_runtime_request``
+        narrows to ``path.startswith("/_internal/a2a/")``.  A future
+        refactor that hoists the A2A flag check up one level would
+        silently disable all internal MCP dispatch whenever A2A is off —
+        a significant availability regression for A2A-disabled
+        deployments.  This test pins the path-scoped behavior.
+        """
+        # First-Party
+        from starlette.requests import Request
+
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
+
+        # Synthesize a request scope whose URL path is /_internal/mcp/...
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/_internal/mcp/authenticate",
+            "raw_path": b"/_internal/mcp/authenticate",
+            "query_string": b"",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", b"stub"),
+            ],
+            "client": ("127.0.0.1", 12345),
+        }
+        request = Request(scope)
+
+        # First-Party
+        from mcpgateway.main import _is_trusted_internal_mcp_runtime_request
+
+        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+            assert _is_trusted_internal_mcp_runtime_request(request) is True
+
+        # And the equivalent /_internal/a2a/ path with the same headers
+        # MUST still be rejected (the feature flag narrows correctly).
+        a2a_scope = {**scope, "path": "/_internal/a2a/authenticate", "raw_path": b"/_internal/a2a/authenticate"}
+        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+            assert _is_trusted_internal_mcp_runtime_request(Request(a2a_scope)) is False

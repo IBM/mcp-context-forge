@@ -168,6 +168,23 @@ pub struct MetricsCollector {
     agents: DashMap<String, AgentMetrics>,
     global: AgentMetrics,
     max_entries: Option<usize>,
+    /// Count of webhook dispatches that exhausted their retry budget.
+    /// Exposed for alerting — ``error!`` logs alone are invisible to any
+    /// operator without log aggregation.
+    webhook_retry_exhausted: AtomicU64,
+    /// Count of webhook dispatches that permanently failed on a 4xx
+    /// response (no retry attempted — wrong config or bad payload).
+    webhook_permanent_failure: AtomicU64,
+    /// Count of dispatch cycles aborted before any webhook was attempted
+    /// because ``push/list`` was unreachable / non-200 / undeserializable.
+    /// A non-zero rate here indicates the sidecar↔backend trust chain is
+    /// broken, not that individual webhooks are failing.
+    webhook_list_aborted: AtomicU64,
+    /// Count of push-config rows whose ``auth_token`` could not be
+    /// decrypted during a dispatch listing.  A misconfigured
+    /// ``AUTH_ENCRYPTION_SECRET`` will make this rate proportional to
+    /// total dispatches.
+    push_config_decrypt_failed: AtomicU64,
 }
 
 impl MetricsCollector {
@@ -178,7 +195,57 @@ impl MetricsCollector {
             agents: DashMap::new(),
             global: AgentMetrics::new(),
             max_entries,
+            webhook_retry_exhausted: AtomicU64::new(0),
+            webhook_permanent_failure: AtomicU64::new(0),
+            webhook_list_aborted: AtomicU64::new(0),
+            push_config_decrypt_failed: AtomicU64::new(0),
         }
+    }
+
+    /// Record that a webhook-dispatch task gave up after exhausting its
+    /// retry budget (typically 3 attempts with exponential backoff).
+    pub fn record_webhook_retry_exhausted(&self) {
+        self.webhook_retry_exhausted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current count of exhausted-retry webhook dispatches.
+    pub fn webhook_retry_exhausted_count(&self) -> u64 {
+        self.webhook_retry_exhausted.load(Ordering::Relaxed)
+    }
+
+    /// Record that a webhook dispatch permanently failed on a 4xx status
+    /// (not retried because the config or payload is wrong).
+    pub fn record_webhook_permanent_failure(&self) {
+        self.webhook_permanent_failure
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current count of permanent-failure (4xx) webhook dispatches.
+    pub fn webhook_permanent_failure_count(&self) -> u64 {
+        self.webhook_permanent_failure.load(Ordering::Relaxed)
+    }
+
+    /// Record that a dispatch cycle aborted before attempting any webhook
+    /// because ``push/list`` could not be fetched or parsed.
+    pub fn record_webhook_list_aborted(&self) {
+        self.webhook_list_aborted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current count of aborted (pre-attempt) dispatch cycles.
+    pub fn webhook_list_aborted_count(&self) -> u64 {
+        self.webhook_list_aborted.load(Ordering::Relaxed)
+    }
+
+    /// Record a per-config ``auth_token`` decryption failure encountered
+    /// during a dispatch listing.
+    pub fn record_push_config_decrypt_failed(&self) {
+        self.push_config_decrypt_failed
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current count of push-config decryption failures.
+    pub fn push_config_decrypt_failed_count(&self) -> u64 {
+        self.push_config_decrypt_failed.load(Ordering::Relaxed)
     }
 
     /// Record a single invocation for both the per-agent bucket and the global

@@ -74,12 +74,44 @@ class RustA2ARuntimeClient:
         if prepared.auth_query_params_encrypted:
             payload["auth_query_params_encrypted"] = prepared.auth_query_params_encrypted
 
-        response = await client.post(
-            target_url,
-            json=payload,
-            timeout=httpx.Timeout(proxy_timeout),
-            follow_redirects=False,
-        )
+        try:
+            response = await client.post(
+                target_url,
+                json=payload,
+                timeout=httpx.Timeout(proxy_timeout),
+                follow_redirects=False,
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            # Sidecar process is down, UDS socket missing, or DNS/TCP
+            # connect failed.  Surface as RustA2ARuntimeError so the caller's
+            # existing handling kicks in (vs. an uncaught httpx exception
+            # becoming an opaque 500).
+            logger.error("Experimental Rust A2A runtime unreachable at %s: %s", target_url, exc)
+            is_timeout = isinstance(exc, httpx.ConnectTimeout)
+            raise RustA2ARuntimeError(
+                f"Experimental Rust A2A runtime unreachable: {exc}",
+                is_timeout=is_timeout,
+            ) from exc
+        except httpx.TimeoutException as exc:
+            # Read/write/pool timeout talking to the sidecar.  Flag as a
+            # timeout so callers can distinguish retriable slow-sidecar
+            # cases from hard connection errors.
+            logger.error("Experimental Rust A2A runtime request timed out at %s: %s", target_url, exc)
+            raise RustA2ARuntimeError(
+                f"Experimental Rust A2A runtime timed out: {exc}",
+                is_timeout=True,
+            ) from exc
+        except httpx.HTTPError as exc:
+            # Safety net for other httpx transport errors (RemoteProtocolError,
+            # ReadError, WriteError, NetworkError, etc.).  Without this the
+            # caller's ``except RustA2ARuntimeError`` branch would be bypassed
+            # and a generic 500 would surface with no context.  is_timeout=False
+            # since these are hard protocol/transport faults, not retriable.
+            logger.error("Experimental Rust A2A runtime transport error at %s: %s", target_url, exc)
+            raise RustA2ARuntimeError(
+                f"Experimental Rust A2A runtime transport error: {exc}",
+                is_timeout=False,
+            ) from exc
 
         if response.status_code != 200:
             detail = response.text

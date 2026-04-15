@@ -739,6 +739,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn try_send_rejects_overflow_under_concurrent_producers() {
+        // Multiple producers racing to submit into a bounded channel must
+        // get QueueError::Full once capacity is exhausted — rather than
+        // blocking or dropping messages silently.  This verifies the
+        // semaphore-bounded contract under producer contention.
+        let (tx, mut rx) = mpsc::channel(4);
+        let sender = Arc::new(QueueSender::Bounded(tx));
+
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let sender_clone = Arc::clone(&sender);
+            handles.push(tokio::spawn(async move {
+                let (result_tx, _result_rx) = oneshot::channel();
+                sender_clone.try_send(QueueMessage::Job(Job {
+                    requests: vec![],
+                    timeout: Duration::from_secs(1),
+                    result_tx,
+                }))
+            }));
+        }
+
+        let mut ok_count = 0;
+        let mut full_count = 0;
+        for h in handles {
+            match h.await.expect("task join") {
+                Ok(()) => ok_count += 1,
+                Err(QueueError::Full) => full_count += 1,
+                Err(other) => panic!("unexpected error: {other:?}"),
+            }
+        }
+
+        assert_eq!(ok_count, 4, "exactly capacity-many sends succeed");
+        assert_eq!(full_count, 12, "remainder reject with Full");
+
+        // Drain the channel so the test does not leak pending messages.
+        while rx.try_recv().is_ok() {}
+    }
+
+    #[tokio::test]
     async fn worker_loop_acknowledges_shutdown() {
         let (tx, rx) = mpsc::channel(2);
         let (ack_tx, ack_rx) = oneshot::channel();

@@ -254,9 +254,13 @@ apply_rust_a2a_mode_defaults() {
     if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_URL}" ]]; then
         EXPERIMENTAL_RUST_A2A_RUNTIME_URL="http://127.0.0.1:8788"
     fi
-    if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS}" && "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" = "true" ]]; then
-        EXPERIMENTAL_RUST_A2A_RUNTIME_UDS="/tmp/contextforge-a2a-rust.sock"
-    fi
+    # Default to TCP — both compose nginx and the Helm chart's
+    # nginx upstream point at the sidecar via TCP (gateway:8788).
+    # UDS is opt-in: set EXPERIMENTAL_RUST_A2A_RUNTIME_UDS explicitly to
+    # bind a Unix socket instead.  Note: `listen_target()` in the runtime
+    # currently picks one or the other; an explicit UDS override will
+    # disable the TCP listener and break the nginx upstream until the
+    # nginx config is also updated to proxy via the same socket.
     if [[ -z "${A2A_RUST_LISTEN_HTTP}" ]]; then
         A2A_RUST_LISTEN_HTTP="127.0.0.1:8788"
     fi

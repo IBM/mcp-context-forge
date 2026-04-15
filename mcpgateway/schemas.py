@@ -5486,13 +5486,41 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
 # ---------------------------------------------------------------------------
 
 
+class A2ATaskState(str, Enum):
+    """Finite state machine for A2A task lifecycle per the A2A v1 spec.
+
+    Terminal states (``completed``, ``canceled``, ``failed``, ``rejected``)
+    are the only states for which ``completed_at`` should be set; the
+    model-validators on :class:`A2ATaskCreate` and :class:`A2ATaskUpdate`
+    enforce this invariant.
+    """
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    INPUT_REQUIRED = "input-required"
+    AUTH_REQUIRED = "auth-required"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+    @classmethod
+    def terminal(cls) -> "frozenset[A2ATaskState]":
+        """Return the set of terminal states."""
+        return frozenset({cls.COMPLETED, cls.CANCELED, cls.FAILED, cls.REJECTED})
+
+    def is_terminal(self) -> bool:
+        """Whether this state is a terminal state."""
+        return self in self.terminal()
+
+
 class A2ATaskCreate(BaseModel):
     """Schema for recording a new A2A task state."""
 
     a2a_agent_id: str
     task_id: str
     context_id: Optional[str] = None
-    state: str = "submitted"
+    state: A2ATaskState = A2ATaskState.SUBMITTED
     payload: Optional[Dict[str, Any]] = None
     latest_message: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
@@ -5517,13 +5545,27 @@ class A2ATaskRead(BaseModel):
 
 
 class A2ATaskUpdate(BaseModel):
-    """Schema for updating A2A task state."""
+    """Schema for updating A2A task state.
 
-    state: Optional[str] = None
+    The validator rejects ``completed_at`` paired with a non-terminal
+    ``state``.  The reverse (terminal ``state`` without ``completed_at``)
+    is **not** enforced here — the service layer (e.g. ``cancel_task``)
+    stamps ``completed_at`` itself when transitioning into a terminal
+    state, so callers may legitimately omit the timestamp.
+    """
+
+    state: Optional[A2ATaskState] = None
     payload: Optional[Dict[str, Any]] = None
     latest_message: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
     completed_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _enforce_completed_at_iff_terminal(self) -> "A2ATaskUpdate":
+        """Reject ``completed_at`` paired with a non-terminal state."""
+        if self.completed_at is not None and self.state is not None and not self.state.is_terminal():
+            raise ValueError(f"completed_at is only valid with a terminal state (got state={self.state.value!r})")
+        return self
 
 
 # ---------------------------------------------------------------------------

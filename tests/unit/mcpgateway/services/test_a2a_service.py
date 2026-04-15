@@ -2423,11 +2423,14 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_query_param_auth_decrypt_error_is_skipped(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Query param decrypt failures are logged and skipped, without applying auth to URL."""
+    async def test_invoke_query_param_auth_decrypt_error_fails_closed(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Query-param decrypt failures must fail the invocation, not silently drop the credential.
+
+        Sending the request without the credential can reach the agent as an
+        unauthenticated call with unpredictable results; we require fail-closed
+        semantics matching the header auth path.
+        """
         mock_client = AsyncMock()
-        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
-        mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
@@ -2437,7 +2440,7 @@ class TestInvokeAgentEdgeCases:
             endpoint_url="https://x.com/api",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "bad", "empty": ""},
+            auth_query_params={"api_key": "bad"},  # pragma: allowlist secret
             visibility="public",
             team_id=None,
             owner_email=None,
@@ -2457,11 +2460,9 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {})
-        assert result["ok"] is True
-        # No decrypted params => URL is unchanged and apply_query_param_auth not called
-        call_url = mock_client.post.call_args[0][0]
-        assert call_url == "https://x.com/api"
+        with pytest.raises(A2AAgentError, match="query_param"):
+            await service.invoke_agent(mock_db, "ag", {})
+        mock_client.post.assert_not_called()
         mock_apply.assert_not_called()
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
@@ -3669,13 +3670,19 @@ class TestCancelTask:
         task.payload = None
         return task
 
+    @staticmethod
+    def _mock_task_query(task):
+        """Build a mock query that behaves like ``.limit(2).all() → [task]``."""
+        q = MagicMock()
+        q.filter.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = [task] if task is not None else []
+        return q
+
     def test_cancel_active_task(self, service, mock_db):
         """Task found in non-terminal state is set to canceled and returned as wire dict."""
         task = self._make_task("submitted")
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = task
-        mock_db.query.return_value = mock_query
+        mock_db.query.return_value = self._mock_task_query(task)
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
@@ -3690,10 +3697,7 @@ class TestCancelTask:
     def test_cancel_already_terminal_task(self, service, mock_db):
         """Task already in terminal state is returned as-is without modification."""
         task = self._make_task("completed")
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = task
-        mock_db.query.return_value = mock_query
+        mock_db.query.return_value = self._mock_task_query(task)
 
         result = service.cancel_task(mock_db, "task-1")
 
@@ -3704,10 +3708,7 @@ class TestCancelTask:
 
     def test_cancel_task_not_found_returns_none(self, service, mock_db):
         """Returns None when the task does not exist."""
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
-        mock_db.query.return_value = mock_query
+        mock_db.query.return_value = self._mock_task_query(None)
 
         result = service.cancel_task(mock_db, "missing-task")
 
@@ -3716,9 +3717,7 @@ class TestCancelTask:
     def test_cancel_task_with_agent_id_filter(self, service, mock_db):
         """agent_id parameter adds an extra filter clause."""
         task = self._make_task("submitted")
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = task
+        mock_query = self._mock_task_query(task)
         mock_db.query.return_value = mock_query
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -3728,11 +3727,28 @@ class TestCancelTask:
         # filter called: task_id, agent_id, and agent visibility lookup
         assert mock_query.filter.call_count >= 2
 
+    def test_cancel_ambiguous_task_without_agent_id_returns_none(self, service, mock_db):
+        """Two rows with the same ``task_id`` and no ``agent_id`` filter must refuse to guess."""
+        task_a = self._make_task("submitted")
+        task_a.a2a_agent_id = "agent-a"
+        task_b = self._make_task("submitted")
+        task_b.a2a_agent_id = "agent-b"
+
+        q = MagicMock()
+        q.filter.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = [task_a, task_b]
+        mock_db.query.return_value = q
+
+        result = service.cancel_task(mock_db, "shared-task-id")
+        assert result is None
+        # task_a must not have been cancelled by a "first match wins" policy.
+        assert task_a.state == "submitted"
+        assert task_b.state == "submitted"
+
     def _setup_task_and_agent(self, mock_db, task, agent):
         """Wire mock_db.query() to return task on first call and agent on second."""
-        mock_task_q = MagicMock()
-        mock_task_q.filter.return_value = mock_task_q
-        mock_task_q.first.return_value = task
+        mock_task_q = self._mock_task_query(task)
         mock_agent_q = MagicMock()
         mock_agent_q.filter.return_value = mock_agent_q
         mock_agent_q.first.return_value = agent
@@ -3824,13 +3840,27 @@ class TestPushConfigCRUD:
         mock_db.refresh.assert_called_once_with(cfg_instance)
         assert result == expected
 
-    def test_create_push_config_returns_existing_on_duplicate(self, service, mock_db):
-        """create_push_config returns the existing config when a duplicate is found."""
+    def test_create_push_config_idempotent_retry_is_noop(self, service, mock_db):
+        """Re-registering the exact same config is an idempotent no-op.
+
+        ``updated_at`` must NOT be bumped — neither commit nor refresh is
+        called when none of the mutable fields differ.
+        """
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
         existing_cfg = MagicMock()
+        existing_cfg.auth_token = encode_auth({"token": "secret-token"})  # pragma: allowlist secret
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
         mock_dup_query = MagicMock()
         mock_dup_query.filter.return_value = mock_dup_query
         mock_dup_query.first.return_value = existing_cfg
         mock_db.query.return_value = mock_dup_query
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
 
         expected = {"id": "cfg-existing", "task_id": "task-1"}
         with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
@@ -3838,16 +3868,237 @@ class TestPushConfigCRUD:
             result = service.create_push_config(mock_db, self._config_data())
 
         mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
+        mock_db.refresh.assert_not_called()
         assert result == expected
+
+    def test_create_push_config_upserts_rotated_auth_token(self, service, mock_db):
+        """Re-registering with a rotated bearer secret must update the stored token.
+
+        This is the security fix: previously the stale row was returned
+        verbatim so a client attempting to rotate a leaked secret would
+        silently keep dispatching with the old one.
+        """
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth, encode_auth
+
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = encode_auth({"token": "old-token"})  # pragma: allowlist secret
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        rotated = self._config_data()
+        rotated["auth_token"] = "new-token"  # pragma: allowlist secret
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, rotated)
+
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(existing_cfg)
+        assert decode_auth(existing_cfg.auth_token) == {"token": "new-token"}  # pragma: allowlist secret
+
+    def test_create_push_config_upserts_changed_events_and_enabled(self, service, mock_db):
+        """Re-registering with a narrowed event set or enabled=False must apply."""
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = encode_auth({"token": "secret-token"})  # pragma: allowlist secret
+        existing_cfg.events = ["completed", "failed"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        updated = self._config_data()
+        updated["events"] = ["completed"]
+        updated["enabled"] = False
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, updated)
+
+        mock_db.commit.assert_called_once()
+        assert existing_cfg.events == ["completed"]
+        assert existing_cfg.enabled is False
+
+    def test_create_push_config_upserts_when_existing_ciphertext_is_undecryptable(self, service, mock_db):
+        """Legacy cleartext or rotated-key ciphertext must be replaced with fresh ciphertext."""
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = "legacy-cleartext-or-rotated-ciphertext"  # pragma: allowlist secret
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, self._config_data())
+
+        mock_db.commit.assert_called_once()
+        assert decode_auth(existing_cfg.auth_token) == {"token": "secret-token"}  # pragma: allowlist secret
+
+    def test_create_push_config_upserts_add_token_to_previously_unauthenticated(self, service, mock_db):
+        """None → Some: adding a bearer token to a previously-unsecured webhook."""
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = None
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, self._config_data())
+
+        mock_db.commit.assert_called_once()
+        assert existing_cfg.auth_token is not None, "token must be set"
+        assert decode_auth(existing_cfg.auth_token) == {"token": "secret-token"}  # pragma: allowlist secret
+
+    def test_create_push_config_upserts_remove_token_with_decryptable_existing(self, service, mock_db):
+        """Some → None: caller rotates the token away (set auth_token=None)."""
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = encode_auth({"token": "to-be-removed"})  # pragma: allowlist secret
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        data = self._config_data()
+        data["auth_token"] = None  # explicit clear
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, data)
+
+        mock_db.commit.assert_called_once()
+        assert existing_cfg.auth_token is None, "token must be cleared"
+
+    def test_create_push_config_race_lost_branch_applies_upsert(self, service, mock_db):
+        """If an IntegrityError loses the insert race, the winner row must still be upserted.
+
+        Sequence: pre-check sees no row → INSERT → commit raises
+        IntegrityError → rollback → re-find finds the racing winner →
+        ``_apply_push_config_mutations`` runs against the winner.  This
+        path was added as part of the upsert refactor; this test pins it.
+        """
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth, encode_auth
+
+        winner_cfg = MagicMock()
+        winner_cfg.auth_token = encode_auth({"token": "loser-token"})  # pragma: allowlist secret
+        winner_cfg.events = ["state_change"]
+        winner_cfg.enabled = True
+
+        # First query: pre-check finds nothing.  Second query (after
+        # rollback): re-find returns the racing winner.
+        empty_query = MagicMock()
+        empty_query.filter.return_value = empty_query
+        empty_query.first.return_value = None
+        winner_query = MagicMock()
+        winner_query.filter.return_value = winner_query
+        winner_query.first.return_value = winner_cfg
+
+        mock_db.query.side_effect = [empty_query, winner_query]
+        mock_db.add = MagicMock()
+        # First commit raises (race lost); second commit (the upsert) succeeds.
+        mock_db.commit = MagicMock(side_effect=[Exception("IntegrityError simulated"), None])
+        mock_db.rollback = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        rotated = self._config_data()
+        rotated["auth_token"] = "winner-rotated-token"  # pragma: allowlist secret
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "winner"}
+            service.create_push_config(mock_db, rotated)
+
+        mock_db.rollback.assert_called_once()
+        # The upsert must have actually run on the winner — token rotated.
+        assert decode_auth(winner_cfg.auth_token) == {"token": "winner-rotated-token"}  # pragma: allowlist secret
+
+    def test_create_push_config_upserts_remove_token_with_undecryptable_existing(self, service, mock_db):
+        """Some(undecryptable) → None regression.
+
+        If the existing ciphertext cannot be decrypted (rotated master key,
+        corrupt row) AND the caller rotates to no-auth, the stale ciphertext
+        must still be cleared.  A prior bug fell through this branch
+        silently — the upsert would report success while leaving the
+        un-decryptable ciphertext in place, so ``list_push_configs_for_dispatch``
+        kept logging ``failed to decrypt`` on every dispatch.
+        """
+        existing_cfg = MagicMock()
+        existing_cfg.auth_token = "corrupt-ciphertext"  # pragma: allowlist secret
+        existing_cfg.events = ["state_change"]
+        existing_cfg.enabled = True
+
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = existing_cfg
+        mock_db.query.return_value = mock_dup_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        data = self._config_data()
+        data["auth_token"] = None  # explicit clear
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"id": "cfg-existing"}
+            service.create_push_config(mock_db, data)
+
+        mock_db.commit.assert_called_once()
+        assert existing_cfg.auth_token is None, "undecryptable ciphertext must be cleared"
+
+    @staticmethod
+    def _mock_push_query(rows):
+        """Build a mock query that behaves like ``.order_by(...).limit(2).all() → rows``."""
+        q = MagicMock()
+        q.filter.return_value = q
+        q.order_by.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = list(rows)
+        return q
 
     def test_get_push_config_found(self, service, mock_db):
         """get_push_config returns a dict when config exists."""
         cfg = MagicMock()
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.first.return_value = cfg
-        mock_db.query.return_value = mock_query
+        mock_db.query.return_value = self._mock_push_query([cfg])
 
         expected = {"id": "cfg-1", "task_id": "task-1"}
         with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
@@ -3858,23 +4109,25 @@ class TestPushConfigCRUD:
 
     def test_get_push_config_not_found(self, service, mock_db):
         """get_push_config returns None when no config exists for the task."""
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.first.return_value = None
-        mock_db.query.return_value = mock_query
+        mock_db.query.return_value = self._mock_push_query([])
 
         result = service.get_push_config(mock_db, "missing-task")
 
         assert result is None
 
+    def test_get_push_config_ambiguous_without_agent_id_returns_none(self, service, mock_db):
+        """Two rows with the same ``task_id`` and no ``agent_id`` filter must refuse to guess."""
+        cfg_a = MagicMock()
+        cfg_b = MagicMock()
+        mock_db.query.return_value = self._mock_push_query([cfg_a, cfg_b])
+
+        result = service.get_push_config(mock_db, "shared-task-id")
+        assert result is None
+
     def test_get_push_config_with_agent_id(self, service, mock_db):
         """agent_id adds a second filter clause to get_push_config."""
         cfg = MagicMock()
-        mock_query = MagicMock()
-        mock_query.filter.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.first.return_value = cfg
+        mock_query = self._mock_push_query([cfg])
         mock_db.query.return_value = mock_query
 
         with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
@@ -3941,6 +4194,180 @@ class TestPushConfigCRUD:
 
         mock_db.delete.assert_not_called()
         assert result is False
+
+    def test_create_push_config_encrypts_auth_token_at_rest(self, service, mock_db):
+        """Plaintext auth_token must be encrypted before being written to the DB.
+
+        The bearer token that signs outbound webhook requests is sensitive
+        and must not be recoverable from a raw DB dump or backup.
+        """
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        # No existing row → insert path.
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = None
+        mock_db.query.return_value = mock_dup_query
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        captured = {}
+
+        def capture_init(**kwargs):
+            captured.update(kwargs)
+            stub = MagicMock()
+            stub.auth_token = kwargs.get("auth_token")
+            return stub
+
+        with (
+            patch("mcpgateway.db.A2APushNotificationConfig", side_effect=capture_init),
+            patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv,
+        ):
+            mock_mv.return_value.model_dump.return_value = {}
+            service.create_push_config(mock_db, self._config_data())
+
+        stored = captured["auth_token"]
+        assert stored != "secret-token", "auth_token must be ciphertext, not cleartext"  # pragma: allowlist secret
+        # Round-trip via decode_auth proves it was encrypted (not, e.g.,
+        # blanked out) and that the original value is recoverable for
+        # webhook dispatch.
+        decoded = decode_auth(stored)
+        assert decoded == {"token": "secret-token"}  # pragma: allowlist secret
+
+    def test_create_push_config_with_no_auth_token_stores_none(self, service, mock_db):
+        """A missing/empty auth_token stays as NULL (not an empty ciphertext)."""
+        mock_dup_query = MagicMock()
+        mock_dup_query.filter.return_value = mock_dup_query
+        mock_dup_query.first.return_value = None
+        mock_db.query.return_value = mock_dup_query
+
+        captured = {}
+
+        def capture_init(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        data = self._config_data()
+        data["auth_token"] = None
+        with (
+            patch("mcpgateway.db.A2APushNotificationConfig", side_effect=capture_init),
+            patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv,
+        ):
+            mock_mv.return_value.model_dump.return_value = {}
+            service.create_push_config(mock_db, data)
+
+        assert captured["auth_token"] is None
+
+    def test_list_push_configs_for_dispatch_decrypts_auth_token(self, service, mock_db):
+        """Rust-facing dispatch listing must return the plaintext token."""
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
+        cfg = MagicMock()
+        cfg.id = "cfg-1"
+        cfg.a2a_agent_id = "agent-1"
+        cfg.task_id = "task-1"
+        cfg.webhook_url = "https://example.com/webhook"
+        cfg.auth_token = encode_auth({"token": "live-secret"})  # pragma: allowlist secret
+        cfg.events = ["completed"]
+        cfg.enabled = True
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [cfg]
+        mock_db.query.return_value = mock_query
+
+        rows = service.list_push_configs_for_dispatch(mock_db, agent_id="agent-1")
+        assert len(rows) == 1
+        assert rows[0]["auth_token"] == "live-secret"  # pragma: allowlist secret
+        assert rows[0]["webhook_url"] == "https://example.com/webhook"
+
+    def test_list_push_configs_for_dispatch_admin_bypass_skips_visibility_filter(self, service, mock_db):
+        """Admin (user_email=None, token_teams=None) must not scope by ``_visible_agent_ids``.
+
+        An admin listing for dispatch should see every row without paying
+        the cost of a preliminary agent-id scan.
+        """
+        cfg = MagicMock()
+        cfg.id = "cfg-1"
+        cfg.a2a_agent_id = "agent-1"
+        cfg.task_id = "task-1"
+        cfg.webhook_url = "https://example.com/webhook"
+        cfg.auth_token = None
+        cfg.events = None
+        cfg.enabled = True
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [cfg]
+        mock_db.query.return_value = mock_query
+
+        with patch.object(service, "_visible_agent_ids") as mock_visible:
+            rows = service.list_push_configs_for_dispatch(mock_db, user_email=None, token_teams=None)
+            mock_visible.assert_called_once_with(mock_db, None, None)
+
+        assert len(rows) == 1
+
+    def test_list_push_configs_for_dispatch_non_admin_scopes_via_sql(self, service, mock_db):
+        """Non-admin caller must have visibility pushed into the SQL query."""
+        cfg = MagicMock()
+        cfg.id = "cfg-1"
+        cfg.a2a_agent_id = "agent-visible"
+        cfg.task_id = "task-1"
+        cfg.webhook_url = "https://example.com/webhook"
+        cfg.auth_token = None
+        cfg.events = None
+        cfg.enabled = True
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [cfg]
+        mock_db.query.return_value = mock_query
+
+        with patch.object(service, "_visible_agent_ids", return_value=["agent-visible"]):
+            rows = service.list_push_configs_for_dispatch(mock_db, user_email="u@test.com", token_teams=["team-a"])
+
+        # A non-admin call must apply a visibility filter — at minimum one
+        # ``.filter()`` call beyond the optional agent_id/task_id filters.
+        assert mock_query.filter.call_count >= 1
+        assert len(rows) == 1
+
+    def test_list_push_configs_for_dispatch_empty_visible_set_short_circuits(self, service, mock_db):
+        """Empty visible-agents set must return [] without executing ``.all()``.
+
+        A public-only user whose filters match no public agents should not
+        cause a full scan of ``a2a_push_notification_configs``.
+        """
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_db.query.return_value = mock_query
+
+        with patch.object(service, "_visible_agent_ids", return_value=[]):
+            rows = service.list_push_configs_for_dispatch(mock_db, user_email="u@test.com", token_teams=[])
+
+        assert rows == []
+        mock_query.all.assert_not_called()
+
+    def test_list_push_configs_for_dispatch_drops_undecryptable_token(self, service, mock_db):
+        """Ciphertext encrypted under a rotated key must not leak as a bearer token."""
+        cfg = MagicMock()
+        cfg.id = "cfg-1"
+        cfg.a2a_agent_id = "agent-1"
+        cfg.task_id = "task-1"
+        cfg.webhook_url = "https://example.com/webhook"
+        cfg.auth_token = "not-valid-ciphertext"
+        cfg.events = None
+        cfg.enabled = True
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [cfg]
+        mock_db.query.return_value = mock_query
+
+        rows = service.list_push_configs_for_dispatch(mock_db)
+        assert rows[0]["auth_token"] is None
 
 
 class TestFlushAndReplayEvents:
@@ -4279,10 +4706,16 @@ class TestGetTask:
         return MagicMock(spec=Session)
 
     def _setup_task_query(self, mock_db, task, agent=None):
-        """Wire mock_db.query() to return task on first call and agent on second."""
+        """Wire mock_db.query() to return task on first call and agent on second.
+
+        ``get_task``/``cancel_task`` now fetch with ``.limit(2).all()`` and
+        refuse ambiguous matches; return a single-element list so the
+        disambiguation guard passes through to the agent-visibility check.
+        """
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = task
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [task] if task is not None else []
 
         mock_agent_query = MagicMock()
         mock_agent_query.filter.return_value = mock_agent_query
@@ -4293,10 +4726,26 @@ class TestGetTask:
     def test_task_not_found_returns_none(self, service, mock_db):
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = []
         mock_db.query.return_value = mock_query
 
         assert service.get_task(mock_db, "missing") is None
+
+    def test_ambiguous_task_without_agent_id_returns_none(self, service, mock_db):
+        """Two matches without agent_id must refuse to guess."""
+        task_a = MagicMock()
+        task_a.a2a_agent_id = "agent-a"
+        task_b = MagicMock()
+        task_b.a2a_agent_id = "agent-b"
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [task_a, task_b]
+        mock_db.query.return_value = mock_query
+
+        assert service.get_task(mock_db, "shared-task-id", user_email=None, token_teams=None) is None
 
     def _wire_task(self, **overrides):
         """Return a MagicMock with the attributes _task_to_wire needs."""

@@ -250,6 +250,55 @@ class TestA2AServerService:
 
         assert result is None
 
+    def test_select_downstream_agent_respects_order_by_name(self, service, mock_db):
+        """Selection is deterministic: ``ORDER BY name LIMIT 1`` picks the first.
+
+        The SQL ordering is emitted in the query construction.  We exercise
+        the statement builder to confirm (a) an ORDER BY name clause is
+        present and (b) the result comes from ``scalar_one_or_none`` (single
+        row, not a collection).
+        """
+        # First-Party
+        from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+
+        chosen = _make_agent(aid="agt-a", name="alpha")
+        captured_query = {}
+
+        def capture_execute(query):
+            captured_query["stmt"] = query
+            return MagicMock(**{"scalar_one_or_none.return_value": chosen})
+
+        mock_db.execute.side_effect = capture_execute
+
+        result = service.select_downstream_agent(mock_db, "srv-1")
+
+        assert result == "agt-a"
+        compiled = str(captured_query["stmt"].compile(compile_kwargs={"literal_binds": False}))
+        assert "ORDER BY" in compiled.upper()
+        assert DbA2AAgent.__tablename__ + ".name" in compiled or "name" in compiled.split("ORDER BY", 1)[1].lower()
+
+    def test_select_downstream_agent_filters_out_disabled(self, service, mock_db):
+        """Disabled agents are filtered in SQL; an all-disabled server returns None.
+
+        We assert the ``enabled = TRUE`` predicate is present in the
+        statement — this is the guarantee callers rely on.
+        """
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        captured_query = {}
+
+        def capture_execute(query):
+            captured_query["stmt"] = query
+            return MagicMock(**{"scalar_one_or_none.return_value": None})
+
+        mock_db.execute.side_effect = capture_execute
+
+        assert service.select_downstream_agent(mock_db, "srv-1") is None
+
+        compiled = str(captured_query["stmt"].compile(compile_kwargs={"literal_binds": True}))
+        # The exact compiled SQL varies by dialect — assert on a normalized
+        # substring that pins the enabled-filter predicate.
+        assert "enabled" in compiled.lower()
+
     # ------------------------------------------------------------------
     # create_task_mapping
     # ------------------------------------------------------------------

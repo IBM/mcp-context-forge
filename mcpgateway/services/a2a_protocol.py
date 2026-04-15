@@ -181,13 +181,27 @@ def _normalize_part(part: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_task_state(state: Any, protocol_version: Optional[str]) -> Any:
-    """Normalize an A2A task state between v1 and legacy protocol forms."""
+    """Normalize an A2A task state between v1 and legacy protocol forms.
+
+    Unknown states (not in the spec FSM) are passed through unchanged for
+    forward-compatibility with future spec additions, but we log a warning
+    so operators can see drift.  Per CLAUDE.md the domain-level
+    ``A2ATaskState`` enum defines the canonical set.
+    """
     value = str(state or "").strip()
     if not value:
         return state
     if is_v1_a2a_protocol(protocol_version):
-        return _LEGACY_TASK_STATE_TO_V1.get(value.lower(), value)
-    return _V1_TASK_STATE_TO_LEGACY.get(value, value.lower())
+        mapped = _LEGACY_TASK_STATE_TO_V1.get(value.lower())
+        if mapped is None:
+            logger.warning("Unknown A2A legacy task state %r — passing through unchanged", value)
+            return value
+        return mapped
+    mapped = _V1_TASK_STATE_TO_LEGACY.get(value)
+    if mapped is None:
+        logger.warning("Unknown A2A v1 task state %r — passing through unchanged", value)
+        return value.lower()
+    return mapped
 
 
 def _normalize_message(message: Any, protocol_version: Optional[str]) -> Any:
@@ -390,9 +404,12 @@ def prepare_a2a_invocation(
             try:
                 decrypted = decode_auth(encrypted_value)
                 auth_query_params_decrypted[str(param_key)] = str(decrypted.get(param_key, ""))
-            except Exception:  # nosec B112
-                logger.warning("Failed to decrypt query param %r for A2A agent invocation — invocation proceeds without this credential", param_key, exc_info=True)
-                continue
+            except (InvalidTag, binascii.Error, orjson.JSONDecodeError, IndexError, ValueError) as exc:
+                # Fail closed: matches the header-path behavior in a2a_service.invoke_agent.
+                # Silently dropping the credential and sending the request unauthenticated
+                # can reach the agent as an anonymous call with unpredictable results.
+                logger.warning("Failed to decrypt query param %r for A2A agent invocation", param_key)
+                raise ValueError(f"Failed to decrypt query_param authentication for {param_key!r}") from exc
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)
 
