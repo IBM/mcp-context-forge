@@ -107,7 +107,7 @@ class A2AServerService:
             >>> service.get_server_agent_card(db, "no-such-server") is None
             True
         """
-        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled == True)  # noqa: E712
+        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled.is_(True))
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
             return None
@@ -178,7 +178,7 @@ class A2AServerService:
             >>> service.resolve_server_agent(db, "no-such-server") is None
             True
         """
-        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled == True)  # noqa: E712
+        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled.is_(True))
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
             return None
@@ -225,7 +225,7 @@ class A2AServerService:
             .join(server_a2a_association, server_a2a_association.c.a2a_agent_id == DbA2AAgent.id)
             .where(
                 server_a2a_association.c.server_id == server_id,
-                DbA2AAgent.enabled == True,  # noqa: E712
+                DbA2AAgent.enabled.is_(True),
             )
             .order_by(DbA2AAgent.name)
             .limit(1)
@@ -331,7 +331,7 @@ class A2AServerService:
             select(DbServerInterface)
             .where(
                 DbServerInterface.server_id == server_id,
-                DbServerInterface.enabled == True,  # noqa: E712
+                DbServerInterface.enabled.is_(True),
                 func.lower(DbServerInterface.protocol).like("a2a%"),
             )
             .order_by(DbServerInterface.created_at.desc())

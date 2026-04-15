@@ -116,8 +116,9 @@ class TestTasksGetTrusted:
     """tasks/get returns 200 + task dict when a matching task exists."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
-    def test_returns_task(self, mock_get_task, _mock_trust, client):
+    def test_returns_task(self, mock_get_task, _mock_scope, _mock_trust, client):
         mock_get_task.return_value = {"task_id": "t1", "state": "completed"}
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "t1"})
         assert resp.status_code == 200
@@ -130,8 +131,9 @@ class TestTasksGetTrusted:
         assert resp.status_code == 400
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
-    def test_task_not_found_returns_404(self, mock_get_task, _mock_trust, client):
+    def test_task_not_found_returns_404(self, mock_get_task, _mock_scope, _mock_trust, client):
         mock_get_task.return_value = None
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "missing"})
         assert resp.status_code == 404
@@ -163,8 +165,9 @@ class TestTasksListTrusted:
     """tasks/list returns 200 + tasks array."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.list_tasks")
-    def test_returns_tasks(self, mock_list_tasks, _mock_trust, client):
+    def test_returns_tasks(self, mock_list_tasks, _mock_scope, _mock_trust, client):
         mock_list_tasks.return_value = [{"task_id": "t1"}]
         resp = client.post("/_internal/a2a/tasks/list", json={})
         assert resp.status_code == 200
@@ -175,8 +178,9 @@ class TestTasksCancelTrusted:
     """tasks/cancel returns 200 when task found, 404 when not."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
-    def test_cancels_task(self, mock_cancel, _mock_trust, client):
+    def test_cancels_task(self, mock_cancel, _mock_scope, _mock_trust, client):
         mock_cancel.return_value = {"task_id": "t1", "state": "canceled"}
         resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "t1"})
         assert resp.status_code == 200
@@ -189,8 +193,9 @@ class TestTasksCancelTrusted:
         assert resp.status_code == 400
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
-    def test_task_not_found_returns_404(self, mock_cancel, _mock_trust, client):
+    def test_task_not_found_returns_404(self, mock_cancel, _mock_scope, _mock_trust, client):
         mock_cancel.return_value = None
         resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "missing"})
         assert resp.status_code == 404
@@ -216,8 +221,10 @@ class TestPushCreateTrusted:
     """push/create returns 200 with config, 400 when required fields missing."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.create_push_config")
-    def test_creates_config(self, mock_create, _mock_trust, client):
+    def test_creates_config(self, mock_create, _mock_access, _mock_scope, _mock_trust, client):
         mock_create.return_value = {"id": "cfg1"}
         resp = client.post(
             "/_internal/a2a/push/create",
@@ -236,16 +243,19 @@ class TestPushGetTrusted:
     """push/get returns 200 + config when found, 404 when not."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_push_config")
-    def test_returns_config(self, mock_get, _mock_trust, client):
-        mock_get.return_value = {"id": "cfg1", "task_id": "t1"}
+    def test_returns_config(self, mock_get, _mock_access, _mock_scope, _mock_trust, client):
+        mock_get.return_value = {"id": "cfg1", "task_id": "t1", "a2a_agent_id": "agent1"}
         resp = client.post("/_internal/a2a/push/get", json={"task_id": "t1"})
         assert resp.status_code == 200
         assert resp.json()["task_id"] == "t1"
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_push_config")
-    def test_config_not_found_returns_404(self, mock_get, _mock_trust, client):
+    def test_config_not_found_returns_404(self, mock_get, _mock_scope, _mock_trust, client):
         mock_get.return_value = None
         resp = client.post("/_internal/a2a/push/get", json={"task_id": "t1"})
         assert resp.status_code == 404
@@ -260,9 +270,11 @@ class TestPushListTrusted:
     """push/list returns 200 + configs array."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs")
-    def test_returns_configs(self, mock_list, _mock_trust, client):
-        mock_list.return_value = [{"id": "cfg1"}, {"id": "cfg2"}]
+    def test_returns_configs(self, mock_list, _mock_access, _mock_scope, _mock_trust, client):
+        mock_list.return_value = [{"id": "cfg1", "a2a_agent_id": "agent1"}, {"id": "cfg2", "a2a_agent_id": "agent1"}]
         resp = client.post("/_internal/a2a/push/list", json={})
         assert resp.status_code == 200
         assert len(resp.json()["configs"]) == 2
@@ -272,16 +284,20 @@ class TestPushDeleteTrusted:
     """push/delete returns 200 when deleted, 404 when not found, 400 if id missing."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.delete_push_config")
-    def test_deletes_config(self, mock_delete, _mock_trust, client):
+    def test_deletes_config(self, mock_delete, _mock_access, _mock_scope, _mock_trust, client):
         mock_delete.return_value = True
         resp = client.post("/_internal/a2a/push/delete", json={"config_id": "cfg1"})
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.delete_push_config")
-    def test_config_not_found_returns_404(self, mock_delete, _mock_trust, client):
+    def test_config_not_found_returns_404(self, mock_delete, _mock_access, _mock_scope, _mock_trust, client):
         mock_delete.return_value = False
         resp = client.post("/_internal/a2a/push/delete", json={"config_id": "missing"})
         assert resp.status_code == 404

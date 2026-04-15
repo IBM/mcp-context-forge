@@ -361,7 +361,7 @@ class A2AAgentService(BaseService):
         if token_teams is None and user_email is None:
             return None
 
-        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled == True)  # noqa: E712
+        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
@@ -1055,7 +1055,7 @@ class A2AAgentService(BaseService):
             >>> service.get_agent_card(db, "missing") is None
             True
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True)  # noqa: E712
+        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
             return None

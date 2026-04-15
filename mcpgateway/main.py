@@ -81,7 +81,7 @@ from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import A2AAgent as DbA2AAgent, A2APushNotificationConfig, A2ATask as DbA2ATask, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -111,6 +111,7 @@ from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
+    A2APushNotificationConfigCreate,
     A2AAgentUpdate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
@@ -143,6 +144,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
@@ -8968,19 +8970,12 @@ async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
 
     db = SessionLocal()
     try:
-        # First-Party
-        from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         if not agent:
-            # First-Party
-            from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
-
-            server_service = A2AServerService()
-            server_agent = server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
+            a2a_server_service = A2AServerService()
+            server_agent = a2a_server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
             if server_agent:
                 return ORJSONResponse(status_code=200, content=server_agent)
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
@@ -9029,27 +9024,18 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
 
     db = SessionLocal()
     try:
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
 
         # Check agent visibility before building the card to avoid loading
         # sensitive relationship data for agents the caller cannot see.
-        # First-Party
-        from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
-
-        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
         if agent is not None and service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
             card = service.get_agent_card(db, agent_name)
         if card is None:
-            # First-Party
-            from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
-
-            server_service = A2AServerService()
-            card = server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+            a2a_server_service = A2AServerService()
+            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
         if card is None:
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
         return ORJSONResponse(status_code=200, content=card)
@@ -9083,9 +9069,6 @@ async def handle_internal_a2a_tasks_get(request: Request):
             return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
         if agent_id is not None and not isinstance(agent_id, str):
             return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
-
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
@@ -9126,9 +9109,6 @@ async def handle_internal_a2a_tasks_list(request: Request):
         limit = min(int(body.get("limit", 100)), 1000)
         offset = max(int(body.get("offset", 0)), 0)
 
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset, user_email=user_email, token_teams=token_teams)
@@ -9164,9 +9144,6 @@ async def handle_internal_a2a_tasks_cancel(request: Request):
         if agent_id is not None and not isinstance(agent_id, str):
             return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
 
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         task = service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
@@ -9201,10 +9178,6 @@ async def handle_internal_a2a_push_create(request: Request):
             return ORJSONResponse(status_code=400, content={"error": "a2a_agent_id, task_id, and webhook_url are required"})
 
         # Validate webhook URL through the schema to enforce SSRF protection.
-        # First-Party
-        from mcpgateway.schemas import A2APushNotificationConfigCreate  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         try:
             validated = A2APushNotificationConfigCreate(**body)
         except Exception as validation_err:
@@ -9245,9 +9218,6 @@ async def handle_internal_a2a_push_get(request: Request):
         if not task_id:
             return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
 
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         cfg = service.get_push_config(db, task_id, agent_id=agent_id)
@@ -9283,9 +9253,6 @@ async def handle_internal_a2a_push_list(request: Request):
         agent_id = body.get("agent_id")
         task_id = body.get("task_id")
 
-        # First-Party
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
-
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         configs = service.list_push_configs(db, agent_id=agent_id, task_id=task_id)
@@ -9319,10 +9286,6 @@ async def handle_internal_a2a_push_delete(request: Request):
         config_id = body.get("config_id")
         if not config_id:
             return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
-
-        # First-Party
-        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
@@ -9360,10 +9323,6 @@ async def handle_internal_a2a_events_flush(request: Request):
         events = body.get("events", [])
         if not events:
             return ORJSONResponse(status_code=200, content={"count": 0})
-
-        # First-Party
-        from mcpgateway.db import A2ATask as DbA2ATask  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
@@ -9408,10 +9367,6 @@ async def handle_internal_a2a_events_replay(request: Request):
         limit = min(int(body.get("limit", 1000)), 10000)
         if not task_id:
             return ORJSONResponse(status_code=400, content={"error": "task_id required"})
-
-        # First-Party
-        from mcpgateway.db import A2ATask as DbA2ATask  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()

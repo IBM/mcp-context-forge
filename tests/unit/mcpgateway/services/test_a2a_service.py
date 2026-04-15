@@ -3550,6 +3550,7 @@ class TestPushConfigCRUD:
         cfg = MagicMock()
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
         mock_query.first.return_value = cfg
         mock_db.query.return_value = mock_query
 
@@ -3564,6 +3565,7 @@ class TestPushConfigCRUD:
         """get_push_config returns None when no config exists for the task."""
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
         mock_query.first.return_value = None
         mock_db.query.return_value = mock_query
 
@@ -3576,6 +3578,7 @@ class TestPushConfigCRUD:
         cfg = MagicMock()
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
         mock_query.first.return_value = cfg
         mock_db.query.return_value = mock_query
 

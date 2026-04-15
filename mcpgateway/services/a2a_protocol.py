@@ -366,9 +366,7 @@ def prepare_a2a_invocation(
                     # If decoding fails (corrupted data, wrong key, invalid encoding, truncated input,
                     # or invalid nonce/cipher parameters), use the raw value as the API key
                     #
-                    # TODO:  Is this a logic failure?  Perhaps the gateway should
-                    # ensure all API Key style auths are encoded -- or vice versa
-                    #
+                    # Keep backward compatibility with older raw API key rows.
                     headers.setdefault("Authorization", f"Bearer {auth_value}")
             else:
                 decoded = decode_auth(auth_value)

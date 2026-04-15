@@ -135,7 +135,6 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 # Build the experimental Rust A2A runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         cargo build --release -p contextforge_a2a_runtime && \
-        cp /build/target/release/contextforge_a2a_runtime /build/target/release/contextforge-a2a-runtime && \
         echo "✅ Rust A2A runtime built successfully"; \
     else \
         echo "⏭️  Skipping Rust A2A runtime build"; \
