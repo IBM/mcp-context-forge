@@ -22,14 +22,7 @@
  *   useRouter()                    — { path, params, navigate }
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { getToken } from "../api/client";
 
@@ -103,10 +96,7 @@ const RouterContext = createContext<RouterContextValue | null>(null);
 // Returns params or null when there is no match or a param is malformed.
 // ---------------------------------------------------------------------------
 
-function matchPath(
-  pattern: string,
-  path: string
-): Record<string, string> | null {
+function matchPath(pattern: string, path: string): Record<string, string> | null {
   const patternParts = pattern.split("/").filter(Boolean);
   const pathParts = path.split("/").filter(Boolean);
 
@@ -157,12 +147,10 @@ export function RouterProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<RouterContextValue>(
     () => ({ path, params: {}, navigate }),
-    [path, navigate]
+    [path, navigate],
   );
 
-  return (
-    <RouterContext.Provider value={value}>{children}</RouterContext.Provider>
-  );
+  return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,10 +201,7 @@ export function Redirect({ to }: { to: string }) {
 // ---------------------------------------------------------------------------
 
 // Exact paths that are always public.
-const DEFAULT_PUBLIC_PATHS: readonly string[] = [
-  "/app/login",
-  "/app/forgot-password",
-];
+const DEFAULT_PUBLIC_PATHS: readonly string[] = ["/app/login", "/app/forgot-password"];
 
 // Path prefixes whose subtrees are always public.
 const DEFAULT_PUBLIC_PREFIXES: readonly string[] = ["/app/reset-password/"];
@@ -238,8 +223,7 @@ export function AuthGuard({
   const authenticated = getToken() !== null;
 
   const isPublic =
-    publicPaths.includes(path) ||
-    publicPrefixes.some((prefix) => path.startsWith(prefix));
+    publicPaths.includes(path) || publicPrefixes.some((prefix) => path.startsWith(prefix));
 
   useEffect(() => {
     if (!authenticated && !isPublic) {
