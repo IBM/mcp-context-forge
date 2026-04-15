@@ -7730,7 +7730,7 @@ profile-compare:
 .PHONY: benchmark
 benchmark:
 	@echo "Starting benchmark console (first run may compile; wait for TUI)..."
-	cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_console/Cargo.toml --
+	cargo run --manifest-path crates/contextforge_benchmark_console/Cargo.toml --
 
 .PHONY: async-validate
 async-validate:

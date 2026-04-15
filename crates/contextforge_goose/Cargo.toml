@@ -1,0 +1,24 @@
+[package]
+name = "contextforge_goose"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "contextforge_goose"
+path = "goosefile_benchmark.rs"
+
+[dependencies]
+goose = "0.18.1"
+goose-eggs = "0.6.0"
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

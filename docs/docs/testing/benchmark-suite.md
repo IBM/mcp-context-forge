@@ -30,25 +30,25 @@ Each scenario runs against the real containerized testing stack:
 The runner is:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml --
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml --
 ```
 
 Committed scenarios now live in:
 
 ```bash
-tools_rust/contextforge_benchmark/assets/scenarios/
+crates/contextforge_benchmark_runner/assets/scenarios/
 ```
 
 The benchmark launcher now lives in:
 
 ```bash
-tools_rust/contextforge_benchmark/benchmark_console/
+crates/contextforge_benchmark_console/
 ```
 
 The Goose driver now lives in:
 
 ```bash
-tools_rust/contextforge_benchmark/contextforge_goose/
+crates/contextforge_goose/
 ```
 
 ## Quick Start
@@ -71,36 +71,36 @@ Inside the launcher you can choose:
 - `Generate`
 
 The `Generate` action opens a template builder that saves a new scenario file
-under `tools_rust/contextforge_benchmark/assets/scenarios/`. It fills in the important fields in
+under `crates/contextforge_benchmark_runner/assets/scenarios/`. It fills in the important fields in
 the UI and writes a full TOML template containing all supported sections and
 keys, including commented optional settings for advanced tuning.
 
 Build the benchmark image expected by scenarios with `rebuild_policy = "never"`:
 
 ```bash
-make container-build CONTAINER_FILE=tools_rust/contextforge_benchmark/assets/Containerfile ENABLE_RUST_BUILD=1 ENABLE_PROFILING_BUILD=1 CONTAINER_RUNTIME=podman
+make container-build CONTAINER_FILE=crates/contextforge_benchmark_runner/assets/Containerfile ENABLE_RUST_BUILD=1 ENABLE_PROFILING_BUILD=1 CONTAINER_RUNTIME=podman
 ```
 
 Validate the suite:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- validate --scenario rust-mcp-runtime-300
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- validate --scenario rust-mcp-runtime-300
 ```
 
 Run the smoke suite:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
 ```
 
 Run the suite:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- run --scenario rust-mcp-runtime-300
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario rust-mcp-runtime-300
 ```
 
 The TUI discovers committed scenarios automatically from
-`tools_rust/contextforge_benchmark/assets/scenarios/`.
+`crates/contextforge_benchmark_runner/assets/scenarios/`.
 
 ## Scenario Contract
 
@@ -148,7 +148,7 @@ rather than strict unknown-key rejection.
 
 ## Request Mixes
 
-The Rust Goose driver in `tools_rust/contextforge_benchmark/contextforge_goose/` uses real request
+The Rust Goose driver in `crates/contextforge_goose/` uses real request
 families:
 
 - health checks
@@ -156,7 +156,7 @@ families:
 - REST discovery (`/servers`, `/resources`, `/prompts`)
 - MCP JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
 - MCP JSON-RPC prompt/resource/tool calls from payload fixtures in
-  `tools_rust/contextforge_benchmark/assets/payloads/`
+  `crates/contextforge_benchmark_runner/assets/payloads/`
 
 This means the committed scenario mixes now hit real prompt/resource/tool and
 REST discovery code paths over the transports named in the scenario files, not
@@ -196,11 +196,11 @@ Key reporting behaviors:
 Re-render a saved run:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
 ```
 
 Rebuild comparisons for a saved run:
 
 ```bash
-cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
 ```
