@@ -1,4 +1,11 @@
-"""Local GitHub CI parity runner for ``make ci``."""
+"""Best-effort local GitHub CI parity runner for ``make ci``.
+
+This module tries to match the workflows GitHub Actions would select for a
+branch diff against ``main`` and then run local equivalents where possible.
+It is a practical predictor, not a guarantee: some jobs are only approximated,
+some GitHub-hosted behavior cannot be reproduced locally, and local toolchain
+differences can still affect results.
+"""
 
 from __future__ import annotations
 
@@ -721,7 +728,12 @@ def _gap_exit_code(approx_count: int, unreproducible_count: int, strict: bool) -
 
 
 def run_ci(repo_root: Path, base_ref: str = DEFAULT_BASE_REF, changed_files: list[str] | None = None, pr_draft: bool = False, allow_approx: bool = True, list_only: bool = False) -> int:
-    """Execute the selected local CI job plan and report parity gaps."""
+    """Execute the selected local CI job plan and report parity gaps.
+
+    This is best-effort matching for GitHub CI, not a formal guarantee of the
+    eventual GitHub result. Approximated and non-reproducible jobs are reported
+    explicitly, and best-effort mode can tolerate those gaps.
+    """
 
     actual_changed_files = changed_files or derive_changed_files(repo_root, base_ref)
     execution_plan = build_execution_plan(repo_root=repo_root, changed_files=actual_changed_files, pr_draft=pr_draft, base_ref=base_ref)
@@ -777,7 +789,7 @@ def run_ci(repo_root: Path, base_ref: str = DEFAULT_BASE_REF, changed_files: lis
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``python -m mcpgateway.utils.ci_parity``."""
 
-    parser = argparse.ArgumentParser(description="Run a high-confidence local approximation of GitHub CI.")
+    parser = argparse.ArgumentParser(description="Run a best-effort local approximation of GitHub CI. This predicts workflow coverage but does not guarantee the GitHub result.")
     parser.add_argument("--base-ref", default=os.environ.get("CI_BASE_REF", DEFAULT_BASE_REF))
     parser.add_argument("--changed-files", default=os.environ.get("CI_CHANGED_FILES"))
     parser.add_argument("--pr-draft", action="store_true", default=os.environ.get("CI_PR_DRAFT", "0") == "1")
