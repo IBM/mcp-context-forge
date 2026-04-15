@@ -259,7 +259,7 @@ Status:
 
 Observed behavior:
 - The compose testing stack enables the plugin framework with `PLUGINS_ENABLED=true`.
-- However, the default [plugins/config.yaml](/home/cmihai/agents2/pr/mcp-context-forge/plugins/config.yaml) keeps built-in plugins such as `PIIFilterPlugin` in `mode: "disabled"`, so the current Rust MCP end-to-end battery does not exercise live plugin enforcement or transformation behavior.
+- However, the default [plugins/config.yaml](../../plugins/config.yaml) keeps built-in plugins such as `PIIFilterPlugin` in `mode: "disabled"`, so the current Rust MCP end-to-end battery does not exercise live plugin enforcement or transformation behavior.
 - Manual spot checks with temporary plugin enablement showed:
   - `resource_post_fetch` parity for `resources/read` using `LicenseHeaderInjector`
   - `prompt_pre_fetch` is reached on Rust full mode using `DenyListPlugin`
@@ -268,7 +268,7 @@ Observed behavior:
   - `tool_pre_invoke` / `tool_post_invoke`
   - `prompt_pre_fetch` / `prompt_post_fetch`
   - `resource_pre_fetch` / `resource_post_fetch`
-- In Rust full mode, the direct fast paths in [lib.rs](/home/cmihai/agents2/pr/mcp-context-forge/crates/mcp_runtime/src/lib.rs) serve several of those methods directly:
+- In Rust full mode, the direct fast paths in [lib.rs](src/lib.rs) serve several of those methods directly:
   - `direct_server_tools_list(...)`
   - `direct_server_resources_list(...)`
   - `direct_server_resource_templates_list(...)`
@@ -289,10 +289,10 @@ Why this matters:
   `prompts/get` happy path.
 
 Likely area:
-- [tool_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/tool_service.py)
-- [prompt_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/prompt_service.py)
-- [resource_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/resource_service.py)
-- [lib.rs](/home/cmihai/agents2/pr/mcp-context-forge/crates/mcp_runtime/src/lib.rs)
+- [tool_service.py](../../mcpgateway/services/tool_service.py)
+- [prompt_service.py](../../mcpgateway/services/prompt_service.py)
+- [resource_service.py](../../mcpgateway/services/resource_service.py)
+- [lib.rs](src/lib.rs)
 
 Recommended next step:
 - Keep `make test-mcp-plugin-parity` green in both Python mode and Rust full mode using `tests/e2e/plugin_parity_config.yaml`.

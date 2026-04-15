@@ -98,7 +98,7 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
 """
 
 REDIS_SERVICE = """  redis:
-    image: redis:7-alpine
+    image: redis:7-bookworm
     container_name: redis_perf
     ports:
       - "6379:6379"
@@ -172,7 +172,7 @@ BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
 """
 
 NGINX_LOAD_BALANCER = """  nginx:
-    image: nginx:alpine
+    image: nginx:stable-bookworm
     container_name: nginx_lb
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -223,7 +223,7 @@ class DockerComposeGenerator:
             raise ValueError(f"Server profile '{server_profile}' not found")
 
         # Override values if provided
-        pg_version = postgres_version or infra.get("postgres_version", "17-alpine")
+        pg_version = postgres_version or infra.get("postgres_version", "17-bookworm")
         num_instances = instances or infra.get("gateway_instances", 1)
         redis_enabled = infra.get("redis_enabled", False)
         benchmark_enabled = infra.get("benchmark_server_enabled", False)
@@ -454,7 +454,7 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Configuration file path")
     parser.add_argument("--infrastructure", default="staging", help="Infrastructure profile name (default: staging)")
     parser.add_argument("--server-profile", default="standard", help="Server profile name")
-    parser.add_argument("--postgres-version", help="PostgreSQL version (e.g., 17-alpine)")
+    parser.add_argument("--postgres-version", help="PostgreSQL version (e.g., 17-bookworm)")
     parser.add_argument("--instances", type=int, help="Number of gateway instances")
     parser.add_argument("--output", type=Path, default=Path("docker-compose.perf.yml"), help="Output file path")
     parser.add_argument("--list-profiles", action="store_true", help="List available profiles and exit")

@@ -974,7 +974,7 @@ make test lint format
 **Solution**: Make sure the virtual environment is activated and the package is installed:
 
 ```bash
-. /home/cmihai/.venv/mcpgateway/bin/activate
+. .venv/bin/activate
 cd mcp-servers/python/mcp-rss-search
 pip install -e .
 ```
