@@ -90,7 +90,7 @@ Create a `docker-compose.yaml` file with the following content:
 ```yaml
 services:
     hyprmcp-dex:
-        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        image: ghcr.io/dexidp/dex:v2.43.1
         command: ["dex", "serve", "/config.yaml"]
         ports:
 
@@ -305,7 +305,7 @@ Choose a tool from the list and run it via the right side panel.
 ```yaml
 services:
     hyprmcp-dex:
-        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        image: ghcr.io/dexidp/dex:v2.43.1
         command: ["dex", "serve", "/config.yaml"]
         ports:
 

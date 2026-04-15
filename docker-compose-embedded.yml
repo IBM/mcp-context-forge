@@ -132,7 +132,7 @@ services:
   # Access: http://localhost:8889
   # ──────────────────────────────────────────────────────────────────────
   iframe_harness:
-    image: nginx:alpine
+    image: nginx:stable-bookworm
     restart: unless-stopped
     networks: [mcpnet]
     ports:
