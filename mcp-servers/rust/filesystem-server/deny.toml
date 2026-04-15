@@ -1,27 +1,140 @@
-# Cargo-deny config: license and policy checks for this crate.
+# Workspace-level cargo-deny config: applies to all crates in the workspace.
 # See https://embarkstudios.github.io/cargo-deny/
 
+[advisories]
+ignore = [
+    # pyo3-stub-gen currently depends on rustpython-parser 0.4, which still pulls
+    # the unmaintained rust-unic crates used only for Python stub generation.
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0090",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
 [licenses]
+# Keep this allowlist broad on purpose. It represents the IBM-approved license
+# set plus ContextForge-specific extensions, not just the subset currently
+# present in the dependency graph. Do not shorten it opportunistically when
+# editing unrelated Rust dependency policy.
+# Listed licenses are allowed even if not encountered in the dependency tree.
 unused-allowed-license = "allow"
 confidence-threshold = 0.95
 allow = [
-    # Currently used across our Rust projects
+    "0BSD",
+    "AFL-1.1",
+    "AFL-1.2",
+    "AFL-2.0",
+    "AFL-2.1",
+    "AFL-3.0",
+    "Adobe-2006",
+    "ANTLR-PD",
+    "Apache-1.0",
+    "Apache-1.1",
     "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
+    "Apache-2.0 WITH LLVM-exception",
+    "Artistic-1.0",
+    "Artistic-1.0-Perl",
+    "Artistic-1.0-cl8",
+    "Artistic-2.0",
+    "Beerware",
+    "BlueOak-1.0.0",
     "BSL-1.0",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-2-Clause-FreeBSD",
+    "BSD-2-Clause-NetBSD",
+    "BSD-2-Clause-Patent",
+    "BSD-2-Clause-Views",
+    "BSD-3-Clause",
+    "BSD-3-Clause-Attribution",
+    "BSD-3-Clause-Clear",
+    "BSD-4-Clause",
+    "BSD-Protection",
+    "BSD-Source-Code",
+    "bzip2-1.0.6",
+    "CC-BY-1.0",
+    "CC-BY-2.0",
+    "CC-BY-2.5",
+    "CC-BY-2.5-AU",
+    "CC-BY-3.0",
+    "CC-BY-3.0-AT",
+    "CC-BY-3.0-DE",
+    "CC-BY-3.0-NL",
+    "CC-BY-3.0-US",
+    "CC-BY-4.0",
     "CC0-1.0",
+    "CDDL-1.0",
+    "CDDL-1.1",
+    "ClArtistic",
+    "CPL-1.0",
+    "curl",
+    "ECL-2.0",
+    "eGenix",
+    "EPL-1.0",
+    "EPL-2.0",
+    "ErlPL-1.1",
+    "FSFAP",
+    "FTL",
+    "HPND",
+    "ICU",
+    "IJG",
+    "Info-ZIP",
     "ISC",
-    "LGPL-2.1-or-later",
+    "JSON",
+    "Libpng",
     "MIT",
     "MIT-0",
+    "MIT-Modern-Variant",
+    "MPL-1.0",
+    "MPL-1.1",
+    "MPL-2.0",
+    "MS-PL",
+    "Net-SNMP",
+    "OLDAP-1.4",
+    "OLDAP-2.8",
+    "OFL-1.0",
+    "OFL-1.1",
     "OpenSSL",
+    "PHP-3.0",
+    "PHP-3.01",
+    "Plexus",
+    "PostgreSQL",
+    "PSF-2.0",
+    "Python-2.0",
+    "Python-2.0.1",
+    "RSA-MD",
+    "Ruby",
+    "SISSL",
+    "SISSL-1.2",
+    "TCL",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "Unlicense",
-    "Zlib",
-    # Common safe licenses in the Rust ecosystem
-    "0BSD",
-    "Apache-2.0 WITH LLVM-exception",
     "Unicode-DFS-2015",
+    "Unicode-DFS-2016",
+    "Unicode-TOU",
+    "Unlicense",
+    "UPL-1.0",
+    "W3C",
+    "W3C-19980720",
+    "W3C-20150513",
+    "X11",
+    "X11-distribute-modifications-variant",
+    "Xnet",
+    "Zend-2.0",
+    "Zlib",
+    "zlib-acknowledgement",
+    "ZPL-1.1",
+    "ZPL-2.0",
+    "ZPL-2.1",
 ]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

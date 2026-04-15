@@ -18,7 +18,9 @@ on:
     # paths:
     #   - "mcpgateway/**"
     #   - "tests/**"
+    #   - "!tests/e2e_rust/**"
     #   - "pyproject.toml"
+    #   - "uv.lock"
     #   - ".github/workflows/pytest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
@@ -26,7 +28,9 @@ on:
     # paths:
     #   - "mcpgateway/**"
     #   - "tests/**"
+    #   - "!tests/e2e_rust/**"
     #   - "pyproject.toml"
+    #   - "uv.lock"
     #   - ".github/workflows/pytest.yml"
   # schedule:
   #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
@@ -88,7 +92,6 @@ jobs:
       # (e2e_rust tests are excluded and run in separate workflow)
       # -----------------------------------------------------------
 
-      # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest

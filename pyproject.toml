@@ -135,6 +135,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
+    "radon>=6.0.1",
     "redis>=6.4.0",
     "rich>=13.0.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk

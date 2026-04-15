@@ -197,13 +197,17 @@ Update non-Python dependencies across the repository.
 
 ### 3.1 Rust dependencies
 
-Update `Cargo.lock` files for all Rust crates and verify they build and pass tests:
+Update the root workspace `Cargo.lock`, plus any standalone Rust server locks outside the workspace, and verify they build and pass tests:
 
 ```bash
-# Update dependencies
-cd mcp-servers/rust/fast-test-server && cargo update && cd ../../..
-cd mcp-servers/rust/filesystem-server && cargo update && cd ../../..
-cd tools_rust/wrapper && cargo update && cd ../..
+# Update the root Rust workspace lockfile
+cargo update --workspace
+
+# Update standalone Rust MCP server locks
+for manifest in mcp-servers/rust/*/Cargo.toml; do
+  server_dir="$(dirname "$manifest")"
+  (cd "$server_dir" && cargo update)
+done
 
 # Verify build + lint + tests
 make rust-check

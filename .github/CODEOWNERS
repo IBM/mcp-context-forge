@@ -6,8 +6,15 @@
 /mcpgateway/plugins @araujof @terylt @jonpspri
 
 # Rust projects
-/tools_rust/ @lucarlig @dima-zakharov
-/mcp-servers/rust/ @lucarlig @dima-zakharov
+/crates/ @lucarlig @dima-zakharov @dawid-nowak
+/mcp-servers/rust/ @lucarlig @dima-zakharov @dawid-nowak
+/Cargo.toml @lucarlig @dima-zakharov @dawid-nowak
+/Cargo.lock @lucarlig @dima-zakharov @dawid-nowak
+/deny.toml @lucarlig @dima-zakharov @dawid-nowak
+/rust-toolchain.toml @lucarlig @dima-zakharov @dawid-nowak
+/supply-chain/ @lucarlig @dima-zakharov @dawid-nowak
+/.github/workflows/rust.yml @lucarlig @dima-zakharov @dawid-nowak
+/.github/workflows/pytest-rust.yml @lucarlig @dima-zakharov @dawid-nowak
 
 # Ownership for all tests
 /tests/ @crivetimihai @kevalmahajan @madhav165

@@ -19,6 +19,9 @@ on:
     branches: ["main"]
     paths:
       - 'Containerfile.lite'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -28,6 +31,9 @@ on:
     branches: ["main"]
     paths:
       - 'Containerfile.lite'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -76,11 +82,12 @@ jobs:
           cache-to: type=gha,mode=max,scope=scan-build-amd64
 
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: ${{ env.IMAGE_NAME }}:scan
-          output-file: sbom.spdx.json
-          upload-artifact: false
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}:/work" \
+            anchore/syft:v1.42.3 \
+            "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
 
       - name: Upload SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -88,3 +95,31 @@ jobs:
           name: sbom
           path: sbom.spdx.json
           retention-days: 30
+
+  rust-enabled-build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Rust-enabled container smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build Rust-enabled image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: linux/amd64
+          push: false
+          load: false
+          build-args: |
+            ENABLE_RUST=true
+          cache-from: type=gha,scope=scan-build-rust-amd64
+          cache-to: type=gha,mode=max,scope=scan-build-rust-amd64
