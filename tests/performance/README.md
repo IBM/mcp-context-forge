@@ -96,10 +96,10 @@ make clean-all            # Deep clean (results + baselines + reports)
 ### Infrastructure Profiles
 | Profile | Instances | PostgreSQL | nginx | Use Case |
 |---------|-----------|------------|-------|----------|
-| development | 1 | 17-alpine | No | Local dev |
-| staging | 2 | 17-alpine | Yes | Pre-prod |
-| production | 4 | 17-alpine | Yes | Production |
-| production_ha | 6 | 17-alpine | Yes | High availability |
+| development | 1 | 17-bookworm | No | Local dev |
+| staging | 2 | 17-bookworm | Yes | Pre-prod |
+| production | 4 | 17-bookworm | Yes | Production |
+| production_ha | 6 | 17-bookworm | Yes | High availability |
 
 ## Examples
 
@@ -119,8 +119,8 @@ make test-optimized
 make compare-postgres
 
 # Or manually:
-./run-advanced.sh -p medium --postgres-version 15-alpine --save-baseline pg15.json
-./run-advanced.sh -p medium --postgres-version 17-alpine --compare-with pg15.json
+./run-advanced.sh -p medium --postgres-version 15-bookworm --save-baseline pg15.json
+./run-advanced.sh -p medium --postgres-version 17-bookworm --compare-with pg15.json
 ```
 
 ### Capacity Planning
@@ -191,7 +191,7 @@ RESULTS_BASE=/mnt/storage/perf make test
 ./run-advanced.sh -p medium \
   --server-profile optimized \
   --infrastructure production \
-  --postgres-version 17-alpine \
+--postgres-version 17-bookworm \
   --instances 4 \
   --save-baseline prod_baseline.json
 ```

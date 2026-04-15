@@ -9,9 +9,12 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/bin/a2a-echo-agent .
 
-# Use alpine so basic tooling (busybox/wget) exists for container healthchecks.
-FROM alpine:3.20
-RUN adduser -D -u 1001 app
+# Use Debian slim so basic tooling exists without Alpine.
+FROM debian:bookworm-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --uid 1001 --create-home --shell /usr/sbin/nologin app
 COPY --from=builder /usr/local/bin/a2a-echo-agent /usr/local/bin/a2a-echo-agent
 USER 1001:1001
 EXPOSE 9100

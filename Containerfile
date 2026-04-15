@@ -1,7 +1,7 @@
 ###########################
 # Frontend builder stage
 ###########################
-FROM node:lts-alpine AS frontend-builder
+FROM node:lts-bookworm-slim AS frontend-builder
 WORKDIR /app
 
 # Copy package.json and package-lock.json

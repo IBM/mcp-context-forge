@@ -53,7 +53,7 @@ Find the completed guide on how to use the [HyprContextForge](https://github.com
 # docker-compose.yaml
 services:
     hyprmcp-dex:
-        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        image: ghcr.io/dexidp/dex:v2.43.1
         command: ["dex", "serve", "/config.yaml"]
         ports:
 

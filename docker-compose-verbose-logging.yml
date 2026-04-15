@@ -1630,12 +1630,15 @@ services:
   # Certificate Initialization - Auto-generates self-signed certs if missing
   # ──────────────────────────────────────────────────────────────────────
   cert_init:
-    image: alpine/openssl:latest
+    image: debian:bookworm-slim
     volumes:
       - ./certs:/certs
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        apt-get update
+        apt-get install -y --no-install-recommends openssl
+        rm -rf /var/lib/apt/lists/*
         if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
           echo "✅ Certificates found in ./certs - using existing"
           exit 0

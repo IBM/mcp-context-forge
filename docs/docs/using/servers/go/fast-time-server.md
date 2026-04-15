@@ -1332,14 +1332,14 @@ If you need to build from source:
 
 ```dockerfile
 # Dockerfile
-FROM golang:1.23-alpine AS builder
+FROM golang:1.23-bookworm AS builder
 WORKDIR /app
 COPY . .
 RUN go mod download
 RUN go build -o fast-time-server .
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 WORKDIR /root/
 COPY --from=builder /app/fast-time-server .
 EXPOSE 8080
