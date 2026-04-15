@@ -155,9 +155,6 @@ python .github/tools/update_dependencies.py --file plugins/external/cedar/pyproj
 python .github/tools/update_dependencies.py --file plugins/external/llmguard/pyproject.toml
 python .github/tools/update_dependencies.py --file plugins/external/opa/pyproject.toml
 
-# Rust plugins (Python bindings)
-python .github/tools/update_dependencies.py --file plugins_rust/pyproject.toml
-
 # Requirements files
 python .github/tools/update_dependencies.py --file docs/requirements.txt
 python .github/tools/update_dependencies.py --file tests/load/requirements.txt
@@ -204,7 +201,6 @@ Update `Cargo.lock` files for all Rust crates and verify they build and pass tes
 
 ```bash
 # Update dependencies
-cd plugins_rust && cargo update && cd ..
 cd mcp-servers/rust/fast-test-server && cargo update && cd ../../..
 cd mcp-servers/rust/filesystem-server && cargo update && cd ../../..
 cd tools_rust/wrapper && cargo update && cd ../..
@@ -322,10 +318,10 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 
 All formatting and linting checks must pass with zero errors.
 
-### 4.1 Code formatting and pre-commit hooks
+### 4.1 Code formatting
 
 ```bash
-make autoflake isort black pre-commit
+make autoflake isort black
 ```
 
 | Target | What it checks |
@@ -333,18 +329,19 @@ make autoflake isort black pre-commit
 | `autoflake` | Removes unused imports and variables |
 | `isort` | Sorts imports (profile=black) |
 | `black` | Formats Python code (line length 200) |
-| `pre-commit` | Runs all configured pre-commit hooks |
+
+!!! note "Pre-commit hooks run automatically"
+    The configured pre-commit hooks (whitespace, EOF fixers, detect-secrets, AST checks, etc.) are enforced at commit time and in CI — they do not need a dedicated release step. If a release commit passes pre-commit locally it will pass in CI; otherwise investigate before tagging.
 
 ### 4.2 Python linters
 
 ```bash
-make flake8 ruff vulture bandit interrogate pylint verify
+make ruff vulture bandit interrogate pylint verify
 ```
 
 | Target | What it checks |
 |--------|----------------|
-| `flake8` | PEP 8 style violations (E3, E4, E7, E9, F, D1) |
-| `ruff` | Fast lint pass (overlaps flake8, catches additional patterns) |
+| `ruff` | PEP 8 style, pyflakes, docstrings, pylint rules (E3, E4, E7, E9, F, D1, D417, PL) |
 | `vulture` | Dead code detection (unused functions, variables, imports) |
 | `bandit` | Security vulnerabilities in Python code |
 | `interrogate` | Docstring coverage (must meet threshold) |
@@ -374,18 +371,18 @@ Runs eslint, nodejsscan, htmlhint, stylelint, retire.js, and npm audit against t
 ### 4.5 Secrets scanning
 
 ```bash
-make dodgy gitleaks
+make dodgy detect-secrets-scan
 ```
 
 | Target | What it checks |
 |--------|----------------|
 | `dodgy` | Hardcoded passwords, suspicious code patterns, secret-like strings |
-| `gitleaks` | Scans git history for leaked secrets, API keys, and tokens |
+| `detect-secrets-scan` | Scans tracked files for secrets against the `.secrets.baseline` allowlist |
 
-**Acceptance criteria:** No secrets or credentials detected. Any false positives should be added to `.gitleaksignore`.
+**Acceptance criteria:** No secrets or credentials detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`. `detect-secrets` also runs automatically as a pre-commit hook on every change, so most regressions are caught before merge.
 
 !!! warning "Run before tagging"
-    Secrets in git history survive even after deletion from the working tree. Always run `gitleaks` before creating a release tag.
+    Secrets in git history survive even after deletion from the working tree. Always run the secrets-scan gate before creating a release tag.
 
 ### 4.6 Security best practices
 
@@ -779,7 +776,7 @@ Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
 
 ```yaml
 - name: "PIIFilterPlugin"
-  kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+  kind: "cpex_pii_filter.PIIFilterPlugin"
   mode: "enforce"  # Change from "disabled" to "enforce"
   priority: 50
   config:
@@ -1323,9 +1320,7 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-cd plugins_rust && cargo update && cd ..
 # ... repeat for all Cargo.toml dirs (see Section 3) ...
-make rust-check
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
@@ -1338,11 +1333,11 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make test
 
 # 4. Format, lint & security
-make autoflake isort black pre-commit
-make flake8 ruff vulture bandit interrogate pylint verify
+make autoflake isort black
+make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web
-make dodgy gitleaks
+make dodgy detect-secrets-scan
 make devskim prospector
 make check-headers
 

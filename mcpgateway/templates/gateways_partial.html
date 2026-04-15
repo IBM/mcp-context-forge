@@ -21,13 +21,19 @@
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-          <div class="relative" x-data="{ menuOpen: false }" @click.away="menuOpen = false">
+          <div class="relative"
+               x-data="Admin.overflowMenu('gateways-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
             <!-- Three-dot trigger -->
             <button
               type="button"
-              @click="menuOpen = !menuOpen"
+              x-ref="trigger"
+              @click="menuOpen ? (menuOpen = false) : openMenu()"
               class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
               :aria-expanded="menuOpen"
+              aria-haspopup="menu"
+              aria-label="Actions"
               x-tooltip="'Actions'"
             >
               <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -35,8 +41,10 @@
               </svg>
             </button>
 
-            <!-- Dropdown menu -->
+            <!-- Dropdown menu (fixed-positioned to escape overflow/scroll containers) -->
             <div
+              x-ref="menu"
+              x-cloak
               x-show="menuOpen"
               x-transition:enter="transition ease-out duration-100"
               x-transition:enter-start="opacity-0 scale-95"
@@ -44,14 +52,18 @@
               x-transition:leave="transition ease-in duration-75"
               x-transition:leave-start="opacity-100 scale-100"
               x-transition:leave-end="opacity-0 scale-95"
-              class="absolute left-0 mt-1 w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
-              style="display:none"
+              class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+              :style="`top: ${menuTop}px; left: ${menuLeft}px; display: ${menuOpen ? 'block' : 'none'}`"
               role="menu"
+              aria-orientation="vertical"
+              @keydown.arrow-down.prevent="navigate(1)"
+              @keydown.arrow-up.prevent="navigate(-1)"
             >
               <!-- Test -->
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.testGateway({{ gateway.url|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Test</button>
@@ -62,6 +74,7 @@
                 href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
                 @click="menuOpen = false"
                 role="menuitem"
+                tabindex="0"
                 class="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >🔐 Authorize</a>
               {% endif %}
@@ -71,6 +84,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 id="refresh-tools-{{ gateway.id }}"
                 @click="menuOpen = false; Admin.refreshGatewayTools({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }}, $event.currentTarget)"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -84,6 +98,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.viewGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
@@ -93,6 +108,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.editGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
@@ -100,20 +116,22 @@
               <hr class="border-gray-200 dark:border-gray-600 my-1">
 
               <!-- Activate / Deactivate -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'gateways')">
                 <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm {% if gateway.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
                 >{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
 
               <!-- Delete -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
                 >Delete</button>
               </form>

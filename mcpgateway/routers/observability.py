@@ -394,7 +394,7 @@ async def cleanup_old_traces(
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
         >>> class FakeService:
-        ...     def delete_old_traces(self, db, cutoff):
+        ...     def delete_old_traces(self, cutoff):
         ...         return 5
         >>> obs.ObservabilityService = FakeService
         >>> async def run_cleanup():
@@ -405,7 +405,7 @@ async def cleanup_old_traces(
     """
     service = ObservabilityService()
     cutoff_time = datetime.now() - timedelta(days=days)
-    deleted = service.delete_old_traces(db, cutoff_time)
+    deleted = service.delete_old_traces(cutoff_time)
     return {"deleted": deleted, "cutoff_time": cutoff_time}
 
 

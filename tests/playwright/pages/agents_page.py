@@ -7,6 +7,9 @@ Authors: Mihai Criveti
 A2A Agents page object for Agent management features.
 """
 
+# Standard
+import re
+
 # Third-Party
 from playwright.sync_api import expect, Locator
 
@@ -407,6 +410,27 @@ class AgentsPage(BasePage):
             Locator for the agent row
         """
         return self.agent_rows.nth(agent_index)
+
+    def open_edit_modal(self, agent_index: int = 0) -> None:
+        """Open the edit modal for an A2A agent.
+
+        The JS handler fetches GET /admin/a2a/{id} before showing the modal.
+
+        Args:
+            agent_index: Index of the agent row (default: 0 for first agent)
+        """
+        row = self.get_agent_row(agent_index)
+        self._open_action_dropdown(row)
+        edit_btn = row.locator('button[role="menuitem"]:has-text("Edit")')
+        with self.page.expect_response(
+            lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+            timeout=30000,
+        ) as resp_info:
+            edit_btn.click()
+        response = resp_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Agent API fetch failed (HTTP {response.status}) for {response.url}")
+        self.page.wait_for_selector("#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000)
 
     def agent_exists(self, agent_name: str) -> bool:
         """Check if an agent with the given name exists.

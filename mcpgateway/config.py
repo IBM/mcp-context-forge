@@ -350,12 +350,19 @@ class Settings(BaseSettings):
 
     # Security Validation & Sanitization
     experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
+    experimental_rust_request_logging_masking_enabled: bool = Field(
+        default=False,
+        description="Enable experimental Rust native extension for request logging sensitive-data masking",
+    )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
+    meta_max_keys: int = Field(default=16, description="Maximum number of keys in user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
+    meta_max_depth: int = Field(default=2, description="Maximum nesting depth for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
+    meta_max_bytes: int = Field(default=4096, description="Maximum JSON-encoded byte size for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
     dangerous_patterns: List[str] = Field(
         default_factory=lambda: [
             r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
@@ -1596,6 +1603,14 @@ class Settings(BaseSettings):
     max_tool_retries: int = 3
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
+    rest_response_text_max_length: int = Field(
+        default=5000,
+        ge=1000,
+        le=100000,
+        description="Maximum length of response text to return for non-JSON REST API responses. "
+        "Longer responses are truncated to prevent exposing excessive sensitive data. "
+        "Default: 5000 characters. Range: 1000-100000.",
+    )
 
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB

@@ -43,9 +43,7 @@ include .interrogaterc
 include .jshintrc
 include .npmrc
 include whitesource.config
-include .darglint
 include .dockerignore
-include .flake8
 include .htmlhintrc
 include .pycodestyle
 include .pylintrc*
@@ -61,6 +59,9 @@ include .snyk
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 exclude mcpgateway/static/iframe-test-harness.html
+# Vite build artifacts (gitignored; regenerated per build with hashed filenames)
+exclude mcpgateway/static/bundle-*.js
+recursive-exclude mcpgateway/static/.vite *
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
 recursive-include mcpgateway *.json
@@ -96,20 +97,10 @@ recursive-include tests/manual *.py *.md
 recursive-include plugins *.py
 recursive-include plugins *.json
 recursive-include plugins *.sh
+recursive-include plugins *.txt
 recursive-include plugins *.yaml
 recursive-include plugins *.md
 
-# Rust plugins (optional - exclude build artifacts)
-recursive-include plugins_rust *.rs
-recursive-include plugins_rust *.toml
-recursive-include plugins_rust *.md
-recursive-include plugins_rust *.py
-recursive-include plugins_rust *.pyi
-recursive-include plugins_rust *.json
-recursive-include plugins_rust Makefile
-recursive-include plugins_rust *.lock
-prune plugins_rust/target
-recursive-exclude plugins_rust/*/target *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -159,7 +150,6 @@ prune node_modules
 prune plugins/external/opa/.venv
 prune plugins/external/llmguard/.venv
 prune plugins/external/cedar/.venv
-prune plugins_rust/url_reputation/.venv
 global-exclude **/.venv/*
 
 # Environment files (security sensitive!)

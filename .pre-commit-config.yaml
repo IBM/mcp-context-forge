@@ -36,7 +36,7 @@ repos:
       - id: detect-private-key
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
-        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs
+        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py
         types: [text]
 
   # -----------------------------------------------------------------------------
@@ -248,7 +248,6 @@ repos:
         name: ✅ Check Shebang Scripts Are Executable
         description: Ensures that (non-binary) files with a shebang are executable.
         types: [text]
-        exclude: plugins_rust/secrets_detection/compare_performance\.py
         stages: [pre-commit, pre-push, manual]
 
       - id: forbid-new-submodules
@@ -354,12 +353,6 @@ repos:
         exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load.*|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.3.0
-    hooks:
-      - id: flake8
-        name: 🐍 Flake8 - Python Linter
-        description: Tool for style guide enforcement.
 
   # - repo: https://github.com/pycqa/bandit
   #   rev: 1.8.3
@@ -402,7 +395,7 @@ repos:
       #   files: ^mcpgateway/
 
   - repo: https://github.com/psf/black
-    rev: 26.1.0
+    rev: 26.3.1
     hooks:
       - id: black
         name: 🐍 Black - Python Code Formatter

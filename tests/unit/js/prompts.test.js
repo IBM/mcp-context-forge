@@ -33,6 +33,7 @@ vi.mock("../../../mcpgateway/admin_ui/modals", () => ({
   openModal: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeAttrValue: vi.fn((s) => (s != null ? String(s) : "")),
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
   validateInputName: vi.fn((s) => ({ valid: true, value: s })),
   validateJson: vi.fn((s) => ({ valid: true })),

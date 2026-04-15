@@ -45,7 +45,7 @@ curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/mono
 
 # Download Alpine.js (pinned to 3.15.8 for reproducibility)
 echo "  ⬇️  Alpine.js 3.15.8..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js" \
   -o "${STATIC_DIR}/alpinejs/alpine.min.js"
 
 # Download Chart.js (pinned to 4.5.1 for reproducibility)
@@ -62,7 +62,7 @@ curl -fsSL "https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js" \
 # Download DOMPurify (XSS sanitizer, pinned to 3.3.2 for reproducibility)
 echo "  ⬇️  DOMPurify 3.3.2..."
 mkdir -p "${STATIC_DIR}/dompurify"
-curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"
 
 # Download Font Awesome (pinned to 6.7.2 for reproducibility)

@@ -1573,6 +1573,6 @@ echo "Done!"
 
 For issues or questions:
 
-- [GitHub Issues](https://github.com/cmihai/mcp-context-forge/issues)
+- [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues)
 - [Documentation](https://mcpgateway.org)
 - API Reference: `$BASE_URL/openapi.json`

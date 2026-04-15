@@ -37,6 +37,7 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.paths import resolve_root_path
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +447,7 @@ async def oauth_callback(
 
     try:
         # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        root_path = resolve_root_path(request) if request else ""
         safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code

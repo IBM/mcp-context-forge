@@ -251,7 +251,7 @@ make test
 make doctest
 
 # Check linting
-make flake8
+make ruff RUFF_MODE=check
 
 # Run pre-commit hooks
 make pre-commit

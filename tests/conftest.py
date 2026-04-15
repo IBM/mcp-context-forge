@@ -54,10 +54,7 @@ def _force_safe_test_db_defaults() -> None:
 
     if configured:
         warnings.warn(
-            "External DB-related test env ignored "
-            f"({', '.join(configured)}). "
-            f"Set {EXTERNAL_TEST_DB_OPT_IN_ENV}=1 or pass --allow-external-db to allow it. "
-            f"Using {TEST_SQLITE_MEMORY_URL}.",
+            "External DB-related test env ignored " f"({', '.join(configured)}). " f"Set {EXTERNAL_TEST_DB_OPT_IN_ENV}=1 or pass --allow-external-db to allow it. " f"Using {TEST_SQLITE_MEMORY_URL}.",
             UserWarning,
             stacklevel=2,
         )
@@ -69,6 +66,47 @@ def _force_safe_test_db_defaults() -> None:
 
 
 _force_safe_test_db_defaults()
+
+
+def _force_minimal_main_app_features() -> None:
+    """Default heavy optional features to off before anything imports mcpgateway.main.
+
+    This runs at conftest import time, which pytest loads before any test
+    module is collected. We default the admin API, admin UI, and LLM chat
+    router to off so that `import mcpgateway.main` skips the ~19k-line
+    admin module and the langchain import chain. Individual tests that
+    exercise these features use the ``main_app_with_admin_api`` fixture
+    (below), which flips the settings and mounts admin_router onto the
+    live ``main.app``.
+
+    Host env values win when explicitly set. A developer running
+    ``MCPGATEWAY_ADMIN_API_ENABLED=true pytest ...`` to debug a single
+    admin test will still see admin mounted at import time.
+
+    The ``mcpgateway.config.get_settings`` call is ``@lru_cache``-backed, so
+    we also clear its cache here in case anything already populated it.
+    """
+    os.environ.setdefault("MCPGATEWAY_ADMIN_API_ENABLED", "false")
+    os.environ.setdefault("MCPGATEWAY_UI_ENABLED", "false")
+    os.environ.setdefault("LLMCHAT_ENABLED", "false")
+
+    # Defensive: if any import above already populated the settings cache,
+    # clear it so subsequent reads reflect the values we just set.
+    try:
+        # First-Party
+        from mcpgateway.config import get_settings  # noqa: E402  # local import - conftest bootstrap
+
+        get_settings.cache_clear()
+    except Exception:  # noqa: BLE001 - best-effort during bootstrap
+        pass
+
+    # Defensive: if a plugin or helper imported main before we got here,
+    # drop it from sys.modules so the first genuine import picks up the
+    # minimal-feature settings.
+    sys.modules.pop("mcpgateway.main", None)
+
+
+_force_minimal_main_app_features()
 
 # First-Party
 import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
@@ -307,6 +345,102 @@ def app_with_temp_db():
     engine.dispose()
     os.close(fd)
     os.unlink(path)
+
+
+@pytest.fixture(scope="session")
+def main_app_with_admin_api():
+    """Return the mcpgateway.main FastAPI app with the admin router mounted.
+
+    The session conftest bootstrap force-disables MCPGATEWAY_ADMIN_API_ENABLED
+    and MCPGATEWAY_UI_ENABLED to keep `import mcpgateway.main` cheap for the
+    vast majority of unit tests. Tests that need to hit `/admin/...`
+    endpoints via the real main.app use this fixture.
+
+    Instead of reloading mcpgateway.main (which would break other test
+    files that hold a module-level reference to ``app`` from a prior
+    import), we dynamically flip the settings and mount the admin router
+    onto the existing app in place. FastAPI's router is a mutable
+    collection, so dynamically-added routes are picked up by existing
+    TestClient instances on subsequent requests.
+    """
+    # First-Party
+    from mcpgateway.config import get_settings  # noqa: E402  # local import - runs once per session
+    from mcpgateway.config import settings as settings_wrapper  # noqa: E402
+
+    # Capture prior env so we can restore it at fixture teardown. The
+    # fixture is session-scoped so teardown only runs once at end-of-
+    # session, but keeping state changes reversible is good hygiene.
+    _prior_env = {key: os.environ.get(key) for key in ("MCPGATEWAY_ADMIN_API_ENABLED", "MCPGATEWAY_UI_ENABLED")}
+    os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
+    os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+
+    # Earlier tests (notably tests/unit/mcpgateway/test_main_extended.py)
+    # call `monkeypatch.setattr(settings, <field>, <value>)`, which sets
+    # direct instance attributes on LazySettingsWrapper and shadows its
+    # __getattr__. Monkeypatch cleanup is not always reliable for these
+    # shadowed attributes, so we explicitly strip the feature flags we
+    # care about flipping back on.
+    for shadowed in ("mcpgateway_admin_api_enabled", "mcpgateway_ui_enabled", "llmchat_enabled"):
+        settings_wrapper.__dict__.pop(shadowed, None)
+    get_settings.cache_clear()
+
+    # First-Party
+    import mcpgateway.main as main_mod  # noqa: E402
+
+    # Mount admin_router on the live app if it is not already mounted.
+    # The well-known router already contributes a couple of ``/admin/...``
+    # routes, so we filter those out before deciding whether to mount.
+    # We do not try to "un-mount" admin_router at teardown: FastAPI does
+    # not support reliable route removal, and the fixture is session-
+    # scoped so any downstream test that imported ``main.app`` already
+    # expects admin routes to be present.
+    admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
+    if not admin_routes:
+        # First-Party
+        from mcpgateway.admin import (  # noqa: E402
+            admin_router,
+            set_logging_service,
+            validate_section_permissions,
+        )
+
+        set_logging_service(main_mod.logging_service)
+        main_mod.app.include_router(admin_router)
+        validate_section_permissions(admin_router)
+
+    yield main_mod.app
+
+    # Restore prior env values. Leaves the mounted admin routes in place
+    # (see comment above) and does not clear the settings lru_cache — the
+    # cached values are consistent with the still-mounted admin router
+    # until the session ends.
+    for key, prior in _prior_env.items():
+        if prior is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prior
+
+
+@pytest.fixture(scope="session")
+def main_app_with_a2a_router():
+    """Return ``mcpgateway.main.app`` with ``a2a_router`` mounted.
+
+    ``main.py`` includes ``a2a_router`` only when
+    ``settings.mcpgateway_a2a_enabled`` is True at module-import time.
+    Under xdist, a worker may import main while another file has
+    transiently disabled A2A, leaving ``a2a_router`` unmounted for the
+    rest of the session. Tests that exercise ``/a2a/*`` routes pull this
+    fixture to guarantee the router is present — it mounts dynamically
+    on the live ``main.app`` so the app's identity is preserved for any
+    caller that already captured a reference.
+    """
+    # First-Party
+    import mcpgateway.main as main_mod  # noqa: E402
+
+    a2a_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/a2a")]
+    if not a2a_routes:
+        # ``a2a_router`` is defined inline inside ``mcpgateway.main``.
+        main_mod.app.include_router(main_mod.a2a_router)
+    yield main_mod.app
 
 
 def pytest_sessionfinish(session, exitstatus):

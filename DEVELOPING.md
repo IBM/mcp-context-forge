@@ -31,10 +31,10 @@ make dev
 
 # Run quality checks before committing
 make autoflake isort black pre-commit
-make doctest test htmlcov flake8 pylint verify
+make doctest test htmlcov pylint verify
 
-# If you changed Rust code (plugins_rust/ or tools_rust/):
-make rust-check    # fmt-check, clippy -D warnings, cargo test
+# If you changed Rust code (tools_rust/):
+cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
@@ -196,7 +196,7 @@ python3 -m mcpgateway --host 0.0.0.0 --port 8080
 make autoflake isort black pre-commit
 
 # Comprehensive linting
-make flake8 bandit interrogate pylint verify
+make bandit interrogate pylint verify
 
 # Quick lint for changed files only
 make lint-changed
@@ -207,8 +207,8 @@ make lint-watch
 # Fix common issues automatically
 make lint-fix
 
-# Rust plugins (plugins_rust/ or tools_rust/) — run before committing Rust changes
-make rust-check    # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
+# Rust (tools_rust/) — run before committing Rust changes
+cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ### Pre-commit Workflow
@@ -223,7 +223,7 @@ make pre-commit
 # Complete quality pipeline (recommended before commits)
 make autoflake isort black pre-commit
 make doctest test htmlcov smoketest
-make flake8 bandit interrogate pylint verify
+make bandit interrogate pylint verify
 
 # If Rust code was changed:
 make rust-check
@@ -289,7 +289,6 @@ make autoflake          # Remove unused imports
 
 # Lint code
 make ruff               # Ruff linter (RUFF_MODE=check|fix|format)
-make flake8             # Style checker
 make pylint             # Advanced linting
 make mypy               # Type checking
 make bandit             # Security analysis

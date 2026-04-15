@@ -54,6 +54,8 @@ Non-admin callers may only create bindings for teams they belong to. Attempting 
 - **Updated in place** if a row already exists (the `id`, `created_at`, and `created_by` are preserved).
 - **Inserted** if no matching row exists.
 
+**Stale tool pruning**: when a policy includes a `binding_reference_id`, any existing binding that shares the same `binding_reference_id` and `plugin_id` but whose `tool_name` is **not** in the incoming `tool_names` list is automatically deleted. This keeps the stored state in sync when an external system sends a full replacement tool list on an update event.
+
 On success, returns **all created/updated** bindings and immediately invalidates the in-process plugin cache so the new config takes effect on the very next tool call.
 
 #### Request body
@@ -68,6 +70,7 @@ On success, returns **all created/updated** bindings and immediately invalidates
           "plugin_id": "<PLUGIN_ID>",
           "mode": "enforce | permissive | disabled",
           "priority": 10,
+          "binding_reference_id": "<EXTERNAL_BINDING_ID>",
           "config": { /* plugin-specific — see below */ }
         }
       ]
@@ -84,6 +87,7 @@ On success, returns **all created/updated** bindings and immediately invalidates
 | `policies[].plugin_id`      | enum string     | ✅        | —          | `OUTPUT_LENGTH_GUARD`, `RATE_LIMITER`, or `SECRETS_DETECTION`      |
 | `policies[].mode`           | enum string     | ❌        | `enforce`  | `enforce` = fail on violation; `permissive` = log only; `disabled` = skip |
 | `policies[].priority`       | int (1–1000)    | ❌        | `50`       | Lower runs first                                                    |
+| `policies[].binding_reference_id` | string   | ❌        | `null`     | External reference ID for correlating this binding with an upstream system. Used for stale-tool pruning on update and bulk delete. |
 | `policies[].config`         | object          | ✅        | —          | All config fields for the plugin must be present (full replace, no partial patch) |
 
 #### `mode` semantics
@@ -102,9 +106,18 @@ On success, returns **all created/updated** bindings and immediately invalidates
 
 List all bindings across all teams (admin use).
 
+| Query param            | Type   | Required | Description                                          |
+|------------------------|--------|----------|------------------------------------------------------|
+| `binding_reference_id` | string | ❌        | Filter — return only bindings with this reference ID |
+
 ```bash
+# All bindings
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings | jq
+
+# Filtered by external reference ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
 ```
 
 ---
@@ -113,14 +126,32 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 List all bindings for a specific team.
 
+| Query param            | Type   | Required | Description                                                                                          |
+|------------------------|--------|----------|------------------------------------------------------------------------------------------------------|
+| `binding_reference_id` | string | ❌        | If provided, **takes precedence over `team_id`** — returns all bindings with this reference ID across all teams |
+
 ```bash
+# All bindings for a team
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/<YOUR_TEAM_ID> | jq
+
+# Filtered by external reference ID (team_id is ignored when binding_reference_id is present)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/<YOUR_TEAM_ID>?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
 ```
 
 ---
 
-### `DELETE /v1/tools/plugin_bindings/{binding_id}`
+### `DELETE /v1/tools/plugin_bindings?binding_reference_id={ref}`
+
+Delete **all** bindings tagged with the given external reference ID. Intended for external systems that need to remove all bindings associated with one of their own reference objects without knowing the internal ContextForge UUIDs.
+
+Returns the deleted records. Returns an empty list (not an error) if no bindings matched.
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
 
 Delete a single binding by its UUID. Returns the deleted record.
 
@@ -152,6 +183,7 @@ All write operations (`POST`, `DELETE`) and read operations (`GET`) return the s
     "strategy": "truncate",
     "ellipsis": "..."
   },
+  "binding_reference_id": "<EXTERNAL_REFERENCE_ID>",
   "created_at": "2026-04-07T17:00:00Z",
   "created_by": "admin@example.com",
   "updated_at": "2026-04-07T17:05:00Z",
@@ -456,7 +488,7 @@ curl -s -X POST \
 | `400`       | Invalid request payload (missing fields, bad config values)              |
 | `401`       | Missing or invalid Bearer token                                          |
 | `403`       | Caller lacks `tools.manage_plugins` or configuring bindings for a team they don't belong to |
-| `404`       | Binding ID not found (DELETE only)                                       |
+| `404`       | Binding ID not found (DELETE `/{binding_id}` only)                       |
 
 ### Example 400 — bad `OUTPUT_LENGTH_GUARD` config
 

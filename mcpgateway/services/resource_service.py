@@ -35,9 +35,10 @@ import uuid
 
 # Third-Party
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -47,6 +48,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
@@ -109,6 +111,53 @@ logger = logging_service.get_logger(__name__)
 structured_logger = get_structured_logger("resource_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+
+def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
+    """Build a ReadResource ClientRequest that carries _meta (CWE-20, CWE-284).
+
+    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
+    key written into the dict so the subsequent ``model_validate`` call
+    resolves it correctly regardless of ``populate_by_name`` settings.
+
+    ``send_request`` is used instead of ``session.read_resource()`` because the
+    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
+    updated if the SDK later adds that capability.
+
+    Args:
+        uri: The resource URI.
+        meta_data: Validated metadata dict to inject as ``_meta``.
+
+    Returns:
+        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+    """
+    _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
+    _rp_dict["_meta"] = meta_data
+    return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
+
+
+async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
+    """Dispatch a read_resource call, injecting ``_meta`` when meta_data is provided.
+
+    Eliminates the repeated ``if meta_data: send_request … else: read_resource``
+    pattern across every transport/pool branch in this module.
+
+    Args:
+        session: An active MCP :class:`ClientSession`.
+        uri: The resource URI to read.
+        meta_data: Optional validated metadata dict. When ``None`` the standard
+            SDK helper is used; when non-empty the low-level ``send_request``
+            path is taken to carry ``_meta``.
+
+    Returns:
+        The raw MCP result object (caller extracts ``.contents``).
+    """
+    if meta_data:
+        return await session.send_request(
+            _build_read_resource_request(uri, meta_data),
+            types.ReadResourceResult,
+        )
+    return await session.read_resource(uri=uri)
 
 
 class ResourceError(Exception):
@@ -258,7 +307,7 @@ class ResourceService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="resource",
             entity_model=DbResource,
             limit=effective_limit,
@@ -1150,7 +1199,7 @@ class ResourceService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -1521,7 +1570,7 @@ class ResourceService(BaseService):
         resource_uri: str,
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
-        meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
+        meta_data: Optional[Dict[str, Any]] = None,  # Forwarded as _meta in upstream MCP requests
         resource_obj: Optional[Any] = None,
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
@@ -1635,6 +1684,10 @@ class ResourceService(BaseService):
         'using template: /template'
 
         """
+        # CWE-400: Validate meta_data limits before any further processing; invoke_resource is
+        # a separate entry point that must enforce the same guards as read_resource.
+        _validate_meta_data(meta_data)
+
         uri = None
         if resource_uri and resource_template_uri:
             uri = resource_template_uri
@@ -1698,7 +1751,6 @@ class ResourceService(BaseService):
                 if trace_id and observability_service:
                     try:
                         db_span_id = observability_service.start_span(
-                            db=db,
                             trace_id=trace_id,
                             name="invoke.resource",
                             attributes={
@@ -1870,8 +1922,8 @@ class ResourceService(BaseService):
                             ``None`` instead of raising.
 
                             Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
+                                When meta_data is provided, the request is built using send_request
+                                with _meta injected into ReadResourceRequestParams.
 
                             Args:
                                 server_url (str):
@@ -1918,8 +1970,7 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                        resource_response = await pooled.session.read_resource(uri=uri)
+                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -1929,8 +1980,7 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                            resource_response = await session.read_resource(uri=uri)
+                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -1952,8 +2002,8 @@ class ResourceService(BaseService):
                             of propagating the exception.
 
                             Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
+                                When meta_data is provided, the request is built using send_request
+                                with _meta injected into ReadResourceRequestParams.
 
                             Args:
                                 server_url (str):
@@ -1999,8 +2049,7 @@ class ResourceService(BaseService):
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                        resource_response = await pooled.session.read_resource(uri=uri)
+                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -2011,8 +2060,7 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
-                                            resource_response = await session.read_resource(uri=uri)
+                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2026,10 +2074,8 @@ class ResourceService(BaseService):
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         if span and resource_text is not None and is_output_capture_enabled("invoke.resource"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
@@ -2047,13 +2093,11 @@ class ResourceService(BaseService):
                         # before making HTTP calls to prevent connection pool exhaustion
                         if db_span_id and observability_service and not db_span_ended:
                             try:
-                                with fresh_db_session() as fresh_db:
-                                    observability_service.end_span(
-                                        db=fresh_db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                observability_service.end_span(
+                                    span_id=db_span_id,
+                                    status="ok" if success else "error",
+                                    status_message=error_message if error_message else None,
+                                )
                                 db_span_ended = True
                                 logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                             except Exception as e:
@@ -2143,6 +2187,8 @@ class ResourceService(BaseService):
         resource_db = None
         server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
+        # CWE-400: Validate meta_data limits before any further processing
+        _validate_meta_data(meta_data)
         content = None
         uri = resource_uri or "unknown"
         if resource_id:
@@ -2166,7 +2212,6 @@ class ResourceService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
@@ -2318,8 +2363,7 @@ class ResourceService(BaseService):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
 
-                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
-                                    result = await session.read_resource(uri=uri)
+                                    result = await _read_resource_with_meta(session, uri, meta_data)
 
                                     # Convert MCP result to MCP-compliant content models
                                     # result.contents is a list of TextResourceContents or BlobResourceContents
@@ -2460,7 +2504,7 @@ class ResourceService(BaseService):
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
-                        db=db,
+                        db,
                         resource_id=getattr(content, "id"),
                         resource_uri=getattr(content, "uri") or None,
                         resource_template_uri=getattr(content, "text") or None,
@@ -2477,7 +2521,7 @@ class ResourceService(BaseService):
                     # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "blob") or None,
@@ -2491,7 +2535,7 @@ class ResourceService(BaseService):
                             setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "text") or None,
@@ -2564,13 +2608,11 @@ class ResourceService(BaseService):
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        with fresh_db_session() as fresh_db:
-                            observability_service.end_span(
-                                db=fresh_db,
-                                span_id=db_span_id,
-                                status="ok" if success else "error",
-                                status_message=error_message if error_message else None,
-                            )
+                        observability_service.end_span(
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
                         db_span_ended = True
                         logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                     except Exception as e:

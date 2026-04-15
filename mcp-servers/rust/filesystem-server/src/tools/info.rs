@@ -77,7 +77,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(metadata.size, 5);
-        assert!(metadata.permissions.len() > 0);
+        assert!(!metadata.permissions.is_empty());
         assert!(metadata.created.is_some() || metadata.modified.is_some());
     }
 

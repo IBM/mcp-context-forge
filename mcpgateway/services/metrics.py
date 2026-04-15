@@ -143,6 +143,19 @@ if elicitation_duration_seconds is None:
         buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
     )
 
+# OAuth / JWKS access-token verification on oauth_enabled virtual servers.
+# Outcome labels:
+#   success          — IdP-issued token verified and user context populated
+#   failed           — verification attempted and rejected (401/503 emitted)
+#   not_applicable   — target server is not oauth_enabled, issuer outside the
+#                      allowlist, token undecodable, or URL path missing a
+#                      server id; caller falls through to internal verify
+oauth_verify_events_counter = Counter(
+    "oauth_verify_events_total",
+    "OAuth access token verification outcomes on virtual server MCP endpoints",
+    ["outcome"],
+)
+
 
 def setup_metrics(app):
     """

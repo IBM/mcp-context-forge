@@ -16,7 +16,7 @@ from mcpgateway.plugins.framework import (
     ToolHookType,
     ToolPostInvokePayload,
 )
-from plugins.encoded_exfil_detection.encoded_exfil_detector import (
+from cpex_encoded_exfil_detection.encoded_exfil_detection import (
     EncodedExfilDetectorPlugin,
 )
 
@@ -26,7 +26,7 @@ def _make_plugin(config: dict, mode: str = "enforce") -> EncodedExfilDetectorPlu
     return EncodedExfilDetectorPlugin(
         PluginConfig(
             name="EncodedExfilDetector",
-            kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+            kind="cpex_encoded_exfil_detection.encoded_exfil_detection.EncodedExfilDetectorPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE],
             mode=mode,
             config=config,

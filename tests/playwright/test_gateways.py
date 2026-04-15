@@ -209,6 +209,7 @@ class TestGatewaysPage:
         so the hidden JSON field stayed empty and form submission failed with
         "auth_headers list must be provided".
         """
+        # Standard
         import json
 
         gateways_page.navigate_to_gateways_tab()
@@ -531,6 +532,9 @@ class TestGatewayActions:
 
         # Get first gateway row
         first_row = gateways_page.get_gateway_row(0)
+
+        # Row actions now live inside an overflow menu; open it so visibility asserts pass.
+        gateways_page.open_action_dropdown(first_row)
 
         # Verify all action buttons exist
         expect(first_row.locator('button:has-text("Test")')).to_be_visible()
