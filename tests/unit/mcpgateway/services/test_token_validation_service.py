@@ -388,3 +388,144 @@ class TestValidateOauthTokenClaims:
 
         # Should not crash
         assert result.is_jwt is True
+
+
+# ---------- scope / scp as array (Ory Hydra, Keycloak, some Auth0 configs) ----------
+
+
+class TestScopeClaimArrayShape:
+    """RFC 6749 defines ``scope`` as a space-delimited string at the
+    authorization response layer but does not prescribe a shape for the
+    JWT access-token claim.  Ory Hydra (used by Amplitude's MCP among
+    others), Keycloak, and certain Auth0 configurations emit the claim as
+    a JSON array.  The validator must normalize both shapes."""
+
+    def test_scp_as_list_matches_configured_scope(self):
+        token = _make_jwt({"scp": ["mcp:read", "offline_access"]})
+        oauth_config = {"scopes": ["mcp:read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        assert result.scopes_sufficient is True
+        assert not any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_scope_as_list_with_uri_prefix(self):
+        """A list-shaped claim must still trigger URI-prefix normalization."""
+        token = _make_jwt({"scope": ["api://app-a/Tools.Read", "api://app-a/Tools.Write"]})
+        oauth_config = {"scopes": ["api://app-a/Tools.Read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    def test_scp_as_list_with_missing_scope(self):
+        token = _make_jwt({"scp": ["mcp:read"]})
+        oauth_config = {"scopes": ["mcp:write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_scope_empty_list_treated_as_absent(self):
+        """Empty list is treated as an absent claim (scopes_sufficient stays None)."""
+        token = _make_jwt({"scp": []})
+        oauth_config = {"scopes": ["mcp:read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is None
+        assert not any("scope" in w.lower() for w in result.warnings)
+
+
+# ---------- Advisory contract: individual validators must not propagate ----------
+
+
+class TestValidatorAdvisoryContract:
+    """The module docstring declares the validator is best-effort advisory:
+    ``Validation is advisory — the upstream MCP server remains the
+    authoritative validator.``  Unexpected exceptions inside any single
+    ``_validate_*`` helper must therefore be caught locally, appended as a
+    non-blocking warning, and must not skip sibling validators or propagate
+    to the caller."""
+
+    def _baseline_token_and_config(self):
+        token = _make_jwt(
+            {
+                "aud": "api://x",
+                "scope": "read",
+                "iss": "https://auth.example.com",
+            }
+        )
+        oauth_config = {
+            "resource": "api://x",
+            "scopes": ["read"],
+            "issuer": "https://auth.example.com",
+        }
+        return token, oauth_config
+
+    def test_audience_validator_crash_does_not_propagate(self):
+        token, oauth_config = self._baseline_token_and_config()
+
+        with patch(
+            "mcpgateway.services.token_validation_service._validate_audience",
+            side_effect=RuntimeError("boom-aud"),
+        ):
+            result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        # Non-blocking warning was recorded with the error type for diagnosability
+        assert any("audience validation error" in w.lower() for w in result.warnings)
+        assert any("RuntimeError" in w for w in result.warnings)
+        # audience_match stays at its initial None (real validator was replaced)
+        assert result.audience_match is None
+        # Sibling validators still ran
+        assert result.scopes_sufficient is True
+        assert result.issuer_match is True
+
+    def test_scope_validator_crash_does_not_skip_sibling_validators(self):
+        """Regression guard: a crash in ``_validate_scopes`` must not prevent
+        the audience or issuer checks from running, and must not escape the
+        public API."""
+        token, oauth_config = self._baseline_token_and_config()
+
+        with patch(
+            "mcpgateway.services.token_validation_service._validate_scopes",
+            side_effect=AttributeError("'list' object has no attribute 'split'"),
+        ):
+            result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        assert result.audience_match is True  # ran before the crash
+        assert result.issuer_match is True  # ran after the crash
+        assert any("scope validation error" in w.lower() for w in result.warnings)
+        assert any("AttributeError" in w for w in result.warnings)
+
+    def test_issuer_validator_crash_does_not_propagate(self):
+        token, oauth_config = self._baseline_token_and_config()
+
+        with patch(
+            "mcpgateway.services.token_validation_service._validate_issuer",
+            side_effect=RuntimeError("boom-iss"),
+        ):
+            result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        assert any("issuer validation error" in w.lower() for w in result.warnings)
+        assert result.audience_match is True
+        assert result.scopes_sufficient is True
+
+    def test_crash_warnings_are_not_classified_as_blocking(self):
+        """``TokenValidationResult.blocking_errors`` keys off ``*_match is
+        False``.  A validator crash leaves those flags at ``None``, so the
+        non-blocking warning must not end up in ``blocking_errors``."""
+        token, oauth_config = self._baseline_token_and_config()
+
+        with patch(
+            "mcpgateway.services.token_validation_service._validate_scopes",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # Crash warning is recorded but the corresponding flag is None,
+        # so blocking_errors must stay empty for that path.
+        assert any("scope validation error" in w.lower() for w in result.warnings)
+        assert result.scopes_sufficient is None
+        assert all("validation error" not in b.lower() for b in result.blocking_errors)

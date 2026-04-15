@@ -185,8 +185,16 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
     if not configured_scopes:
         return
 
-    # Entra ID uses 'scp' claim; standard OAuth uses 'scope'
-    token_scope_str = claims.get("scope") or claims.get("scp") or ""
+    # Entra ID uses 'scp' claim; standard OAuth uses 'scope'.
+    # Some IdPs (Ory Hydra, Keycloak, certain Auth0 configurations) emit
+    # these claims as JSON arrays rather than space-separated strings —
+    # normalize the array shape to a single space-separated string before
+    # tokenization so ``_normalize_scope`` continues to receive a ``str``.
+    token_scope = claims.get("scope") or claims.get("scp") or ""
+    if isinstance(token_scope, list):
+        token_scope_str = " ".join(str(s) for s in token_scope if s)
+    else:
+        token_scope_str = str(token_scope) if token_scope else ""
     if not token_scope_str:
         logger.debug("OAuth token for gateway %s has no 'scope'/'scp' claim", gateway_name)
         return
@@ -287,8 +295,27 @@ def validate_oauth_token_claims(
 
     result.is_jwt = True
 
-    _validate_audience(claims, oauth_config, gateway_url, gateway_name, result)
-    _validate_scopes(claims, oauth_config, gateway_name, result)
-    _validate_issuer(claims, oauth_config, gateway_name, result)
+    # Advisory: each claim validator is best-effort.  Unexpected claim shapes
+    # from non-conforming IdPs must not abort the forwarding path — the
+    # upstream MCP server remains the authoritative validator (see module
+    # docstring).  Wrap each validator so one crashing check does not skip
+    # the others and does not propagate to the caller.
+    try:
+        _validate_audience(claims, oauth_config, gateway_url, gateway_name, result)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("OAuth audience validation crashed for gateway %s: %s", gateway_name, exc)
+        result.warnings.append(f"audience validation error (non-blocking): {type(exc).__name__}: {exc}")
+
+    try:
+        _validate_scopes(claims, oauth_config, gateway_name, result)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("OAuth scope validation crashed for gateway %s: %s", gateway_name, exc)
+        result.warnings.append(f"scope validation error (non-blocking): {type(exc).__name__}: {exc}")
+
+    try:
+        _validate_issuer(claims, oauth_config, gateway_name, result)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("OAuth issuer validation crashed for gateway %s: %s", gateway_name, exc)
+        result.warnings.append(f"issuer validation error (non-blocking): {type(exc).__name__}: {exc}")
 
     return result
