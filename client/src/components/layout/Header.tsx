@@ -12,9 +12,7 @@ export function Header() {
       <SidebarTrigger />
       <div className="flex items-center gap-3">
         <LanguageSwitcher />
-        {user && (
-          <span className="text-sm text-muted-foreground">{user.email}</span>
-        )}
+        {user && <span className="text-sm text-muted-foreground">{user.email}</span>}
         <button
           onClick={logout}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"

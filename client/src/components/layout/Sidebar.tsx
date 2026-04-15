@@ -27,7 +27,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "../ui/sidebar";
-import { GatewayIcon,  } from "../icons/GatewayIcon.tsx";
+import { GatewayIcon } from "../icons/GatewayIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
 import { MainNavIcon } from "../icons/MainNavIcon.tsx";
 
@@ -60,7 +60,11 @@ const TEAM_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.members", path: "/app/members", icon: Users },
 ];
 
-const FOOTER_NAV_ITEM: NavItem = { labelKey: "navigation.settings", path: "/app/settings", icon: Settings };
+const FOOTER_NAV_ITEM: NavItem = {
+  labelKey: "navigation.settings",
+  path: "/app/settings",
+  icon: Settings,
+};
 
 export function AppSidebar() {
   const intl = useIntl();
@@ -68,15 +72,10 @@ export function AppSidebar() {
 
   const renderNavItems = (items: NavItem[]) => {
     return items.map(({ labelKey, path: itemPath, icon: Icon }) => {
-      const isActive =
-        path === itemPath ||
-        (itemPath !== "/app/" && path.startsWith(itemPath));
+      const isActive = path === itemPath || (itemPath !== "/app/" && path.startsWith(itemPath));
       return (
         <SidebarMenuItem key={itemPath}>
-          <SidebarMenuButton
-            isActive={isActive}
-            onClick={() => navigate(itemPath)}
-          >
+          <SidebarMenuButton isActive={isActive} onClick={() => navigate(itemPath)}>
             <Icon className="h-4 w-4" />
             <span>{intl.formatMessage({ id: labelKey })}</span>
           </SidebarMenuButton>
@@ -90,18 +89,18 @@ export function AppSidebar() {
       <SidebarHeader>
         <div className="flex items-center gap-2 px-2 py-1">
           <div className="flex h-8 w-8 items-center justify-center">
-            <span className="text-lg font-bold"><MainNavIcon className="w-6 h-6" /></span>
+            <span className="text-lg font-bold">
+              <MainNavIcon className="w-6 h-6" />
+            </span>
           </div>
         </div>
       </SidebarHeader>
-      
+
       <SidebarContent>
         {/* Main Navigation */}
         <SidebarGroup>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderNavItems(MAIN_NAV_ITEMS)}
-            </SidebarMenu>
+            <SidebarMenu>{renderNavItems(MAIN_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
@@ -109,9 +108,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Components</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderNavItems(COMPONENTS_NAV_ITEMS)}
-            </SidebarMenu>
+            <SidebarMenu>{renderNavItems(COMPONENTS_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
@@ -119,9 +116,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Team</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderNavItems(TEAM_NAV_ITEMS)}
-            </SidebarMenu>
+            <SidebarMenu>{renderNavItems(TEAM_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
