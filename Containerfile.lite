@@ -45,11 +45,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/native-extension-wheels /build/crates/mcp_runtime/target/release; \
-        printf '#!/usr/bin/env sh\n' > /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        printf 'exit 1\n' >> /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        chmod +x /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        mkdir -p /build/native-extension-wheels /build/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-mcp-runtime; \
+        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
+        chmod +x /build/target/release/contextforge-mcp-runtime; \
         exit 0; \
     fi
 
