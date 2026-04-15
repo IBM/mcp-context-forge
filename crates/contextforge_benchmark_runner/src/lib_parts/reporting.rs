@@ -42,7 +42,7 @@ pub fn write_goose_stats_csv(request_log_path: &Path, csv_prefix: &Path) -> Resu
     let aggregate = aggregate_rows("Aggregated", &rows);
     writer.serialize(&aggregate)?;
     for (name, group) in groups {
-        writer.serialize(&aggregate_rows(&name, &group))?;
+        writer.serialize(aggregate_rows(&name, &group))?;
     }
     writer.flush()?;
 

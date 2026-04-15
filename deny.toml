@@ -11,6 +11,8 @@ ignore = [
     "RUSTSEC-2025-0090",
     "RUSTSEC-2025-0098",
     "RUSTSEC-2025-0100",
+    # ratatui currently pulls paste 1.x; tracked here until upstream moves off the archived crate.
+    "RUSTSEC-2024-0436",
 ]
 
 [bans]

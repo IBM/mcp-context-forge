@@ -15,10 +15,7 @@ fn load_payload(root: &Path, group: &str, name: &str) -> Result<Value> {
     let path = payload_root(root).join(group).join(name);
     let raw =
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok(
-        serde_json::from_str(&raw)
-            .with_context(|| format!("failed to parse {}", path.display()))?,
-    )
+    serde_json::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 pub fn benchmark_catalog(root: &Path) -> Result<Vec<RequestDefinition>> {

@@ -1,3 +1,6 @@
+// Allow duplicate transitive deps in this benchmark-only binary target.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::path::PathBuf;
 
 use anyhow::Result;

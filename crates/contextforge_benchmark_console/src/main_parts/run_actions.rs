@@ -1,17 +1,9 @@
 use std::env;
-use std::io::Stdout;
 use std::path::Path;
-
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 
 use crate::{Action, AppResult, LogSource};
 
-pub(crate) fn launch_action(
-    app: &mut App,
-    root: &Path,
-    _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-) -> AppResult<()> {
+pub(crate) fn launch_action(app: &mut App, root: &Path) -> AppResult<()> {
     let command_spec = build_command(app, root)?;
     if app.running_command.is_some() {
         app.status = "A benchmark command is already running.".to_string();
@@ -64,9 +56,8 @@ pub(crate) fn build_command(app: &App, _root: &Path) -> AppResult<CommandSpec> {
                 args.push("--scenario".to_string());
                 args.push(app.scenario().to_string());
             }
-            match action {
-                Action::Smoke => args.push("--smoke".to_string()),
-                _ => {}
+            if action == Action::Smoke {
+                args.push("--smoke".to_string());
             }
         }
         Action::Report => {

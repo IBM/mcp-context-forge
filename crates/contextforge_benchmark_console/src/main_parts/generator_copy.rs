@@ -433,4 +433,3 @@ pub(crate) fn generator_change_reason(key: &str) -> &'static str {
         _ => "Changing it changes the generated benchmark template.",
     }
 }
-use crate::main_parts::*;

@@ -30,9 +30,11 @@ fn builds_goose_command_for_local_driver() {
     let temp = std::env::temp_dir().join("benchmark-runner-tests");
     let spec = build_goose_command(root, &scenario, &temp, "goose_metrics", false);
     assert_eq!(spec.command, "cargo");
-    assert!(spec.args.iter().any(|part| {
-        part.ends_with("crates/contextforge_goose/Cargo.toml")
-    }));
+    assert!(
+        spec.args
+            .iter()
+            .any(|part| { part.ends_with("crates/contextforge_goose/Cargo.toml") })
+    );
     assert!(
         spec.args
             .iter()
@@ -230,7 +232,10 @@ fn benchmark_scenarios_cover_locust_workload_families() {
         "slow-time-server",
         "spin-detector",
     ] {
-        assert!(stems.contains(required), "missing benchmark scenario suite `{required}`");
+        assert!(
+            stems.contains(required),
+            "missing benchmark scenario suite `{required}`"
+        );
     }
 
     for suite in scenario_names {
@@ -253,7 +258,11 @@ fn mcp_focused_suites_compare_python_and_rust_runtime() {
         let baseline = &resolved.scenarios[0];
         let variant = &resolved.scenarios[1];
 
-        assert_eq!(baseline.setup.expected_mcp_runtime.as_deref(), None, "{suite}");
+        assert_eq!(
+            baseline.setup.expected_mcp_runtime.as_deref(),
+            None,
+            "{suite}"
+        );
         assert_eq!(
             variant.setup.expected_mcp_runtime.as_deref(),
             Some("rust"),
@@ -402,7 +411,10 @@ volumes: {}
         .unwrap();
 
     assert!(gateway.get("ports").is_none());
-    assert_eq!(yaml_strings(nginx.get("ports")), vec!["18080:80".to_string()]);
+    assert_eq!(
+        yaml_strings(nginx.get("ports")),
+        vec!["18080:80".to_string()]
+    );
 
     let _ = std::fs::remove_dir_all(&tempdir);
 }

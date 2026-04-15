@@ -8,11 +8,11 @@ use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use serde_json::{Value, json};
 
-use crate::{CommandSpec, ResolvedScenario, RuntimeChoice, log_progress};
 use crate::lib_parts::{
     build_goose_command, ensure_benchmark_image, run_compose, slug, wait_for_gateway_health,
     wait_for_service, write_compose_override,
 };
+use crate::{CommandSpec, ResolvedScenario, RuntimeChoice, log_progress};
 
 #[derive(Debug)]
 pub(crate) struct RunOutput {
@@ -49,8 +49,14 @@ where
 {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn()?;
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("missing child stdout"))?;
-    let stderr = child.stderr.take().ok_or_else(|| anyhow!("missing child stderr"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("missing child stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("missing child stderr"))?;
     let (sender, receiver) = mpsc::channel::<(&'static str, String)>();
 
     let stdout_sender = sender.clone();

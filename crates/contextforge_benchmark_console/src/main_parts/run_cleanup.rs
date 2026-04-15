@@ -47,7 +47,7 @@ pub(crate) fn run_cleanup() -> AppResult<std::process::ExitStatus> {
 
     let reports_dir = Path::new("reports/benchmarks");
     if reports_dir.exists() {
-        for entry in fs::read_dir(&reports_dir)? {
+        for entry in fs::read_dir(reports_dir)? {
             let path = entry?.path();
             let name = path
                 .file_name()

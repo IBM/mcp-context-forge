@@ -115,6 +115,7 @@ recursive-include crates *.rs
 recursive-include crates *.md
 recursive-include crates *.py
 recursive-include crates *.pyi
+recursive-include crates *.json
 recursive-include crates *.sh
 recursive-include crates Makefile
 recursive-include crates pyproject.toml

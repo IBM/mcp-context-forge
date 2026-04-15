@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::{DEFAULT_OUTPUT_ROOT, ResolvedScenario, RuntimeChoice, log_progress};
 use crate::lib_parts::{slug, uses_a2a_fixture, uses_fast_time_fixture, write_text};
+use crate::{DEFAULT_OUTPUT_ROOT, ResolvedScenario, RuntimeChoice, log_progress};
 
 pub(crate) fn ensure_benchmark_image(
     root: &Path,
@@ -100,16 +100,16 @@ pub(crate) fn write_compose_override(
         .as_mapping_mut()
         .ok_or_else(|| anyhow!("docker-compose.yml must be a mapping"))?;
     let base_services = base_map
-        .get(&yaml_key("services"))
+        .get(yaml_key("services"))
         .and_then(serde_yaml::Value::as_mapping)
         .cloned()
         .ok_or_else(|| anyhow!("docker-compose.yml must define services"))?;
     let networks = base_map
-        .get(&yaml_key("networks"))
+        .get(yaml_key("networks"))
         .cloned()
         .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     let volumes = base_map
-        .get(&yaml_key("volumes"))
+        .get(yaml_key("volumes"))
         .cloned()
         .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
@@ -129,12 +129,12 @@ pub(crate) fn write_compose_override(
     let mut services = serde_yaml::Mapping::new();
     for name in selected {
         let mut service = base_services
-            .get(&yaml_key(name))
+            .get(yaml_key(name))
             .and_then(serde_yaml::Value::as_mapping)
             .cloned()
             .ok_or_else(|| anyhow!("missing compose service '{name}'"))?;
-        service.remove(&yaml_key("profiles"));
-        service.remove(&yaml_key("build"));
+        service.remove(yaml_key("profiles"));
+        service.remove(yaml_key("build"));
         service.insert(
             yaml_key("deploy"),
             serde_yaml::to_value(json!({
@@ -145,9 +145,9 @@ pub(crate) fn write_compose_override(
             }))?,
         );
         if !matches!(name, "gateway" | "nginx") {
-            service.remove(&yaml_key("ports"));
+            service.remove(yaml_key("ports"));
         }
-        if let Some(volumes) = service.get(&yaml_key("volumes")).cloned() {
+        if let Some(volumes) = service.get(yaml_key("volumes")).cloned() {
             let normalized = yaml_strings(Some(&volumes))
                 .into_iter()
                 .map(|entry| normalize_volume_entry(root, &entry))
@@ -162,7 +162,7 @@ pub(crate) fn write_compose_override(
             if scenario.load.target_service == "gateway" {
                 service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["14444:4444"])?);
             } else {
-                service.remove(&yaml_key("ports"));
+                service.remove(yaml_key("ports"));
             }
             service.insert(
                 yaml_key("cap_add"),
@@ -172,7 +172,7 @@ pub(crate) fn write_compose_override(
                 yaml_key("security_opt"),
                 serde_yaml::to_value(vec!["seccomp:unconfined"])?,
             );
-            let mut volumes_list = yaml_strings(service.get(&yaml_key("volumes")));
+            let mut volumes_list = yaml_strings(service.get(yaml_key("volumes")));
             volumes_list.push(format!(
                 "{}:/mnt/bench",
                 scenario_dir
@@ -184,7 +184,7 @@ pub(crate) fn write_compose_override(
             service.insert(
                 yaml_key("environment"),
                 serde_yaml::to_value(merge_environment(
-                    service.get(&yaml_key("environment")),
+                    service.get(yaml_key("environment")),
                     &gateway_environment(scenario),
                 ))?,
             );

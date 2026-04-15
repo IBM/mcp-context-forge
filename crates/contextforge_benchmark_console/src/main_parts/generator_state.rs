@@ -1,3 +1,8 @@
+use crate::main_parts::{
+    generator_fields_execution, generator_fields_runtime, generator_fields_suite,
+    generator_fields_workload, generator_section,
+};
+
 #[derive(Clone, Copy)]
 pub(crate) enum GeneratorFieldKind {
     Text,
@@ -194,5 +199,3 @@ impl GeneratorState {
         }
     }
 }
-use crate::*;
-use crate::main_parts::*;

@@ -131,21 +131,12 @@ impl App {
     }
 
     pub(crate) fn cycle_view(&mut self, delta: isize) {
-        let views = if self.running_command.is_some() {
-            vec![
-                AppView::Launcher,
-                AppView::SuiteInspector,
-                AppView::RunMonitor,
-                AppView::Generator,
-            ]
-        } else {
-            vec![
-                AppView::Launcher,
-                AppView::SuiteInspector,
-                AppView::RunMonitor,
-                AppView::Generator,
-            ]
-        };
+        let views = [
+            AppView::Launcher,
+            AppView::SuiteInspector,
+            AppView::RunMonitor,
+            AppView::Generator,
+        ];
         let current = views
             .iter()
             .position(|view| *view == self.active_view)
@@ -197,5 +188,5 @@ impl App {
         });
     }
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;

@@ -1,3 +1,6 @@
+// Allow duplicate transitive deps in this benchmark-only binary target.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Stdout};

@@ -76,15 +76,13 @@ pub(crate) fn draw_live_logs(frame: &mut ratatui::Frame<'_>, area: Rect, app: &A
         Style::default().fg(Color::DarkGray),
     ))];
     let widget = Paragraph::new(if lines.is_empty() { empty } else { lines })
-        .block(
-            Block::default().borders(Borders::ALL).title(format!(
-                "Live Logs ({}/{}, scroll {}, dropped {})",
-                end.saturating_sub(start),
-                total,
-                app.log_scroll,
-                app.dropped_log_lines
-            )),
-        )
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Live Logs ({}/{}, scroll {}, dropped {})",
+            end.saturating_sub(start),
+            total,
+            app.log_scroll,
+            app.dropped_log_lines
+        )))
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
@@ -241,5 +239,5 @@ pub(crate) fn draw_help(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;

@@ -1,3 +1,6 @@
+// Allow duplicate transitive deps in this benchmark-only binary target.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -5,10 +8,10 @@ use std::time::Duration;
 
 use goose::goose::{GooseMethod, GooseRequest};
 use goose::prelude::*;
-use goose_eggs::{validate_page, Validate};
+use goose_eggs::{Validate, validate_page};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde_json::Value;
 

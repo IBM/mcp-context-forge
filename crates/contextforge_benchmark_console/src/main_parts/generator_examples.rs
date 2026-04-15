@@ -166,4 +166,3 @@ pub(crate) fn generator_example(key: &str) -> &'static str {
         _ => "Set this to the value you want written into the generated scenario.",
     }
 }
-use crate::main_parts::*;

@@ -136,12 +136,13 @@ fn draw_status_banner(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::styled("Status ", Style::default().fg(Color::Gray)),
             Span::styled(
                 app.status.as_str(),
-                Style::default().fg(if app.running_command.is_some() {
-                    Color::Yellow
-                } else {
-                    Color::Green
-                })
-                .add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(if app.running_command.is_some() {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -329,7 +330,11 @@ fn draw_inspector_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
         line_pair("Question", &summary.comparison_question),
     ];
     let widget = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Suite Inspector"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Suite Inspector"),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
@@ -337,13 +342,19 @@ fn draw_inspector_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
 fn draw_scenario_cards(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let summary = build_suite_inspector_summary(app, Path::new(".")).unwrap_or_default();
     if summary.scenario_cards.is_empty() {
-        let widget = Paragraph::new("No scenarios found for the selected suite.")
-            .block(Block::default().borders(Borders::ALL).title("Scenario Comparison"));
+        let widget = Paragraph::new("No scenarios found for the selected suite.").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Scenario Comparison"),
+        );
         frame.render_widget(widget, area);
         return;
     }
 
-    let constraints = vec![Constraint::Ratio(1, summary.scenario_cards.len() as u32); summary.scenario_cards.len()];
+    let constraints = vec![
+        Constraint::Ratio(1, summary.scenario_cards.len() as u32);
+        summary.scenario_cards.len()
+    ];
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
@@ -355,7 +366,11 @@ fn draw_scenario_cards(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Line::from(Span::styled(
                 card.name.clone(),
                 Style::default()
-                    .fg(if is_active { Color::Yellow } else { Color::White })
+                    .fg(if is_active {
+                        Color::Yellow
+                    } else {
+                        Color::White
+                    })
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(card.description.clone()),
@@ -365,9 +380,11 @@ fn draw_scenario_cards(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from("Settings: inherits suite defaults"));
         } else {
             lines.push(Line::from("Settings:"));
-            lines.extend(card.settings.iter().map(|(key, value)| {
-                Line::from(format!("  {} = {}", key, value))
-            }));
+            lines.extend(
+                card.settings
+                    .iter()
+                    .map(|(key, value)| Line::from(format!("  {} = {}", key, value))),
+            );
         }
         let title = if is_active {
             format!("Scenario {} (active)", index + 1)
@@ -401,7 +418,9 @@ fn draw_run_monitor_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
         line_pair("Suite", selected_suite),
         line_pair(
             "Command",
-            app.last_command_label.as_deref().unwrap_or("(no command launched)"),
+            app.last_command_label
+                .as_deref()
+                .unwrap_or("(no command launched)"),
         ),
         line_pair("Current Scenario", current),
         line_pair(
@@ -410,7 +429,9 @@ fn draw_run_monitor_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
         ),
         line_pair(
             "Outcome",
-            app.last_run_outcome.as_deref().unwrap_or("(running or pending)"),
+            app.last_run_outcome
+                .as_deref()
+                .unwrap_or("(running or pending)"),
         ),
         line_pair("Buffered Logs", &buffered_logs),
         line_pair("Dropped Logs", &dropped_logs),
@@ -426,5 +447,5 @@ fn draw_run_monitor_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;

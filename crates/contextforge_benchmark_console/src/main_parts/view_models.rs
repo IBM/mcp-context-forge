@@ -189,7 +189,10 @@ pub(crate) fn build_selection_summary(app: &App) -> SelectionSummary {
     }
 }
 
-pub(crate) fn build_suite_inspector_summary(app: &App, root: &Path) -> AppResult<SuiteInspectorSummary> {
+pub(crate) fn build_suite_inspector_summary(
+    app: &App,
+    root: &Path,
+) -> AppResult<SuiteInspectorSummary> {
     let Some(suite) = app.selected_suite() else {
         return Ok(SuiteInspectorSummary {
             suite_name: "(none selected)".to_string(),
@@ -224,7 +227,10 @@ pub(crate) fn build_suite_inspector_summary(app: &App, root: &Path) -> AppResult
     Ok(summary)
 }
 
-fn build_scenario_card_summary(defaults: Option<&TomlValue>, scenario: &TomlValue) -> ScenarioCardSummary {
+fn build_scenario_card_summary(
+    defaults: Option<&TomlValue>,
+    scenario: &TomlValue,
+) -> ScenarioCardSummary {
     let name = scenario
         .get("name")
         .and_then(TomlValue::as_str)
@@ -299,7 +305,12 @@ fn build_scenario_card_summary(defaults: Option<&TomlValue>, scenario: &TomlValu
     }
 }
 
-fn merged_bool(defaults: Option<&TomlValue>, scenario: &TomlValue, section: &str, key: &str) -> Option<bool> {
+fn merged_bool(
+    defaults: Option<&TomlValue>,
+    scenario: &TomlValue,
+    section: &str,
+    key: &str,
+) -> Option<bool> {
     scenario
         .get(section)
         .and_then(|value| value.get(key))
@@ -403,5 +414,5 @@ pub(crate) fn build_generator_focus_summary(app: &App) -> GeneratorFocusSummary 
         example: generator_example(field.key).to_string(),
     }
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;

@@ -1,3 +1,6 @@
+// Allow duplicate transitive deps in this benchmark-only crate.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
@@ -393,17 +396,13 @@ pub use lib_parts::scenario_loading::{
 };
 
 #[cfg(test)]
-use lib_parts::{
-    benchmark_token,
-    benchmark_token_command,
-    determine_scenario_success,
-    ensure_benchmark_image,
-    has_endpoint_failures,
-    run_command_streaming,
-    write_compose_override,
-    yaml_strings,
+use lib_parts::compose::run_command_streaming;
+#[cfg(test)]
+use lib_parts::runtime::{determine_scenario_success, has_endpoint_failures};
+#[cfg(test)]
+use lib_parts::runtime_orchestration::{
+    benchmark_token_command, write_compose_override, yaml_strings,
 };
-
 #[cfg(test)]
 #[path = "lib_parts/tests.rs"]
 mod tests;

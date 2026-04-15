@@ -9,7 +9,11 @@ pub(crate) fn format_command(command: &str, args: &[String]) -> String {
         .join(" ")
 }
 
-pub(crate) fn start_command_capture(app: &mut App, command_spec: CommandSpec, root: &Path) -> AppResult<()> {
+pub(crate) fn start_command_capture(
+    app: &mut App,
+    command_spec: CommandSpec,
+    root: &Path,
+) -> AppResult<()> {
     let command_label = format_command(&command_spec.command, &command_spec.args);
     let mut child = Command::new(&command_spec.command)
         .args(&command_spec.args)
@@ -19,8 +23,14 @@ pub(crate) fn start_command_capture(app: &mut App, command_spec: CommandSpec, ro
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let stdout = child.stdout.take().ok_or("Could not capture child stdout")?;
-    let stderr = child.stderr.take().ok_or("Could not capture child stderr")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Could not capture child stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not capture child stderr")?;
     let (sender, receiver) = mpsc::channel::<LogLine>();
     spawn_log_reader(stdout, LogSource::Stdout, sender.clone());
     spawn_log_reader(stderr, LogSource::Stderr, sender);
@@ -82,10 +92,17 @@ pub(crate) fn drain_running_command(app: &mut App) -> AppResult<()> {
             while let Ok(line) = running.receiver.try_recv() {
                 app.push_log_line(line.source, line.text);
             }
-            let outcome = if status.success() { "finished" } else { "failed" };
+            let outcome = if status.success() {
+                "finished"
+            } else {
+                "failed"
+            };
             app.push_log_line(
                 LogSource::System,
-                format!("Command {outcome} with status {status}: {}", running.command_label),
+                format!(
+                    "Command {outcome} with status {status}: {}",
+                    running.command_label
+                ),
             );
         }
         None => {
@@ -141,5 +158,5 @@ pub(crate) fn parse_run_outcome(text: &str) -> Option<String> {
 pub(crate) fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;

@@ -350,4 +350,3 @@ pub(crate) fn generator_format_hint(key: &str) -> &'static str {
         _ => "plain text",
     }
 }
-use crate::main_parts::*;

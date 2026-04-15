@@ -7,17 +7,17 @@ use anyhow::{Result, bail};
 use chrono::Utc;
 use serde_json::{Value, json};
 
-use crate::{
-    CommandSpec, DEFAULT_GOSE_BIN, LoadConfig, ResolvedScenario, ResolvedSuite, RuntimeChoice,
-    ScenarioSummary, SuiteMeta, log_progress,
-};
+use crate::lib_parts::scenario_loading::{discover_scenarios, load_suite};
 use crate::lib_parts::{
     benchmark_token, build_comparison_report, build_run_summary, collect_endpoint_metrics,
     render_comparison_html, render_comparison_markdown, render_run_summary_markdown,
     resolve_requests_from_workload, run_command_spec, run_flamegraph, start_stack, stop_stack,
     wait_for_gateway_health, write_goose_stats_csv, write_json, write_text,
 };
-use crate::lib_parts::scenario_loading::{discover_scenarios, load_suite};
+use crate::{
+    CommandSpec, DEFAULT_GOSE_BIN, LoadConfig, ResolvedScenario, ResolvedSuite, RuntimeChoice,
+    ScenarioSummary, SuiteMeta, log_progress,
+};
 
 pub fn detect_runtime() -> Result<RuntimeChoice> {
     let preferred = std::env::var("CONTAINER_RUNTIME").unwrap_or_else(|_| "docker".to_string());
@@ -174,10 +174,7 @@ fn target_host(load: &LoadConfig) -> String {
     }
 }
 
-pub fn scenario_env(
-    root: &Path,
-    scenario: &ResolvedScenario,
-) -> Result<BTreeMap<String, String>> {
+pub fn scenario_env(root: &Path, scenario: &ResolvedScenario) -> Result<BTreeMap<String, String>> {
     let mut env = BTreeMap::new();
     env.insert("LOADTEST_HOST".to_string(), target_host(&scenario.load));
     env.insert(
@@ -266,7 +263,10 @@ pub fn run_benchmark(
         Utc::now().format("%Y%m%d_%H%M%S")
     ));
     fs::create_dir_all(&run_dir)?;
-    log_progress(format!("Writing benchmark artifacts to {}", run_dir.display()));
+    log_progress(format!(
+        "Writing benchmark artifacts to {}",
+        run_dir.display()
+    ));
 
     let mut summaries = Vec::new();
     let mut failed_scenarios = Vec::new();
@@ -328,7 +328,10 @@ pub fn run_benchmark(
         &render_comparison_html(&comparison),
     )?;
     if failed_scenarios.is_empty() {
-        log_progress(format!("Benchmark run completed successfully: {}", run_dir.display()));
+        log_progress(format!(
+            "Benchmark run completed successfully: {}",
+            run_dir.display()
+        ));
     } else {
         log_progress(format!(
             "Benchmark run completed with failed scenarios [{}]: {}",
@@ -419,7 +422,9 @@ fn execute_scenario(
         let command = build_goose_command(root, scenario, scenario_dir, artifact_prefix, false);
         log_progress(format!(
             "Launching Goose for scenario '{}': {} {}",
-            scenario.name, command.command, command.args.join(" ")
+            scenario.name,
+            command.command,
+            command.args.join(" ")
         ));
         let goose_result = run_command_spec(root, &command, token.as_deref())?;
         let request_log = scenario_dir.join("goose_requests.csv");
@@ -436,7 +441,10 @@ fn execute_scenario(
             );
         }
         if scenario.profiling.enabled {
-            log_progress(format!("Collecting flamegraph for scenario '{}'", scenario.name));
+            log_progress(format!(
+                "Collecting flamegraph for scenario '{}'",
+                scenario.name
+            ));
             flamegraph_run = run_flamegraph(root, scenario, scenario_dir, token.as_deref())?;
             if let Some(path) = flamegraph_run.get("svg").and_then(Value::as_str) {
                 if Path::new(path).exists() {

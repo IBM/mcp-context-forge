@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use toml::Value as TomlValue;
 
-use crate::{
-    BuildConfig, ExecutionConfig, GatewayConfig, LoadConfig, MeasurementConfig, ProfilingConfig,
-    RequestsConfig, ResolvedScenario, ResolvedSuite, RuntimeConfig, ScenarioEntry,
-    ScenarioTemplate, SetupConfig, SuiteDocument, DEFAULT_GOSE_BIN, DEFAULT_SCENARIO_DIR,
-};
 use crate::lib_parts::benchmark_request_names;
+use crate::{
+    BuildConfig, DEFAULT_GOSE_BIN, DEFAULT_SCENARIO_DIR, ExecutionConfig, GatewayConfig,
+    LoadConfig, MeasurementConfig, ProfilingConfig, RequestsConfig, ResolvedScenario,
+    ResolvedSuite, RuntimeConfig, ScenarioEntry, ScenarioTemplate, SetupConfig, SuiteDocument,
+};
 
 pub fn repo_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;

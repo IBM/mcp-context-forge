@@ -33,22 +33,17 @@ pub(crate) fn handle_key_event(
     app: &mut App,
     key: KeyEvent,
     root: &Path,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
 ) -> AppResult<()> {
     match app.mode {
-        InputMode::Normal => handle_normal_mode(app, key, root, terminal),
+        InputMode::Normal => handle_normal_mode(app, key, root),
         InputMode::EditRunPath => handle_text_input(app, key, InputMode::EditRunPath),
         InputMode::EditExtraArgs => handle_text_input(app, key, InputMode::EditExtraArgs),
         InputMode::EditGeneratorField => handle_text_input(app, key, InputMode::EditGeneratorField),
     }
 }
 
-pub(crate) fn handle_normal_mode(
-    app: &mut App,
-    key: KeyEvent,
-    root: &Path,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-) -> AppResult<()> {
+pub(crate) fn handle_normal_mode(app: &mut App, key: KeyEvent, root: &Path) -> AppResult<()> {
     if app.active_view == AppView::Generator {
         return handle_generate_mode(app, key, root);
     }
@@ -117,7 +112,7 @@ pub(crate) fn handle_normal_mode(
             app.status =
                 "Editing extra args. Type, Backspace to delete, Enter to finish.".to_string();
         }
-        KeyCode::Enter | KeyCode::Char('r') => launch_action(app, root, terminal)?,
+        KeyCode::Enter | KeyCode::Char('r') => launch_action(app, root)?,
         _ => {}
     }
     Ok(())
@@ -201,5 +196,5 @@ pub(crate) fn handle_text_input(app: &mut App, key: KeyEvent, mode: InputMode) -
     }
     Ok(())
 }
-use crate::*;
 use crate::main_parts::*;
+use crate::*;
