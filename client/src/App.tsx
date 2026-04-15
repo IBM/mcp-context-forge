@@ -11,6 +11,7 @@ import { Gateways } from "./pages/Gateways";
 import { Servers } from "./pages/Servers";
 import { Tools } from "./pages/Tools";
 import { Resources } from "./pages/Resources";
+import { ServerCatalog } from "./pages/ServerCatalog";
 import { Prompts } from "./pages/Prompts";
 import { Agents } from "./pages/Agents";
 import { Users } from "./pages/Users";
@@ -66,6 +67,7 @@ function PrivateRoutes() {
         <Route path="/app/maintenance" component={Maintenance} />
         <Route path="/app/settings" component={Settings} />
         <Route path="/app/not-found" component={NotFound} />
+        <Route path="/app/server-catalog" component={ServerCatalog} />
       </AppShell>
     </AuthGuard>
   );
