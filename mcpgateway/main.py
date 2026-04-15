@@ -3005,20 +3005,30 @@ class MCPPathRewriteMiddleware:
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
 
+        # Extract root_path prefix and strip it before pattern matching.
+        # In reverse proxy deployments, scope["path"] may contain the full path
+        # including the proxy prefix (e.g., "/dev/mcp-gateway/service/gateway/servers/123/mcp").
+        # We need to strip this prefix to correctly match the /servers/ pattern.
+        # Pattern follows streamablehttp_transport.py:831 and token_scoping.py:354.
+        root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
+        app_path = original_path
+        if root_path and original_path.startswith(root_path + "/"):
+            app_path = original_path[len(root_path) :]
+
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
-        if not original_path.startswith("/.well-known/"):
-            if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+        if not app_path.startswith("/.well-known/"):
+            if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if original_path.startswith("/servers/"):
+                if app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.match(r"/servers/([^/]+)/mcp", original_path)
+                    _srv_match = re.match(r"/servers/([^/]+)/mcp", app_path)
                     if not _srv_match:
                         response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
                         await response(scope, receive, send)
@@ -3028,7 +3038,8 @@ class MCPPathRewriteMiddleware:
                     await self.application(scope, receive, send)
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-                scope["path"] = "/mcp/"
+                # Preserve root_path prefix when rewriting
+                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)
