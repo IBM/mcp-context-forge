@@ -16,7 +16,7 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: unknown,
-    message: string
+    message: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -115,7 +115,11 @@ export const api = {
     return request<T>(path, { method: "GET", headers });
   },
 
-  post<T>(path: string, body?: unknown, opts?: Omit<RequestOptions, "method" | "body">): Promise<T> {
+  post<T>(
+    path: string,
+    body?: unknown,
+    opts?: Omit<RequestOptions, "method" | "body">,
+  ): Promise<T> {
     return request<T>(path, { method: "POST", body, ...opts });
   },
 

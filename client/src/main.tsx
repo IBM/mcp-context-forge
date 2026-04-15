@@ -12,5 +12,5 @@ createRoot(root).render(
     <I18nProvider>
       <App />
     </I18nProvider>
-  </StrictMode>
+  </StrictMode>,
 );

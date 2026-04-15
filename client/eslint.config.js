@@ -1,10 +1,12 @@
 import tseslint from "typescript-eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
+import prettierPlugin from "eslint-plugin-prettier";
+import prettierConfig from "eslint-config-prettier";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["../mcpgateway/static/app"] },
+  { ignores: ["../mcpgateway/static/app", "dist", "build"] },
   {
     extends: [...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
@@ -14,10 +16,15 @@ export default tseslint.config(
     plugins: {
       react: reactPlugin,
       "react-hooks": reactHooks,
+      prettier: prettierPlugin,
     },
     rules: {
       ...reactPlugin.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
+      ...prettierConfig.rules,
+
+      // Prettier integration
+      "prettier/prettier": "error",
 
       // Security: ban dangerouslySetInnerHTML — XSS vector
       "react/no-danger": "error",
