@@ -5,8 +5,7 @@ use std::fmt;
 
 pub const DEFAULT_LOG_LEVEL: &str = "off";
 pub const DEFAULT_CONCURRENCY: usize = 10;
-// pragma: allowlist secret
-pub const DEFAULT_AUTH: Option<&str> = None;
+pub const DEFAULT_AUTH: Option<&str> = None; // pragma: allowlist secret
 
 #[derive(Deserialize, Parser)]
 pub struct Config {

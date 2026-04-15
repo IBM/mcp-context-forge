@@ -130,8 +130,9 @@ pub fn resolve_requests(
 
         // Decrypt and merge auth headers.
         let decrypted_headers = match (&req.auth_headers_encrypted, auth_secret) {
-            (Some(blob), Some(seed_string)) => {
-                Some(crate::auth::decrypt_auth(blob, seed_string).map_err(|e| {
+            (Some(blob), Some(secret)) => {
+                let decrypted = crate::auth::decrypt_auth(blob, secret); // pragma: allowlist secret
+                Some(decrypted.map_err(|e| {
                     InvokeError::Auth(format!("auth header decryption failed: {e}"))
                 })?)
             }
@@ -141,7 +142,8 @@ pub fn resolve_requests(
         // Decrypt and merge auth query params.
         let decrypted_params = match (&req.auth_query_params_encrypted, auth_secret) {
             (Some(map), Some(secret)) => {
-                Some(crate::auth::decrypt_map_values(map, secret).map_err(|e| {
+                let decrypted = crate::auth::decrypt_map_values(map, secret); // pragma: allowlist secret
+                Some(decrypted.map_err(|e| {
                     InvokeError::Auth(format!("auth query param decryption failed: {e}"))
                 })?)
             }
@@ -151,14 +153,10 @@ pub fn resolve_requests(
         // Apply auth to URL and headers.
         if decrypted_headers.is_some() || decrypted_params.is_some() {
             let params = decrypted_params.unwrap_or_default();
-            endpoint_url = crate::auth::apply_invoke_auth(
-                // pragma: allowlist secret
-                &endpoint_url,
-                &params,
-                &mut headers,
-                decrypted_headers.as_ref(),
-            )
-            .map_err(|e| InvokeError::Auth(format!("apply_invoke_auth failed: {e}")))?;
+            #[rustfmt::skip]
+            let applied = crate::auth::apply_invoke_auth(&endpoint_url, &params, &mut headers, decrypted_headers.as_ref()); // pragma: allowlist secret
+            endpoint_url =
+                applied.map_err(|e| InvokeError::Auth(format!("apply_invoke_auth failed: {e}")))?;
         }
 
         // Inject tracing headers.
@@ -301,7 +299,7 @@ mod tests {
 
     fn encrypt_map(
         payload: &HashMap<String, String>,
-        secret: &str, // pragma: allowlist secret
+        secret: &str, /* pragma: allowlist secret */
     ) -> String {
         let plaintext = serde_json::to_vec(payload).unwrap();
         let mut hasher = Sha256::new();

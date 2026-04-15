@@ -40,16 +40,17 @@ pub enum AuthError {
 // ---------------------------------------------------------------------------
 
 /// Derive a 256-bit AES key from the raw bytes of `secret`.
-fn derive_key(cipher_key_seed_string: &str) -> [u8; 32] {
+#[rustfmt::skip]
+fn derive_key(secret: &str) -> [u8; 32] { // pragma: allowlist secret
     let mut hasher = Sha256::new();
-    hasher.update(cipher_key_seed_string.as_bytes());
+    hasher.update(secret.as_bytes());
     hasher.finalize().into()
 }
 
 /// Build an `Aes256Gcm` cipher from a secret string.
-fn cipher_for(cipher_key_seed_string: &str) -> Aes256Gcm {
-    // pragma: allowlist secret
-    Aes256Gcm::new(&derive_key(cipher_key_seed_string).into())
+#[rustfmt::skip]
+fn cipher_for(secret: &str) -> Aes256Gcm { // pragma: allowlist secret
+    Aes256Gcm::new(&derive_key(secret).into())
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +165,7 @@ mod tests {
     /// Test-only encrypt helper that mirrors the Python `encode_auth`.
     fn encrypt_auth(
         payload: &HashMap<String, String>,
-        secret: &str, // pragma: allowlist secret
+        secret: &str, /* pragma: allowlist secret */
     ) -> String {
         let plaintext = serde_json::to_vec(payload).unwrap();
         let cipher = cipher_for(secret);

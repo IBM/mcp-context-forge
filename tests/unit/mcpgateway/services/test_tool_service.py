@@ -5121,14 +5121,7 @@ class TestRestToolQueryParamHandling:
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
-            await tool_service.invoke_tool(
-                test_db,
-                "test_tool",
-                {
-                    "api_key": "input_value", # pragma: allowlist secret
-                    "q": "search"
-                },
-                request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"api_key": "input_value", "q": "search"}, request_headers=None)  # pragma: allowlist secret
 
             assert "conflicting parameters" in caplog.text.lower()
             assert "api_key" in caplog.text

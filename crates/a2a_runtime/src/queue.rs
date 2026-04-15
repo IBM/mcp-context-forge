@@ -65,7 +65,7 @@ pub struct WorkerState {
 
 /// A batch of requests plus a channel to return results.
 struct Job {
-    requests: Vec<Arc<ResolvedRequest>>,
+    requests: Vec<ResolvedRequest>,
     timeout: Duration,
     result_tx: oneshot::Sender<Vec<JobResult>>,
 }
@@ -112,11 +112,13 @@ const MAX_COALESCED_REQUESTS: usize = 128;
 // Coalescing
 // ---------------------------------------------------------------------------
 
-/// Drain the receiver non-blockingly, collecting consecutive `Job` messages
-/// until the combined request count reaches [`MAX_COALESCED_REQUESTS`].
+/// Drain the receiver non-blockingly, collecting consecutive `Job` messages.
 ///
-/// All drained jobs are returned regardless of timeout differences —
-/// deduplication happens at the request-ID level during execution.
+/// Jobs with matching `timeout` and a combined request count under
+/// [`MAX_COALESCED_REQUESTS`] are considered part of the same logical batch
+/// (coalesced at the request-ID level during execution).  Jobs that exceed
+/// the limit or have a different timeout are still returned — the caller
+/// processes them all.
 ///
 /// Any non-`Job` messages (i.e., `Shutdown`) are returned separately so the
 /// caller can handle them after processing the jobs.
@@ -222,7 +224,7 @@ async fn worker_loop(
 struct RequestEntry {
     job_idx: usize,
     pos_in_job: usize,
-    request: Arc<ResolvedRequest>,
+    request: ResolvedRequest,
 }
 
 /// Execute a batch of jobs, deduplicating requests by `request_id`.
@@ -268,17 +270,7 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
 
         join_set.spawn(async move {
             // Acquire a semaphore permit to bound concurrency.
-            let _permit = match semaphore.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => {
-                    // Semaphore closed (shutdown).  Return an error for this batch.
-                    return (
-                        indices,
-                        Arc::new(Err("queue semaphore closed during shutdown".to_string())),
-                        Duration::ZERO,
-                    );
-                }
-            };
+            let _permit = semaphore.acquire_owned().await.expect("semaphore closed");
 
             let start = Instant::now();
             let scope_id = req.scope_id.as_deref().unwrap_or("default");
@@ -311,17 +303,9 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
     }
 
     while let Some(joined) = join_set.join_next().await {
-        match joined {
-            Ok((indices, shared, elapsed)) => {
-                for idx in indices {
-                    results.insert(idx, (Arc::clone(&shared), elapsed));
-                }
-            }
-            Err(join_err) => {
-                error!("queue worker task panicked: {join_err}");
-                // The panicked task's indices are lost; callers will get
-                // "no result from queue" when they look up their entry.
-            }
+        let (indices, shared, elapsed) = joined.expect("queue worker task panicked");
+        for idx in indices {
+            results.insert(idx, (Arc::clone(&shared), elapsed));
         }
     }
 
@@ -335,17 +319,10 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
                 .position(|e| e.job_idx == job_idx && e.pos_in_job == pos)
                 .expect("entry must exist for every request");
 
-            let (result, duration) = match results.get(&entry_idx) {
-                Some(r) => r.clone(),
-                None => {
-                    // A panicked task loses its results; return an error
-                    // rather than cascading the panic to the worker loop.
-                    (
-                        Arc::new(Err("internal: task result lost (worker panic)".to_string())),
-                        Duration::ZERO,
-                    )
-                }
-            };
+            let (result, duration) = results
+                .get(&entry_idx)
+                .expect("result must exist for every entry")
+                .clone();
 
             job_results.push(JobResult {
                 id: pos,
@@ -459,7 +436,7 @@ pub fn try_submit_batch(
     let (result_tx, result_rx) = oneshot::channel();
 
     let job = Job {
-        requests: requests.into_iter().map(Arc::new).collect(),
+        requests,
         timeout,
         result_tx,
     };
@@ -653,7 +630,7 @@ mod tests {
         let (tx_b, rx_b) = oneshot::channel();
         let job_a = Job {
             requests: vec![
-                Arc::new(ResolvedRequest {
+                ResolvedRequest {
                     id: 0,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -665,8 +642,8 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: Some("dedupe-me".to_string()),
                     correlation_id: None,
-                }),
-                Arc::new(ResolvedRequest {
+                },
+                ResolvedRequest {
                     id: 1,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -678,13 +655,13 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: None,
                     correlation_id: None,
-                }),
+                },
             ],
             timeout: Duration::from_secs(1),
             result_tx: tx_a,
         };
         let job_b = Job {
-            requests: vec![Arc::new(ResolvedRequest {
+            requests: vec![ResolvedRequest {
                 id: 0,
                 endpoint_url: format!("{}/invoke", mock_server.uri()),
                 headers: HashMap::new(),
@@ -696,7 +673,7 @@ mod tests {
                 scope_id: Some("scope-1".to_string()),
                 request_id: Some("dedupe-me".to_string()),
                 correlation_id: None,
-            })],
+            }],
             timeout: Duration::from_secs(1),
             result_tx: tx_b,
         };
@@ -791,7 +768,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let (result_tx, result_rx) = oneshot::channel();
         tx.send(QueueMessage::Job(Job {
-            requests: vec![Arc::new(ResolvedRequest {
+            requests: vec![ResolvedRequest {
                 id: 0,
                 endpoint_url: format!("{}/invoke", mock_server.uri()),
                 headers: HashMap::new(),
@@ -803,7 +780,7 @@ mod tests {
                 scope_id: Some("scope-1".to_string()),
                 request_id: None,
                 correlation_id: None,
-            })],
+            }],
             timeout: Duration::from_secs(1),
             result_tx,
         }))
@@ -845,7 +822,7 @@ mod tests {
 
         execute_job_batch(
             vec![Job {
-                requests: vec![Arc::new(ResolvedRequest {
+                requests: vec![ResolvedRequest {
                     id: 0,
                     endpoint_url: format!("{}/invoke", mock_server.uri()),
                     headers: HashMap::new(),
@@ -857,7 +834,7 @@ mod tests {
                     scope_id: Some("scope-1".to_string()),
                     request_id: None,
                     correlation_id: None,
-                })],
+                }],
                 timeout: Duration::from_secs(1),
                 result_tx: tx,
             }],

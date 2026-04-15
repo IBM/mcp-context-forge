@@ -16,21 +16,16 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use dashmap::DashMap;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
 use tracing::{info, warn};
 
 const RUNTIME_NAME: &str = "contextforge-a2a-runtime";
 const CONTENT_TYPE_SSE: &str = "text/event-stream";
-
-/// In-flight resolve map: cache_key → watch receiver broadcasting the result.
-type ResolveInflight = DashMap<String, watch::Receiver<Option<Result<ResolvedAgent, String>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -48,10 +43,6 @@ pub struct AppState {
     pub(crate) agent_cache: Arc<crate::cache::TieredCache<ResolvedAgent>>,
     pub(crate) session_manager: Option<Arc<crate::session::SessionManager>>,
     pub(crate) event_store: Option<Arc<crate::event_store::EventStore>>,
-    /// In-flight resolve requests keyed by scoped cache key.  Prevents
-    /// thundering-herd on cache miss — the first caller resolves from
-    /// Python and all concurrent waiters receive the same result.
-    pub(crate) resolve_inflight: Arc<ResolveInflight>,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,15 +121,11 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 /// `POST /invoke` — backward-compatible Python-initiated invoke path.
 ///
 /// Accepts a single `InvokeRequest` and calls `invoke::execute_invoke()`
-/// directly.  Trust-gated: the caller must present a valid HMAC trust
-/// header proving it is the co-located Python gateway.
+/// directly.  No trust validation: Python already authenticated the caller.
 async fn handle_invoke(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<InvokeRequest>,
 ) -> Result<Json<InvokeResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Validate the request comes from the trusted Python gateway.
-    validate_trust_headers(&state, &headers)?;
     let timeout = request
         .timeout_seconds
         .map(Duration::from_secs)
@@ -176,43 +163,6 @@ async fn handle_metrics(State(state): State<AppState>) -> Json<crate::metrics::A
     Json(state.metrics.snapshot())
 }
 
-/// Constant-time string comparison to prevent timing side-channels.
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let a = a.as_bytes();
-    let b = b.as_bytes();
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
-/// Validate that the inbound request carries a valid trust header,
-/// proving it originates from the co-located Python gateway.
-fn validate_trust_headers(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
-    let expected = trust::compute_trust_header(auth_secret);
-    let actual = headers
-        .get("x-contextforge-mcp-runtime-auth")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !constant_time_eq(actual, &expected) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "untrusted request: invalid or missing trust header".to_string(),
-            }),
-        ));
-    }
-    Ok(())
-}
-
 /// Convert Axum `HeaderMap` into a plain `HashMap<String, String>`.
 fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
     headers
@@ -227,11 +177,6 @@ fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
 }
 
 /// Map a public A2A method to the internal authz action used by Python.
-///
-/// Read-only methods map to `"get"` or `"list"` (permission `a2a.read`).
-/// Mutative methods (cancel, push config CRUD) require `"invoke"` permission
-/// (`a2a.invoke`).  Unknown methods also require `"invoke"` (default-deny
-/// treats unrecognised methods as write operations).
 fn authz_action_for_method(method: Option<&str>) -> &'static str {
     match method {
         Some(
@@ -249,42 +194,18 @@ fn authz_action_for_method(method: Option<&str>) -> &'static str {
             | "ListTaskPushNotificationConfigs"
             | "tasks/pushNotificationConfig/list",
         ) => "list",
-        // Mutative operations — explicitly mapped so the match is exhaustive
-        // over known methods.  Falls through to "invoke" alongside the
-        // catch-all for unknown methods.
-        Some(
-            "SendMessage"
-            | "message/send"
-            | "SendStreamingMessage"
-            | "message/stream"
-            | "CancelTask"
-            | "tasks/cancel"
-            | "CreateTaskPushNotificationConfig"
-            | "tasks/pushNotificationConfig/set"
-            | "DeleteTaskPushNotificationConfig"
-            | "tasks/pushNotificationConfig/delete",
-        ) => "invoke",
-        // Unknown methods require invoke permission (default-deny).
         _ => "invoke",
     }
 }
 
 /// Normalize public A2A task params into the internal Python request shape.
-///
-/// `agent_id` is injected so the Python task endpoints scope their queries
-/// to the target agent, preventing cross-agent task ID collisions and
-/// information leakage between agents.
-fn normalize_task_proxy_params(action: &str, body: &Value, agent_id: &str) -> Value {
+fn normalize_task_proxy_params(action: &str, body: &Value) -> Value {
     let mut params = body
         .get("params")
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
 
     if let Value::Object(ref mut map) = params {
-        // Always inject agent_id so Python scopes to this agent.
-        map.entry("agent_id")
-            .or_insert_with(|| Value::String(agent_id.to_string()));
-
         match action {
             "get" | "cancel" => {
                 if !map.contains_key("task_id") {
@@ -307,111 +228,21 @@ fn normalize_task_proxy_params(action: &str, body: &Value, agent_id: &str) -> Va
     params
 }
 
-/// Build a scope-aware cache key from agent name and auth context.
-///
-/// The cache key includes both the caller's team scope and email so that
-/// private-agent visibility (which depends on `owner_email`) is not
-/// shared across different users in the same team.
-///
-/// - `teams: null` + no email → `"admin"` (unrestricted)
-/// - `teams: [...]` → sorted team list + email
-/// - missing teams → `"public"` + email
-fn scoped_cache_key(agent_name: &str, auth_context: &Value) -> String {
-    use sha2::{Digest, Sha256};
-
-    let email = auth_context
-        .get("email")
-        .and_then(|e| e.as_str())
-        .unwrap_or("");
-    let teams_canonical = match auth_context.get("teams") {
-        Some(Value::Null) => "null".to_string(),
-        Some(Value::Array(teams)) => {
-            let mut sorted: Vec<&str> = teams.iter().filter_map(|t| t.as_str()).collect();
-            sorted.sort_unstable();
-            serde_json::to_string(&sorted).unwrap_or_default()
-        }
-        _ => "none".to_string(),
-    };
-
-    // Hash the composite identity to prevent delimiter-injection collisions
-    // (e.g., team "a,b" vs teams ["a","b"]).
-    let mut hasher = Sha256::new();
-    hasher.update(agent_name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(teams_canonical.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(email.as_bytes());
-    let digest = hasher.finalize();
-    // Use agent_name prefix for human-readable log/debug output.
-    let hex: String = digest[..16]
-        .iter()
-        .fold(String::with_capacity(32), |mut s, b| {
-            use std::fmt::Write;
-            let _ = write!(s, "{b:02x}");
-            s
-        });
-    format!("{agent_name}:{hex}")
-}
-
 /// Resolve an agent by name, using the tiered cache when possible.
 ///
 /// On cache miss the Python `/_internal/a2a/agents/{name}/resolve` endpoint
 /// is called (L3).  Successful responses are written to both L1 and L2.
-///
-/// Cache keys include a hash of the caller's team scope to prevent
-/// cross-tenant cache poisoning.  Concurrent requests for the same cache
-/// key are deduplicated — only the first caller hits Python, the rest
-/// wait for the same result (single-flight pattern).
 async fn resolve_agent(
     state: &AppState,
     agent_name: &str,
     auth_context: &Value,
 ) -> Result<ResolvedAgent, (StatusCode, String)> {
-    let cache_key = scoped_cache_key(agent_name, auth_context);
-
     // Check tiered cache (L1 → L2).
-    if let Some(agent) = state.agent_cache.get(&cache_key).await {
+    if let Some(agent) = state.agent_cache.get(agent_name).await {
         return Ok(agent);
     }
 
-    // Check if another request is already resolving this key.
-    if let Some(entry) = state.resolve_inflight.get(&cache_key) {
-        let mut rx = entry.clone();
-        drop(entry); // release DashMap read lock
-        // Wait for the leader to publish the result.
-        while rx.changed().await.is_ok() {
-            if let Some(result) = rx.borrow().as_ref() {
-                return result.clone().map_err(|e| (StatusCode::BAD_GATEWAY, e));
-            }
-        }
-        // Sender dropped without publishing — fall through and resolve ourselves.
-    }
-
-    // We are the leader: insert a watch channel so followers wait on us.
-    // Cap the inflight map to prevent unbounded growth under adversarial load.
-    if state.resolve_inflight.len() >= state.config.agent_cache_max_entries {
-        warn!("resolve inflight map at capacity — resolving without dedup");
-        return resolve_agent_from_python(state, agent_name, auth_context, &cache_key).await;
-    }
-    let (tx, rx) = watch::channel(None);
-    state.resolve_inflight.insert(cache_key.clone(), rx);
-
-    let result = resolve_agent_from_python(state, agent_name, auth_context, &cache_key).await;
-
-    // Publish result to waiters and remove the inflight entry.
-    let _ = tx.send(Some(result.clone().map_err(|(_status, msg)| msg)));
-    state.resolve_inflight.remove(&cache_key);
-
-    result
-}
-
-/// Perform the actual Python resolve call (L3 backend).
-async fn resolve_agent_from_python(
-    state: &AppState,
-    agent_name: &str,
-    auth_context: &Value,
-    cache_key: &str,
-) -> Result<ResolvedAgent, (StatusCode, String)> {
+    // L1+L2 miss — call Python resolve endpoint (L3).
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
     let url = format!(
         "{}/_internal/a2a/agents/{}/resolve",
@@ -429,10 +260,7 @@ async fn resolve_agent_from_python(
         .headers(trust::reqwest_headers(&trust_headers))
         .send()
         .await
-        .map_err(|e| {
-            warn!(error = %e, agent_name, "agent resolve request failed");
-            (StatusCode::BAD_GATEWAY, "agent resolve failed".to_string())
-        })?;
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("resolve failed: {e}")))?;
 
     if response.status().as_u16() == 404 {
         return Err((
@@ -443,22 +271,26 @@ async fn resolve_agent_from_python(
     if response.status().as_u16() != 200 {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        warn!(agent_name, %status, "agent resolve returned non-200: {detail}");
-        return Err((StatusCode::BAD_GATEWAY, "agent resolve failed".to_string()));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("resolve failed: HTTP {status}: {detail}"),
+        ));
     }
 
     let agent: ResolvedAgent = response.json().await.map_err(|e| {
-        warn!(error = %e, agent_name, "invalid resolve response JSON");
-        (StatusCode::BAD_GATEWAY, "agent resolve failed".to_string())
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("invalid resolve response: {e}"),
+        )
     })?;
 
-    // Populate L1 + L2 with scope-aware key.
-    state.agent_cache.set(cache_key, agent.clone()).await;
+    // Populate L1 + L2.
+    state.agent_cache.set(agent_name, agent.clone()).await;
 
     Ok(agent)
 }
 
-/// Proxy a task method (get, list, cancel) to the Python backend.
+/// Proxy a task read method (GetTask/ListTasks) to the Python backend.
 ///
 /// Calls `/_internal/a2a/tasks/{action}` with the JSON-RPC params and
 /// wraps the result in a JSON-RPC response envelope.
@@ -467,7 +299,6 @@ async fn proxy_task_method(
     action: &str,
     body: &Value,
     auth_context: &Value,
-    agent_id: &str,
 ) -> Result<Json<InvokeResultDto>, (StatusCode, Json<ErrorResponse>)> {
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
     let url = format!(
@@ -483,7 +314,7 @@ async fn proxy_task_method(
     );
     headers.insert("content-type".to_string(), "application/json".to_string());
 
-    let params = normalize_task_proxy_params(action, body, agent_id);
+    let params = normalize_task_proxy_params(action, body);
 
     let response = state
         .client
@@ -493,23 +324,16 @@ async fn proxy_task_method(
         .send()
         .await
         .map_err(|e| {
-            warn!(error = %e, action, "task proxy request failed");
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: format!("task {action} operation failed"),
+                    error: format!("task {action} proxy failed: {e}"),
                 }),
             )
         })?;
 
     let status_code = response.status().as_u16();
-    let response_json: Option<Value> = match response.json().await {
-        Ok(v) => Some(v),
-        Err(e) => {
-            warn!(error = %e, "proxy response JSON parse failed");
-            None
-        }
-    };
+    let response_json: Option<Value> = response.json().await.ok();
     let request_id = body.get("id").cloned().unwrap_or(Value::Number(1.into()));
 
     // Wrap in JSON-RPC response envelope.
@@ -558,7 +382,6 @@ async fn proxy_push_method(
     action: &str,
     body: &Value,
     auth_context: &Value,
-    agent_id: &str,
 ) -> Result<Json<InvokeResultDto>, (StatusCode, Json<ErrorResponse>)> {
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
     let url = format!(
@@ -574,15 +397,11 @@ async fn proxy_push_method(
     );
     headers.insert("content-type".to_string(), "application/json".to_string());
 
-    // Extract params and inject agent_id for scoping.
-    let mut params = body
+    // Extract params from the JSON-RPC body to send as the request body.
+    let params = body
         .get("params")
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
-    if let Value::Object(ref mut map) = params {
-        map.entry("agent_id")
-            .or_insert_with(|| Value::String(agent_id.to_string()));
-    }
 
     let response = state
         .client
@@ -592,23 +411,16 @@ async fn proxy_push_method(
         .send()
         .await
         .map_err(|e| {
-            warn!(error = %e, action, "push proxy request failed");
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: format!("push notification {action} operation failed"),
+                    error: format!("push {action} proxy failed: {e}"),
                 }),
             )
         })?;
 
     let status_code = response.status().as_u16();
-    let response_json: Option<Value> = match response.json().await {
-        Ok(v) => Some(v),
-        Err(e) => {
-            warn!(error = %e, "proxy response JSON parse failed");
-            None
-        }
-    };
+    let response_json: Option<Value> = response.json().await.ok();
     let request_id = body.get("id").cloned().unwrap_or(Value::Number(1.into()));
 
     // Wrap in JSON-RPC response envelope.
@@ -680,23 +492,16 @@ async fn proxy_agent_card(
         .send()
         .await
         .map_err(|e| {
-            warn!(error = %e, agent_name, "agent card proxy request failed");
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: "agent card operation failed".to_string(),
+                    error: format!("agent card proxy failed: {e}"),
                 }),
             )
         })?;
 
     let status_code = response.status().as_u16();
-    let response_json: Option<Value> = match response.json().await {
-        Ok(v) => Some(v),
-        Err(e) => {
-            warn!(error = %e, "proxy response JSON parse failed");
-            None
-        }
-    };
+    let response_json: Option<Value> = response.json().await.ok();
     let request_id = body.get("id").cloned().unwrap_or(Value::Number(1.into()));
 
     // Wrap in JSON-RPC response envelope.
@@ -737,21 +542,14 @@ async fn proxy_agent_card(
 }
 
 /// Perform full Python authenticate for an inbound request.
-///
-/// `jsonrpc_method` is the A2A JSON-RPC method name (e.g. `"SendMessage"`,
-/// `"GetTask"`).  It is included in the `path` field of the authenticate
-/// request so the Python gateway can use it for audit logging and
-/// path-aware policy decisions.
 async fn full_authenticate(
     state: &AppState,
     request_headers: &HashMap<String, String>,
     agent_name: &str,
-    jsonrpc_method: Option<&str>,
 ) -> Result<serde_json::Value, (StatusCode, Json<ErrorResponse>)> {
-    let rpc = jsonrpc_method.unwrap_or("invoke");
     let auth_request = trust::AuthenticateRequest {
         method: "POST".to_string(),
-        path: format!("/a2a/{agent_name}/{rpc}"),
+        path: format!("/a2a/{agent_name}/invoke"),
         query_string: String::new(),
         headers: request_headers.clone(),
         client_ip: None,
@@ -764,11 +562,10 @@ async fn full_authenticate(
     )
     .await
     .map_err(|e| {
-        warn!(error = %e, agent_name, "A2A authentication failed");
         (
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "authentication failed".to_string(),
+                error: e.to_string(),
             }),
         )
     })
@@ -803,9 +600,8 @@ async fn handle_a2a_invoke(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
-    // --- 1. Extract request headers and JSON-RPC method -------------------
+    // --- 1. Extract request headers --------------------------------------
     let request_headers = extract_headers(&headers);
-    let jsonrpc_method = body.get("method").and_then(|m| m.as_str());
 
     // --- 2. Authenticate (session fast-path or full Python call) ---------
     let session_id_header = request_headers
@@ -813,40 +609,37 @@ async fn handle_a2a_invoke(
         .or_else(|| request_headers.get("mcp-session-id"))
         .cloned();
 
-    let (auth_context, session_id) = if let (Some(mgr), Some(sid)) =
-        (&state.session_manager, &session_id_header)
-    {
-        // Try to reuse an existing session.
-        if let Some(record) = mgr.lookup(sid).await {
-            let fingerprint = mgr.compute_fingerprint(&request_headers);
-            if mgr.validate_fingerprint(&record, &fingerprint) {
-                // Cache hit — extend TTL and reuse auth_context.
-                mgr.extend(sid).await;
-                (record.auth_context, Some(sid.clone()))
+    let (auth_context, session_id) =
+        if let (Some(mgr), Some(sid)) = (&state.session_manager, &session_id_header) {
+            // Try to reuse an existing session.
+            if let Some(record) = mgr.lookup(sid).await {
+                let fingerprint = mgr.compute_fingerprint(&request_headers);
+                if mgr.validate_fingerprint(&record, &fingerprint) {
+                    // Cache hit — extend TTL and reuse auth_context.
+                    mgr.extend(sid).await;
+                    (record.auth_context, Some(sid.clone()))
+                } else {
+                    // Fingerprint mismatch — invalidate old session and create a new one.
+                    mgr.invalidate(sid).await;
+                    let ctx = full_authenticate(&state, &request_headers, &agent_name).await?;
+                    let new_sid = create_session(&state, &ctx, &request_headers).await;
+                    (ctx, new_sid)
+                }
             } else {
-                // Fingerprint mismatch — invalidate old session and create a new one.
-                mgr.invalidate(sid).await;
-                let ctx = full_authenticate(&state, &request_headers, &agent_name, jsonrpc_method)
-                    .await?;
+                // Session not found — full authenticate and create new session.
+                let ctx = full_authenticate(&state, &request_headers, &agent_name).await?;
                 let new_sid = create_session(&state, &ctx, &request_headers).await;
                 (ctx, new_sid)
             }
         } else {
-            // Session not found — full authenticate and create new session.
-            let ctx =
-                full_authenticate(&state, &request_headers, &agent_name, jsonrpc_method).await?;
+            // No session manager or no session ID header — full authenticate.
+            let ctx = full_authenticate(&state, &request_headers, &agent_name).await?;
             let new_sid = create_session(&state, &ctx, &request_headers).await;
             (ctx, new_sid)
-        }
-    } else {
-        // No session manager or no session ID header — full authenticate.
-        let ctx = full_authenticate(&state, &request_headers, &agent_name, jsonrpc_method).await?;
-        let new_sid = create_session(&state, &ctx, &request_headers).await;
-        (ctx, new_sid)
-    };
+        };
 
-    // --- 3. Authorize ----------------------------------------------------
-    let method = jsonrpc_method;
+    // --- 2. Authorize ----------------------------------------------------
+    let method = body.get("method").and_then(|m| m.as_str());
     trust::authorize(
         &state.client,
         &state.config.backend_base_url,
@@ -855,40 +648,38 @@ async fn handle_a2a_invoke(
         authz_action_for_method(method),
     )
     .await
-    .map_err(|e| {
-        warn!(error = %e, "A2A authorization check failed");
-        match e {
-            trust::TrustError::AuthorizationDenied { .. } => (
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "access denied".to_string(),
-                }),
-            ),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "authorization check failed".to_string(),
-                }),
-            ),
-        }
+    .map_err(|e| match e {
+        trust::TrustError::AuthorizationDenied { .. } => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        ),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        ),
     })?;
 
-    // --- 3a. Method-based routing for task/card/push operations -----------
-    // Task and push methods need the agent_id so Python can scope queries
-    // to the target agent.  Resolve eagerly (cached) for these methods.
+    // --- 2b. Method-based routing for task operations ---------------------
+    // If the JSON-RPC method is a task read operation, proxy to the
+    // Python task endpoints instead of invoking the agent directly.
     if let Some(method) = method {
         match method {
-            "GetTask" | "tasks/get" | "ListTasks" | "tasks/list" | "CancelTask"
-            | "tasks/cancel" => {
-                let resolved = resolve_agent(&state, &agent_name, &auth_context)
+            "GetTask" | "tasks/get" => {
+                return proxy_task_method(&state, "get", &body, &auth_context)
                     .await
-                    .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
-                let action = match method {
-                    "GetTask" | "tasks/get" => "get",
-                    "ListTasks" | "tasks/list" => "list",
-                    _ => "cancel",
-                };
-                return proxy_task_method(&state, action, &body, &auth_context, &resolved.agent_id)
+                    .map(IntoResponse::into_response);
+            }
+            "ListTasks" | "tasks/list" => {
+                return proxy_task_method(&state, "list", &body, &auth_context)
+                    .await
+                    .map(IntoResponse::into_response);
+            }
+            "CancelTask" | "tasks/cancel" => {
+                return proxy_task_method(&state, "cancel", &body, &auth_context)
                     .await
                     .map(IntoResponse::into_response);
             }
@@ -899,28 +690,23 @@ async fn handle_a2a_invoke(
                     .await
                     .map(IntoResponse::into_response);
             }
-            "CreateTaskPushNotificationConfig"
-            | "tasks/pushNotificationConfig/set"
-            | "GetTaskPushNotificationConfig"
-            | "tasks/pushNotificationConfig/get"
-            | "ListTaskPushNotificationConfigs"
-            | "tasks/pushNotificationConfig/list"
-            | "DeleteTaskPushNotificationConfig"
-            | "tasks/pushNotificationConfig/delete" => {
-                let resolved = resolve_agent(&state, &agent_name, &auth_context)
+            "CreateTaskPushNotificationConfig" | "tasks/pushNotificationConfig/set" => {
+                return proxy_push_method(&state, "create", &body, &auth_context)
                     .await
-                    .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
-                let action = match method {
-                    "CreateTaskPushNotificationConfig" | "tasks/pushNotificationConfig/set" => {
-                        "create"
-                    }
-                    "GetTaskPushNotificationConfig" | "tasks/pushNotificationConfig/get" => "get",
-                    "ListTaskPushNotificationConfigs" | "tasks/pushNotificationConfig/list" => {
-                        "list"
-                    }
-                    _ => "delete",
-                };
-                return proxy_push_method(&state, action, &body, &auth_context, &resolved.agent_id)
+                    .map(IntoResponse::into_response);
+            }
+            "GetTaskPushNotificationConfig" | "tasks/pushNotificationConfig/get" => {
+                return proxy_push_method(&state, "get", &body, &auth_context)
+                    .await
+                    .map(IntoResponse::into_response);
+            }
+            "ListTaskPushNotificationConfigs" | "tasks/pushNotificationConfig/list" => {
+                return proxy_push_method(&state, "list", &body, &auth_context)
+                    .await
+                    .map(IntoResponse::into_response);
+            }
+            "DeleteTaskPushNotificationConfig" | "tasks/pushNotificationConfig/delete" => {
+                return proxy_push_method(&state, "delete", &body, &auth_context)
                     .await
                     .map(IntoResponse::into_response);
             }
@@ -938,12 +724,12 @@ async fn handle_a2a_invoke(
         }
     }
 
-    // --- 4. Resolve agent (with cache) -----------------------------------
+    // --- 3. Resolve agent (with cache) -----------------------------------
     let resolved = resolve_agent(&state, &agent_name, &auth_context)
         .await
         .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
 
-    // --- 5. Build DTO and invoke -----------------------------------------
+    // --- 4. Build DTO and invoke -----------------------------------------
     let dto = InvokeRequestDto {
         id: 0,
         endpoint_url: resolved.endpoint_url.clone(),
@@ -1122,19 +908,11 @@ async fn handle_streaming_method(
     // Build reqwest headers from the resolved request.
     let mut agent_headers = reqwest::header::HeaderMap::new();
     for (k, v) in &resolved_req.headers {
-        match (
+        if let (Ok(name), Ok(val)) = (
             reqwest::header::HeaderName::from_bytes(k.as_bytes()),
             reqwest::header::HeaderValue::from_str(v),
         ) {
-            (Ok(name), Ok(val)) => {
-                agent_headers.insert(name, val);
-            }
-            (Err(e), _) => {
-                warn!(header = %k, error = %e, "dropping streaming header with invalid name");
-            }
-            (_, Err(e)) => {
-                warn!(header = %k, error = %e, "dropping streaming header with invalid value");
-            }
+            agent_headers.insert(name, val);
         }
     }
 
@@ -1160,7 +938,7 @@ async fn handle_streaming_method(
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: "streaming request failed".to_string(),
+                    error: format!("streaming request failed: {e}"),
                 }),
             )
         })?;
@@ -1187,13 +965,7 @@ async fn handle_streaming_method(
     } else {
         // Agent returned JSON (doesn't support streaming) — return as JSON.
         let status_code = agent_response.status().as_u16();
-        let response_json: Option<Value> = match agent_response.json().await {
-            Ok(v) => Some(v),
-            Err(e) => {
-                warn!(error = %e, "agent response JSON parse failed");
-                None
-            }
-        };
+        let response_json: Option<Value> = agent_response.json().await.ok();
         let success = (200..300).contains(&status_code);
         let result_dto = InvokeResultDto {
             id: 0,
@@ -1243,6 +1015,7 @@ fn parse_last_event_id(header: &str, body: &Value) -> Option<(String, i64)> {
         let task_id_part = &header[..pos];
         let sequence_part = &header[pos + 1..];
 
+        // Non-empty task_id with valid sequence
         if let (false, Ok(seq)) = (task_id_part.is_empty(), sequence_part.parse::<i64>()) {
             return Some((task_id_part.to_string(), seq));
         }
@@ -1283,10 +1056,6 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
 /// Fallback handler for `/a2a/...` — proxy catch-all that forwards to the
 /// Python backend.  Because this is a `fallback` (not a parameterized route),
 /// we extract the sub-path from the request URI.
-///
-/// The proxy authenticates the inbound request via a Python gateway callout
-/// before forwarding.  The original client headers are forwarded to Python
-/// (minus hop-by-hop headers) after authentication succeeds.
 async fn handle_a2a_proxy(
     State(state): State<AppState>,
     method: Method,
@@ -1294,54 +1063,24 @@ async fn handle_a2a_proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
-    // Authenticate the inbound request via the Python gateway.
-    let request_headers = extract_headers(&headers);
+    // The nested router strips the `/a2a` prefix, so `uri.path()` is the
+    // remainder (e.g. `/some-agent/tasks`).  Strip the leading `/`.
     let rest = uri.path().trim_start_matches('/');
-    let auth_request = trust::AuthenticateRequest {
-        method: method.as_str().to_string(),
-        path: format!("/a2a/{rest}"),
-        query_string: uri.query().unwrap_or("").to_string(),
-        headers: request_headers,
-        client_ip: None,
-    };
-    trust::authenticate(
-        &state.client,
-        &state.config.backend_base_url,
-        state.config.auth_secret.as_deref().unwrap_or(""),
-        &auth_request,
-    )
-    .await
-    .map_err(|e| {
-        warn!(error = %e, "proxy authentication failed");
-        (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "authentication failed".to_string(),
-            }),
-        )
-    })?;
-
-    let query = uri.query();
-    proxy_to_backend(&state, method, rest, query, &headers, body).await
+    proxy_to_backend(&state, method, rest, &headers, body).await
 }
 
 async fn proxy_to_backend(
     state: &AppState,
     method: Method,
     path: &str,
-    query: Option<&str>,
     headers: &HeaderMap,
     body: Bytes,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
-    let base = format!(
+    let url = format!(
         "{}/a2a/{}",
         state.config.backend_base_url.trim_end_matches('/'),
         path,
     );
-    let url = match query {
-        Some(q) if !q.is_empty() => format!("{base}?{q}"),
-        _ => base,
-    };
 
     // Build filtered header map — skip hop-by-hop headers.
     let mut forwarded = reqwest::header::HeaderMap::new();
@@ -1376,7 +1115,7 @@ async fn proxy_to_backend(
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: "proxy request failed".to_string(),
+                    error: format!("proxy request failed: {e}"),
                 }),
             )
         })?;
@@ -1395,11 +1134,10 @@ async fn proxy_to_backend(
     }
 
     let response_body = response.bytes().await.map_err(|e| {
-        warn!(error = %e, "failed to read proxy response body");
         (
             StatusCode::BAD_GATEWAY,
             Json(ErrorResponse {
-                error: "failed to read proxy response".to_string(),
+                error: format!("failed to read proxy response: {e}"),
             }),
         )
     })?;
@@ -1411,11 +1149,10 @@ async fn proxy_to_backend(
     builder
         .body(axum::body::Body::from(response_body))
         .map_err(|e| {
-            warn!(error = %e, "failed to build proxy response");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: "internal proxy error".to_string(),
+                    error: format!("failed to build proxy response: {e}"),
                 }),
             )
         })
@@ -1493,59 +1230,7 @@ mod tests {
             )),
             session_manager: None,
             event_store: None,
-            resolve_inflight: Arc::new(DashMap::new()),
         }
-    }
-
-    #[test]
-    fn scoped_cache_key_differentiates_by_email() {
-        let ctx_a = json!({"teams": ["t1"], "email": "alice@test.com"});
-        let ctx_b = json!({"teams": ["t1"], "email": "bob@test.com"});
-        assert_ne!(
-            scoped_cache_key("agent", &ctx_a),
-            scoped_cache_key("agent", &ctx_b),
-            "different emails with same teams must produce different keys"
-        );
-    }
-
-    #[test]
-    fn scoped_cache_key_differentiates_by_teams() {
-        let ctx_a = json!({"teams": ["t1"], "email": "u@test.com"});
-        let ctx_b = json!({"teams": ["t2"], "email": "u@test.com"});
-        assert_ne!(
-            scoped_cache_key("agent", &ctx_a),
-            scoped_cache_key("agent", &ctx_b),
-        );
-    }
-
-    #[test]
-    fn scoped_cache_key_admin_without_email() {
-        let ctx = json!({"teams": null});
-        let key = scoped_cache_key("agent", &ctx);
-        assert!(key.starts_with("agent:"));
-    }
-
-    #[test]
-    fn scoped_cache_key_prevents_delimiter_injection() {
-        // Team "a","b" vs team "a,b" must produce different keys.
-        let ctx_two = json!({"teams": ["a", "b"], "email": "u@test.com"});
-        let ctx_one = json!({"teams": ["a,b"], "email": "u@test.com"});
-        assert_ne!(
-            scoped_cache_key("agent", &ctx_two),
-            scoped_cache_key("agent", &ctx_one),
-            "delimiter injection must not cause cache key collision"
-        );
-    }
-
-    #[test]
-    fn scoped_cache_key_deterministic_with_unsorted_teams() {
-        let ctx_a = json!({"teams": ["z", "a", "m"], "email": "u@test.com"});
-        let ctx_b = json!({"teams": ["a", "m", "z"], "email": "u@test.com"});
-        assert_eq!(
-            scoped_cache_key("agent", &ctx_a),
-            scoped_cache_key("agent", &ctx_b),
-            "team order must not affect cache key"
-        );
     }
 
     #[test]
@@ -1563,8 +1248,6 @@ mod tests {
             "list"
         );
         assert_eq!(authz_action_for_method(Some("SendMessage")), "invoke");
-        assert_eq!(authz_action_for_method(Some("CancelTask")), "invoke");
-        assert_eq!(authz_action_for_method(Some("tasks/cancel")), "invoke");
         assert_eq!(
             authz_action_for_method(Some("tasks/pushNotificationConfig/delete")),
             "invoke"
@@ -1576,20 +1259,20 @@ mod tests {
     fn normalize_task_proxy_params_copies_id_and_status_fields() {
         let get_body = json!({"params": {"id": "task-1"}});
         assert_eq!(
-            normalize_task_proxy_params("get", &get_body, "agent-1"),
-            json!({"id": "task-1", "task_id": "task-1", "agent_id": "agent-1"})
+            normalize_task_proxy_params("get", &get_body),
+            json!({"id": "task-1", "task_id": "task-1"})
         );
 
         let cancel_body = json!({"params": {"id": "task-2"}});
         assert_eq!(
-            normalize_task_proxy_params("cancel", &cancel_body, "agent-1"),
-            json!({"id": "task-2", "task_id": "task-2", "agent_id": "agent-1"})
+            normalize_task_proxy_params("cancel", &cancel_body),
+            json!({"id": "task-2", "task_id": "task-2"})
         );
 
         let list_body = json!({"params": {"status": "working"}});
         assert_eq!(
-            normalize_task_proxy_params("list", &list_body, "agent-1"),
-            json!({"status": "working", "state": "working", "agent_id": "agent-1"})
+            normalize_task_proxy_params("list", &list_body),
+            json!({"status": "working", "state": "working"})
         );
     }
 
@@ -1598,12 +1281,12 @@ mod tests {
         let body =
             json!({"params": {"id": "public-id", "task_id": "internal-id", "state": "done"}});
         assert_eq!(
-            normalize_task_proxy_params("get", &body, "agent-1"),
-            json!({"id": "public-id", "task_id": "internal-id", "state": "done", "agent_id": "agent-1"})
+            normalize_task_proxy_params("get", &body),
+            json!({"id": "public-id", "task_id": "internal-id", "state": "done"})
         );
         assert_eq!(
-            normalize_task_proxy_params("list", &body, "agent-1"),
-            json!({"id": "public-id", "task_id": "internal-id", "state": "done", "agent_id": "agent-1"})
+            normalize_task_proxy_params("list", &body),
+            json!({"id": "public-id", "task_id": "internal-id", "state": "done"})
         );
     }
 
@@ -1671,7 +1354,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_GATEWAY);
-        assert!(err.1.contains("agent resolve failed"));
+        assert!(err.1.contains("invalid resolve response"));
     }
 
     #[tokio::test]
@@ -1679,15 +1362,13 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/_internal/a2a/tasks/get"))
-            .and(body_json(
-                json!({"task_id": "task-1", "id": "task-1", "agent_id": "agent-1"}),
-            ))
+            .and(body_json(json!({"task_id": "task-1", "id": "task-1"})))
             .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "missing"})))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
             .and(path("/_internal/a2a/push/get"))
-            .and(body_json(json!({"id": "cfg-1", "agent_id": "agent-1"})))
+            .and(body_json(json!({"id": "cfg-1"})))
             .respond_with(ResponseTemplate::new(400).set_body_json(json!({"error": "bad push"})))
             .mount(&server)
             .await;
@@ -1698,7 +1379,6 @@ mod tests {
             "get",
             &json!({"id": 9, "params": {"id": "task-1"}}),
             &json!({"sub": "user"}),
-            "agent-1",
         )
         .await
         .unwrap();
@@ -1711,7 +1391,6 @@ mod tests {
             "get",
             &json!({"id": 8, "params": {"id": "cfg-1"}}),
             &json!({"sub": "user"}),
-            "agent-1",
         )
         .await
         .unwrap();
@@ -1729,7 +1408,6 @@ mod tests {
             "get",
             &json!({"id": 1, "params": {"id": "task-1"}}),
             &json!({"sub": "user"}),
-            "agent-1",
         )
         .await
         .unwrap_err();
@@ -1740,7 +1418,6 @@ mod tests {
             "get",
             &json!({"id": 1, "params": {"id": "cfg-1"}}),
             &json!({"sub": "user"}),
-            "agent-1",
         )
         .await
         .unwrap_err();
@@ -1792,7 +1469,6 @@ mod tests {
             &state,
             Method::POST,
             "agent/tasks",
-            None,
             &headers,
             Bytes::from_static(br#"{"ok":true}"#),
         )

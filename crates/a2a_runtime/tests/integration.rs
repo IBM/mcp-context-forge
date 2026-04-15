@@ -43,32 +43,6 @@ async fn post_json(app: axum::Router, uri: &str, body: Value) -> (StatusCode, Va
     (status, json)
 }
 
-/// Like `post_json` but includes the HMAC trust header expected by
-/// trust-gated endpoints (`/invoke`, proxy paths).  The `auth_secret`
-/// should match the config's `auth_secret` (use `""` for `None`).
-async fn post_json_trusted(
-    app: axum::Router,
-    uri: &str,
-    body: Value,
-    auth_secret: &str, // pragma: allowlist secret
-) -> (StatusCode, Value) {
-    let trust_value = contextforge_a2a_runtime::trust::compute_trust_header(auth_secret);
-    let request = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .header("x-contextforge-mcp-runtime-auth", trust_value)
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let json: Value = serde_json::from_slice(&bytes)
-        .unwrap_or(json!({"raw": String::from_utf8_lossy(&bytes).to_string()}));
-    (status, json)
-}
-
 async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
     let request = Request::builder()
         .method("GET")
@@ -110,7 +84,7 @@ fn default_test_config() -> RuntimeConfig {
         cache_invalidation_channel: "mcpgw:a2a:invalidate".to_string(),
         session_enabled: false,
         session_ttl_secs: 300,
-        session_fingerprint_headers: "authorization,cookie".to_string(),
+        session_fingerprint_headers: "authorization,cookie,x-forwarded-for".to_string(),
         event_store_max_events: 1000,
         event_store_ttl_secs: 3600,
         event_flush_interval_ms: 1000,
@@ -150,7 +124,7 @@ async fn invoke_forwards_to_agent_and_returns_response() {
         .await;
 
     let app = test_app(default_test_config());
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -159,7 +133,6 @@ async fn invoke_forwards_to_agent_and_returns_response() {
             "json_body": {"jsonrpc": "2.0", "method": "SendMessage", "id": 1, "params": {}},
             "timeout_seconds": 5
         }),
-        "", // auth_secret matches default_test_config (None → "")
     )
     .await;
 
@@ -171,7 +144,7 @@ async fn invoke_forwards_to_agent_and_returns_response() {
 #[tokio::test]
 async fn invoke_rejects_file_scheme() {
     let app = test_app(default_test_config());
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -179,7 +152,6 @@ async fn invoke_rejects_file_scheme() {
             "headers": {},
             "json_body": {},
         }),
-        "",
     )
     .await;
 
@@ -209,7 +181,7 @@ async fn invoke_retries_on_5xx_then_succeeds() {
     config.retry_backoff_ms = 50;
     let app = test_app(config);
 
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -217,7 +189,6 @@ async fn invoke_retries_on_5xx_then_succeeds() {
             "headers": {},
             "json_body": {"test": true},
         }),
-        "",
     )
     .await;
 
@@ -229,7 +200,7 @@ async fn invoke_retries_on_5xx_then_succeeds() {
 #[tokio::test]
 async fn invoke_returns_bad_gateway_on_connection_refused() {
     let app = test_app(default_test_config());
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -237,7 +208,6 @@ async fn invoke_returns_bad_gateway_on_connection_refused() {
             "headers": {},
             "json_body": {},
         }),
-        "",
     )
     .await;
 
@@ -259,7 +229,7 @@ async fn invoke_returns_gateway_timeout_on_slow_agent() {
     config.max_retries = 0;
     let app = test_app(config);
 
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -268,7 +238,6 @@ async fn invoke_returns_gateway_timeout_on_slow_agent() {
             "json_body": {},
             "timeout_seconds": 1
         }),
-        "",
     )
     .await;
 
@@ -287,7 +256,7 @@ async fn invoke_forwards_custom_headers() {
         .await;
 
     let app = test_app(default_test_config());
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -295,7 +264,6 @@ async fn invoke_forwards_custom_headers() {
             "headers": {"X-Custom": "test-value", "Content-Type": "application/json"},
             "json_body": {},
         }),
-        "",
     )
     .await;
 
@@ -383,7 +351,7 @@ async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
     config.auth_secret = None; // pragma: allowlist secret
     let app = test_app(config);
 
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -392,7 +360,6 @@ async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
             "json_body": {},
             "auth_headers_encrypted": "some-encrypted-blob"
         }),
-        "", // auth_secret is None → trust header computed from ""
     )
     .await;
 
@@ -445,7 +412,7 @@ async fn test_invoke_records_metrics_after_success() {
     let app = test_app(config);
 
     // First: invoke successfully.
-    let (invoke_status, _) = post_json_trusted(
+    let (invoke_status, _) = post_json(
         app.clone(),
         "/invoke",
         json!({
@@ -454,7 +421,6 @@ async fn test_invoke_records_metrics_after_success() {
             "json_body": {"jsonrpc": "2.0", "method": "SendMessage", "id": 1, "params": {}},
             "timeout_seconds": 5
         }),
-        "",
     )
     .await;
     assert_eq!(invoke_status, StatusCode::OK);
@@ -482,9 +448,6 @@ async fn test_invoke_records_metrics_after_success() {
 #[tokio::test]
 async fn test_a2a_proxy_forwards_to_backend() {
     let mock_server = MockServer::start().await;
-
-    // Set up authentication mock (proxy now authenticates before forwarding).
-    setup_auth_mock(&mock_server, 1).await;
 
     // Set up the mock backend to expect a proxied request at /a2a/some-path.
     Mock::given(method("POST"))
@@ -516,21 +479,6 @@ async fn test_a2a_proxy_forwards_to_backend() {
 async fn test_a2a_proxy_forwards_get_requests() {
     let mock_server = MockServer::start().await;
 
-    // The proxy now authenticates — set up the auth mock.
-    // For GET requests, authenticate uses POST to the authenticate endpoint.
-    Mock::given(method("POST"))
-        .and(path("/_internal/a2a/authenticate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "authContext": {
-                "email": "user@example.com",
-                "is_admin": false,
-                "teams": ["team1"]
-            }
-        })))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
     Mock::given(method("GET"))
         .and(path("/a2a/agents/list"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"agents": ["echo", "calc"]})))
@@ -550,7 +498,7 @@ async fn test_a2a_proxy_forwards_get_requests() {
 }
 
 #[tokio::test]
-async fn test_a2a_proxy_returns_forbidden_when_backend_unreachable() {
+async fn test_a2a_proxy_returns_bad_gateway_when_backend_unreachable() {
     let mut config = default_test_config();
     // Point to a port that nothing is listening on.
     config.backend_base_url = "http://127.0.0.1:1".to_string();
@@ -558,20 +506,13 @@ async fn test_a2a_proxy_returns_forbidden_when_backend_unreachable() {
 
     let (status, body) = post_json(app, "/a2a/some-path", json!({"test": true})).await;
 
-    // The proxy now authenticates before forwarding; with an unreachable
-    // backend the authentication call fails first, returning 403.
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         body["error"]
             .as_str()
             .unwrap_or("")
-            .contains("request failed")
-            || body["error"]
-                .as_str()
-                .unwrap_or("")
-                .contains("authentication failed"),
-        "error should indicate auth/request failure, got: {}",
-        body["error"].as_str().unwrap_or("")
+            .contains("proxy request failed"),
+        "error message should indicate proxy failure"
     );
 }
 
@@ -762,8 +703,8 @@ async fn test_a2a_invoke_authz_denied() {
         body["error"]
             .as_str()
             .unwrap_or("")
-            .contains("access denied"),
-        "error should mention access denied, got: {}",
+            .contains("authorization denied"),
+        "error should mention authorization denied, got: {}",
         body["error"]
     );
 
@@ -964,9 +905,6 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve → 200 (task methods now resolve the agent to get agent_id)
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     // tasks/get → 200 with task data
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/get$"))
@@ -977,6 +915,14 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
             "result": "done"
         })))
         .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve should NOT be called — task methods bypass agent resolution
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1041,9 +987,6 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve → 200
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     // tasks/list → 200 with task list
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/list$"))
@@ -1054,6 +997,14 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
             ]
         })))
         .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve should NOT be called
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1118,9 +1069,6 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // resolve → 200
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     // tasks/get → 200 with task data
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/get$"))
@@ -1130,6 +1078,14 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
             "state": "completed"
         })))
         .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve should NOT be called
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1195,9 +1151,6 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // resolve → 200
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     // tasks/cancel → 200 with canceled task data
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/cancel$"))
@@ -1207,6 +1160,14 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
             "state": "canceled"
         })))
         .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve should NOT be called — task methods bypass agent resolution
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1271,9 +1232,6 @@ async fn test_a2a_invoke_cancel_task_legacy_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // resolve → 200
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     // tasks/cancel → 200 with canceled task data
     Mock::given(method("POST"))
         .and(path_regex(".*tasks/cancel$"))
@@ -1283,6 +1241,14 @@ async fn test_a2a_invoke_cancel_task_legacy_name_routes_correctly() {
             "state": "canceled"
         })))
         .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve should NOT be called
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1681,16 +1647,13 @@ async fn test_a2a_invoke_create_push_config_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     Mock::given(method("POST"))
         .and(path_regex(".*push/create$"))
         .and(body_json(json!({
             "a2a_agent_id": "agent-001",
             "task_id": "task-1",
             "webhook_url": "https://example.com/hook",
-            "enabled": true,
-            "agent_id": "agent-001"
+            "enabled": true
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
@@ -1749,13 +1712,10 @@ async fn test_a2a_invoke_get_push_config_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     Mock::given(method("POST"))
         .and(path_regex(".*push/get$"))
         .and(body_json(json!({
-            "task_id": "task-1",
-            "agent_id": "agent-001"
+            "task_id": "task-1"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "config_id": "cfg-1",
@@ -1809,13 +1769,10 @@ async fn test_a2a_invoke_list_push_configs_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     Mock::given(method("POST"))
         .and(path_regex(".*push/list$"))
         .and(body_json(json!({
-            "task_id": "task-1",
-            "agent_id": "agent-001"
+            "task_id": "task-1"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "configs": [{"config_id": "cfg-1"}, {"config_id": "cfg-2"}]
@@ -1868,13 +1825,10 @@ async fn test_a2a_invoke_delete_push_config_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    setup_resolve_mock(&mock_server, "test-agent", "http://unused", 1).await;
-
     Mock::given(method("POST"))
         .and(path_regex(".*push/delete$"))
         .and(body_json(json!({
-            "config_id": "cfg-1",
-            "agent_id": "agent-001"
+            "config_id": "cfg-1"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "deleted": true
@@ -2826,7 +2780,7 @@ async fn test_a2a_invoke_with_invalid_json_body() {
 async fn test_invoke_with_empty_endpoint_url() {
     let app = test_app(default_test_config());
 
-    let (status, body) = post_json_trusted(
+    let (status, body) = post_json(
         app,
         "/invoke",
         json!({
@@ -2834,7 +2788,6 @@ async fn test_invoke_with_empty_endpoint_url() {
             "headers": {},
             "json_body": {}
         }),
-        "",
     )
     .await;
 

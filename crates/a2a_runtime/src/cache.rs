@@ -28,21 +28,6 @@ use tokio::sync::watch;
 use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Redact userinfo (username:password) from a Redis URL for safe logging.
-fn redact_redis_url(url: &str) -> String {
-    // Strip the userinfo portion between scheme and host.
-    if let Some(at_pos) = url.find('@') {
-        if let Some(scheme_end) = url.find("://") {
-            return format!("{}{}", &url[..scheme_end + 3], &url[at_pos + 1..]);
-        }
-    }
-    url.to_string()
-}
-
-// ---------------------------------------------------------------------------
 // RedisPool
 // ---------------------------------------------------------------------------
 
@@ -64,24 +49,23 @@ impl RedisPool {
     /// Returns `None` on failure and logs a warning — callers should treat a
     /// missing pool as "L2 unavailable" rather than a fatal error.
     pub async fn connect(url: &str) -> Option<Self> {
-        let safe_url = redact_redis_url(url);
         let client = match redis::Client::open(url) {
             Ok(c) => c,
             Err(e) => {
-                warn!(url = %safe_url, error = %e, "redis: failed to build client");
+                warn!(url = url, error = %e, "redis: failed to build client");
                 return None;
             }
         };
         match client.get_connection_manager().await {
             Ok(manager) => {
-                debug!(url = %safe_url, "redis: connection manager ready");
+                debug!(url = url, "redis: connection manager ready");
                 Some(Self {
                     manager,
                     url: Arc::new(url.to_owned()),
                 })
             }
             Err(e) => {
-                warn!(url = %safe_url, error = %e, "redis: could not connect, L2 cache disabled");
+                warn!(url = url, error = %e, "redis: could not connect, L2 cache disabled");
                 None
             }
         }

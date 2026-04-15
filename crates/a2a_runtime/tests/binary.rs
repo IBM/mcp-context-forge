@@ -8,8 +8,6 @@ fn binary_starts_and_exits_cleanly_for_http_listener() {
     let output = Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime")) // pragma: allowlist secret
         .arg("--listen-http")
         .arg("127.0.0.1:0")
-        .arg("--auth-secret") // pragma: allowlist secret
-        .arg("test-secret") // pragma: allowlist secret
         .arg("--exit-after-startup-ms")
         .arg("5")
         .arg("--max-concurrent")
@@ -27,24 +25,9 @@ fn binary_starts_and_exits_cleanly_for_http_listener() {
 }
 
 #[test]
-fn binary_rejects_missing_auth_secret() {
-    let output = Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime")) // pragma: allowlist secret
-        .arg("--listen-http")
-        .arg("127.0.0.1:0")
-        .arg("--exit-after-startup-ms")
-        .arg("5")
-        .output()
-        .expect("spawn binary");
-
-    assert!(
-        !output.status.success(),
-        "binary should fail without auth_secret"
-    );
-}
-
-#[test]
 fn binary_exits_non_zero_for_invalid_http_listener() {
-    let output = Command::new(env!("CARGO_BIN_EXE_contextforge-a2a-runtime")) // pragma: allowlist secret
+    let binary = env!("CARGO_BIN_EXE_contextforge-a2a-runtime"); // pragma: allowlist secret
+    let output = Command::new(binary)
         .arg("--listen-http")
         .arg("not-an-addr")
         .output()

@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use tracing::warn;
 
 // Header names (must match mcpgateway/main.py constants).
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
@@ -22,13 +21,11 @@ const RUNTIME_AUTH_HEADER: &str = "x-contextforge-mcp-runtime-auth";
 const AUTH_CONTEXT_HEADER: &str = "x-contextforge-auth-context";
 const AUTH_CONTEXT_DERIVATION: &str = "contextforge-internal-mcp-runtime-v1";
 
-/// Compute the trust header value from the auth secret.
+/// Compute the HMAC trust header value from the auth secret.
 ///
-/// Uses `SHA256("{secret}:{AUTH_CONTEXT_DERIVATION}").hex()` — a keyed hash
-/// (not a formal HMAC), sufficient for proving co-location since the secret
-/// never crosses the network boundary.
-pub fn compute_trust_header(auth_secret: &str, // pragma: allowlist secret
-) -> String {
+/// Format: `SHA256("{secret}:{AUTH_CONTEXT_DERIVATION}").hex()`
+#[rustfmt::skip]
+pub fn compute_trust_header(auth_secret: &str) -> String { // pragma: allowlist secret
     let material = format!("{auth_secret}:{AUTH_CONTEXT_DERIVATION}");
     let digest = Sha256::digest(material.as_bytes());
     digest.iter().fold(String::with_capacity(64), |mut s, b| {
@@ -40,7 +37,7 @@ pub fn compute_trust_header(auth_secret: &str, // pragma: allowlist secret
 
 /// Build the standard trust headers for Rust → Python internal requests.
 pub fn build_trust_headers(
-    auth_secret: &str, // pragma: allowlist secret
+    auth_secret: &str, /* pragma: allowlist secret */
 ) -> HashMap<String, String> {
     let mut headers = HashMap::new();
     headers.insert(RUNTIME_HEADER.to_string(), "rust".to_string());
@@ -52,14 +49,8 @@ pub fn build_trust_headers(
 }
 
 /// Encode an auth context JSON value as a base64url header value (no padding).
-///
-/// # Panics
-///
-/// Panics if the auth context cannot be serialized — proceeding with an
-/// empty context would silently alter the caller's effective permissions.
 pub fn encode_auth_context(auth_context: &serde_json::Value) -> String {
-    let json_bytes =
-        serde_json::to_vec(auth_context).expect("auth context must be JSON-serializable");
+    let json_bytes = serde_json::to_vec(auth_context).unwrap_or_default();
     URL_SAFE_NO_PAD.encode(json_bytes)
 }
 
@@ -198,27 +189,15 @@ pub fn is_loopback(addr: Option<IpAddr>) -> bool {
 }
 
 /// Convert a `HashMap<String, String>` into a `reqwest::header::HeaderMap`.
-///
-/// Invalid header names or values are logged and skipped rather than
-/// silently dropped — this is security-critical because dropped trust
-/// headers would cause 403s with no diagnostic breadcrumb.
 pub(crate) fn reqwest_headers(map: &HashMap<String, String>) -> reqwest::header::HeaderMap {
     use reqwest::header::{HeaderName, HeaderValue};
     let mut hm = reqwest::header::HeaderMap::new();
     for (k, v) in map {
-        match (
+        if let (Ok(name), Ok(val)) = (
             HeaderName::from_bytes(k.as_bytes()),
             HeaderValue::from_str(v),
         ) {
-            (Ok(name), Ok(val)) => {
-                hm.insert(name, val);
-            }
-            (Err(e), _) => {
-                warn!(header = %k, error = %e, "dropping header with invalid name in trust request");
-            }
-            (_, Err(e)) => {
-                warn!(header = %k, error = %e, "dropping header with invalid value in trust request");
-            }
+            hm.insert(name, val);
         }
     }
     hm

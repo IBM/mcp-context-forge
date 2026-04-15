@@ -53,7 +53,7 @@ fn default_bench_config() -> RuntimeConfig {
         cache_invalidation_channel: "mcpgw:a2a:invalidate".to_string(),
         session_enabled: false,
         session_ttl_secs: 300,
-        session_fingerprint_headers: "authorization,cookie".to_string(),
+        session_fingerprint_headers: "authorization,cookie,x-forwarded-for".to_string(),
         event_store_max_events: 1000,
         event_store_ttl_secs: 3600,
         event_flush_interval_ms: 1000,
@@ -66,9 +66,8 @@ fn default_bench_config() -> RuntimeConfig {
 /// Encrypt helper replicating the `#[cfg(test)]` function from `auth.rs`.
 fn encrypt_auth(
     payload: &HashMap<String, String>,
-    secret: &str, // pragma: allowlist secret
+    secret: &str, /* pragma: allowlist secret */
 ) -> String {
-    // pragma: allowlist secret
     let plaintext = serde_json::to_vec(payload).unwrap();
     let key: [u8; 32] = Sha256::digest(secret.as_bytes()).into();
     let cipher = Aes256Gcm::new(&key.into());

@@ -45,4 +45,4 @@ The adapter normalizes between v1 and legacy forms at the gateway boundary, allo
 ## References
 - `mcpgateway/services/a2a_protocol.py` - Protocol adapter implementation
 - `a2a-agents/go/a2a-echo-agent/` - Go reference implementation
-- `tools_rust/a2a_runtime/` - Rust A2A runtime
+- `crates/a2a_runtime/` - Rust A2A runtime
