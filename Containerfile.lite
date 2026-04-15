@@ -35,7 +35,8 @@ ARG ENABLE_PROFILING=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS rust-builder-base
+ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
 
@@ -53,6 +54,23 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         exit 0; \
     fi
 
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        dnf upgrade -y && \
+        dnf install -y \
+            python${PYTHON_VERSION} \
+            python${PYTHON_VERSION}-devel \
+            python${PYTHON_VERSION}-pip \
+            gcc \
+            gcc-c++ \
+            openssl-devel \
+            postgresql-devel \
+            libpq-devel \
+            findutils \
+            curl && \
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
+        dnf clean all; \
+    fi
+
 # Install Rust toolchain (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
@@ -68,7 +86,7 @@ COPY crates/ /build/crates/
 # Build local native extensions from maturin crates under crates/
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/native-extension-wheels && \
-        python3.12 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
+        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
         printf '%s\n' \
             'import pathlib' \
             'import subprocess' \
@@ -92,7 +110,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
             'print("✅ Local native extensions built successfully")' \
             > /tmp/build_local_native_extensions.py && \
-        python3.12 /tmp/build_local_native_extensions.py && \
+        python3 /tmp/build_local_native_extensions.py && \
         rm -f /tmp/build_local_native_extensions.py \
     else \
         echo "⏭️  Skipping local native extension build"; \

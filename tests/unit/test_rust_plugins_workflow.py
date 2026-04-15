@@ -157,7 +157,7 @@ def test_containerfile_lite_uses_workspace_runtime_and_native_extensions():
 
     assert "ENABLE_RUST=true but no Rust wheels were produced" not in containerfile
     assert "COPY mcp-servers/rust/ /build/mcp-servers/rust/" not in containerfile
-    assert "FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base" in containerfile
+    assert "FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS rust-builder-base" in containerfile
     assert "Rust plugins" not in containerfile
     assert "Skipping Rust plugin build" not in containerfile
     assert "rust-wheels" not in containerfile
@@ -170,7 +170,7 @@ def test_containerfile_lite_uses_workspace_runtime_and_native_extensions():
     assert 'target.get("required-features") or target.get("required_features")' not in containerfile
     assert 'build-backend = "maturin"' not in containerfile
     assert '"maturin==1.12.6"' in containerfile
-    assert '["maturin", "build", "--release"' in containerfile
+    assert '[sys.executable, "-m", "maturin", "build", "--release"' in containerfile
     assert "Installing local native extensions..." in containerfile
     assert "No local native extensions discovered" in containerfile
     assert "cargo build --release -p contextforge_mcp_runtime" in containerfile
