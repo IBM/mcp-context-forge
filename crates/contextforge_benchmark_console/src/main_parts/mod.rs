@@ -31,7 +31,9 @@ pub(crate) use generator_metadata::{
     generator_config_path, generator_format_hint, generator_section,
 };
 pub(crate) use generator_state::{GeneratorField, GeneratorFieldKind, GeneratorState};
-pub(crate) use interaction::{handle_normal_mode, restore_terminal, run_app, setup_terminal};
+#[cfg(test)]
+pub(crate) use interaction::handle_normal_mode;
+pub(crate) use interaction::{restore_terminal, run_app, setup_terminal};
 pub(crate) use run_actions::{CommandSpec, build_command, launch_action};
 pub(crate) use run_cleanup::run_cleanup;
 pub(crate) use runtime_helpers::{
