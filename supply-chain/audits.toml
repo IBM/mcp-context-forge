@@ -1,7 +1,11 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.rustls-webpki]]
+who = "lucarlig <luca.carlig@ibm.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.11 -> 0.103.12"
+notes = "Security patch update for RUSTSEC-2026-0098; reviewed upstream diff for URI name-constraint handling change."
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"

@@ -68,10 +68,11 @@ COPY crates/ /build/crates/
 # Build local native extensions from maturin crates under crates/
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/native-extension-wheels && \
-        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
+        python3.12 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
         printf '%s\n' \
             'import pathlib' \
             'import subprocess' \
+            'import sys' \
             'import tomllib' \
             '' \
             'crates_root = pathlib.Path("/build/crates")' \
@@ -88,10 +89,10 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             '        continue' \
             '    crate_dir = cargo_toml.parent' \
             '    print(f"🦀 Building local native extension: {crate_dir.name}")' \
-            '    subprocess.run(["maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
+            '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
             'print("✅ Local native extensions built successfully")' \
             > /tmp/build_local_native_extensions.py && \
-        python3 /tmp/build_local_native_extensions.py && \
+        python3.12 /tmp/build_local_native_extensions.py && \
         rm -f /tmp/build_local_native_extensions.py \
     else \
         echo "⏭️  Skipping local native extension build"; \
