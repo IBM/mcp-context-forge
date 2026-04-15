@@ -1694,7 +1694,7 @@ def _check_public_visibility_allowed(visibility: str, team_id: Optional[str] = N
     Raises:
         HTTPException: 422 when flag is false, team_id is set, and visibility is 'public'.
     """
-    if not settings.allow_public_visibility and visibility == "public" and team_id:
+    if not settings.allow_public_visibility and visibility == "public" and team_id and team_id.strip():
         raise HTTPException(
             status_code=422,
             detail="Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).",

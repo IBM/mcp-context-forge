@@ -22241,6 +22241,32 @@ class TestPublicVisibilityGuard:
         result = await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code == 201
 
+    # --- Whitespace-only team_id: treated as absent, public must NOT be blocked ---
+    # Test _check_public_visibility_allowed directly to avoid unrelated form-processing
+    # side effects (e.g. TeamManagementService.verify_team_for_user returning [] for
+    # whitespace-only input, which would cause Pydantic to reject ToolCreate).
+
+    def test_check_public_visibility_spaces_not_blocked(self, monkeypatch):
+        from mcpgateway.admin import _check_public_visibility_allowed
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        # Should not raise — whitespace-only team_id treated as absent
+        _check_public_visibility_allowed("public", team_id="   ")
+
+    def test_check_public_visibility_tab_not_blocked(self, monkeypatch):
+        from mcpgateway.admin import _check_public_visibility_allowed
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        _check_public_visibility_allowed("public", team_id="\t")
+
+    def test_check_public_visibility_real_team_id_blocked(self, monkeypatch):
+        from mcpgateway.admin import _check_public_visibility_allowed
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        with pytest.raises(HTTPException) as exc_info:
+            _check_public_visibility_allowed("public", team_id="team-abc")
+        assert exc_info.value.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # include_public parameter — team isolation with public overlay (#3411)
