@@ -35,22 +35,7 @@
       failed_when: confirm.user_input | lower not in ['yes', 'y']
       when: not (skip_confirm | default(false) | bool)
 
-    # Step 1: Fetch JWT secret
-    - name: Get JWT secret from gateway secret
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Secret
-        namespace: "{{ ocp_namespace }}"
-        name: "{{ ocp_namespace }}-mcp-stack-gateway-secret"
-      register: gw_secret
-      no_log: true
-
-    - name: Extract JWT secret key
-      ansible.builtin.set_fact:
-        jwt_secret: "{{ gw_secret.resources[0].data.JWT_SECRET_KEY | b64decode }}"
-      no_log: true
-
-    # Step 2: Generate JWT token
+    # Step 1: Find gateway pod and generate JWT token
     - name: Find gateway pod
       kubernetes.core.k8s_info:
         api_version: v1
@@ -67,9 +52,9 @@
         namespace: "{{ ocp_namespace }}"
         pod: "{{ gw_pods.resources[0].metadata.name }}"
         command: >
-          python3 -m mcpgateway.utils.create_jwt_token
+          sh -c 'python3 -m mcpgateway.utils.create_jwt_token
           --username admin@example.com --exp 5
-          --secret "{{ jwt_secret }}"
+          --secret "$JWT_SECRET_KEY"'
       register: jwt_result
       no_log: true
 
