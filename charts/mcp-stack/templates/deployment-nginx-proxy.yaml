@@ -7,7 +7,7 @@ metadata:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-nginx
 spec:
-  replicas: 1
+  replicas: {{ .Values.nginxProxy.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-nginx
@@ -39,9 +39,16 @@ spec:
         - name: nginx
           image: "{{ .Values.nginxProxy.image.repository }}:{{ .Values.nginxProxy.image.tag }}"
           imagePullPolicy: {{ .Values.nginxProxy.image.pullPolicy }}
+          {{- if .Values.nginxProxy.command }}
+          command: {{ .Values.nginxProxy.command | toJson }}
+          {{- end }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.nginxProxy.containerPort | default 80 }}
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: https
+              containerPort: {{ .Values.nginxProxy.tls.containerPort | default 8443 }}
+            {{- end }}
 
           {{- with .Values.nginxProxy.probes.readiness }}
           readinessProbe:
@@ -62,6 +69,11 @@ spec:
               subPath: nginx.conf
             - name: nginx-cache
               mountPath: /var/cache/nginx
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: nginx-tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            {{- end }}
 
       volumes:
         - name: nginx-config
@@ -74,4 +86,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.nginxProxy.tls.enabled }}
+        - name: nginx-tls
+          secret:
+            secretName: {{ include "mcp-stack.fullname" . }}-nginx-tls
+        {{- end }}
 {{- end }}

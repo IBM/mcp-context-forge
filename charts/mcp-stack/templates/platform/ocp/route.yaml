@@ -1,0 +1,85 @@
+{{- /*
+  OpenShift Route — provides external access via OCP's built-in HAProxy router.
+
+  This is the preferred way to expose ContextForge on OpenShift. The standard
+  ingress.yaml (Kubernetes Ingress) can achieve the same result on OCP, but
+  requires additional configuration for TLS re-encrypt, serving certificates,
+  and NGINX backend routing. This template provides direct control over
+  OCP Route-specific features with less configuration.
+
+  Traffic paths:
+    Internal (benchmarks, pod-to-pod):
+      Locust/client → K8s Service port 80 → NGINX port 8080 (plain HTTP)
+      No TLS, no Route involved. This is what benchmarks use.
+
+    External (laptop, browser):
+      Client → OCP Router → Route → NGINX → Gateway
+      TLS is handled by the Route. Two modes:
+
+      Edge termination (simple):
+        Set route.tls.termination: edge, nginxProxy.tls.enabled: false
+        OCP Router handles TLS. Traffic to NGINX is plain HTTP.
+
+      Re-encrypt (encrypted inside cluster):
+        Set route.tls.termination: reencrypt, nginxProxy.tls.enabled: true
+        OCP Router terminates external TLS, then re-encrypts to NGINX on port 8443.
+        Certificates are auto-generated and rotated by OCP's Service CA
+        (service-ca-operator) via the serving-cert-secret-name annotation
+        on the NGINX service. No manual certificate management needed.
+
+  Gated by .Values.route.enabled (default: false).
+*/ -}}
+{{- if and .Values.route .Values.route.enabled }}
+{{- if and (eq (.Values.route.tls.termination | default "edge") "reencrypt") (not .Values.nginxProxy.tls.enabled) }}
+{{- fail "route.tls.termination=reencrypt requires nginxProxy.tls.enabled=true (the Route expects the backend NGINX to be serving TLS)" }}
+{{- end }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.route.host }}
+  host: {{ .Values.route.host }}
+  {{- end }}
+  to:
+    kind: Service
+    {{- if .Values.nginxProxy.enabled }}
+    name: {{ include "mcp-stack.fullname" . }}-nginx
+    {{- else }}
+    name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+    {{- end }}
+    weight: 100
+  port:
+    {{- if and .Values.nginxProxy.enabled .Values.nginxProxy.tls.enabled }}
+    targetPort: https   # port 443 → NGINX 8443 (re-encrypt: TLS inside cluster)
+    {{- else }}
+    targetPort: http    # port 80 → NGINX 8080 (edge: plain HTTP inside cluster)
+    {{- end }}
+  tls:
+    # edge = TLS at router only; reencrypt = TLS router-to-NGINX too (needs nginxProxy.tls.enabled: true)
+    termination: {{ .Values.route.tls.termination | default "edge" }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+    {{- if .Values.route.tls.certificate }}
+    certificate: |
+      {{- .Values.route.tls.certificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.key }}
+    key: |
+      {{- .Values.route.tls.key | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.caCertificate }}
+    caCertificate: |
+      {{- .Values.route.tls.caCertificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.destinationCACertificate }}
+    destinationCACertificate: |
+      {{- .Values.route.tls.destinationCACertificate | nindent 6 }}
+    {{- end }}
+  wildcardPolicy: None
+{{- end }}
