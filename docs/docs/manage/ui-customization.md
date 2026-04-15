@@ -12,7 +12,7 @@ deployment).
 | Library | Version | Purpose |
 |---------|---------|---------|
 | HTMX | 2.0.3 | AJAX interactions, HTML-over-HTTP (bundled via npm/Vite) |
-| Alpine.js | 3.x | Lightweight reactive components |
+| Alpine.js | 3.15.8 | Lightweight reactive components (bundled via npm/Vite) |
 | Tailwind CSS | CDN | Utility-first styling |
 | CodeMirror | 5.65.18 | Syntax-highlighted code editing |
 | Chart.js | - | Data visualization |

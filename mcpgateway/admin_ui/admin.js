@@ -8,9 +8,9 @@
  * for use by HTMX and Alpine.js in templates.
  */
 
-// Import HTMX and make it globally available
+// Import HTMX and Alpine.js
 import htmx from 'htmx.org';
-window.htmx = htmx;
+import Alpine from 'alpinejs';
 
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
@@ -525,6 +525,13 @@ import "./app.js";
 import "./events.js";
 
 console.log("🚀 ContextForge AI Gateway Admin API initialized");
+
+// Make HTMX and Alpine.js globally available after bootstrap
+window.htmx = htmx;
+window.Alpine = Alpine;
+
+// Start Alpine.js after all modules are loaded and Admin namespace is fully populated
+Alpine.start();
 
 // Export the Admin namespace so Vite's IIFE can expose it as window.Admin
 export default Admin;

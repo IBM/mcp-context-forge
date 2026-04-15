@@ -388,7 +388,7 @@ MCP Gateway implements Subresource Integrity for all external CDN resources to c
 **Protected Resources** (15 total):
 
 - HTMX (2.0.3) - Dynamic interactions (bundled via npm/Vite)
-- Alpine.js (3.14.1) - Reactive framework
+- Alpine.js (3.15.8) - Reactive framework (bundled via npm/Vite)
 - Chart.js (4.4.1) - Data visualization
 - Marked (11.1.1) - Markdown parser
 - DOMPurify (3.0.6) - XSS sanitizer
