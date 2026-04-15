@@ -77,6 +77,9 @@ OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.
 # Enable metrics and events
 OBSERVABILITY_METRICS_ENABLED=true
 OBSERVABILITY_EVENTS_ENABLED=true
+
+# Store safe JWT claims (sub, iss, aud, iat, exp, nbf, jti) in trace/span attributes (e.g. for user id as token.sub)
+# OBSERVABILITY_STORE_TOKEN_CLAIMS=false
 ```
 
 ### 2. Start ContextForge
@@ -129,6 +132,9 @@ http://localhost:4444/admin/observability
 | `DB_METRICS_RECORDING_ENABLED` | Enable execution metrics (tool/resource/prompt/server/A2A) | `true` | `true`, `false` |
 | `OBSERVABILITY_METRICS_ENABLED` | Enable metrics collection | `true` | `true`, `false` |
 | `OBSERVABILITY_EVENTS_ENABLED` | Enable event logging | `true` | `true`, `false` |
+| `OBSERVABILITY_STORE_TOKEN_CLAIMS` | Store safe JWT claims (sub, iss, aud, iat, exp, nbf, jti) in trace and span attributes | `false` | `true`, `false` |
+
+When `OBSERVABILITY_STORE_TOKEN_CLAIMS` is `true`, the gateway extracts standard JWT claims from the request (from the Bearer token or from `request.state.token_claims` if set by auth middleware) and stores them in the `attributes` JSON of both traces and spans under keys `token.sub`, `token.iss`, `token.aud`, `token.iat`, `token.exp`, `token.nbf`, and `token.jti`. This allows linking tool invocations and other spans to the authenticated user (e.g. filtering by `token.sub` as user id) without adding new database columns or storing secrets.
 
 ## Admin UI Dashboards
 
@@ -255,6 +261,7 @@ Comprehensive trace analysis:
 - **Duration**: Total execution time
 - **HTTP Context**: Method, URL, status code, user agent
 - **User Context**: Email, IP address
+- **Token claims** (if `OBSERVABILITY_STORE_TOKEN_CLAIMS=true`): Trace and span attributes include `token.sub`, `token.iss`, and other safe JWT claims for linking to the authenticated user
 - **Timestamps**: Start, end, created times
 
 #### Gantt Chart Timeline
@@ -286,7 +293,7 @@ Detailed span information:
 - **Duration**: Millisecond precision
 - **Status**: Success/error indicator
 - **Resource Info**: Type, name, ID
-- **Attributes**: Custom metadata
+- **Attributes**: Custom metadata (when `OBSERVABILITY_STORE_TOKEN_CLAIMS=true`, includes `token.sub`, `token.iss`, `token.aud`, `token.iat`, `token.exp`, `token.nbf`, `token.jti` from the request JWT)
 
 ## Performance Metrics
 
