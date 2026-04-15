@@ -1,0 +1,68 @@
+[workspace]
+resolver = "3"
+# Workspace policy: repo-owned crates that participate in the shared Rust
+# workspace live under crates/. Keep the glob so new workspace-owned crates are
+# included automatically from the repo root.
+members = [
+    "crates/*",
+]
+default-members = [
+    "crates/*",
+]
+
+[workspace.package]
+version = "1.0.0-BETA-3"
+edition = "2024"
+rust-version = "1.85"
+authors = ["ContextForge Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+
+[workspace.dependencies]
+anyhow = "1.0"
+base64 = "0.22.1"
+clap = { version = "4.5.60", features = ["derive", "env"] }
+futures = "0.3.31"
+futures-util = "0.3.31"
+# PyO3 for Python bindings
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+pyo3-log = "0.13.3"
+pyo3-stub-gen = "0.19"
+rand = "0.8"
+regex = "1.12.2"
+rmcp = { version = "=1.2.0", default-features = false }
+sha2 = "0.11.0"
+
+# HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)
+reqwest = { version = "0.12.28", default-features = false, features = [
+    "native-tls",
+    "json",
+    "stream",
+    "http2",
+    "rustls-tls-native-roots",
+] }
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.16"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+uuid = { version = "1.19.0", features = ["v4"] }
+
+[workspace.lints.clippy]
+multiple_crate_versions = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+debug = true

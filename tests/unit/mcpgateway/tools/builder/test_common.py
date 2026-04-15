@@ -94,13 +94,13 @@ class TestGeneratePluginConfig:
         template_dir = tmp_path / "templates"
         template_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "gateway": {"image": "mcpgateway:latest"},
-            "deployment": {"type": "compose"},
-            "plugins": [
-                {"name": "TestPlugin", "port": 8000, "mtls_enabled": True, "repo": "https://github.com/test/plugin.git"}
-            ],
-        })
+        config = MCPStackConfig.model_validate(
+            {
+                "gateway": {"image": "mcpgateway:latest"},
+                "deployment": {"type": "compose"},
+                "plugins": [{"name": "TestPlugin", "port": 8000, "mtls_enabled": True, "repo": "https://github.com/test/plugin.git"}],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path") as mock_path:
             mock_path.return_value.__truediv__.return_value = template_dir
@@ -127,13 +127,13 @@ class TestGeneratePluginConfig:
         template_dir = tmp_path / "templates"
         template_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "gateway": {"image": "mcpgateway:latest"},
-            "deployment": {"type": "kubernetes", "namespace": "test-ns"},
-            "plugins": [
-                {"name": "TestPlugin", "port": 8000, "mtls_enabled": False, "repo": "https://github.com/test/plugin1.git"}
-            ],
-        })
+        config = MCPStackConfig.model_validate(
+            {
+                "gateway": {"image": "mcpgateway:latest"},
+                "deployment": {"type": "kubernetes", "namespace": "test-ns"},
+                "plugins": [{"name": "TestPlugin", "port": 8000, "mtls_enabled": False, "repo": "https://github.com/test/plugin1.git"}],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path") as mock_path:
             mock_path.return_value.__truediv__.return_value = template_dir
@@ -160,22 +160,24 @@ class TestGeneratePluginConfig:
         template_dir = tmp_path / "templates"
         template_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose"},
-            "gateway": {"image": "mcpgateway:latest"},
-            "plugins": [
-                {
-                    "name": "TestPlugin",
-                    "port": 8000,
-                    "plugin_overrides": {
-                        "priority": 10,
-                        "mode": "enforce",
-                        "tags": ["security"],
-                    },
-                    "repo": "https://github.com/test/plugin1.git"
-                }
-            ],
-        })
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {"image": "mcpgateway:latest"},
+                "plugins": [
+                    {
+                        "name": "TestPlugin",
+                        "port": 8000,
+                        "plugin_overrides": {
+                            "priority": 10,
+                            "mode": "enforce",
+                            "tags": ["security"],
+                        },
+                        "repo": "https://github.com/test/plugin1.git",
+                    }
+                ],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path") as mock_path:
             mock_path.return_value.__truediv__.return_value = template_dir
@@ -315,9 +317,7 @@ class TestRunCompose:
         compose_file.write_text("services:\n  test: {}\n")
 
         mock_get_cmd.return_value = ["docker", "compose"]
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "cmd", output="", stderr="Error"
-        )
+        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd", output="", stderr="Error")
 
         with pytest.raises(RuntimeError, match="Docker Compose failed"):
             run_compose(compose_file, ["up", "-d"])
@@ -422,9 +422,7 @@ class TestVerifyKubernetes:
     def test_verify_kubernetes_success(self, mock_run, mock_which):
         """Test successful Kubernetes verification."""
         mock_which.return_value = "/usr/bin/kubectl"
-        mock_run.return_value = Mock(
-            returncode=0, stdout="pod-1 Running\npod-2 Running", stderr=""
-        )
+        mock_run.return_value = Mock(returncode=0, stdout="pod-1 Running\npod-2 Running", stderr="")
 
         result = verify_kubernetes("test-ns")
         assert "Running" in result
@@ -493,15 +491,17 @@ class TestGenerateKubernetesManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config = MCPStackConfig.model_validate({
-            "deployment": {"type": "kubernetes", "namespace": "test-ns"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [],
-        })
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "kubernetes", "namespace": "test-ns"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "mtls_enabled": False,
+                },
+                "plugins": [],
+            }
+        )
 
         generate_kubernetes_manifests(config, output_dir)
 
@@ -534,28 +534,30 @@ class TestGenerateKubernetesManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "kubernetes", "namespace": "mcp-test"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [
-                {
-                    "name": "TestPlugin",
-                    "image": "test-plugin:v1",
-                    "port": 8000,
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "kubernetes", "namespace": "mcp-test"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
                     "mtls_enabled": False,
                 },
-                {
-                    "name": "AnotherPlugin",
-                    "image": "another-plugin:v2",
-                    "port": 8001,
-                    "mtls_enabled": False,
-                },
-            ],
-        })
+                "plugins": [
+                    {
+                        "name": "TestPlugin",
+                        "image": "test-plugin:v1",
+                        "port": 8000,
+                        "mtls_enabled": False,
+                    },
+                    {
+                        "name": "AnotherPlugin",
+                        "image": "another-plugin:v2",
+                        "port": 8001,
+                        "mtls_enabled": False,
+                    },
+                ],
+            }
+        )
 
         generate_kubernetes_manifests(config, output_dir)
 
@@ -607,22 +609,24 @@ class TestGenerateKubernetesManifests:
             (plugin_dir / "server.crt").write_bytes(b"fake-plugin-cert")
             (plugin_dir / "server.key").write_bytes(b"fake-plugin-key")
 
-            config =  MCPStackConfig.model_validate({
-                "deployment": {"type": "kubernetes", "namespace": "secure-ns"},
-                "gateway": {
-                    "image": "mcpgateway:latest",
-                    "port": 4444,
-                    "mtls_enabled": True,
-                },
-                "plugins": [
-                    {
-                        "name": "SecurePlugin",
-                        "image": "secure-plugin:v1",
-                        "port": 8000,
+            config = MCPStackConfig.model_validate(
+                {
+                    "deployment": {"type": "kubernetes", "namespace": "secure-ns"},
+                    "gateway": {
+                        "image": "mcpgateway:latest",
+                        "port": 4444,
                         "mtls_enabled": True,
-                    }
-                ],
-            })
+                    },
+                    "plugins": [
+                        {
+                            "name": "SecurePlugin",
+                            "image": "secure-plugin:v1",
+                            "port": 8000,
+                            "mtls_enabled": True,
+                        }
+                    ],
+                }
+            )
 
             generate_kubernetes_manifests(config, output_dir)
         finally:
@@ -651,28 +655,30 @@ class TestGenerateKubernetesManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "kubernetes", "namespace": "infra-ns"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [],
-            "infrastructure": {
-                "postgres": {
-                    "enabled": True,
-                    "image": "postgres:17",
-                    "database": "testdb",
-                    "user": "testuser",
-                    "password": "testpass",
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "kubernetes", "namespace": "infra-ns"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "mtls_enabled": False,
                 },
-                "redis": {
-                    "enabled": True,
-                    "image": "redis:alpine",
+                "plugins": [],
+                "infrastructure": {
+                    "postgres": {
+                        "enabled": True,
+                        "image": "postgres:17",
+                        "database": "testdb",
+                        "user": "testuser",
+                        "password": "testpass",
+                    },
+                    "redis": {
+                        "enabled": True,
+                        "image": "redis:alpine",
+                    },
                 },
-            },
-        })
+            }
+        )
 
         generate_kubernetes_manifests(config, output_dir)
 
@@ -736,16 +742,18 @@ class TestGenerateComposeManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose", "project_name": "test-mcp"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "host_port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [],
-        })
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose", "project_name": "test-mcp"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "host_port": 4444,
+                    "mtls_enabled": False,
+                },
+                "plugins": [],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path.cwd", return_value=tmp_path):
             generate_compose_manifests(config, output_dir)
@@ -770,32 +778,34 @@ class TestGenerateComposeManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose", "project_name": "mcp-stack"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "host_port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [
-                {
-                    "name": "Plugin1",
-                    "image": "plugin1:v1",
-                    "port": 8000,
-                    "expose_port": True,
-                    "host_port": 8000,
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose", "project_name": "mcp-stack"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "host_port": 4444,
                     "mtls_enabled": False,
                 },
-                {
-                    "name": "Plugin2",
-                    "image": "plugin2:v1",
-                    "port": 8001,
-                    "expose_port": False,
-                    "mtls_enabled": False,
-                },
-            ],
-        })
+                "plugins": [
+                    {
+                        "name": "Plugin1",
+                        "image": "plugin1:v1",
+                        "port": 8000,
+                        "expose_port": True,
+                        "host_port": 8000,
+                        "mtls_enabled": False,
+                    },
+                    {
+                        "name": "Plugin2",
+                        "image": "plugin2:v1",
+                        "port": 8001,
+                        "expose_port": False,
+                        "mtls_enabled": False,
+                    },
+                ],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path.cwd", return_value=tmp_path):
             generate_compose_manifests(config, output_dir)
@@ -838,23 +848,25 @@ class TestGenerateComposeManifests:
         (plugin_dir / "server.crt").write_text("fake-plugin-cert")
         (plugin_dir / "server.key").write_text("fake-plugin-key")
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "host_port": 4444,
-                "mtls_enabled": True,
-            },
-            "plugins": [
-                {
-                    "name": "SecurePlugin",
-                    "image": "secure:v1",
-                    "port": 8000,
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "host_port": 4444,
                     "mtls_enabled": True,
-                }
-            ],
-        })
+                },
+                "plugins": [
+                    {
+                        "name": "SecurePlugin",
+                        "image": "secure:v1",
+                        "port": 8000,
+                        "mtls_enabled": True,
+                    }
+                ],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path.cwd", return_value=tmp_path):
             generate_compose_manifests(config, output_dir)
@@ -887,22 +899,24 @@ class TestGenerateComposeManifests:
         (env_dir / ".env.gateway").write_text("GATEWAY_VAR=value1\n")
         (env_dir / ".env.TestPlugin").write_text("PLUGIN_VAR=value2\n")
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [
-                {
-                    "name": "TestPlugin",
-                    "image": "test:v1",
-                    "port": 8000,
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
                     "mtls_enabled": False,
-                }
-            ],
-        })
+                },
+                "plugins": [
+                    {
+                        "name": "TestPlugin",
+                        "image": "test:v1",
+                        "port": 8000,
+                        "mtls_enabled": False,
+                    }
+                ],
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.get_deploy_dir", return_value=deploy_dir):
             with patch("mcpgateway.tools.builder.common.Path.cwd", return_value=tmp_path):
@@ -929,28 +943,30 @@ class TestGenerateComposeManifests:
         output_dir = tmp_path / "manifests"
         output_dir.mkdir()
 
-        config =  MCPStackConfig.model_validate({
-            "deployment": {"type": "compose"},
-            "gateway": {
-                "image": "mcpgateway:latest",
-                "port": 4444,
-                "mtls_enabled": False,
-            },
-            "plugins": [],
-            "infrastructure": {
-                "postgres": {
-                    "enabled": True,
-                    "image": "postgres:17",
-                    "database": "mcpdb",
-                    "user": "mcpuser",
-                    "password": "secret123",
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {
+                    "image": "mcpgateway:latest",
+                    "port": 4444,
+                    "mtls_enabled": False,
                 },
-                "redis": {
-                    "enabled": True,
-                    "image": "redis:7-alpine",
+                "plugins": [],
+                "infrastructure": {
+                    "postgres": {
+                        "enabled": True,
+                        "image": "postgres:17",
+                        "database": "mcpdb",
+                        "user": "mcpuser",
+                        "password": "secret123",
+                    },
+                    "redis": {
+                        "enabled": True,
+                        "image": "redis:7-alpine",
+                    },
                 },
-            },
-        })
+            }
+        )
 
         with patch("mcpgateway.tools.builder.common.Path.cwd", return_value=tmp_path):
             generate_compose_manifests(config, output_dir)

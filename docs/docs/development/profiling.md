@@ -243,15 +243,15 @@ py-spy record -o flamegraph.svg -- python -m mcpgateway
 For Rust-local profiling of the MCP runtime crate:
 
 ```bash
-make -C tools_rust/mcp_runtime setup-profiling
-make -C tools_rust/mcp_runtime flamegraph-test
-make -C tools_rust/mcp_runtime flamegraph-test-rmcp
+make -C crates/mcp_runtime setup-profiling
+make -C crates/mcp_runtime flamegraph-test
+make -C crates/mcp_runtime flamegraph-test-rmcp
 ```
 
 These targets generate flamegraphs under:
 
 ```text
-tools_rust/mcp_runtime/profiles/
+crates/mcp_runtime/profiles/
 ```
 
 Use them to inspect Rust-internal startup and hot-path behavior in the runtime

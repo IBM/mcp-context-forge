@@ -31,11 +31,12 @@ ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 ###############################################################################
-# Rust builder stage - builds Rust MCP runtime
+# Rust builder stage - builds Rust MCP runtime and local native extensions
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS rust-builder-base
+ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
 
@@ -45,12 +46,29 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/tools_rust/mcp_runtime/target/release; \
-        printf '#!/usr/bin/env sh\n' > /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        printf 'exit 1\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
-        chmod +x /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        mkdir -p /build/native-extension-wheels /build/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-mcp-runtime; \
+        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
+        chmod +x /build/target/release/contextforge-mcp-runtime; \
         exit 0; \
+    fi
+
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        dnf upgrade -y && \
+        dnf install -y \
+            python${PYTHON_VERSION} \
+            python${PYTHON_VERSION}-devel \
+            python${PYTHON_VERSION}-pip \
+            gcc \
+            gcc-c++ \
+            openssl-devel \
+            postgresql-devel \
+            libpq-devel \
+            findutils \
+            curl && \
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
+        dnf clean all; \
     fi
 
 # Install Rust toolchain (only if ENABLE_RUST=true)
@@ -61,23 +79,50 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust MCP runtime files (only if ENABLE_RUST=true)
-COPY tools_rust/mcp_runtime/ /build/tools_rust/mcp_runtime/
+# Copy workspace and crates (only if ENABLE_RUST=true)
+COPY Cargo.toml Cargo.lock /build/
+COPY crates/ /build/crates/
 
-RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        echo "⏭️  Skipping Rust MCP runtime build"; \
+# Build local native extensions from maturin crates under crates/
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        mkdir -p /build/native-extension-wheels && \
+        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
+        printf '%s\n' \
+            'import pathlib' \
+            'import subprocess' \
+            'import sys' \
+            'import tomllib' \
+            '' \
+            'crates_root = pathlib.Path("/build/crates")' \
+            'wheel_dir = pathlib.Path("/build/native-extension-wheels")' \
+            'for cargo_toml in sorted(crates_root.rglob("Cargo.toml")):' \
+            '    pyproject_toml = cargo_toml.with_name("pyproject.toml")' \
+            '    if not pyproject_toml.exists():' \
+            '        continue' \
+            '    pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))' \
+            '    build_system = pyproject.get("build-system", {})' \
+            '    backend = str(build_system.get("build-backend", ""))' \
+            '    requires = [str(item) for item in build_system.get("requires", [])]' \
+            '    if "maturin" not in backend and not any("maturin" in item for item in requires):' \
+            '        continue' \
+            '    crate_dir = cargo_toml.parent' \
+            '    print(f"🦀 Building local native extension: {crate_dir.name}")' \
+            '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
+            'print("✅ Local native extensions built successfully")' \
+            > /tmp/build_local_native_extensions.py && \
+        python3 /tmp/build_local_native_extensions.py && \
+        rm -f /tmp/build_local_native_extensions.py \
+    else \
+        echo "⏭️  Skipping local native extension build"; \
     fi
 
-WORKDIR /build/tools_rust/mcp_runtime
-
-# Build the experimental Rust MCP runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
-            cargo build --release --features rmcp-upstream-client; \
+            cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
         else \
-            cargo build --release; \
+            cargo build --release -p contextforge_mcp_runtime; \
         fi && \
-        cp target/release/contextforge_mcp_runtime target/release/contextforge-mcp-runtime && \
+        cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
         echo "✅ Rust MCP runtime built successfully"; \
     else \
         echo "⏭️  Skipping Rust MCP runtime build"; \
@@ -154,9 +199,10 @@ COPY pyproject.toml /app/
 COPY plugins/requirements.txt /app/plugins/requirements.txt
 
 # ----------------------------------------------------------------------------
-# Copy Rust MCP runtime from rust-builder stage
+# Copy Rust MCP runtime and local native extensions from rust-builder stage
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
+COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
 # ----------------------------------------------------------------------------
 # Copy frontend build artifacts from frontend-builder stage
@@ -170,6 +216,7 @@ COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
 #  - Install plugins from PyPI (cpex-* packages)
+#  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
@@ -189,6 +236,14 @@ RUN set -euo pipefail \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
+    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
+        echo "🦀 Installing local native extensions..."; \
+        /app/.venv/bin/pip install --no-cache-dir /tmp/local-native-extension-wheels/*.whl && \
+        /app/.venv/bin/python3 -c $'import glob\nimport importlib\nimport zipfile\n\nmodules = []\nfor wheel in glob.glob(\"/tmp/local-native-extension-wheels/*.whl\"):\n    with zipfile.ZipFile(wheel) as archive:\n        top_level = next((name for name in archive.namelist() if name.endswith(\".dist-info/top_level.txt\")), None)\n        if top_level:\n            modules.extend(line.strip() for line in archive.read(top_level).decode(\"utf-8\").splitlines() if line.strip())\n            continue\n        for name in archive.namelist():\n            if \"/\" not in name and (name.endswith(\".so\") or name.endswith(\".pyd\")):\n                modules.append(name.split(\".\", 1)[0])\n                break\n            if name.count(\"/\") == 1 and name.endswith(\"/__init__.py\"):\n                modules.append(name.split(\"/\", 1)[0])\n                break\nmodules = list(dict.fromkeys(modules))\nif not modules:\n    raise SystemExit(\"Local native extension wheels installed but no importable top-level modules were discovered\")\nfor module in modules:\n    importlib.import_module(module)\n    print(f\"✓ Local native extension import ok: {module}\")'; \
+    else \
+        echo "⏭️  No local native extensions discovered"; \
+    fi \
+    && rm -rf /tmp/local-native-extension-wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \

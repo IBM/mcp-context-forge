@@ -8,7 +8,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
-- `tools_rust/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
+- `crates/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
@@ -38,7 +38,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-tools_rust/                 # Rust utilities and MCP runtime (see tools_rust/mcp_runtime/DEVELOPING.md)
+crates/                     # Direct Rust crate folders (runtime and wrapper)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 

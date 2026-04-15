@@ -60,6 +60,11 @@ conditions:
 
 **Rollback**: Keep configuration backups. Restore previous `plugins/config.yaml` if issues arise.
 
+### Changed
+
+- Consolidated the repository-owned Rust workspace under `crates/`, kept root-level `cargo build` / `cargo test` / `cargo check` support, and documented that `mcp-servers/rust/` stays outside the shared workspace for now. ([#4087](https://github.com/IBM/mcp-context-forge/pull/4087))
+- Added workspace-level Rust policy notes for contributors, tracked `cargo-vet` exemption reduction in [#4173](https://github.com/IBM/mcp-context-forge/issues/4173), and tracked Rust CI workflow factoring in [#4174](https://github.com/IBM/mcp-context-forge/issues/4174).
+
 #### **👥 `MAX_MEMBERS_PER_TEAM` No Longer Baked Into Team Rows** ([#3682](https://github.com/IBM/mcp-context-forge/pull/3682), [#3588](https://github.com/IBM/mcp-context-forge/issues/3588))
 
 **Action Required**: New teams now store `NULL` for `max_members` and resolve the limit at check time from the `MAX_MEMBERS_PER_TEAM` environment variable. Existing teams created before this change still have the old default baked into the DB and will **not** automatically pick up env var changes.

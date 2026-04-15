@@ -33,6 +33,7 @@ tests/
 ```bash
 # Core testing
 make test                         # Run unit tests
+pytest -k "<name>" tests/unit/    # Run only tests matching <name>
 make doctest                      # Run doctests in modules
 make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html

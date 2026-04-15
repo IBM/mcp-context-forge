@@ -6,6 +6,8 @@ description = "Ultra-fast MCP test server with echo and time tools"
 license = "Apache-2.0"
 authors = ["ContextForge Contributors"]
 
+[workspace]
+
 [dependencies]
 # MCP protocol implementation
 rmcp = { version = "0.12", features = [

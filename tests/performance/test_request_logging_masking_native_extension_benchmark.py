@@ -18,7 +18,7 @@ from mcpgateway.middleware import request_logging_middleware
 from mcpgateway.middleware.request_logging_middleware import mask_sensitive_data, mask_sensitive_headers
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-NATIVE_EXTENSION_MANIFEST = REPO_ROOT / "tools_rust" / "request_logging_masking_native_extension" / "Cargo.toml"
+NATIVE_EXTENSION_MANIFEST = REPO_ROOT / "crates" / "request_logging_masking_native_extension" / "Cargo.toml"
 
 
 @dataclass(frozen=True)

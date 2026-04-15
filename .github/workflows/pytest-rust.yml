@@ -1,0 +1,134 @@
+# ===============================================================
+# 🧪🦀  PyTest With Rust Build - Quality Gate
+# ===============================================================
+#
+#   - builds/install Rust-backed components required by the Python suite
+#   - runs the full pytest suite with Rust enabled
+#   - measures branch + line coverage (fails < 90% main, < 35% doctest)
+#   - posts changed-line coverage for PRs
+# ---------------------------------------------------------------
+
+name: Tests & Coverage (Rust)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "tests/e2e_rust/**"
+      - ".github/workflows/pytest-rust.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "tests/e2e_rust/**"
+      - ".github/workflows/pytest-rust.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: pytest-rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      redis:
+        image: redis:7-bookworm
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      REQUIRE_RUST: "1"
+      AUTH_ENCRYPTION_SECRET: ci-rust-auth-encryption-secret-1234567890 # pragma: allowlist secret
+      REDIS_URL: redis://127.0.0.1:6379/0
+      MCP_RUST_REDIS_URL: redis://127.0.0.1:6379/0
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: 🐍  Setup Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.10.11"
+          python-version: "3.12"
+
+      - name: 🦀  Install Rust stable
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: 📦  Cache Cargo dependencies
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-pytest-rust-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-pytest-rust-
+
+      - name: 🔨  Build Rust extensions
+        run: make rust-install && make rust-verify-stubs
+
+      - name: 🧪  Run pytest
+        run: |
+          uv run --extra plugins pytest -n 0 \
+            --durations=5 \
+            --ignore=tests/fuzz \
+            --ignore=tests/e2e/test_entra_id_integration.py \
+            --cov=mcpgateway \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term \
+            --cov-branch \
+            --cov-fail-under=95
+
+      - name: 📈  Diff-cover (changed lines)
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run diff-cover coverage.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=93
+
+      - name: 📊  Doctest coverage with threshold
+        run: |
+          uv run --extra plugins pytest -n 0 \
+            --doctest-modules mcpgateway/ \
+            --cov=mcpgateway \
+            --cov-report=term \
+            --cov-report=json:doctest-coverage.json \
+            --cov-fail-under=30 \
+            --tb=short

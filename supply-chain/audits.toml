@@ -1,0 +1,1506 @@
+
+# cargo-vet audits file
+
+[[audits.rustls-webpki]]
+who = "lucarlig <luca.carlig@ibm.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.11 -> 0.103.12"
+notes = "Security patch update for RUSTSEC-2026-0098; reviewed upstream diff for URI name-constraint handling change."
+
+[[trusted.aho-corasick]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-03-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.anstream]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-16"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.anstyle]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-05-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.anstyle-parse]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.anstyle-query]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-04-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.anstyle-wincon]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.anyhow]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-05"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.async-stream]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-06-07"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.async-stream-impl]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-08-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.async-trait]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-07-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.aws-lc-rs]]
+criteria = "safe-to-deploy"
+user-id = 156764 # Justin W Smith (justsmth)
+start = "2023-04-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for aws-lc crates used by rustls stack"
+
+[[trusted.aws-lc-sys]]
+criteria = "safe-to-deploy"
+user-id = 156764 # Justin W Smith (justsmth)
+start = "2022-11-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for aws-lc crates used by rustls stack"
+
+[[trusted.base64ct]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2021-01-21"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.block-buffer]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.block-buffer]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2019-04-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.bytes]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-01-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.cc]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.cc]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2024-02-20"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.cc]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2022-10-29"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.cfg-if]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2025-06-09"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.chrono]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-07-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.clap]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.clap_builder]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.clap_derive]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.clap_lex]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-04-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.cmake]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2022-10-29"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.cmov]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2022-02-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.colorchoice]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-04-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.const-oid]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-08-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.const-oid]]
+criteria = "safe-to-deploy"
+user-id = 11235 # Arthur Gautier (baloo)
+start = "2023-07-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for der and spki related crates"
+
+[[trusted.cpufeatures]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2021-04-26"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.crypto-common]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2021-04-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.crypto-common]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2021-02-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.ctutils]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2025-12-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.der_derive]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.der_derive]]
+criteria = "safe-to-deploy"
+user-id = 11235 # Arthur Gautier (baloo)
+start = "2023-04-19"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for der and spki related crates"
+
+[[trusted.digest]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.digest]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2019-06-30"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.fallible-iterator]]
+criteria = "safe-to-deploy"
+user-id = 5 # Steven Fackler (sfackler)
+start = "2019-03-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres and stringprep related crates"
+
+[[trusted.find-msvc-tools]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2025-08-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for indexmap and num-bigint ecosystem crates"
+
+[[trusted.getrandom]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2019-06-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.h2]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.hashbrown]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2025-04-30"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.hmac]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.hmac]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2019-07-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.http]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-04-05"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.http-body-util]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2022-10-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.httparse]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-07-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.hybrid-array]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2022-05-07"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.hyper]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.hyper-rustls]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-11-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.hyper-tls]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-19"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.hyper-util]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2022-01-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.id-arena]]
+criteria = "safe-to-deploy"
+user-id = 696 # Nick Fitzgerald (fitzgen)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wit-parser support crates"
+
+[[trusted.indexmap]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2020-01-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for indexmap and num-bigint ecosystem crates"
+
+[[trusted.is_terminal_polyfill]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2024-05-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.itoa]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.jobserver]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2024-07-23"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.js-sys]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.js-sys]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.libc]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2024-08-15"
+end = "2027-04-13"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.linux-raw-sys]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-06-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustix and linux-raw-sys crates"
+
+[[trusted.litemap]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-02-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.lock_api]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.md-5]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.md-5]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2020-06-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.memchr]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-07-07"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.mime]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.mio]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-05-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.mio]]
+criteria = "safe-to-deploy"
+user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)
+start = "2019-12-17"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for mio and socket2 ecosystem crates"
+
+[[trusted.native-tls]]
+criteria = "safe-to-deploy"
+user-id = 988 # Kornel (kornelski)
+start = "2026-02-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for native-tls related crates"
+
+[[trusted.num-bigint]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-09-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for indexmap and num-bigint ecosystem crates"
+
+[[trusted.num_cpus]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-06-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.once_cell_polyfill]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-05-22"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.openssl]]
+criteria = "safe-to-deploy"
+user-id = 5 # Steven Fackler (sfackler)
+start = "2019-02-22"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres and stringprep related crates"
+
+[[trusted.openssl-probe]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2020-08-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.openssl-probe]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2025-12-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.openssl-sys]]
+criteria = "safe-to-deploy"
+user-id = 5 # Steven Fackler (sfackler)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres and stringprep related crates"
+
+[[trusted.opentelemetry]]
+criteria = "safe-to-deploy"
+user-id = 270607 # Lalit Kumar Bhasin (lalitb)
+start = "2024-11-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for opentelemetry crates used here"
+
+[[trusted.opentelemetry-http]]
+criteria = "safe-to-deploy"
+user-id = 270607 # Lalit Kumar Bhasin (lalitb)
+start = "2024-11-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for opentelemetry crates used here"
+
+[[trusted.opentelemetry-otlp]]
+criteria = "safe-to-deploy"
+user-id = 270607 # Lalit Kumar Bhasin (lalitb)
+start = "2024-11-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for opentelemetry crates used here"
+
+[[trusted.opentelemetry-proto]]
+criteria = "safe-to-deploy"
+user-id = 270607 # Lalit Kumar Bhasin (lalitb)
+start = "2024-10-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for opentelemetry crates used here"
+
+[[trusted.opentelemetry_sdk]]
+criteria = "safe-to-deploy"
+user-id = 270607 # Lalit Kumar Bhasin (lalitb)
+start = "2024-07-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for opentelemetry crates used here"
+
+[[trusted.parking_lot]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.parking_lot_core]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.phf]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for phf ecosystem crates"
+
+[[trusted.phf_shared]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for phf ecosystem crates"
+
+[[trusted.postgres-protocol]]
+criteria = "safe-to-deploy"
+user-id = 55015 # Paolo Barbolini (paolobarbolini)
+start = "2025-09-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres protocol ecosystem crates"
+
+[[trusted.postgres-types]]
+criteria = "safe-to-deploy"
+user-id = 55015 # Paolo Barbolini (paolobarbolini)
+start = "2025-09-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres protocol ecosystem crates"
+
+[[trusted.potential_utf]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2024-11-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.prettyplease]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2022-01-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.proc-macro2]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-04-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.process-wrap]]
+criteria = "safe-to-deploy"
+user-id = 411 # Félix Saparelli (passcod)
+start = "2024-03-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for process-wrap crates"
+
+[[trusted.prost]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2021-07-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.prost-derive]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2021-07-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.quinn]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2019-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.quinn-proto]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2019-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.quote]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-04-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.redis]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-08-24"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.redis]]
+criteria = "safe-to-deploy"
+user-id = 147005 # Shachar Langbeheim (nihohit)
+start = "2023-08-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for redis crate versions used here"
+
+[[trusted.regex]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.regex-automata]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.regex-syntax]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-03-30"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.reqwest]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.ring]]
+criteria = "safe-to-deploy"
+user-id = 2342 # Brian Smith (briansmith)
+start = "2019-07-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ring and untrusted crates"
+
+[[trusted.rmcp]]
+criteria = "safe-to-deploy"
+user-id = 341684 # Alex Hancock (alexhancock)
+start = "2025-07-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rmcp crates"
+
+[[trusted.rustix]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-10-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustix and linux-raw-sys crates"
+
+[[trusted.rustls]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-05-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.rustls-native-certs]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2023-06-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.rustls-pki-types]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2023-08-31"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.rustls-platform-verifier]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2024-12-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.rustls-webpki]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2023-09-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.ryu]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.same-file]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-07-16"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.scopeguard]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2020-02-16"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.security-framework]]
+criteria = "safe-to-deploy"
+user-id = 988 # Kornel (kornelski)
+start = "2019-02-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for native-tls related crates"
+
+[[trusted.security-framework-sys]]
+criteria = "safe-to-deploy"
+user-id = 988 # Kornel (kornelski)
+start = "2019-02-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for native-tls related crates"
+
+[[trusted.semver]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2021-05-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for semver crate"
+
+[[trusted.serde]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.serde_core]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2025-09-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.serde_derive]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.serde_json]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-02-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.serde_path_to_error]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-08-20"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.serde_spanned]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-20"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.sha2]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-05-24"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.sha2]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2020-01-06"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
+
+[[trusted.slab]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-10-13"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.socket2]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-05-06"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.socket2]]
+criteria = "safe-to-deploy"
+user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)
+start = "2020-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for mio and socket2 ecosystem crates"
+
+[[trusted.spki]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.spki]]
+criteria = "safe-to-deploy"
+user-id = 11235 # Arthur Gautier (baloo)
+start = "2023-05-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for der and spki related crates"
+
+[[trusted.stringprep]]
+criteria = "safe-to-deploy"
+user-id = 5 # Steven Fackler (sfackler)
+start = "2023-07-16"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres and stringprep related crates"
+
+[[trusted.syn]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.thiserror]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.thiserror-impl]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.tinystr]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.tokio]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2020-12-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.tokio-macros]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2020-10-26"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.tokio-postgres]]
+criteria = "safe-to-deploy"
+user-id = 55015 # Paolo Barbolini (paolobarbolini)
+start = "2025-09-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for postgres protocol ecosystem crates"
+
+[[trusted.tokio-rustls]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2023-06-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.tokio-stream]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-01-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.tokio-test]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-05-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.tokio-util]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-01-12"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tokio ecosystem crates"
+
+[[trusted.toml]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-12-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.toml_parser]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.toml_writer]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.tonic]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2019-10-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.tonic-prost]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2025-07-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.tower]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-04-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.tower]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tower crate"
+
+[[trusted.tower-http]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tower-http crate"
+
+[[trusted.tower-layer]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-04-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.tower-layer]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2019-09-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.tower-service]]
+criteria = "safe-to-deploy"
+user-id = 3959 # Lucio Franco (LucioFranco)
+start = "2019-08-20"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for prost and tonic ecosystem crates"
+
+[[trusted.tracing]]
+criteria = "safe-to-deploy"
+user-id = 172786 # Hayden Stainsby (hds)
+start = "2024-11-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tracing ecosystem crates"
+
+[[trusted.tracing-appender]]
+criteria = "safe-to-deploy"
+user-id = 172786 # Hayden Stainsby (hds)
+start = "2025-11-26"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tracing ecosystem crates"
+
+[[trusted.tracing-attributes]]
+criteria = "safe-to-deploy"
+user-id = 172786 # Hayden Stainsby (hds)
+start = "2024-11-26"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tracing ecosystem crates"
+
+[[trusted.tracing-core]]
+criteria = "safe-to-deploy"
+user-id = 172786 # Hayden Stainsby (hds)
+start = "2024-11-25"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tracing ecosystem crates"
+
+[[trusted.tracing-opentelemetry]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2024-05-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.tracing-subscriber]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2025-08-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer across tokio-adjacent and tower ecosystem crates"
+
+[[trusted.tracing-subscriber]]
+criteria = "safe-to-deploy"
+user-id = 172786 # Hayden Stainsby (hds)
+start = "2024-11-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for tracing ecosystem crates"
+
+[[trusted.unicode-ident]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2021-10-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.unicode-properties]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2023-07-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.untrusted]]
+criteria = "safe-to-deploy"
+user-id = 2342 # Brian Smith (briansmith)
+start = "2019-07-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ring and untrusted crates"
+
+[[trusted.url]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-02-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.walkdir]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-06-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.wasi]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2020-06-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasi]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2019-07-22"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustix and linux-raw-sys crates"
+
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.wasm-bindgen-futures]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasm-bindgen-futures]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.web-sys]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm and wasi ecosystem crates"
+
+[[trusted.web-sys]]
+criteria = "safe-to-deploy"
+user-id = 145038 # Guy Bedford (guybedford)
+start = "2026-01-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.webpki-root-certs]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2025-10-07"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.winapi-util]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2020-01-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for regex stack"
+
+[[trusted.windows]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-01-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-collections]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-02-06"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-core]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-future]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-02-10"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-implement]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-01-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-interface]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-02-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-numerics]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2023-05-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-result]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-strings]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-sys]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-targets]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-09"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows-threading]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-04-29"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_aarch64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_aarch64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-05"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_i686_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_i686_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-04-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_i686_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_x86_64_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-28"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_x86_64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.windows_x86_64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-27"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for windows crates"
+
+[[trusted.winnow]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-02-22"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for clap and toml ecosystem crates"
+
+[[trusted.writeable]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-11-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.x509-cert]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2022-03-14"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.yoke]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-05-01"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.yoke-derive]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-07-02"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zerofrom]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2022-04-06"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zerofrom-derive]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2022-04-06"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zeroize_derive]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2019-03-23"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.zerotrie]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2023-10-03"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zerovec]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-04-19"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zerovec-derive]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2021-12-11"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zmij]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2025-12-18"
+end = "2027-04-13"
+notes = "Trusted upstream maintainer for widely used foundational crates"

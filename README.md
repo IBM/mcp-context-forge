@@ -658,6 +658,12 @@ make venv install-dev      # create .venv + install deps + build Admin UI
 make serve                 # gunicorn on :4444
 ```
 
+Rust workspace note:
+- Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
+- Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
+- `mcp-servers/rust/` stays outside the shared workspace on purpose and is managed separately.
+- `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
+
 <details>
 <summary><strong>Alternative: UV or pip</strong></summary>
 

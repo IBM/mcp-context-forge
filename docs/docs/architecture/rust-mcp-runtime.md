@@ -116,7 +116,7 @@ make test-mcp-session-isolation
 ```
 
 See the detailed threat model and test matrix in
-`tools_rust/mcp_runtime/TESTING-DESIGN.md` in the repository.
+`crates/mcp_runtime/TESTING-DESIGN.md` in the repository.
 
 ## Verification
 
@@ -244,7 +244,7 @@ make testing-rebuild-rust-full
 make test-mcp-cli
 make test-mcp-rbac
 make test-mcp-session-isolation
-cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml
 ```
 
 Recommended benchmark wrappers:
@@ -257,4 +257,4 @@ make benchmark-mcp-tools-300
 ```
 
 For Rust-local profiling and crate-level lint/test helpers, see
-`tools_rust/mcp_runtime/README.md` in the repository.
+`crates/mcp_runtime/README.md` in the repository.
