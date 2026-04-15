@@ -1,0 +1,427 @@
+########################################################################
+# OCP Deployment Values (PGO) — Experimental
+# Cluster: <your-ocp-cluster>
+#
+# Override values for deploying ContextForge on OpenShift with
+# an externally managed PostgreSQL operator (CrunchyData PGO).
+# Only settings that differ from the chart defaults are listed here.
+#
+# Key decisions:
+#   - 3 gateway replicas to match the benchmarked deployment sizing
+#   - HPA disabled to keep replica count stable during benchmarking
+#   - Chart-managed Postgres disabled; uses externally managed CrunchyData PGO Postgres
+#   - Chart-managed PgBouncer disabled; connects via the PGO-provided PgBouncer endpoint
+#   - NGINX proxy enabled (UBI9 image), 3 replicas, with TLS for Route re-encrypt termination
+#   - Locust deferred until ocp-benchmark-setup so ocp-deploy doesn't waste cluster CPU on test pods
+#   - Postgres data + Redis use dynamic NFS provisioning (storageClassName: nfs-client)
+#   - SSRF private networks allowed for in-cluster MCP server registration
+#   - Explicit Docker Hub image references to avoid pull rate-limit ambiguity
+########################################################################
+
+# --- Global ---
+global:
+  imagePullSecrets:
+    - dockerhub-pull                       # required if cluster lacks global Docker Hub credentials
+
+# --- Gateway ---
+mcpContextForge:
+  replicaCount: 3                          # 3 replicas × 8 CPU = 24 CPU (matches benchmark)
+
+  hpa:
+    enabled: false                           # disabled — manual scaling for benchmarking
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  resources:
+    limits:
+      cpu: "8"
+      memory: 8Gi
+    requests:
+      cpu: "4"
+      memory: 4Gi
+
+  pluginConfig:
+    enabled: true                          # enabled for rate limiter testing
+    plugins: |
+      plugin_dirs:
+        - "plugins/native"
+        - "plugins/custom"
+        - "/etc/mcpgateway/plugins"
+      plugin_settings:
+        parallel_execution_within_band: true
+        plugin_timeout: 120
+        fail_on_plugin_error: false
+        enable_plugin_api: true
+        plugin_health_check_interval: 120
+        include_user_info: false
+      plugins:
+        - name: "PIIFilterPlugin"
+          kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+          description: "Detects and masks Personally Identifiable Information"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+          tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
+          mode: "permissive"
+          priority: 50
+          conditions:
+            - prompts: []
+              server_ids: []
+              tenant_ids: []
+          config:
+            detect_ssn: true
+            detect_credit_card: true
+            detect_email: true
+            detect_phone: false
+            detect_ip_address: false
+            default_mask_strategy: "partial"
+            redaction_text: "[PII_REDACTED]"
+            block_on_detection: false
+            log_detections: true
+            include_detection_details: true
+            whitelist_patterns:
+              - "test@example.com"
+              - "555-555-5555"
+        - name: "RateLimiterPlugin"
+          kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
+          description: "Per-user/tenant/tool rate limits"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
+          tags: ["limits", "throttle"]
+          mode: "permissive"
+          priority: 20
+          conditions: []
+          config:
+            backend: "redis"
+            redis_url: "redis://:{{ "{{" }} env.REDIS_PASSWORD {{ "}}" }}@{{ .Release.Name }}-mcp-stack-redis:6379/0"
+            redis_key_prefix: "rl"
+            redis_fallback: true
+            by_user: "30/m"
+            by_tenant: "3000/m"
+            by_tool: {}
+        - name: "RetryWithBackoffPlugin"
+          kind: "plugins.retry_with_backoff.retry_with_backoff.RetryWithBackoffPlugin"
+          description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["tool_post_invoke"]
+          tags: ["retry", "backoff", "resilience"]
+          mode: "permissive"
+          priority: 170
+          conditions: []
+          config:
+            max_retries: 2
+            backoff_base_ms: 200
+            max_backoff_ms: 5000
+            retry_on_status: [429, 500, 502, 503, 504]
+            jitter: true
+            check_text_content: false
+            tool_overrides: {}
+        - name: "OutputLengthGuardPlugin"
+          kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
+          description: "Guards tool outputs by enforcing min/max length; block or truncate"
+          version: "0.1.0"
+          author: "ContextForge"
+          hooks: ["tool_post_invoke"]
+          tags: ["guard", "length", "outputs", "truncate", "block"]
+          mode: "permissive"
+          priority: 160
+          conditions: []
+          config:
+            min_chars: 0
+            max_chars: 15000
+            strategy: "truncate"
+            ellipsis: "…"
+        - name: "SecretsDetection"
+          kind: "plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin"
+          description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
+          version: "0.1.0"
+          author: "ContextForge"
+          hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
+          tags: ["security", "secrets", "dlp"]
+          mode: "permissive"
+          priority: 51
+          conditions: []
+          config:
+            enabled:
+              aws_access_key_id: true
+              aws_secret_access_key: true
+              google_api_key: true
+              slack_token: true
+              private_key_block: true
+              jwt_like: true
+              hex_secret_32: true
+              base64_24: false
+            redact: false
+            redaction_text: "***REDACTED***"
+            block_on_detection: true
+            min_findings_to_block: 1
+        - name: "EncodedExfilDetector"
+          kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
+          description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "tool_post_invoke"]
+          tags: ["security", "exfiltration", "dlp", "encoding"]
+          mode: "permissive"
+          priority: 52
+          conditions: []
+          config:
+            enabled:
+              base64: true
+              base64url: true
+              hex: true
+              percent_encoding: true
+              escaped_hex: true
+            min_encoded_length: 24
+            min_decoded_length: 12
+            min_entropy: 3.3
+            min_printable_ratio: 0.70
+            min_suspicion_score: 3
+            max_scan_string_length: 200000
+        - name: "UnifiedPDPPlugin"
+          kind: "plugins.unified_pdp.unified_pdp.UnifiedPDPPlugin"
+          description: "Unified Policy Decision Point for access control across multiple policy engines"
+          version: "0.1.0"
+          author: "yiannis2804"
+          hooks: ["tool_pre_invoke", "resource_pre_fetch"]
+          tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
+          mode: "permissive"
+          priority: 10
+          conditions: []
+          config:
+            engines:
+              - name: native
+                enabled: true
+                priority: 1
+                settings:
+                  rules_file: "plugins/unified_pdp/default_rules.json"
+              - name: mac
+                enabled: false
+                priority: 2
+                settings:
+                  relaxed_star: false
+              - name: opa
+                enabled: false
+                priority: 3
+                settings:
+                  opa_url: "http://localhost:8181"
+                  policy_path: "mcpgateway"
+                  timeout_ms: 5000
+                  max_retries: 3
+              - name: cedar
+                enabled: false
+                priority: 4
+                settings:
+                  cedar_url: "http://localhost:8700"
+                  timeout_ms: 5000
+                  max_retries: 3
+            combination_mode: "all_must_allow"
+            default_decision: "deny"
+            cache:
+              enabled: true
+              ttl_seconds: 60
+              max_entries: 10000
+            performance:
+              timeout_ms: 1000
+              parallel_evaluation: true
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+    pullPolicy: Always                     # Always pull to get latest image
+
+  config:
+    # Required for in-cluster MCP server registration (same as docker-compose.yml:218).
+    # For tighter control, use SSRF_ALLOWED_NETWORKS to restrict to the cluster CIDR.
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    LOG_LEVEL: INFO
+    # --- Gunicorn tuning (match VM benchmark) ---
+    GUNICORN_WORKERS: "8"                  # 8 workers per pod × 3 pods = 24 total (matches VM)
+    GUNICORN_MAX_REQUESTS: "1000000"       # recycle after 1M requests (VM: 1M)
+    GUNICORN_MAX_REQUESTS_JITTER: "100000" # prevent thundering herd
+    DISABLE_ACCESS_LOG: "true"             # reduce I/O overhead
+    # --- Feature flags ---
+    LLMCHAT_ENABLED: "true"                # enable LLM endpoints (VM has this enabled)
+    COMPRESSION_ENABLED: "false"           # disable compression to save CPU (VM: false)
+    # --- Cache TTLs (match VM: 300s vs default 20-60s) ---
+    REGISTRY_CACHE_TOOLS_TTL: "300"
+    REGISTRY_CACHE_SERVERS_TTL: "300"
+    REGISTRY_CACHE_PROMPTS_TTL: "300"
+    REGISTRY_CACHE_RESOURCES_TTL: "300"
+    REGISTRY_CACHE_GATEWAYS_TTL: "300"
+    REGISTRY_CACHE_AGENTS_TTL: "300"
+    REGISTRY_CACHE_CATALOG_TTL: "300"
+    AUTH_CACHE_USER_TTL: "300"
+    AUTH_CACHE_TEAM_TTL: "300"
+    AUTH_CACHE_ROLE_TTL: "300"
+    AUTH_CACHE_REVOCATION_TTL: "120"
+    AUTH_CACHE_TEAMS_TTL: "300"
+    # --- MCP transport and session pool (Python mode) ---
+    TRANSPORT_TYPE: "streamablehttp"
+    MCP_SESSION_POOL_ENABLED: "true"
+    MCP_SESSION_POOL_MAX_PER_KEY: "200"
+    MCP_SESSION_POOL_TTL: "300.0"
+    MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL: "60.0"
+    MCP_SESSION_POOL_ACQUIRE_TIMEOUT: "60.0"
+    # --- Connection pools (match VM) ---
+    REDIS_MAX_CONNECTIONS: "100"
+    HTTPX_MAX_CONNECTIONS: "500"
+    HTTPX_MAX_KEEPALIVE_CONNECTIONS: "300"
+    DB_POOL_SIZE: "20"
+    DB_POOL_CLASS: "queue"
+    DB_POOL_PRE_PING: "true"
+    DB_POOL_RECYCLE: "60"
+    DB_POOL_TIMEOUT: "60"
+
+  secret:
+    JWT_SECRET_KEY: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
+    AUTH_ENCRYPTION_SECRET: "my-test-salt"  # pragma: allowlist secret
+    BASIC_AUTH_PASSWORD: "changeme"  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: "changeme"  # pragma: allowlist secret
+    REQUIRE_STRONG_SECRETS: "true"         # gateway refuses to start with weak/default secrets
+
+# --- Migration ---
+# Run migration as pre-install hook (Postgres already exists via PGO operator).
+# Connect directly to Postgres (bypass PgBouncer) so advisory locks work correctly.
+migration:
+  hookPhase: "pre-install,pre-upgrade"
+  hostKey: "host"
+  portKey: "port"
+
+# --- Postgres ---
+# Using CrunchyData PGO operator — internal Postgres and PgBouncer disabled
+postgres:
+  enabled: false
+  external:
+    enabled: true
+    existingSecret: gp-postgres-pguser-admin  # generated by CrunchyData PGO from CR name "gp-postgres" + user "admin"
+    hostKey: pgbouncer-host                # connect via CrunchyData's PgBouncer
+    portKey: pgbouncer-port
+    databaseKey: dbname
+    userKey: user
+    passwordKey: password
+
+# --- PgBouncer ---
+pgbouncer:
+  enabled: false                           # disabled — using CrunchyData PGO operator
+
+# --- Redis ---
+redis:
+  enabled: true
+  image:
+    repository: docker.io/library/redis
+    tag: "7"
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: "1"
+      memory: 1Gi
+  persistence:
+    enabled: true
+    storageClassName: nfs-client
+    size: 1Gi
+    accessModes: [ReadWriteOnce]
+
+# --- NGINX Proxy ---
+nginxProxy:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: registry.access.redhat.com/ubi9/nginx-126
+    tag: latest
+  command: ["nginx", "-g", "daemon off;"]   # bypass S2I entrypoint for UBI NGINX
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
+  config:
+    workerConnections: 32768
+  containerPort: 8080                      # nginx-unprivileged listens on 8080
+  persistence:
+    enabled: false                         # no PV needed for cache
+  sysctls: []                              # OpenShift blocks unsafe sysctls
+  tls:
+    enabled: true                          # enable HTTPS listener with OCP serving cert
+    containerPort: 8443                    # HTTPS port inside container
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    liveness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+# --- OpenShift Route ---
+route:
+  enabled: true
+  host: ""                                 # auto-generated by OpenShift if empty
+  annotations: {}
+  tls:
+    termination: reencrypt                  # re-encrypt: TLS between route and NGINX
+    insecureEdgeTerminationPolicy: Redirect
+    certificate: ""                        # custom TLS cert (optional)
+    key: ""                                # custom TLS key (optional)
+    caCertificate: ""                      # CA cert for reencrypt (optional)
+    destinationCACertificate: ""           # backend CA for reencrypt (optional)
+
+# --- Fast Time Server ---
+mcpFastTimeServer:
+  enabled: true
+
+# --- Testing / Registration ---
+testing:
+  enabled: true
+  registration:
+    enabled: true
+    image:
+      repository: ghcr.io/ibm/mcp-context-forge
+      tag: latest
+    jwt:
+      username: admin@example.com
+      expirationMinutes: 10080
+      secret: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
+  fastTime:
+    register:
+      enabled: true
+      createVirtualServer: true
+  fastTestServer:
+    enabled: false                         # image not available in OCP shared registry
+  fastTest:
+    register:
+      enabled: false                       # depends on fastTestServer
+  a2a:
+    register:
+      enabled: false
+  a2aEchoAgent:
+    enabled: false
+  locust:
+    enabled: false                           # off by default; ocp-benchmark-setup enables it on demand
+    users: 125
+    spawnRate: 30
+    runTime: 60s
+    expectWorkers: 1                         # master starts with 1 worker; more join as they come up
+    script:
+      file: "files/ocp/locustfile_mcp_protocol.py"
+    worker:
+      replicaCount: 3

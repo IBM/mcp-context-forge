@@ -2955,6 +2955,87 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 			--processes=-1'
 
 # =============================================================================
+# 🔴 OCP DEPLOYMENT & BENCHMARK
+# =============================================================================
+# Make targets wrap Ansible playbooks in ansible/ocp/playbooks/.
+# All logic lives in the playbooks — Make provides a simpler interface.
+# Requires: pip install ansible && ansible-galaxy collection install kubernetes.core
+
+# OCP_NS is used as both the namespace and the Helm release name (kept identical for simplicity)
+OCP_NS ?=
+BENCH_USERS ?= 125
+BENCH_SPAWN ?= 30
+BENCH_RUNTIME ?= 60s
+OCP_INVENTORY ?= ansible/ocp/inventory/cluster.yml
+
+define check_ansible
+@command -v ansible-playbook >/dev/null 2>&1 || \
+	(echo "ERROR: ansible-playbook not found." && \
+	 echo "Install with: pip install ansible && ansible-galaxy collection install kubernetes.core" && \
+	 exit 1)
+endef
+
+ocp-install-operator:                        ## Install CrunchyData PGO operator (one-time, cluster-wide, requires OCP_CLUSTER)
+	$(check_ansible)
+	@if [ -z "$(OCP_CLUSTER)" ]; then echo "Usage: make ocp-install-operator OCP_CLUSTER=<api-url>"; echo "Example: make ocp-install-operator OCP_CLUSTER=https://api.my-cluster.example.com:6443"; exit 1; fi
+	@CURRENT=$$(oc whoami --show-server 2>/dev/null) || (echo "ERROR: Not logged in. Run: oc login $(OCP_CLUSTER)" && exit 1); \
+		if [ "$$CURRENT" != "$(OCP_CLUSTER)" ]; then \
+			echo "ERROR: Currently logged into $$CURRENT but OCP_CLUSTER=$(OCP_CLUSTER)"; \
+			echo "Run: oc login $(OCP_CLUSTER)"; exit 1; \
+		fi
+	@/bin/bash -c 'read -p "Install CrunchyData PGO operator on $(OCP_CLUSTER)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/install-operator.yml \
+		-i $(OCP_INVENTORY) \
+		-e skip_confirm=true
+
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-deploy for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/deploy.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-benchmark-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS; optional BENCH_USERS, BENCH_SPAWN, BENCH_RUNTIME)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace> [BENCH_USERS=500 BENCH_SPAWN=50 BENCH_RUNTIME=60s]"; exit 1; fi
+	ansible-playbook ansible/ocp/playbooks/benchmark.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e bench_users=$(BENCH_USERS) \
+		-e bench_spawn=$(BENCH_SPAWN) \
+		-e bench_runtime=$(BENCH_RUNTIME) \
+		-e skip_confirm=true
+
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-uninstall for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/uninstall.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+# =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
 # help: 📊 JMETER PERFORMANCE TESTING

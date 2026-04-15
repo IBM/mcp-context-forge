@@ -369,3 +369,6 @@ tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
 .bob
+
+# OCP deployment secrets (never commit)
+*-secrets.yaml

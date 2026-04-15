@@ -8,5 +8,5 @@ metadata:
     app.kubernetes.io/component: gateway
 data:
   config.yaml: |
-    {{- .Values.mcpContextForge.pluginConfig.plugins | nindent 4 }}
+    {{- tpl .Values.mcpContextForge.pluginConfig.plugins . | nindent 4 }}
 {{- end }}
