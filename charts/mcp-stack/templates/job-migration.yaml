@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: migration
   annotations:
     # Run after install (so Postgres exists) and before upgrade (so new app has migrated DB)
-    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook": {{ .Values.migration.hookPhase | default "post-install,pre-upgrade" }}
     # Delete old Job before new one and clean up succeeded ones
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
@@ -63,7 +63,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+                  key: {{ .Values.migration.hostKey | default (.Values.postgres.external.hostKey | default "host") }}
               {{- else }}
               value: {{ .Values.postgres.external.host | quote }}
               {{- end }}
@@ -76,7 +76,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.portKey | default "port" }}
+                  key: {{ .Values.migration.portKey | default (.Values.postgres.external.portKey | default "port") }}
               {{- else }}
               value: "{{ .Values.postgres.external.port }}"
               {{- end }}
@@ -116,8 +116,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+                optional: true
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
+                optional: true
             {{- if .Values.mcpContextForge.extraEnvFrom }}
             {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
             {{- end }}
