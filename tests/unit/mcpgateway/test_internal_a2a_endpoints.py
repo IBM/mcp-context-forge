@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.main import _get_internal_a2a_scope_context
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # ---------------------------------------------------------------------------
@@ -138,6 +139,11 @@ class TestTasksGetTrusted:
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "missing"})
         assert resp.status_code == 404
 
+    @patch(_TRUST_PATH, return_value=True)
+    def test_invalid_agent_id_returns_400(self, _mock_trust, client):
+        resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "t1", "agent_id": 123})
+        assert resp.status_code == 400
+
 
 class TestInternalA2AAuthzTrusted:
     """Trusted authz routes should preserve the MCP authz behavior contract."""
@@ -161,6 +167,18 @@ class TestInternalA2AAuthzTrusted:
         assert resp.json()["message"] == "Access denied"
 
 
+class TestInternalA2AScopeContext:
+    @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "admin@test.com"})
+    @patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@test.com", None, True))
+    def test_admin_with_null_teams_keeps_bypass(self, _mock_scope, _mock_user):
+        assert _get_internal_a2a_scope_context(MagicMock()) == ("admin@test.com", None)
+
+    @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "user@test.com"})
+    @patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@test.com", None, False))
+    def test_non_admin_with_null_teams_becomes_public_only(self, _mock_scope, _mock_user):
+        assert _get_internal_a2a_scope_context(MagicMock()) == ("user@test.com", [])
+
+
 class TestTasksListTrusted:
     """tasks/list returns 200 + tasks array."""
 
@@ -172,6 +190,16 @@ class TestTasksListTrusted:
         resp = client.post("/_internal/a2a/tasks/list", json={})
         assert resp.status_code == 200
         assert resp.json()["tasks"] == [{"task_id": "t1"}]
+
+    @patch(_TRUST_PATH, return_value=True)
+    def test_invalid_agent_id_returns_400(self, _mock_trust, client):
+        resp = client.post("/_internal/a2a/tasks/list", json={"agent_id": 123})
+        assert resp.status_code == 400
+
+    @patch(_TRUST_PATH, return_value=True)
+    def test_invalid_state_returns_400(self, _mock_trust, client):
+        resp = client.post("/_internal/a2a/tasks/list", json={"state": 123})
+        assert resp.status_code == 400
 
 
 class TestTasksCancelTrusted:
@@ -216,6 +244,11 @@ class TestTasksCancelTrusted:
         assert kwargs.get("user_email") == "user@test.com"
         assert kwargs.get("token_teams") == ["team-a"]
 
+    @patch(_TRUST_PATH, return_value=True)
+    def test_invalid_agent_id_returns_400(self, _mock_trust, client):
+        resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "t1", "agent_id": 123})
+        assert resp.status_code == 400
+
 
 class TestPushCreateTrusted:
     """push/create returns 200 with config, 400 when required fields missing."""
@@ -237,6 +270,25 @@ class TestPushCreateTrusted:
     def test_missing_required_fields_returns_400(self, _mock_trust, client):
         resp = client.post("/_internal/a2a/push/create", json={"a2a_agent_id": "agent1"})
         assert resp.status_code == 400
+
+    @patch(_TRUST_PATH, return_value=True)
+    def test_invalid_schema_returns_400(self, _mock_trust, client):
+        resp = client.post(
+            "/_internal/a2a/push/create",
+            json={"a2a_agent_id": "agent1", "task_id": "t1", "webhook_url": "not-a-url"},
+        )
+        assert resp.status_code == 400
+        assert "invalid push config" in resp.json()["error"]
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False)
+    def test_hidden_agent_returns_404(self, _mock_access, _mock_scope, _mock_trust, client):
+        resp = client.post(
+            "/_internal/a2a/push/create",
+            json={"a2a_agent_id": "agent1", "task_id": "t1", "webhook_url": "https://example.com/webhook"},
+        )
+        assert resp.status_code == 404
 
 
 class TestPushGetTrusted:
@@ -265,6 +317,15 @@ class TestPushGetTrusted:
         resp = client.post("/_internal/a2a/push/get", json={})
         assert resp.status_code == 400
 
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_push_config")
+    def test_hidden_config_returns_404(self, mock_get, _mock_access, _mock_scope, _mock_trust, client):
+        mock_get.return_value = {"id": "cfg1", "task_id": "t1", "a2a_agent_id": "agent1"}
+        resp = client.post("/_internal/a2a/push/get", json={"task_id": "t1"})
+        assert resp.status_code == 404
+
 
 class TestPushListTrusted:
     """push/list returns 200 + configs array."""
@@ -278,6 +339,19 @@ class TestPushListTrusted:
         resp = client.post("/_internal/a2a/push/list", json={})
         assert resp.status_code == 200
         assert len(resp.json()["configs"]) == 2
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs")
+    def test_filters_invisible_configs(self, mock_list, _mock_scope, _mock_trust, client):
+        mock_list.return_value = [{"id": "cfg1", "a2a_agent_id": "agent1"}, {"id": "cfg2", "a2a_agent_id": "agent2"}]
+        with patch(
+            "mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id",
+            side_effect=lambda _db, agent_id, *_args: agent_id == "agent1",
+        ):
+            resp = client.post("/_internal/a2a/push/list", json={})
+        assert resp.status_code == 200
+        assert resp.json()["configs"] == [{"id": "cfg1", "a2a_agent_id": "agent1"}]
 
 
 class TestPushDeleteTrusted:
@@ -306,6 +380,20 @@ class TestPushDeleteTrusted:
     def test_missing_config_id_returns_400(self, _mock_trust, client):
         resp = client.post("/_internal/a2a/push/delete", json={})
         assert resp.status_code == 400
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_hidden_config_returns_404(self, mock_session_local, _mock_scope, _mock_trust, client):
+        mock_cfg = MagicMock()
+        mock_cfg.a2a_agent_id = "agent1"
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_cfg
+        mock_session_local.return_value = mock_db
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+            resp = client.post("/_internal/a2a/push/delete", json={"config_id": "cfg1"})
+        assert resp.status_code == 404
 
 
 class TestEventsFlushTrusted:
@@ -343,6 +431,23 @@ class TestEventsFlushTrusted:
             resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
         assert resp.status_code == 403
         assert "access denied" in resp.json()["error"]
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team1"]))
+    @patch("mcpgateway.main.SessionLocal")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.flush_events")
+    def test_flushes_events_for_accessible_task_agents(self, mock_flush, mock_session_cls, _mock_scope, _mock_trust, client):
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+        mock_task = MagicMock()
+        mock_task.a2a_agent_id = "agent-123"
+        mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
+        mock_flush.return_value = 1
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True):
+            resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
 
 
 class TestEventsReplayTrusted:
@@ -478,6 +583,49 @@ class TestAgentResolveTrusted:
 
         assert resp.status_code == 404
 
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    def test_server_agent_fallback_returns_200(self, _mock_scope, _mock_trust, client):
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None
+            mock_session_local.return_value = mock_db
+
+            with patch(
+                "mcpgateway.services.a2a_server_service.A2AServerService.resolve_server_agent",
+                return_value={"name": "server-agent", "endpoint_url": "https://server.example.com"},
+            ):
+                resp = client.post("/_internal/a2a/agents/server-agent/resolve", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "server-agent"
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    def test_resolve_returns_encrypted_auth_fields(self, _mock_scope, _mock_trust, client):
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-id-1"
+        mock_agent.name = "my-agent"
+        mock_agent.endpoint_url = "https://agent.example.com"
+        mock_agent.agent_type = "generic"
+        mock_agent.protocol_version = "1.0"
+        mock_agent.auth_type = "api_key"
+        mock_agent.auth_value = "enc-auth"
+        mock_agent.auth_query_params = {"k": "enc-param"}
+        mock_agent.enabled = True
+
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+            mock_session_local.return_value = mock_db
+
+            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+                resp = client.post("/_internal/a2a/agents/my-agent/resolve", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["auth_value_encrypted"] == "enc-auth"
+        assert resp.json()["auth_query_params_encrypted"] == {"k": "enc-param"}
+
 
 class TestAgentCardTrusted:
     """agents/{name}/card returns 200 when agent card found, 404 when not."""
@@ -515,3 +663,155 @@ class TestAgentCardTrusted:
         resp = client.post("/_internal/a2a/agents/my-agent/card", json={})
         assert resp.status_code == 200
         assert resp.json()["name"] == "my-agent"
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", return_value=None)
+    @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
+    @patch("mcpgateway.main.SessionLocal")
+    def test_card_server_fallback_returns_200(self, mock_session_local, mock_server_card, _mock_card, _mock_scope, _mock_trust, client):
+        mock_agent = MagicMock()
+        mock_agent.enabled = True
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+        mock_session_local.return_value = mock_db
+        mock_server_card.return_value = {"name": "server-agent", "url": "https://server.example.com"}
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=False):
+            resp = client.post("/_internal/a2a/agents/server-agent/card", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "server-agent"
+
+
+class TestInternalA2AExceptionHandling:
+    def _broken_db(self):
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate = MagicMock()
+        mock_db.close = MagicMock()
+        return mock_db
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main.SessionLocal")
+    @patch("mcpgateway.main._authorize_internal_mcp_request", new_callable=AsyncMock, side_effect=RuntimeError("boom"))
+    def test_authz_rollback_failure_invalidates(self, _mock_authz, mock_session_local, _mock_trust, client):
+        mock_db = self._broken_db()
+        mock_session_local.return_value = mock_db
+
+        resp = client.post("/_internal/a2a/get/authz", json={})
+
+        assert resp.status_code == 500
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("url", "body", "patch_target", "setup"),
+        [
+            (
+                "/_internal/a2a/tasks/get",
+                {"task_id": "t1"},
+                "mcpgateway.services.a2a_service.A2AAgentService.get_task",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/tasks/list",
+                {},
+                "mcpgateway.services.a2a_service.A2AAgentService.list_tasks",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/tasks/cancel",
+                {"task_id": "t1"},
+                "mcpgateway.services.a2a_service.A2AAgentService.cancel_task",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/push/create",
+                {"a2a_agent_id": "agent1", "task_id": "t1", "webhook_url": "https://example.com/webhook"},
+                "mcpgateway.services.a2a_service.A2AAgentService.create_push_config",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/push/get",
+                {"task_id": "t1"},
+                "mcpgateway.services.a2a_service.A2AAgentService.get_push_config",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/push/list",
+                {},
+                "mcpgateway.services.a2a_service.A2AAgentService.list_push_configs",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/push/delete",
+                {"config_id": "cfg1"},
+                "mcpgateway.services.a2a_service.A2AAgentService.delete_push_config",
+                lambda mock_db: mock_db.query.return_value.filter.return_value.first.return_value.__setattr__("a2a_agent_id", "agent1"),
+            ),
+            (
+                "/_internal/a2a/events/flush",
+                {"events": [{"seq": 1}]},
+                "mcpgateway.services.a2a_service.A2AAgentService.flush_events",
+                lambda mock_db: None,
+            ),
+            (
+                "/_internal/a2a/events/replay",
+                {"task_id": "t1"},
+                "mcpgateway.services.a2a_service.A2AAgentService.replay_events",
+                lambda mock_db: mock_db.query.return_value.filter.return_value.first.return_value.__setattr__("a2a_agent_id", "agent1"),
+            ),
+        ],
+    )
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_endpoint_rollback_failure_invalidates(self, mock_session_local, _mock_scope, _mock_trust, url, body, patch_target, setup, client):
+        mock_db = self._broken_db()
+        mock_session_local.return_value = mock_db
+        setup(mock_db)
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True):
+            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+                with patch(patch_target, side_effect=RuntimeError("boom")):
+                    resp = client.post(url, json=body)
+
+        assert resp.status_code == 500
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_resolve_rollback_failure_invalidates(self, mock_session_local, _mock_scope, _mock_trust, client):
+        mock_db = self._broken_db()
+        mock_agent = MagicMock()
+        mock_agent.enabled = True
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+        mock_session_local.return_value = mock_db
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", side_effect=RuntimeError("boom")):
+            resp = client.post("/_internal/a2a/agents/my-agent/resolve", json={})
+
+        assert resp.status_code == 500
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
+    @patch("mcpgateway.main.SessionLocal")
+    def test_card_rollback_failure_invalidates(self, mock_session_local, _mock_scope, _mock_trust, client):
+        mock_db = self._broken_db()
+        mock_agent = MagicMock()
+        mock_agent.enabled = True
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+        mock_session_local.return_value = mock_db
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+            with patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", side_effect=RuntimeError("boom")):
+                resp = client.post("/_internal/a2a/agents/my-agent/card", json={})
+
+        assert resp.status_code == 500
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()

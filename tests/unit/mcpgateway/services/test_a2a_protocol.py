@@ -621,6 +621,52 @@ def test_prepare_a2a_invocation_api_key_auth():
     assert prepared.headers["Authorization"] == "Bearer my-api-key"
 
 
+def test_prepare_a2a_invocation_api_key_auth_falls_back_to_raw_value_on_decode_error(monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", MagicMock(side_effect=ValueError("boom")))
+
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        auth_type="api_key",
+        auth_value="raw-api-key",  # pragma: allowlist secret
+    )
+
+    assert prepared.headers["Authorization"] == "Bearer raw-api-key"  # pragma: allowlist secret
+
+
+def test_prepare_a2a_invocation_api_key_auth_uses_decoded_scalar(monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: "decoded-key")
+
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        auth_type="api_key",
+        auth_value="encrypted-api-key",  # pragma: allowlist secret
+    )
+
+    assert prepared.headers["Authorization"] == "Bearer decoded-key"  # pragma: allowlist secret
+
+
+def test_prepare_a2a_invocation_api_key_auth_from_mapping_uses_first_value():
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        auth_type="api_key",
+        auth_value={"x-api-key": "mapped-key"},  # pragma: allowlist secret
+    )
+
+    assert prepared.headers["Authorization"] == "Bearer mapped-key"  # pragma: allowlist secret
+
+
 def test_prepare_a2a_invocation_rejects_non_mapping_decoded_auth(monkeypatch):
     """A decoded auth value that is not a mapping should raise ValueError."""
     monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: "not-a-mapping")

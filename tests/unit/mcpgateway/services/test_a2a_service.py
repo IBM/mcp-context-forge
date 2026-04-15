@@ -22,6 +22,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.utils.services_auth import encode_auth
@@ -2648,6 +2649,300 @@ class TestInvokeAgentEdgeCases:
         assert result == {"ok": True}
         rust_runtime.invoke.assert_called_once()
         mock_get_client.assert_not_called()
+
+    async def test_get_agent_card_returns_none_when_agent_missing(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        assert service.get_agent_card(mock_db, "missing") is None
+
+    async def test_get_agent_card_builds_capabilities(self, service, mock_db):
+        agent = SimpleNamespace(
+            name="ag",
+            description="desc",
+            endpoint_url="https://x.com",
+            version=2,
+            protocol_version="1.0",
+            capabilities={"streaming": True, "pushNotifications": True, "stateTransitionHistory": False, "skills": [{"id": "s1"}]},
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = service.get_agent_card(mock_db, "ag")
+
+        assert result["name"] == "ag"
+        assert result["capabilities"]["streaming"] is True
+        assert result["capabilities"]["pushNotifications"] is True
+        assert result["skills"] == [{"id": "s1"}]
+
+    async def test_invoke_prepare_failure_without_auth_wraps_error(self, service, mock_db, monkeypatch):
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.prepare_a2a_invocation", lambda **_kw: (_ for _ in ()).throw(ValueError("bad prep")))
+
+        with pytest.raises(A2AAgentError, match="Failed to prepare A2A invocation"):
+            await service.invoke_agent(mock_db, "ag", {})
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    async def test_invoke_rust_runtime_error_wraps_agent_error(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(side_effect=RustA2ARuntimeError("runtime failed"))
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        with pytest.raises(A2AAgentError, match="runtime failed"):
+            await service.invoke_agent(mock_db, "ag", {})
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    async def test_invoke_persists_task_from_status_object(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(
+            return_value={
+                "status_code": 200,
+                "json": {"result": {"id": "task-1", "status": {"state": "working", "message": {"role": "agent"}}, "history": [1], "artifacts": [2]}},
+                "text": "",
+            }
+        )
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        service.upsert_task = MagicMock(return_value={})
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result["result"]["id"] == "task-1"
+        service.upsert_task.assert_called_once()
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    async def test_invoke_task_persistence_failure_rolls_back(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"result": {"id": "task-1", "status": {"state": "working"}}}, "text": ""})
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        mock_db.rollback = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        service.upsert_task = MagicMock(side_effect=RuntimeError("persist failed"))
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result["result"]["id"] == "task-1"
+        mock_db.rollback.assert_called_once()
+
+
+class TestA2AInvalidationBestEffort:
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def sample_agent_create(self):
+        return A2AAgentCreate(
+            name="test-agent",
+            description="desc",
+            endpoint_url="https://example.com/agent",
+            agent_type="generic",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
+            tags=[],
+        )
+
+    @pytest.fixture
+    def sample_db_agent(self):
+        return SimpleNamespace(
+            id="agent-1",
+            name="test-agent",
+            slug="test-agent",
+            endpoint_url="https://example.com/agent",
+            description="desc",
+            enabled=True,
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            protocol_version="1.0",
+            agent_type="generic",
+            tool_id=None,
+            metrics=[],
+        )
+
+    async def test_register_agent_ignores_runtime_error_from_invalidation(self, service, mock_db, sample_agent_create, monkeypatch):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        mock_db.add = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")), patch("mcpgateway.schemas.ToolRead.model_validate", return_value=MagicMock()):
+            await service.register_agent(mock_db, sample_agent_create)
+
+    async def test_update_agent_ignores_generic_invalidation_error(self, service, mock_db, sample_db_agent, monkeypatch):
+        sample_db_agent.version = 1
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        loop = MagicMock()
+        loop.create_task.side_effect = Exception("boom")
+        with patch("asyncio.get_running_loop", return_value=loop), patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="Updated description"))
+
+    async def test_delete_agent_ignores_generic_invalidation_error(self, service, mock_db, sample_db_agent, monkeypatch):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+        loop = MagicMock()
+        loop.create_task.side_effect = Exception("boom")
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await service.delete_agent(mock_db, sample_db_agent.id)
+
+
+class TestA2ATaskWireAndUpsert:
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def test_task_to_wire_prefers_latest_message_and_payload(self, service):
+        task = SimpleNamespace(
+            task_id="t1",
+            context_id="ctx",
+            state="working",
+            latest_message={"role": "agent", "parts": [{"text": "hi"}]},
+            last_error=None,
+            payload={"history": [1], "artifacts": [2]},
+        )
+
+        result = service._task_to_wire(task)
+
+        assert result["status"]["message"] == {"role": "agent", "parts": [{"text": "hi"}]}
+        assert result["history"] == [1]
+        assert result["artifacts"] == [2]
+
+    def test_task_to_wire_uses_last_error_for_failed_tasks(self, service):
+        task = SimpleNamespace(task_id="t1", context_id=None, state="failed", latest_message=None, last_error="boom", payload=None)
+
+        result = service._task_to_wire(task)
+
+        assert result["status"]["message"]["parts"][0]["text"] == "boom"
+
+    def test_upsert_task_creates_and_marks_completed(self, service, mock_db):
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = service.upsert_task(
+            mock_db,
+            "agent-1",
+            "task-1",
+            "completed",
+            context_id="ctx",
+            latest_message={"role": "agent"},
+            payload={"history": [1]},
+            last_error="ignored",
+        )
+
+        assert result["id"] == "task-1"
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
 
 
 class TestConvertAgentToRead:

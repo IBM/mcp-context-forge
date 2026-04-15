@@ -149,6 +149,16 @@ class TestA2AServerService:
         assert len(card["skills"]) == 1
         assert card["skills"][0]["id"] == "summarize"
 
+    def test_get_server_agent_card_hidden_server_returns_none(self, service, mock_db):
+        server = _make_server(name="private-server")
+        server.visibility = "private"
+        server.owner_email = "other@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = server
+
+        result = service.get_server_agent_card(mock_db, "private-server", user_email="user@example.com", token_teams=[])
+
+        assert result is None
+
     # ------------------------------------------------------------------
     # resolve_server_agent
     # ------------------------------------------------------------------
@@ -197,6 +207,27 @@ class TestA2AServerService:
 
         assert result is not None
         assert result["protocol_version"] == "1.0"
+
+    def test_resolve_server_agent_hidden_server_returns_none(self, service, mock_db):
+        server = _make_server(name="private-server")
+        server.visibility = "private"
+        server.owner_email = "other@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = server
+
+        result = service.resolve_server_agent(mock_db, "private-server", user_email="user@example.com", token_teams=[])
+
+        assert result is None
+
+    def test_resolve_server_agent_without_a2a_interface_returns_none(self, service, mock_db):
+        server = _make_server(name="srv")
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": None}),
+        ]
+
+        result = service.resolve_server_agent(mock_db, "srv")
+
+        assert result is None
 
     # ------------------------------------------------------------------
     # select_downstream_agent
