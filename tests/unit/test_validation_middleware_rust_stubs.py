@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-STUB_PATH = ROOT / "tools_rust" / "validation_middleware_rust" / "python" / "validation_middleware_rust" / "__init__.pyi"
+STUB_PATH = ROOT / "crates" / "validation_middleware_rust" / "python" / "validation_middleware_rust" / "__init__.pyi"
 
 
 def test_validation_middleware_rust_generates_packaged_stub():

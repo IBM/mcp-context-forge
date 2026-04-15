@@ -29,7 +29,7 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUST_VALIDATION_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_rust" / "Cargo.toml"
+RUST_VALIDATION_MANIFEST = REPO_ROOT / "crates" / "validation_middleware_rust" / "Cargo.toml"
 UDS_TARGET_MEDIANS_MS = {
     "nested_safe": 0.153,
     "deep_nested": 0.806,

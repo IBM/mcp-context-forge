@@ -8661,11 +8661,11 @@ rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust
 rust-validation-install: rust-ensure-deps  ## Build and install the Rust validation extension into the active venv
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@echo "🧪 Installing Rust validation extension..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path tools_rust/validation_middleware_rust/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path crates/validation_middleware_rust/Cargo.toml"
 
 rust-validation-test: rust-ensure-deps  ## Run tests for the Rust validation extension crate
 	@echo "🧪 Testing Rust validation extension..."
-	@cargo test --manifest-path tools_rust/validation_middleware_rust/Cargo.toml
+	@cargo test --manifest-path crates/validation_middleware_rust/Cargo.toml
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."
