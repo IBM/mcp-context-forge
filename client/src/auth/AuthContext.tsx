@@ -51,7 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = sessionStorage.getItem("mcpgateway_token");
     if (token && !state.user) {
-      api.get<User>("/auth/me")
+      api
+        .get<User>("/auth/me")
         .then((user) => {
           setState({ user, isAuthenticated: true });
         })
@@ -69,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await api.post<LoginResponse>(
       "/auth/login",
       { email, password },
-      { unauthenticated: true }
+      { unauthenticated: true },
     );
 
     setToken(data.access_token);
@@ -83,9 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={{ ...state, login, logout }}>{children}</AuthContext.Provider>
   );
 }
 
