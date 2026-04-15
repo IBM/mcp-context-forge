@@ -962,7 +962,7 @@ class TestGenerateComposeManifests:
                     },
                     "redis": {
                         "enabled": True,
-                        "image": "redis:7-alpine",
+                        "image": "redis:7-bookworm",
                     },
                 },
             }

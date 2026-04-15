@@ -92,7 +92,7 @@ docker run -d \
   -e POSTGRES_PASSWORD=changeme \
   -v postgres_data:/var/lib/postgresql/data \
   -p 5432:5432 \
-  postgres:15-alpine
+  postgres:15-bookworm
 
 # Verify PostgreSQL is running
 docker logs postgres
@@ -472,7 +472,7 @@ docker exec postgres pg_dump -U openwebui openwebui > backup.sql
 
 # Backup volumes
 docker run --rm -v postgres_data:/data -v $(pwd):/backup \
-  alpine tar czf /backup/postgres_backup.tar.gz -C /data .
+  debian:bookworm-slim tar czf /backup/postgres_backup.tar.gz -C /data .
 
 # Restore PostgreSQL
 docker exec -i postgres psql -U openwebui openwebui < backup.sql
@@ -552,7 +552,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-bookworm
     environment:
       POSTGRES_DB: openwebui
       POSTGRES_USER: openwebui

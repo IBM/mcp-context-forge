@@ -72,7 +72,7 @@ Test Profile Options:
 Server Configuration:
   --server-profile <name>        Server profile (minimal, standard, optimized, etc.)
   --infrastructure <name>        Infrastructure profile (development, staging, production)
-  --postgres-version <ver>       PostgreSQL version (e.g., 17-alpine)
+  --postgres-version <ver>       PostgreSQL version (e.g., 17-bookworm)
   --instances <n>                Number of gateway instances
 
 Baseline & Comparison:
@@ -98,8 +98,8 @@ Examples:
   $0 -p heavy --infrastructure production
 
   # Compare PostgreSQL versions
-  $0 -p medium --postgres-version 15-alpine --save-baseline pg15.json
-  $0 -p medium --postgres-version 17-alpine --compare-with pg15.json
+  $0 -p medium --postgres-version 15-bookworm --save-baseline pg15.json
+  $0 -p medium --postgres-version 17-bookworm --compare-with pg15.json
 
   # Test with 4 gateway instances
   $0 -p heavy --instances 4
