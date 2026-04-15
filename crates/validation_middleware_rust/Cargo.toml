@@ -12,7 +12,7 @@ name = "validation_middleware_rust"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "stub_gen"
+name = "validation_middleware_rust_stub_gen"
 path = "src/bin/stub_gen.rs"
 
 [dependencies]
