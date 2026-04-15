@@ -2833,6 +2833,162 @@ class TestMCPPathRewriteMiddleware:
         # ORJSONResponse sends http.response.start + http.response.body
         assert any(m.get("status") == 404 for m in sent if m.get("type") == "http.response.start")
 
+    @pytest.mark.asyncio
+    async def test_rewrite_servers_mcp_with_root_path_in_scope(self):
+        """Documented pattern works when root_path is set in scope."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/servers/123/mcp",
+            "root_path": "/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/gateway/mcp/"  # Rewritten with prefix preserved
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_servers_mcp_with_multilevel_prefix(self):
+        """Handle complex multi-level prefixes."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/dev/mcp-gateway/service/gateway/servers/123/mcp",
+            "root_path": "/dev/mcp-gateway/service/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/dev/mcp-gateway/service/gateway/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_servers_mcp_with_prefix_in_path_no_scope_root(self):
+        """Handle prefix in path when scope['root_path'] is empty but APP_ROOT_PATH is set."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/servers/123/mcp",
+            "root_path": "",  # Not set in scope
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch('mcpgateway.config.settings.app_root_path', '/gateway'):
+            with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+                await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_workaround_mcp_servers_passes_through(self):
+        """Undocumented workaround /mcp/servers/{id} passes through without rewrite."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp/servers/123", "headers": []}
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/servers/123"  # NOT rewritten
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_workaround_mcp_servers_with_prefix(self):
+        """Workaround /mcp/servers/{id} with prefix passes through."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/mcp/servers/123",
+            "root_path": "/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/gateway/mcp/servers/123"  # NOT rewritten
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_security_arbitrary_prefix_not_rewritten(self):
+        """PR #3892 security: Arbitrary paths ending with /mcp are NOT rewritten."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/arbitrary/prefix/mcp",
+            "root_path": "",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # Should pass through WITHOUT rewrite (security check)
+        assert scope["path"] == "/arbitrary/prefix/mcp"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_security_arbitrary_prefix_with_root_path(self):
+        """Security: Arbitrary paths rejected even with root_path."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/arbitrary/prefix/mcp",
+            "root_path": "/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # After stripping root_path, path is "/arbitrary/prefix/mcp"
+        # Should pass through WITHOUT rewrite
+        assert scope["path"] == "/gateway/arbitrary/prefix/mcp"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_security_empty_server_id_with_prefix_rejected(self):
+        """Security: Empty server ID with prefix is rejected."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/servers//mcp",
+            "root_path": "/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+        sent = []
+
+        async def mock_send(msg):
+            sent.append(msg)
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, mock_send)
+
+        app_mock.assert_not_called()
+        # ORJSONResponse sends http.response.start + http.response.body
+        assert any(m.get("status") == 404 for m in sent if m.get("type") == "http.response.start")
+
 
 class TestServerEndpointCoverage:
     """Exercise server endpoints and SSE coverage."""
