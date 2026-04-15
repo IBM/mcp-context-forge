@@ -53,6 +53,8 @@ def _make_native(rules=None):
     """Build a mock native engine with a given rules list."""
     native = MagicMock()
     native._rules = rules if rules is not None else []
+    # Mock the rules property to return the _rules list
+    type(native).rules = property(lambda self: self._rules)
     return native
 
 
@@ -62,6 +64,7 @@ def _make_pdp(native=MagicMock()):
 
     pdp = MagicMock()
     pdp._engines = {EngineType.NATIVE: native}
+    pdp.get_engine = MagicMock(return_value=native)
     pdp.cache_stats = MagicMock(return_value={"hits": 0, "misses": 0})
     pdp.health = AsyncMock(return_value=MagicMock(healthy=True, engines=[]))
     return pdp
@@ -87,6 +90,7 @@ class TestGetPolicyPartial:
         native = _make_native(rules=[{"id": "r1"}])
         pdp = MagicMock()
         pdp._engines = {EngineType.NATIVE: native}
+        pdp.get_engine = MagicMock(return_value=native)
         pdp.cache_stats = MagicMock(return_value={})
         pdp.health = AsyncMock(return_value=MagicMock())
 
@@ -106,6 +110,7 @@ class TestGetPolicyPartial:
 
         pdp = MagicMock()
         pdp._engines = {}  # no NATIVE engine
+        pdp.get_engine = MagicMock(return_value=None)  # Return None when engine is absent
         pdp.cache_stats = MagicMock(return_value={})
         pdp.health = AsyncMock(return_value=MagicMock())
 
