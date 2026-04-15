@@ -346,7 +346,7 @@ def _plan_job(repo_root: Path, job: SelectedJob, base_ref: str) -> PlannedJob:  
     if workflow_file == ".github/workflows/lint-web.yml" and job_id == "lint-web":
         return _planned(
             job,
-            "exact",
+            "approx",
             [
                 _multiline(
                     "npm install --no-save --legacy-peer-deps htmlhint",
@@ -381,6 +381,7 @@ def _plan_job(repo_root: Path, job: SelectedJob, base_ref: str) -> PlannedJob:  
                     "npx jscpd 'mcpgateway/static/' 'mcpgateway/templates/'",
                 ),
             ],
+            notes=("Node/npm bootstrap is not reproduced locally; GitHub pins Node 20, upgrades npm, and sets the npm registry before running these checks.",),
         )
 
     if workflow_file == ".github/workflows/lint-web.yml" and job_id == "nodejsscan":
@@ -395,7 +396,12 @@ def _plan_job(repo_root: Path, job: SelectedJob, base_ref: str) -> PlannedJob:  
         )
 
     if workflow_file == ".github/workflows/vitest.yml" and job_id == "vitest":
-        return _planned(job, "exact", ["npm ci", "npx vitest run"])
+        return _planned(
+            job,
+            "approx",
+            ["npm ci", "npx vitest run"],
+            notes=("Node/npm bootstrap is not reproduced locally; GitHub pins Node 20 and upgrades npm before running Vitest.",),
+        )
 
     if workflow_file == ".github/workflows/license-check.yml" and job_id == "license-check":
         return _planned(

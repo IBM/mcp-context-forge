@@ -122,6 +122,22 @@ def test_build_execution_plan_marks_known_parity_gaps():
     assert rust_build.parity == "approx"
 
 
+def test_build_execution_plan_marks_node_jobs_as_approx_when_local_bootstrap_differs():
+    execution_plan = build_execution_plan(
+        repo_root=REPO_ROOT,
+        changed_files=["mcpgateway/static/app.js", "package-lock.json"],
+        pr_draft=False,
+    )
+
+    lint_web = find_job(execution_plan, ".github/workflows/lint-web.yml", "lint-web")
+    vitest = find_job(execution_plan, ".github/workflows/vitest.yml", "vitest")
+
+    assert lint_web.parity == "approx"
+    assert "Node/npm bootstrap" in lint_web.notes[0]
+    assert vitest.parity == "approx"
+    assert "Node/npm bootstrap" in vitest.notes[0]
+
+
 def test_build_execution_plan_never_real_publishes_for_release_only_steps():
     execution_plan = build_execution_plan(
         repo_root=REPO_ROOT,
