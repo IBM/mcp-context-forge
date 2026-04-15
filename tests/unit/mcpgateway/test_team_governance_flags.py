@@ -34,7 +34,9 @@ class TestAllowTeamCreationFlag:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.routers.teams.settings")
-    async def test_allow_team_creation_disabled_non_admin(self, mock_settings):
+    @patch("mcpgateway.routers.teams.fresh_db_session")
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_allow_team_creation_disabled_non_admin(self, MockPermissionService, mock_fresh_db, mock_settings):
         """When allow_team_creation=False and user is not admin, create_team returns 403."""
         mock_settings.allow_team_creation = False
 
@@ -42,9 +44,19 @@ class TestAllowTeamCreationFlag:
         from mcpgateway.routers.teams import create_team
         from mcpgateway.schemas import TeamCreateRequest
 
+        # Mock PermissionService
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_admin_permission = AsyncMock(return_value=False)
+        MockPermissionService.return_value = mock_perm_service
+
+        # Mock fresh_db_session
+        mock_db = MagicMock(spec=Session)
+        mock_fresh_db.return_value.__enter__.return_value = mock_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+
         request = TeamCreateRequest(name="Test Team", visibility="private")
         current_user_ctx = {"email": "user@example.com", "is_admin": False}
-        db = MagicMock(spec=Session)
+        db = mock_db
 
         with pytest.raises(HTTPException) as exc_info:
             await create_team(request=request, current_user_ctx=current_user_ctx, db=db)

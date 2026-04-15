@@ -31,6 +31,31 @@ from mcpgateway.services.team_management_service import TeamManagementService
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
+def mock_permission_check(is_admin=False):
+    """Helper context manager to mock PermissionService.check_admin_permission."""
+    from contextlib import contextmanager
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    @contextmanager
+    def _mock():
+        with patch("mcpgateway.routers.teams.fresh_db_session") as mock_fresh_db, \
+             patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+
+            # Mock PermissionService
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_admin_permission = AsyncMock(return_value=is_admin)
+            MockPermissionService.return_value = mock_perm_service
+
+            # Mock fresh_db_session context manager
+            mock_db = MagicMock()
+            mock_fresh_db.return_value.__enter__.return_value = mock_db
+            mock_fresh_db.return_value.__exit__.return_value = None
+
+            yield mock_perm_service
+
+    return _mock()
+
+
 
 class TestTeamsRouter:
     """Comprehensive test suite for teams router endpoints."""
@@ -65,18 +90,59 @@ class TestTeamsRouter:
 
     @pytest.fixture
     def mock_user_context(self, mock_db):
-        """Create mock user context with permissions."""
-        return {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "db": mock_db, "permissions": ["teams.create", "teams.read", "teams.update", "teams.delete"]}
+        """Create mock user context matching actual get_current_user_with_permissions structure."""
+        return {
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "is_admin": False,
+            "ip_address": "127.0.0.1",
+            "user_agent": "test-agent",
+            "db": None,  # Session closed; use endpoint's db param instead
+            "auth_method": "basic",
+            "request_id": "test-request-id",
+            "team_id": None,
+            "token_teams": None,
+            "token_use": None,
+            "plugin_context_table": {},
+            "plugin_global_context": {},
+        }
 
     @pytest.fixture
     def mock_admin_context(self, mock_db):
-        """Create mock admin user context."""
+        """Create mock admin user context matching actual get_current_user_with_permissions structure."""
         return {
             "email": "admin@example.com",
             "full_name": "Admin User",
             "is_admin": True,
-            "db": mock_db,
-            "permissions": ["*"],  # Admin has all permissions
+            "ip_address": "127.0.0.1",
+            "user_agent": "test-agent",
+            "db": None,  # Session closed; use endpoint's db param instead
+            "auth_method": "basic",
+            "request_id": "test-request-id",
+            "team_id": None,
+            "token_teams": None,
+            "token_use": None,
+            "plugin_context_table": {},
+            "plugin_global_context": {},
+        }
+
+    @pytest.fixture
+    def mock_sso_platform_admin_context(self, mock_db):
+        """Create mock SSO user context with platform_admin RBAC role (is_admin=False in DB)."""
+        return {
+            "email": "sso-admin@example.com",
+            "full_name": "SSO Platform Admin",
+            "is_admin": False,  # DB flag is False for SSO users
+            "ip_address": "127.0.0.1",
+            "user_agent": "test-agent",
+            "db": None,  # Session closed; use endpoint's db param instead
+            "auth_method": "oauth",
+            "request_id": "test-request-id",
+            "team_id": None,
+            "token_teams": None,  # SSO users typically have token_teams=None
+            "token_use": "session",
+            "plugin_context_table": {},
+            "plugin_global_context": {},
         }
 
     @pytest.fixture
@@ -167,7 +233,10 @@ class TestTeamsRouter:
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
+            # Mock TeamManagementService
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(return_value=mock_team)
             MockService.return_value = mock_service
@@ -194,7 +263,9 @@ class TestTeamsRouter:
             max_members=50,
         )
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(side_effect=ValueError("Service validation error"))
             MockService.return_value = mock_service
@@ -212,7 +283,9 @@ class TestTeamsRouter:
         """Test team creation with unexpected error."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(side_effect=Exception("Database error"))
             MockService.return_value = mock_service
@@ -231,10 +304,13 @@ class TestTeamsRouter:
         teams = [mock_team]
         next_cursor = None  # No more pages
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=True), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             # Service returns (teams, next_cursor) tuple for cursor pagination
             mock_service.list_teams = AsyncMock(return_value=(teams, next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
             # Mock the batch cached method for member counts
             mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
             MockService.return_value = mock_service
@@ -276,7 +352,9 @@ class TestTeamsRouter:
         """Test listing teams as regular user (sees only their teams)."""
         user_teams = [mock_team]
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_teams = AsyncMock(return_value=user_teams)
             # Mock the batch cached method for member counts
@@ -315,7 +393,9 @@ class TestTeamsRouter:
             teams.append(team)
             member_counts[str(team.id)] = 1
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_teams = AsyncMock(return_value=teams)
             # Mock the batch cached method for member counts
@@ -331,6 +411,128 @@ class TestTeamsRouter:
             assert result.total == 10
             assert result.teams[0].name == "Team 5"
             assert result.teams[2].name == "Team 7"
+    @pytest.mark.asyncio
+    async def test_list_teams_sso_platform_admin(self, mock_sso_platform_admin_context, mock_team, mock_db):
+        """Test listing teams as SSO user with platform_admin RBAC role (is_admin=False but has admin permissions)."""
+        teams = [mock_team]
+        next_cursor = None
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService, \
+             patch("mcpgateway.routers.teams.fresh_db_session") as mock_fresh_db, \
+             patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+
+            # Mock PermissionService to return True for check_admin_permission
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+            MockPermissionService.return_value = mock_perm_service
+
+            # Mock fresh_db_session context manager
+            mock_fresh_db.return_value.__enter__.return_value = mock_db
+            mock_fresh_db.return_value.__exit__.return_value = None
+
+            # Mock TeamManagementService
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=(teams, next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+
+            # SSO platform_admin should see all teams (admin path)
+            assert len(result.teams) == 1
+            assert result.teams[0].id == mock_team.id
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None)
+            mock_perm_service.check_admin_permission.assert_called_once_with(
+                mock_sso_platform_admin_context["email"],
+                token_teams=mock_sso_platform_admin_context.get("token_teams"),
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
+        """Test SSO platform_admin can bypass team creation limits."""
+        request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService, \
+             patch("mcpgateway.routers.teams.fresh_db_session") as mock_fresh_db, \
+             patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService, \
+             patch("mcpgateway.routers.teams.settings") as mock_settings:
+
+            # Disable team creation for regular users
+            mock_settings.allow_team_creation = False
+
+            # Mock PermissionService to return True for check_admin_permission
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+            MockPermissionService.return_value = mock_perm_service
+
+            # Mock fresh_db_session context manager
+            mock_fresh_db.return_value.__enter__.return_value = mock_db
+            mock_fresh_db.return_value.__exit__.return_value = None
+
+            # Mock TeamManagementService
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            result = await create_team(request, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+
+            # Should succeed despite allow_team_creation=False
+            assert result.id == mock_team.id
+            mock_perm_service.check_admin_permission.assert_called_once_with(
+                mock_sso_platform_admin_context["email"],
+                token_teams=mock_sso_platform_admin_context.get("token_teams"),
+            )
+            # Verify skip_limits=True was passed
+            mock_service.create_team.assert_called_once()
+            call_kwargs = mock_service.create_team.call_args.kwargs
+            assert call_kwargs["skip_limits"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
+        """Test SSO platform_admin can bypass team update limits."""
+        team_id = str(mock_team.id)
+        request = TeamUpdateRequest(name="Updated Team", max_members=200)
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService, \
+             patch("mcpgateway.routers.teams.fresh_db_session") as mock_fresh_db, \
+             patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+
+            # Mock PermissionService to return True for check_admin_permission
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+            MockPermissionService.return_value = mock_perm_service
+
+            # Mock fresh_db_session context manager
+            mock_fresh_db.return_value.__enter__.return_value = mock_db
+            mock_fresh_db.return_value.__exit__.return_value = None
+
+            # Mock TeamManagementService
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)  # Fetches team after update
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import update_team
+
+            result = await update_team(team_id, request, current_user=mock_sso_platform_admin_context, db=mock_db)
+
+            # Should succeed
+            assert result.id == mock_team.id
+            mock_perm_service.check_admin_permission.assert_called_once_with(
+                mock_sso_platform_admin_context["email"],
+                token_teams=mock_sso_platform_admin_context.get("token_teams"),
+            )
+            # Verify skip_limits=True was passed
+            mock_service.update_team.assert_called_once()
+            call_kwargs = mock_service.update_team.call_args.kwargs
+            assert call_kwargs["skip_limits"] is True
+
 
     @pytest.mark.asyncio
     async def test_list_teams_error(self, mock_user_context, mock_db):
@@ -436,7 +638,9 @@ class TestTeamsRouter:
         team_id = mock_team.id
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
@@ -458,7 +662,9 @@ class TestTeamsRouter:
         team_id = str(uuid4())
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
             MockService.return_value = mock_service
@@ -477,7 +683,9 @@ class TestTeamsRouter:
         team_id = str(uuid4())
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.update_team = AsyncMock(return_value=None)
@@ -1131,7 +1339,10 @@ class TestTeamsRouter:
         """Non-admin users cannot set max_members above the configured limit."""
         request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=9999)
 
-        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.settings") as mock_settings, \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_settings.allow_team_creation = True
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
@@ -1150,7 +1361,10 @@ class TestTeamsRouter:
         """Non-admin users can set max_members exactly at the configured limit."""
         request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=100)
 
-        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.settings") as mock_settings, \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_settings.allow_team_creation = True
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -1186,7 +1400,10 @@ class TestTeamsRouter:
         team_id = str(uuid4())
         request = TeamUpdateRequest(max_members=9999)
 
-        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.settings") as mock_settings, \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
@@ -1207,7 +1424,10 @@ class TestTeamsRouter:
         team_id = str(uuid4())
         request = TeamUpdateRequest(max_members=100)
 
-        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.settings") as mock_settings, \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")

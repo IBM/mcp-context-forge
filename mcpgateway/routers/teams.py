@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import fresh_db_session, get_db
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
@@ -50,6 +50,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
@@ -97,7 +98,13 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         True
     """
     try:
-        is_admin = bool(current_user_ctx.get("is_admin"))
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        with fresh_db_session() as db_perm:
+            permission_service = PermissionService(db_perm)
+            is_admin = await permission_service.check_admin_permission(
+                current_user_ctx["email"],
+                token_teams=current_user_ctx.get("token_teams"),
+            )
 
         if not settings.allow_team_creation and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
@@ -176,12 +183,13 @@ async def list_teams(
         next_cursor = None
         total = 0
 
-        # Check is_admin flag (Layer 1) and RBAC permissions (Layer 2)
-        has_admin_team_access = (
-            current_user_ctx.get("is_admin") or
-            "*" in current_user_ctx.get("permissions", []) or
-            "teams.*" in current_user_ctx.get("permissions", [])
-        )
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        with fresh_db_session() as db_perm:
+            permission_service = PermissionService(db_perm)
+            has_admin_team_access = await permission_service.check_admin_permission(
+                current_user_ctx["email"],
+                token_teams=current_user_ctx.get("token_teams"),
+            )
 
         if has_admin_team_access:
             # Use updated list_teams logic
@@ -369,7 +377,14 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         HTTPException: If team not found, access denied, or update fails
     """
     try:
-        is_admin = bool(current_user.get("is_admin"))
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        with fresh_db_session() as db_perm:
+            permission_service = PermissionService(db_perm)
+            is_admin = await permission_service.check_admin_permission(
+                current_user["email"],
+                token_teams=current_user.get("token_teams"),
+            )
+
         service = TeamManagementService(db)
 
         # Check if user is team owner
