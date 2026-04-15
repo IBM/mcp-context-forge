@@ -87,7 +87,7 @@ On success, returns **all created/updated** bindings and immediately invalidates
 | `policies[].plugin_id`      | enum string     | ✅        | —          | `OUTPUT_LENGTH_GUARD`, `RATE_LIMITER`, or `SECRETS_DETECTION`      |
 | `policies[].mode`           | enum string     | ❌        | `enforce`  | `enforce` = fail on violation; `permissive` = log only; `disabled` = skip |
 | `policies[].priority`       | int (1–1000)    | ❌        | `50`       | Lower runs first                                                    |
-| `policies[].binding_reference_id` | string   | ❌        | `null`     | External reference ID for correlating this binding with an upstream system. Used for stale-tool pruning on update and bulk delete. |
+| `policies[].binding_reference_id` | string   | ❌        | `null`     | External reference ID for correlating this binding with an upstream system. Used for stale-tool pruning on update and bulk delete. Max 255 chars; must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. |
 | `policies[].config`         | object          | ✅        | —          | All config fields for the plugin must be present (full replace, no partial patch) |
 
 #### `mode` semantics
@@ -152,6 +152,11 @@ Returns the deleted records. Returns an empty list (not an error) if no bindings
 curl -s -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
   "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
+```
+
+---
+
+### `DELETE /v1/tools/plugin_bindings/{binding_id}`
 
 Delete a single binding by its UUID. Returns the deleted record.
 
@@ -210,7 +215,7 @@ The `config` object in a policy item **must include all fields** for the plugin.
 
 ### `OUTPUT_LENGTH_GUARD`
 
-Enforces a character-count budget on tool outputs. Responses that exceed `max_chars` are either truncated (with an optional `ellipsis` suffix) or blocked entirely.
+Enforces a character or token budget on tool outputs. Responses that exceed the limit are either truncated (with an optional `ellipsis` suffix) or blocked entirely.
 
 **Hooks:** `tool_post_invoke`
 
@@ -218,19 +223,35 @@ Enforces a character-count budget on tool outputs. Responses that exceed `max_ch
 {
   "min_chars": 0,
   "max_chars": 2000,
+  "min_tokens": 0,
+  "max_tokens": null,
+  "chars_per_token": 4,
+  "limit_mode": "character",
   "strategy": "truncate",
-  "ellipsis": "..."
+  "ellipsis": "\u2026",
+  "word_boundary": false,
+  "max_text_length": 1000000,
+  "max_structure_size": 10000,
+  "max_recursion_depth": 100
 }
 ```
 
-| Field       | Type                     | Default    | Constraints       | Description                                      |
-|-------------|--------------------------|------------|-------------------|--------------------------------------------------|
-| `min_chars` | integer                  | `0`        | `>= 0`            | Minimum allowed character count (0 = no minimum) |
-| `max_chars` | integer                  | `2000`     | `> 1`             | Maximum allowed character count                  |
-| `strategy`  | `"truncate"` \| `"block"` | `"truncate"` | —               | `truncate` = cut output; `block` = return error  |
-| `ellipsis`  | string                   | `"..."`    | max length 20     | Suffix appended to truncated output              |
+| Field                 | Type                         | Default      | Constraints        | Description                                                                   |
+|-----------------------|------------------------------|--------------|--------------------|-------------------------------------------------------------------------------|
+| `min_chars`           | integer                      | `0`          | `>= 0`             | Minimum allowed character count (0 = no minimum)                              |
+| `max_chars`           | integer \| null              | `null`       | —                  | Maximum allowed character count; `null` or `0` disables the check             |
+| `min_tokens`          | integer                      | `0`          | `>= 0`             | Minimum allowed token count (0 = no minimum)                                  |
+| `max_tokens`          | integer \| null              | `null`       | —                  | Maximum allowed token count; `null` or `0` disables the check                 |
+| `chars_per_token`     | integer                      | `4`          | `1–10`             | Characters-per-token ratio used to estimate token count                       |
+| `limit_mode`          | `"character"` \| `"token"`   | `"character"` | —                 | Which limit to enforce — character count or estimated token count             |
+| `strategy`            | `"truncate"` \| `"block"`    | `"truncate"` | —                  | `truncate` = cut output at the limit; `block` = return an error               |
+| `ellipsis`            | string                       | `"…"`        | max length 20      | Suffix appended when truncating                                               |
+| `word_boundary`       | boolean                      | `false`      | —                  | Truncate at word boundaries to avoid mid-word cuts                            |
+| `max_text_length`     | integer                      | `1000000`    | `>= 1`             | Maximum raw text size (bytes) to process; prevents memory exhaustion          |
+| `max_structure_size`  | integer                      | `10000`      | `>= 1`             | Maximum items in a list or dict; prevents DoS on large structured outputs     |
+| `max_recursion_depth` | integer                      | `100`        | `>= 1`             | Maximum nesting depth; prevents stack overflow on deeply nested outputs       |
 
-**Validation:** `min_chars` must be strictly less than `max_chars`.
+**Validation:** `min_chars` must be strictly less than `max_chars` when `max_chars` is set. Same applies to `min_tokens` / `max_tokens`.
 
 #### Example — truncate at 500 chars
 
@@ -249,8 +270,16 @@ curl -s -X POST \
           "config": {
             "min_chars": 0,
             "max_chars": 500,
+            "min_tokens": 0,
+            "max_tokens": null,
+            "chars_per_token": 4,
+            "limit_mode": "character",
             "strategy": "truncate",
-            "ellipsis": "…"
+            "ellipsis": "\u2026",
+            "word_boundary": false,
+            "max_text_length": 1000000,
+            "max_structure_size": 10000,
+            "max_recursion_depth": 100
           }
         }]
       }
@@ -265,8 +294,16 @@ curl -s -X POST \
 {
   "min_chars": 0,
   "max_chars": 1000,
+  "min_tokens": 0,
+  "max_tokens": null,
+  "chars_per_token": 4,
+  "limit_mode": "character",
   "strategy": "block",
-  "ellipsis": "..."
+  "ellipsis": "\u2026",
+  "word_boundary": false,
+  "max_text_length": 1000000,
+  "max_structure_size": 10000,
+  "max_recursion_depth": 100
 }
 ```
 
@@ -274,7 +311,7 @@ curl -s -X POST \
 
 ### `RATE_LIMITER`
 
-Throttles tool invocations before they are dispatched. Limits can be set independently for the calling user, the tenant (team), and the tool itself. At least one limit field must be non-null.
+Throttles tool invocations before they are dispatched. Limits can be set independently for the calling user, the tenant (team), or per individual tool.
 
 **Hooks:** `tool_pre_invoke`
 
@@ -282,19 +319,29 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 
 ```json
 {
-  "by_user":   "60/m",
-  "by_tenant": "600/m",
-  "by_tool":   "10/s"
+  "by_user":         "60/m",
+  "by_tenant":       "600/m",
+  "by_tool":         { "search": "10/m", "fetch_data": "5/s" },
+  "algorithm":       "fixed_window",
+  "backend":         "memory",
+  "redis_url":       null,
+  "redis_key_prefix": "rl",
+  "redis_fallback":  true
 }
 ```
 
-| Field       | Type            | Default | Format            | Description                              |
-|-------------|-----------------|---------|-------------------|------------------------------------------|
-| `by_user`   | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-user rate limit                |
-| `by_tenant` | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-tenant (team) rate limit       |
-| `by_tool`   | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-tool rate limit                |
+| Field              | Type                                               | Default          | Format / Constraints               | Description                                                              |
+|--------------------|----------------------------------------------------|------------------|------------------------------------|--------------------------------------------------------------------------|
+| `by_user`          | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per calling user; `null` disables                             |
+| `by_tenant`        | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per tenant (team); `null` disables                            |
+| `by_tool`          | object (string → string) \| null                  | `null`           | values: `<int>/s` or `<int>/m`     | Per-tool rate limits as a map of `tool_name → rate`; `null` disables     |
+| `algorithm`        | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                    | Counting algorithm to use                                                |
+| `backend`          | `"memory"` \| `"redis"`                           | `"memory"`       | —                                  | Storage backend for counters                                             |
+| `redis_url`        | string \| null                                     | `null`           | valid Redis URL                    | Redis connection URL; required when `backend` is `"redis"`               |
+| `redis_key_prefix` | string                                             | `"rl"`           | —                                  | Prefix for all Redis counter keys                                        |
+| `redis_fallback`   | boolean                                            | `true`           | —                                  | Fall back to in-memory counting if Redis is unavailable                  |
 
-**Validation:** Each non-null value must match `^\d+/[sm]$`.
+**Validation:** Each non-null rate string must match `^\d+/[sm]$`.
 
 #### Example — 30 calls/min per user, 300/min per tenant
 
@@ -313,7 +360,12 @@ curl -s -X POST \
           "config": {
             "by_user":   "30/m",
             "by_tenant": "300/m",
-            "by_tool":   null
+            "by_tool":   null,
+            "algorithm": "fixed_window",
+            "backend":   "memory",
+            "redis_url": null,
+            "redis_key_prefix": "rl",
+            "redis_fallback": true
           }
         }]
       }
@@ -431,7 +483,12 @@ curl -s -X POST \
             "config": {
               "by_user": "60/m",
               "by_tenant": "600/m",
-              "by_tool": null
+              "by_tool": null,
+              "algorithm": "fixed_window",
+              "backend": "memory",
+              "redis_url": null,
+              "redis_key_prefix": "rl",
+              "redis_fallback": true
             }
           },
           {
@@ -442,8 +499,16 @@ curl -s -X POST \
             "config": {
               "min_chars": 0,
               "max_chars": 4000,
+              "min_tokens": 0,
+              "max_tokens": null,
+              "chars_per_token": 4,
+              "limit_mode": "character",
               "strategy": "truncate",
-              "ellipsis": "…"
+              "ellipsis": "\u2026",
+              "word_boundary": false,
+              "max_text_length": 1000000,
+              "max_structure_size": 10000,
+              "max_recursion_depth": 100
             }
           }
         ]
