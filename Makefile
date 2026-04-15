@@ -3497,6 +3497,7 @@ images:
 # help: pydocstyle           - Docstring style checker
 # help: pycodestyle          - Simple PEP-8 checker
 # help: pre-commit           - Run all configured pre-commit hooks
+# help: ci                   - Run local CI parity for PR-to-main plus push-to-main workflows
 # help: ruff                 - Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
 # help: ty                   - Ty type checker from astral
 # help: pyright              - Static type-checking with Pyright
@@ -4055,6 +4056,13 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
 		GOCACHE='$(CURDIR)/.cache/go-build' \
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+
+.PHONY: ci
+ci: uv                             ## 🤖  Run local CI parity
+	@echo "🤖 Running local CI parity..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/python -m mcpgateway.utils.ci_parity"
 
 RUFF_MODE   ?= check
 RUFF_SELECT ?=
