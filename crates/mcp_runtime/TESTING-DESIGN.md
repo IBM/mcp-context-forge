@@ -62,7 +62,7 @@ This design covers:
 - safe fallback behavior in `RUST_MCP_MODE=shadow`
 
 It assumes the compose-backed environment from
-[docker-compose.yml](/home/cmihai/agents2/pr/mcp-context-forge/docker-compose.yml),
+[docker-compose.yml](../../docker-compose.yml),
 which uses PostgreSQL and Redis.
 
 ## Why this matters
@@ -107,10 +107,10 @@ The following invariants should stay explicit and testable:
 
 Useful existing coverage already lives in:
 
-- [tests/e2e/test_mcp_rbac_transport.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e/test_mcp_rbac_transport.py)
-- [tests/integration/test_streamable_http_redis.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/integration/test_streamable_http_redis.py)
-- [tests/e2e/test_session_pool_e2e.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e/test_session_pool_e2e.py)
-- [tests/loadtest/locustfile_mcp_protocol.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/loadtest/locustfile_mcp_protocol.py)
+- [tests/e2e/test_mcp_rbac_transport.py](../../tests/e2e/test_mcp_rbac_transport.py)
+- [tests/integration/test_streamable_http_redis.py](../../tests/integration/test_streamable_http_redis.py)
+- [tests/e2e/test_session_pool_e2e.py](../../tests/e2e/test_session_pool_e2e.py)
+- [tests/loadtest/locustfile_mcp_protocol.py](../../tests/loadtest/locustfile_mcp_protocol.py)
 
 These are useful, but they are not enough on their own for Rust session-auth
 reuse.

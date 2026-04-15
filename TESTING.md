@@ -210,7 +210,7 @@ pytest -n auto tests/unit/
 
 ```bash
 # Test a specific file with coverage
-. /home/cmihai/.venv/mcpgateway/bin/activate
+. .venv/bin/activate
 pytest --cov-report=annotate tests/unit/mcpgateway/test_translate.py
 
 # Test with detailed output

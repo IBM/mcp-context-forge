@@ -51,9 +51,15 @@ fi
 cd "$PROJECT_ROOT" || exit 1
 
 # Activate virtual environment if available
-if [ -f "/home/cmihai/.venv/mcpgateway/bin/activate" ]; then
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -f "$VIRTUAL_ENV/bin/activate" ]; then
+    # shellcheck disable=SC1090
+    source "$VIRTUAL_ENV/bin/activate"
+elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     # shellcheck disable=SC1091
-    source /home/cmihai/.venv/mcpgateway/bin/activate
+    source "$PROJECT_ROOT/.venv/bin/activate"
+elif [ -f "$HOME/.venv/mcpgateway/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "$HOME/.venv/mcpgateway/bin/activate"
 fi
 
 # Generate token

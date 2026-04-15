@@ -7,7 +7,13 @@ echo "🚀 Starting MCP RSS Search Server..."
 echo ""
 
 # Activate virtual environment and start server in background
-. /home/cmihai/.venv/mcpgateway/bin/activate
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -f "$VIRTUAL_ENV/bin/activate" ]; then
+    # shellcheck disable=SC1090
+    . "$VIRTUAL_ENV/bin/activate"
+elif [ -f "../../../.venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    . "../../../.venv/bin/activate"
+fi
 python3 -m mcp_rss_search.server_fastmcp --transport http --host 127.0.0.1 --port 9100 > /tmp/rss_server.log 2>&1 &
 SERVER_PID=$!
 
