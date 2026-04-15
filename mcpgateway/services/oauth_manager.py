@@ -33,6 +33,7 @@ from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -417,9 +418,6 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 if ca_certificate:
-                    # First-Party
-                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -497,9 +495,6 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 if ca_certificate:
-                    # First-Party
-                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -881,7 +876,6 @@ class OAuthManager:
 
         if settings.cache_type == "database":
             try:
-                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -957,7 +951,6 @@ class OAuthManager:
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
             try:
-                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1071,7 +1064,6 @@ class OAuthManager:
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
             try:
-                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1188,7 +1180,6 @@ class OAuthManager:
         # Try database
         if settings.cache_type == "database":
             try:
-                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1436,9 +1427,6 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 if ca_certificate:
-                    # First-Party
-                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
@@ -1535,9 +1523,6 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 if ca_certificate:
-                    # First-Party
-                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data, timeout=self.request_timeout)

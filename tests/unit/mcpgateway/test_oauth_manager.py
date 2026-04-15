@@ -1219,7 +1219,7 @@ class TestOAuthManager:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
             with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
                 result = await manager._exchange_code_for_tokens(credentials, code, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
                 assert result["access_token"] == "ssl_token_123"
@@ -1422,7 +1422,7 @@ class TestOAuthManager:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
             with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
                 result = await manager.get_access_token(credentials, ca_certificate=ca_cert)
                 assert result == "ca_cert_token"
@@ -1458,10 +1458,11 @@ class TestOAuthManager:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
             with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
                 result = await manager.get_access_token(credentials, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
                 assert result == "password_ca_token"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
     @pytest.mark.asyncio
     async def test_refresh_token_with_ca_certificate(self):
         """Test refresh token with custom CA certificate."""
@@ -1489,7 +1490,7 @@ class TestOAuthManager:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
             with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
                 result = await manager.refresh_token("old_refresh_token", credentials, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
                 assert result["access_token"] == "refreshed_token"
