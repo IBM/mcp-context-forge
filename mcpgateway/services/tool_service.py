@@ -48,6 +48,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
+from mcpgateway.cache.tool_call_registry import get_tool_call_registry
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
@@ -75,6 +76,7 @@ from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.elicitation_service import get_elicitation_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -100,8 +102,6 @@ from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
-from mcpgateway.cache.tool_call_registry import get_tool_call_registry
-from mcpgateway.services.elicitation_service import get_elicitation_service
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
@@ -4146,6 +4146,7 @@ class ToolService(BaseService):
             return None
 
         # Import session_registry from main (it's a global instance there)
+        # First-Party
         from mcpgateway.main import session_registry
 
         # Get service instances
@@ -4164,7 +4165,7 @@ class ToolService(BaseService):
             )
 
             # Return callback that produces -32601 error
-            async def capability_error_callback(context: Any, params: types.ElicitRequestParams):
+            async def capability_error_callback(_context: Any, params: types.ElicitRequestParams):
                 """Return -32601 error when client lacks elicitation capability.
 
                 This callback is returned when the client session does not advertise
@@ -4173,7 +4174,7 @@ class ToolService(BaseService):
                 available.
 
                 Args:
-                    context: RequestContext from MCP SDK
+                    _context: RequestContext from MCP SDK
                     params: ElicitRequestParams containing the elicitation request
 
                 Returns:
@@ -4184,23 +4185,20 @@ class ToolService(BaseService):
                     f"The client must advertise 'capabilities.elicitation' during initialization "
                     f"to receive elicitation requests from MCP servers."
                 )
-                logger.info(
-                    f"Returning -32601 error for tool call {tool_call_id}: {error_msg}. "
-                    f"Request message: {params.message}"
-                )
+                logger.info(f"Returning -32601 error for tool call {tool_call_id}: {error_msg}. " f"Request message: {params.message}")
                 return types.ErrorData(code=-32601, message=error_msg)
 
             return capability_error_callback
 
         # Client has capability - return normal elicitation callback
-        async def elicitation_callback(context: Any, params: types.ElicitRequestParams):
+        async def elicitation_callback(_context: Any, params: types.ElicitRequestParams):
             """Handle elicitation request from upstream MCP server.
 
             This callback is used when the client has advertised elicitation capability.
             It forwards the elicitation request to the client and returns the response.
 
             Args:
-                context: RequestContext from MCP SDK (unused, for signature compatibility)
+                _context: RequestContext from MCP SDK (unused, for signature compatibility)
                 params: ElicitRequestParams containing message and schema
 
             Returns:
@@ -4222,9 +4220,7 @@ class ToolService(BaseService):
                 # Register the tool call mapping for elicitation routing
                 tool_call_registry.register_tool_call(tool_call_id, downstream_session_id)
 
-                logger.info(
-                    f"Elicitation request from tool call {tool_call_id} to session {downstream_session_id}: {message}"
-                )
+                logger.info(f"Elicitation request from tool call {tool_call_id} to session {downstream_session_id}: {message}")
 
                 # Forward elicitation to client via ElicitationService
                 # This will block until client responds or timeout occurs

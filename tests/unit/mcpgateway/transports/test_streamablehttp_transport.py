@@ -895,6 +895,69 @@ async def test_validate_streamable_session_access_skips_when_rust_already_valida
 
 
 @pytest.mark.asyncio
+async def test_validate_streamable_session_access_allows_admin_owner_bypass(monkeypatch):
+    """Admin callers should be allowed when a session owner exists."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value="owner@example.com")
+    session_registry.session_exists = AsyncMock(side_effect=AssertionError("should not be called"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-admin",
+        user_context={"email": "admin@example.com", "is_admin": True, "is_authenticated": True},
+        rpc_method="tools/call",
+    )
+
+    assert allowed is True
+    assert status == 200
+    assert detail == ""
+
+
+@pytest.mark.asyncio
+async def test_validate_streamable_session_access_allows_matching_owner(monkeypatch):
+    """Matching owner should be allowed for stateful session access."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value="owner@example.com")
+    session_registry.session_exists = AsyncMock(side_effect=AssertionError("should not be called"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-owner",
+        user_context={"email": "owner@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="tools/call",
+    )
+
+    assert allowed is True
+    assert status == 200
+    assert detail == ""
+
+
+@pytest.mark.asyncio
+async def test_validate_streamable_session_access_denies_when_owner_metadata_missing(monkeypatch):
+    """Existing sessions without owner metadata should fail closed."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value=None)
+    session_registry.session_exists = AsyncMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-metadata-missing",
+        user_context={"email": "dev@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="tools/call",
+    )
+
+    assert allowed is False
+    assert status == 403
+    assert detail == "Session owner metadata unavailable"
+
+
+@pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     mock_db = MagicMock()
@@ -8779,6 +8842,7 @@ class TestProxyFunctions:
 
         # Verify compute_passthrough_headers_cached forwarded the headers
         assert "X-Custom-Header" in captured_headers
+        assert "X-Request-ID" in captured_headers
         assert captured_headers["X-Custom-Header"] == "custom-value"
         assert "X-Request-ID" in captured_headers
         assert captured_headers["X-Request-ID"] == "req-456"

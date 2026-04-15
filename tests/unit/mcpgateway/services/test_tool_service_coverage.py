@@ -618,6 +618,64 @@ class TestConvertToolToRead:
         assert tool_read.displayName == "my_custom"
 
 
+class TestUpdateToolCoverage:
+    """Focused coverage tests for update_tool branches."""
+
+    @pytest.mark.asyncio
+    async def test_update_tool_denies_non_owner(self, tool_service, mock_tool):
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch("mcpgateway.services.permission_service.PermissionService") as mock_permission_service,
+        ):
+            mock_permission_service.return_value.check_resource_ownership = AsyncMock(return_value=False)
+
+            with pytest.raises(PermissionError, match="Only the owner can update this tool"):
+                await tool_service.update_tool(db, "tool-1", _make_tool_update(), user_email="user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_update_tool_name_change_visibility_change_and_url_stringify(self, tool_service, mock_tool):
+        db = MagicMock()
+        mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-custom"
+        mock_tool.visibility = "public"
+        mock_tool.team_id = "team-1"
+        mock_tool.owner_email = "owner@example.com"
+
+        tool_update = _make_tool_update(
+            name="new-name",
+            visibility="TEAM",
+            url="https://example.com/new-endpoint",
+            description="updated description",
+        )
+
+        converted = MagicMock()
+        converted.model_dump = MagicMock(return_value={"id": "tool-1"})
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch.object(tool_service, "_check_tool_name_conflict") as mock_conflict,
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value=converted),
+            patch("mcpgateway.services.tool_service.ToolRead.model_validate", return_value=converted),
+        ):
+            result = await tool_service.update_tool(db, "tool-1", tool_update)
+
+        assert result is converted
+        mock_conflict.assert_called_once_with(
+            db,
+            "old-custom",
+            "team",
+            mock_tool.id,
+            team_id="team-1",
+            owner_email="owner@example.com",
+        )
+        assert mock_tool.name == "new-name"
+        assert mock_tool.url == "https://example.com/new-endpoint"
+        assert mock_tool.description == "updated description"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 9. _extract_and_validate_structured_content
 # ═════════════════════════════════════════════════════════════════════════════

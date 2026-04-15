@@ -91,6 +91,30 @@ async def test_create_elicitation_limit_and_timeout(monkeypatch):
         await service.create_elicitation("u", "d", "msg", {"type": "object", "properties": {}}, timeout=0.001)
 
 
+@pytest.mark.asyncio
+async def test_create_elicitation_logs_and_reraises_unexpected_exception(monkeypatch):
+    service = svc.ElicitationService(default_timeout=0.5)
+    monkeypatch.setattr(service, "_validate_schema", lambda s: None)
+
+    class BoomFuture:
+        def __await__(self):
+            async def _raise():
+                raise RuntimeError("boom")
+
+            return _raise().__await__()
+
+    monkeypatch.setattr(svc.asyncio, "Future", lambda: BoomFuture())
+    structured_log = MagicMock()
+    monkeypatch.setattr(svc, "structured_logger", MagicMock(log=structured_log))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await service.create_elicitation("u", "d", "msg", {"type": "object", "properties": {}}, timeout=0.5)
+
+    assert service._pending == {}
+    assert any(call.kwargs.get("level") == "ERROR" for call in structured_log.call_args_list)
+    assert any(call.kwargs.get("metadata", {}).get("event") == "elicitation.error" for call in structured_log.call_args_list)
+
+
 def test_complete_get_and_count(monkeypatch):
     service = svc.ElicitationService()
     loop = asyncio.new_event_loop()

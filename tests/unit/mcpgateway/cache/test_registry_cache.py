@@ -19,6 +19,7 @@ import pytest
 
 # First-Party
 from mcpgateway.cache.registry_cache import CacheEntry, CacheInvalidationSubscriber, RegistryCache, RegistryCacheConfig, _get_cleanup_timeout
+from mcpgateway.cache.tool_call_registry import ToolCallRegistry, get_tool_call_registry, set_tool_call_registry
 
 
 class TestCacheEntry:
@@ -260,6 +261,20 @@ class TestRegistryCache:
         result = await cache.get("gateways")
 
         assert result is None
+
+
+class TestToolCallRegistrySingleton:
+    """Tests for tool_call_registry singleton helpers."""
+
+    def test_set_tool_call_registry_overrides_global_singleton(self):
+        """set_tool_call_registry should replace the global singleton used by getter."""
+        original = get_tool_call_registry()
+        replacement = ToolCallRegistry()
+        try:
+            set_tool_call_registry(replacement)
+            assert get_tool_call_registry() is replacement
+        finally:
+            set_tool_call_registry(original)
 
     @pytest.mark.asyncio
     async def test_invalidate_catalog(self):
