@@ -5,8 +5,6 @@ edition = "2024"
 authors = ["Matheus Cafalchio"]
 license = "Apache-2.0"
 
-[workspace]
-
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.8"
@@ -38,3 +36,11 @@ reqwest = { version = "0.13.1", default-features = false, features = [
 tokio-test = "0.4.5"
 tokio-util = "0.7.18"
 tower = "0.5.3"
+
+
+[profile.release]
+opt-level = 'z'   # Optimize for size
+lto = true        # Enable link-time optimization
+codegen-units = 1 # Reduce number of codegen units to increase optimizations
+panic = 'abort'   # Abort on panic
+strip = true      # Strip symbols from binary*

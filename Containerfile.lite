@@ -31,12 +31,11 @@ ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 ###############################################################################
-# Rust builder stage - builds local native extensions and sidecars from crates/
+# Rust builder stage - builds Rust MCP runtime and local native extensions
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS rust-builder-base
-ARG PYTHON_VERSION=3.12
+FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
 
@@ -46,27 +45,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/native-extension-wheels /build/rust-sidecars; \
+        mkdir -p /build/native-extension-wheels /build/crates/mcp_runtime/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        printf 'exit 1\n' >> /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        chmod +x /build/crates/mcp_runtime/target/release/contextforge-mcp-runtime; \
         exit 0; \
-    fi
-
-# Install native build dependencies only if ENABLE_RUST=true
-# hadolint ignore=DL3041
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        dnf upgrade -y && \
-        dnf install -y \
-            python${PYTHON_VERSION} \
-            python${PYTHON_VERSION}-devel \
-            python${PYTHON_VERSION}-pip \
-            gcc \
-            gcc-c++ \
-            openssl-devel \
-            postgresql-devel \
-            libpq-devel \
-            findutils \
-            curl && \
-        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-        dnf clean all; \
     fi
 
 # Install Rust toolchain (only if ENABLE_RUST=true)
@@ -74,8 +58,6 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
     fi
 ENV PATH="/root/.cargo/bin:$PATH"
-ENV CARGO_PROFILE_RELEASE_LTO=false
-ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
 WORKDIR /build
 
@@ -114,60 +96,17 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
     else \
         echo "⏭️  Skipping local native extension build"; \
     fi
+
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        mkdir -p /build/rust-sidecars && \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
-            cargo build --release --workspace --bins && \
             cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
         else \
-            cargo build --release --workspace --bins; \
+            cargo build --release -p contextforge_mcp_runtime; \
         fi && \
-        printf '%s\n' \
-            'import json' \
-            'import pathlib' \
-            'import shutil' \
-            'import subprocess' \
-            'import tomllib' \
-            '' \
-            'metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"], text=True))' \
-            'target_dir = pathlib.Path(metadata["target_directory"]) / "release"' \
-            'export_dir = pathlib.Path("/build/rust-sidecars")' \
-            '' \
-            'for package in metadata["packages"]:' \
-            '    manifest_dir = pathlib.Path(package["manifest_path"]).parent' \
-            '    pyproject_toml = manifest_dir / "pyproject.toml"' \
-            '    is_maturin = False' \
-            '    if pyproject_toml.exists():' \
-            '        pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))' \
-            '        build_system = pyproject.get("build-system", {})' \
-            '        backend = str(build_system.get("build-backend", ""))' \
-            '        requires = [str(item) for item in build_system.get("requires", [])]' \
-            '        is_maturin = "maturin" in backend or any("maturin" in item for item in requires)' \
-            '    if is_maturin:' \
-            '        continue' \
-            '    for target in package.get("targets", []):' \
-            '        if target.get("kind") != ["bin"]:' \
-            '            continue' \
-            '        if target.get("required-features") or target.get("required_features"):' \
-            '            continue' \
-            '        binary_name = target["name"]' \
-            '        source = target_dir / binary_name' \
-            '        if not source.exists():' \
-            '            raise SystemExit(f"Missing Rust sidecar binary: {source}")' \
-            '        destination = export_dir / binary_name' \
-            '        shutil.copy2(source, destination)' \
-            '        destination.chmod(0o755)' \
-            '        alias_name = binary_name.replace("_", "-")' \
-            '        if alias_name != binary_name:' \
-            '            alias = export_dir / alias_name' \
-            '            shutil.copy2(source, alias)' \
-            '            alias.chmod(0o755)' \
-            'print("✅ Rust sidecars built successfully")' \
-            > /tmp/export_rust_sidecars.py && \
-        python3 /tmp/export_rust_sidecars.py && \
-        rm -f /tmp/export_rust_sidecars.py \
+        cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
+        echo "✅ Rust MCP runtime built successfully"; \
     else \
-        echo "⏭️  Skipping Rust sidecar build"; \
+        echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
 FROM rust-builder-base AS rust-builder
@@ -195,7 +134,7 @@ RUN npm run vite:build
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -238,12 +177,13 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 # This maximizes Docker layer caching - dependencies change less often
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY plugins/requirements.txt /app/plugins/requirements.txt
 
 # ----------------------------------------------------------------------------
-# Copy local native extensions and Rust sidecars from rust-builder stage
+# Copy Rust MCP runtime and local native extensions from rust-builder stage
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
-COPY --from=rust-builder /build/rust-sidecars/ /app/bin/
+COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
 # ----------------------------------------------------------------------------
 # Copy frontend build artifacts from frontend-builder stage
@@ -256,6 +196,7 @@ COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
+#  - Install plugins from PyPI (cpex-* packages)
 #  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
@@ -275,6 +216,7 @@ RUN set -euo pipefail \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins]"; \
     fi \
+    && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
         /app/.venv/bin/pip install --no-cache-dir /tmp/local-native-extension-wheels/*.whl && \
@@ -346,7 +288,7 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Using ubi10-minimal for cross-platform compatibility
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1776071394 AS runtime
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
@@ -360,7 +302,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.0-RC-2"
+    org.opencontainers.image.version="1.0.0-RC-3"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

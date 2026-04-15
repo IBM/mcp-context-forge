@@ -152,27 +152,29 @@ def test_rust_release_workflow_is_dynamic_and_tag_driven():
     assert publish_step["run"] == "uv publish dist/*"
 
 
-def test_containerfile_lite_uses_dynamic_rust_sidecars_and_native_extensions():
+def test_containerfile_lite_uses_workspace_runtime_and_native_extensions():
     containerfile = (WORKFLOW_PATH.parents[2] / "Containerfile.lite").read_text(encoding="utf-8")
 
     assert "ENABLE_RUST=true but no Rust wheels were produced" not in containerfile
     assert "COPY mcp-servers/rust/ /build/mcp-servers/rust/" not in containerfile
-    assert "FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS rust-builder-base" in containerfile
-    assert "manylinux_2_28_x86_64" not in containerfile
+    assert "FROM quay.io/pypa/manylinux2014:2026.04.08-5 AS rust-builder-base" in containerfile
     assert "Rust plugins" not in containerfile
     assert "Skipping Rust plugin build" not in containerfile
     assert "rust-wheels" not in containerfile
+    assert "COPY Cargo.toml Cargo.lock /build/" in containerfile
+    assert "COPY crates/ /build/crates/" in containerfile
     assert "/build/native-extension-wheels" in containerfile
-    assert "/build/rust-sidecars" in containerfile
-    assert 'subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"]' in containerfile
-    assert 'target.get("kind") != ["bin"]' in containerfile
-    assert 'target.get("required-features") or target.get("required_features")' in containerfile
+    assert "/build/rust-sidecars" not in containerfile
+    assert 'subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"]' not in containerfile
+    assert 'target.get("kind") != ["bin"]' not in containerfile
+    assert 'target.get("required-features") or target.get("required_features")' not in containerfile
     assert 'build-backend = "maturin"' not in containerfile
     assert '"maturin==1.12.6"' in containerfile
     assert '["maturin", "build", "--release"' in containerfile
     assert "Installing local native extensions..." in containerfile
     assert "No local native extensions discovered" in containerfile
-    assert "Rust sidecars not built into this image" not in containerfile
+    assert "cargo build --release -p contextforge_mcp_runtime" in containerfile
+    assert "/build/target/release/contextforge-mcp-runtime" in containerfile
     assert "pii_filter_rust" not in containerfile
 
 
