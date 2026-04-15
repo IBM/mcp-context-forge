@@ -427,7 +427,7 @@ Use the trace generator helper to verify your observability backend is working:
 
 ```bash
 # Activate virtual environment if needed
-. /home/cmihai/.venv/mcpgateway/bin/activate
+. .venv/bin/activate
 
 # Run the trace generator
 python tests/integration/helpers/trace_generator.py

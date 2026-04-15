@@ -3,7 +3,8 @@
 .PHONY: help install dev-install format lint test dev serve-http serve-sse test-http mcp-info clean
 
 PYTHON ?= python3
-VENV ?= /home/cmihai/.venv/mcpgateway
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+VENV ?= $(abspath $(MAKEFILE_DIR)/../../../.venv)
 HTTP_PORT ?= 9100
 HTTP_HOST ?= 0.0.0.0
 
