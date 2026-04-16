@@ -887,14 +887,14 @@ export const editServer = async function (serverId) {
       hideUnderlyingToolsCheckbox.checked = isMeta ? hideTools : true;
     }
 
-    // Toggle items section and info banner based on meta-server mode
-    const editItemsSection = safeGetElement("edit-server-items-section");
+    // Toggle gateways+tools wrapper and info banner based on meta-server mode
+    const editGatewaysAndTools = safeGetElement("edit-server-gateways-and-tools");
     const editMetaInfoBanner = safeGetElement("edit-meta-info-banner");
-    if (editItemsSection) {
+    if (editGatewaysAndTools) {
       if (isMeta) {
-        editItemsSection.classList.add("hidden");
+        editGatewaysAndTools.classList.add("hidden");
       } else {
-        editItemsSection.classList.remove("hidden");
+        editGatewaysAndTools.classList.remove("hidden");
       }
     }
     if (editMetaInfoBanner) {
