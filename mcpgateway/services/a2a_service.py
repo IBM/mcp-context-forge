@@ -16,6 +16,7 @@ and interactions with A2A-compatible agents.
 import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 # Third-Party
 from pydantic import ValidationError
@@ -2035,9 +2036,6 @@ class A2AAgentService(BaseService):
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: SSRF Protection - Validate endpoint before URL construction
             # ═══════════════════════════════════════════════════════════════════════════
-            # Standard
-            from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
             # Reject endpoints with SSRF attack vectors:
             # 1. Protocol prefixes (file://, gopher://, etc.)
             # 2. User-info bypass (evil@127.0.0.1)
@@ -2070,7 +2068,11 @@ class A2AAgentService(BaseService):
             allowed_domains = getattr(settings, "uaid_allowed_domains", [])
             if allowed_domains:
                 # Extract just the domain part (without port) for allowlist checking
-                endpoint_domain = endpoint.split(":")[0] if ":" in endpoint else endpoint
+                # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
+                # If endpoint doesn't start with scheme, add https:// for parsing
+                url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
+                parsed = urlparse(url_to_parse)
+                endpoint_domain = parsed.hostname or endpoint.split(":")[0]
 
                 # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
                 if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):

@@ -26,6 +26,9 @@ from typing import Optional
 # Third-Party
 import base58
 
+# First-Party
+from mcpgateway.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,9 +82,6 @@ def parse_uaid(uaid: str) -> UaidComponents:
         ValueError: If UAID format is invalid or required components are missing
     """
     # DoS Protection: Reject excessively long UAIDs before parsing
-    # First-Party
-    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
     # Note: settings.uaid_max_length is enforced by Pydantic Field(le=2048) in config.py
     # which matches the database column limit (a2a_agents.uaid String(2048)).
     # If database schema changes, Alembic migration will fail visibly.
@@ -226,7 +226,16 @@ def generate_uaid(
         ]
     )
 
-    return ";".join(parts)
+    uaid = ";".join(parts)
+
+    # Validate generated UAID length to prevent database constraint violations
+    if len(uaid) > settings.uaid_max_length:
+        raise ValueError(
+            f"Generated UAID exceeds maximum length ({len(uaid)} > {settings.uaid_max_length} characters). "
+            f"Reduce input field sizes (name={len(name)}, endpoint={len(native_id)}, skills={len(skills)})."
+        )
+
+    return uaid
 
 
 def validate_uaid(uaid: str) -> tuple[bool, Optional[str]]:

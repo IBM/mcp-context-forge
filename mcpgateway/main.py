@@ -2146,6 +2146,23 @@ def validate_security_configuration():
 
     log_critical_issues(critical_issues)
 
+    # UAID Cross-Gateway Routing Security Check
+    if not settings.uaid_allowed_domains:
+        if not settings.auth_required:
+            logger.error(
+                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+            )
+        else:
+            logger.warning(
+                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                "Any UAID-based agent can route to any remote gateway endpoint. "
+                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+            )
+
     # Warn about ephemeral storage without strict user-in-DB mode
     if not getattr(settings, "require_user_in_db", False):
         is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
