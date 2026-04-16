@@ -887,6 +887,24 @@ export const editServer = async function (serverId) {
       hideUnderlyingToolsCheckbox.checked = isMeta ? hideTools : true;
     }
 
+    // Toggle items section and info banner based on meta-server mode
+    const editItemsSection = safeGetElement("edit-server-items-section");
+    const editMetaInfoBanner = safeGetElement("edit-meta-info-banner");
+    if (editItemsSection) {
+      if (isMeta) {
+        editItemsSection.classList.add("hidden");
+      } else {
+        editItemsSection.classList.remove("hidden");
+      }
+    }
+    if (editMetaInfoBanner) {
+      if (isMeta) {
+        editMetaInfoBanner.classList.remove("hidden");
+      } else {
+        editMetaInfoBanner.classList.add("hidden");
+      }
+    }
+
     // Store server data for modal population
     window.Admin.currentEditingServer = server;
 
