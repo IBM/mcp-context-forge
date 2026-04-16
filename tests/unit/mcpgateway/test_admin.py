@@ -250,7 +250,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
@@ -3337,7 +3336,6 @@ class TestAdminGatewayRoutes:
             call_count += 1
             if call_count == 1:
                 raise Exception("Gateway is being modified by another process")
-            return None
 
         mock_toggle_status.side_effect = side_effect
 
@@ -5528,7 +5526,7 @@ class TestA2AAgentManagement:
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
-        assert "Hello from ContextForge Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
+        assert params["query"] == "Hello from ContextForge Admin UI test!"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -13205,7 +13203,7 @@ async def test_get_system_stats_htmx_and_json(monkeypatch, mock_db, allow_permis
         async def get_comprehensive_stats_cached(self, _db):
             return {"users": 1}
 
-    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", lambda: StubStatsService())
+    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", StubStatsService)
 
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
@@ -13229,7 +13227,7 @@ async def test_get_system_stats_exception_raises_http_500(monkeypatch, mock_db, 
         async def get_comprehensive_stats_cached(self, _db):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", lambda: StubStatsService())
+    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", StubStatsService)
     request = MagicMock(spec=Request)
     request.headers = {}
     request.scope = {"root_path": ""}
@@ -18430,11 +18428,11 @@ class TestMaintenanceMisc:
         request.is_disconnected = AsyncMock(return_value=True)
 
         mock_gateway_service = MagicMock()
-        mock_gateway_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
+        mock_gateway_service.subscribe_events = MagicMock(return_value=aiter(AsyncMock()))
         monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: mock_gateway_service)
 
         mock_tool_service = MagicMock()
-        mock_tool_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
+        mock_tool_service.subscribe_events = MagicMock(return_value=aiter(AsyncMock()))
         monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: mock_tool_service)
 
         result = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
@@ -18458,8 +18456,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         assert isinstance(response, StreamingResponse)
@@ -18486,8 +18484,8 @@ class TestMaintenanceMisc:
         async def tool_events():
             yield {"type": "tool", "data": {"b": 2}}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         chunks = [chunk async for chunk in response.body_iterator]
@@ -18506,8 +18504,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
 
         async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
             # Close the Queue.get coroutine so it doesn't warn as "never awaited".
@@ -18536,8 +18534,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
 
         async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
             if hasattr(awaitable, "close"):
@@ -18568,8 +18566,8 @@ class TestMaintenanceMisc:
         logger.debug = MagicMock()
         logger.error = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.LOGGER", logger, raising=True)
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         chunks = [chunk async for chunk in response.body_iterator]

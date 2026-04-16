@@ -8,8 +8,7 @@ PORT="${PORT:-8080}"
 SERVER_ID="${SERVER_ID:-9779b6698cbd4b4995ee04a4fab38737}"
 URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp"
 
-# pragma: allowlist secret
-AUTH="Bearer $MCPGATEWAY_BEARER_TOKEN"
+AUTH="Bearer $MCPGATEWAY_BEARER_TOKEN" # pragma: allowlist secret
 rm -f out.log
 
 if [[ "${P:=X}" == "P" ]]; then

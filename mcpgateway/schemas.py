@@ -5482,6 +5482,191 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
 
 
 # ---------------------------------------------------------------------------
+# A2A Task Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2ATaskState(str, Enum):
+    """Finite state machine for A2A task lifecycle per the A2A v1 spec.
+
+    Terminal states (``completed``, ``canceled``, ``failed``, ``rejected``)
+    are the only states for which ``completed_at`` should be set; the
+    model-validators on :class:`A2ATaskCreate` and :class:`A2ATaskUpdate`
+    enforce this invariant.
+    """
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    INPUT_REQUIRED = "input-required"
+    AUTH_REQUIRED = "auth-required"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+    @classmethod
+    def terminal(cls) -> "frozenset[A2ATaskState]":
+        """Return the set of terminal states."""
+        return frozenset({cls.COMPLETED, cls.CANCELED, cls.FAILED, cls.REJECTED})
+
+    def is_terminal(self) -> bool:
+        """Whether this state is a terminal state."""
+        return self in self.terminal()
+
+
+class A2ATaskCreate(BaseModel):
+    """Schema for recording a new A2A task state."""
+
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: A2ATaskState = A2ATaskState.SUBMITTED
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+
+
+class A2ATaskRead(BaseModel):
+    """Schema for reading A2A task state."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: str
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class A2ATaskUpdate(BaseModel):
+    """Schema for updating A2A task state.
+
+    The validator rejects ``completed_at`` paired with a non-terminal
+    ``state``.  The reverse (terminal ``state`` without ``completed_at``)
+    is **not** enforced here — the service layer (e.g. ``cancel_task``)
+    stamps ``completed_at`` itself when transitioning into a terminal
+    state, so callers may legitimately omit the timestamp.
+    """
+
+    state: Optional[A2ATaskState] = None
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    completed_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _enforce_completed_at_iff_terminal(self) -> "A2ATaskUpdate":
+        """Reject ``completed_at`` paired with a non-terminal state."""
+        if self.completed_at is not None and self.state is not None and not self.state.is_terminal():
+            raise ValueError(f"completed_at is only valid with a terminal state (got state={self.state.value!r})")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Server Interface Schemas
+# ---------------------------------------------------------------------------
+
+
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a server interface."""
+
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool = True
+    config: Optional[Dict[str, Any]] = None
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a server interface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool
+    config: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# A2A Push Notification Config Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2APushNotificationConfigCreate(BaseModel):
+    """Schema for creating a push notification webhook configuration."""
+
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
+
+class A2APushNotificationConfigRead(BaseModel):
+    """Schema for reading a push notification webhook configuration."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = Field(default=None, exclude=True)
+    events: Optional[List[str]] = None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class A2ATaskEventCreate(BaseModel):
+    """Schema for creating a task event log entry."""
+
+    a2a_agent_id: Optional[str] = None
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+
+
+class A2ATaskEventRead(BaseModel):
+    """Schema for reading a task event log entry."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: Optional[str] = None
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Email-Based Authentication Schemas
 # ---------------------------------------------------------------------------
 
@@ -8163,7 +8348,8 @@ class PluginPolicyItem(BaseModel):
     mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
-        ..., description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config."
+        ...,
+        description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
     binding_reference_id: Optional[str] = Field(
         None,

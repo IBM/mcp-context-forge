@@ -279,6 +279,32 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
+    experimental_rust_a2a_runtime_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
+    )
+    experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
+        default=False,
+        description="Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_managed: bool = Field(
+        default=True,
+        description="Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
+    )
+    experimental_rust_a2a_runtime_url: str = Field(
+        default="http://127.0.0.1:8788",
+        description="Base URL for the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -2077,13 +2103,14 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
-    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @field_validator("experimental_rust_mcp_runtime_uds", "experimental_rust_a2a_runtime_uds", mode="after")
     @classmethod
-    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+    def _validate_experimental_rust_runtime_uds(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        """Validate the optional UDS path used for a Rust sidecar runtime.
 
         Args:
             value: Candidate UDS path from configuration.
+            info: Pydantic field metadata for the current field.
 
         Returns:
             The normalized absolute UDS path, or ``None`` when unset.
@@ -2094,11 +2121,12 @@ Disallow: /
         if value in (None, ""):
             return None
 
+        field_name = info.field_name or "experimental_rust_runtime_uds"
         uds_path = Path(value).expanduser()
         if not uds_path.is_absolute():
-            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+            raise ValueError(f"{field_name} must be an absolute path")
         if not uds_path.parent.exists():
-            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+            raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
         return str(uds_path)
 
     # -------------------------------

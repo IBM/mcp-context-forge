@@ -29,6 +29,18 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 version = "2.1.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.aead]]
+version = "0.5.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.aes]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.aes-gcm]]
+version = "0.10.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.arc-swap]]
 version = "1.9.1"
 criteria = "safe-to-deploy"
@@ -45,6 +57,10 @@ criteria = "safe-to-deploy"
 version = "0.8.8"
 criteria = "safe-to-deploy"
 
+[[exemptions.axum]]
+version = "0.8.9"
+criteria = "safe-to-deploy"
+
 [[exemptions.axum-core]]
 version = "0.5.6"
 criteria = "safe-to-deploy"
@@ -55,6 +71,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
 version = "2.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.bitflags]]
+version = "2.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.block-buffer]]
@@ -89,9 +109,21 @@ criteria = "safe-to-deploy"
 version = "0.10.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.criterion]]
+version = "0.5.1"
+criteria = "safe-to-run"
+
+[[exemptions.criterion-plot]]
+version = "0.5.0"
+criteria = "safe-to-run"
+
 [[exemptions.crossbeam-channel]]
 version = "0.5.4"
 criteria = "safe-to-deploy"
+
+[[exemptions.crossbeam-deque]]
+version = "0.8.6"
+criteria = "safe-to-run"
 
 [[exemptions.crossbeam-utils]]
 version = "0.8.8"
@@ -101,8 +133,16 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.ctr]]
+version = "0.9.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.ctutils]]
 version = "0.4.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.dashmap]]
+version = "6.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.deadpool]]
@@ -169,12 +209,28 @@ criteria = "safe-to-deploy"
 version = "0.3.21"
 criteria = "safe-to-deploy"
 
+[[exemptions.generic-array]]
+version = "0.14.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.getopts]]
 version = "0.2.24"
 criteria = "safe-to-deploy"
 
 [[exemptions.getrandom]]
 version = "0.4.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.ghash]]
+version = "0.5.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.half]]
+version = "2.7.1"
+criteria = "safe-to-run"
+
+[[exemptions.hashbrown]]
+version = "0.14.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.hermit-abi]]
@@ -187,6 +243,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hybrid-array]]
 version = "0.4.10"
+criteria = "safe-to-deploy"
+
+[[exemptions.hyper-rustls]]
+version = "0.27.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-timeout]]
@@ -212,6 +272,10 @@ criteria = "safe-to-deploy"
 [[exemptions.is-macro]]
 version = "0.3.7"
 criteria = "safe-to-deploy"
+
+[[exemptions.is-terminal]]
+version = "0.4.17"
+criteria = "safe-to-run"
 
 [[exemptions.itertools]]
 version = "0.10.3"
@@ -341,6 +405,22 @@ criteria = "safe-to-deploy"
 version = "0.3.33"
 criteria = "safe-to-deploy"
 
+[[exemptions.plotters]]
+version = "0.3.7"
+criteria = "safe-to-run"
+
+[[exemptions.plotters-backend]]
+version = "0.3.7"
+criteria = "safe-to-run"
+
+[[exemptions.plotters-svg]]
+version = "0.3.7"
+criteria = "safe-to-run"
+
+[[exemptions.polyval]]
+version = "0.6.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.portable-atomic]]
 version = "1.13.1"
 criteria = "safe-to-deploy"
@@ -394,12 +474,24 @@ version = "0.9.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.rand]]
+version = "0.9.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.rand]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.rand_core]]
 version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.rawpointer]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.rayon]]
+version = "1.12.0"
+criteria = "safe-to-run"
 
 [[exemptions.redox_syscall]]
 version = "0.5.18"
@@ -493,6 +585,10 @@ criteria = "safe-to-deploy"
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.tokio]]
+version = "1.52.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.tokio-postgres-rustls]]
 version = "0.13.0"
 criteria = "safe-to-deploy"
@@ -533,6 +629,10 @@ criteria = "safe-to-deploy"
 version = "1.23.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.version_check]]
+version = "0.9.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasite]]
 version = "1.0.2"
 criteria = "safe-to-deploy"
@@ -556,6 +656,10 @@ criteria = "safe-to-deploy"
 [[exemptions.whoami]]
 version = "2.1.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.wiremock]]
+version = "0.6.5"
+criteria = "safe-to-run"
 
 [[exemptions.zerocopy]]
 version = "0.8.48"
