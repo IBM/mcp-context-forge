@@ -2985,7 +2985,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated):
-            _result = service.convert_agent_to_read(agent, db=mock_db)
+            _service.convert_agent_to_read(agent, db=mock_db)
         service._get_team_name.assert_called_once()
 
     def test_with_metrics(self, service):
@@ -3002,7 +3002,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            _result = service.convert_agent_to_read(agent, include_metrics=True)
+            _service.convert_agent_to_read(agent, include_metrics=True)
 
             # Verify model_validate was called with metrics included
             call_data = mock_mv.call_args[0][0]
@@ -5308,9 +5308,8 @@ class TestCrossGatewayRoutingCoverage:
     async def test_invoke_remote_agent_ssrf_internal_ip(self, service):
         """Test SSRF protection rejects internal IP addresses (127.0.0.1)."""
         # Attack: Route to internal network IP
-        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
-
         # Note: Internal IPs should be blocked by allowlist (empty allowlist allows all)
+        # Example UAID: "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
         # Operators should configure UAID_ALLOWED_DOMAINS to prevent internal routing
         # This test documents the behavior - operators must set allowlist explicitly
 
