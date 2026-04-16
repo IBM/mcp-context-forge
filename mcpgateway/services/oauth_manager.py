@@ -1325,22 +1325,27 @@ class OAuthManager:
             try:
                 client = await self._get_client()
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-                if response.status_code == 200:
-                    token_response = response.json()
+                response.raise_for_status()
 
-                    # Validate required fields
-                    if "access_token" not in token_response:
-                        raise OAuthError("No access_token in refresh response")
+                token_response = response.json()
 
-                    logger.info("Successfully refreshed OAuth token")
-                    return token_response
+                # Validate required fields
+                if "access_token" not in token_response:
+                    raise OAuthError("No access_token in refresh response")
 
-                error_text = response.text
-                # If we get a 400/401, the refresh token is likely invalid
-                if response.status_code in [400, 401]:
+                logger.info("Successfully refreshed OAuth token")
+                return token_response
+
+            except httpx.HTTPStatusError as e:
+                # Handle 400/401 specially - refresh token is likely invalid
+                if e.response.status_code in [400, 401]:
+                    error_text = e.response.text
                     raise OAuthError(f"Refresh token invalid or expired: {error_text}")
-                logger.warning(f"Token refresh failed with status {response.status_code}: {error_text}")
-
+                # For other HTTP errors, log and retry
+                logger.warning(f"Token refresh attempt {attempt + 1} failed with status {e.response.status_code}: {e.response.text}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Failed to refresh token after {self.max_retries} attempts: {str(e)}")
+                await asyncio.sleep(2**attempt)  # Exponential backoff
             except httpx.HTTPError as e:
                 logger.warning(f"Token refresh attempt {attempt + 1} failed: {str(e)}")
                 if attempt == self.max_retries - 1:
