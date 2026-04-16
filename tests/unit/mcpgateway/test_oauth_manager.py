@@ -1394,6 +1394,7 @@ class TestOAuthManager:
         with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError) as exc_info:
                 await manager.refresh_token("refresh_token", credentials)
+            assert "No access_token in refresh response" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_client_credentials_flow_with_ca_certificate(self):

@@ -4009,9 +4009,9 @@ class TestToolService:
         call_args = tool_service.oauth_manager.get_access_token.call_args
         assert call_args[0][0] == mock_gateway.oauth_config
         # Check that CA cert parameters were passed (from gateway_payload dict)
-        assert "ca_certificate" in call_args[1]
-        assert "client_cert" in call_args[1]
-        assert "client_key" in call_args[1]
+        assert call_args[1]["ca_certificate"] is None
+        assert call_args[1]["client_cert"] is None
+        assert call_args[1]["client_key"] is None
 
         # Verify MCP session was initialized and tool called
         session_mock.initialize.assert_awaited_once()

@@ -254,9 +254,12 @@ class ResourceService(BaseService):
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
-        # Initialize mime types
+        # Register MIME types for resource content detection
+        # This runs in __init__ rather than initialize() because:
+        # 1. Many tests create ResourceService instances without calling initialize()
+        # 2. MIME type registration is idempotent and safe at import time
+        # 3. The _detect_mime_type_from_uri method depends on these registrations
         mimetypes.init()
-        # Register common MIME types that may not be in system database
         if not mimetypes.guess_type("file.md")[0]:
             mimetypes.add_type("text/markdown", ".md")
         if not mimetypes.guess_type("file.markdown")[0]:
