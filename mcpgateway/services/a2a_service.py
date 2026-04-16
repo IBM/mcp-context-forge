@@ -106,6 +106,9 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger for A2A lifecycle tracking
 structured_logger = get_structured_logger("a2a_service")
 
+# Flag to track if we've logged the cross-gateway authentication warning (log once per process)
+_cross_gateway_auth_warning_logged = False
+
 
 async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
     """Publish a cache invalidation message to Redis for Rust L1 eviction."""
@@ -2032,6 +2035,21 @@ class A2AAgentService(BaseService):
             registry = routing.get("registry")
 
             logger.info(f"Cross-gateway routing: {uaid} -> {protocol}://{endpoint}")
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY WARNING: Log authentication gap on first cross-gateway call
+            # ═══════════════════════════════════════════════════════════════════════════
+            global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
+            if not _cross_gateway_auth_warning_logged:
+                logger.warning(
+                    "⚠️  SECURITY: First cross-gateway UAID call detected. "
+                    "Cross-gateway routing does NOT forward authentication credentials. "
+                    "Remote gateways receive unauthenticated requests. "
+                    "Ensure target gateways enforce AUTH_REQUIRED=true and configure UAID_ALLOWED_DOMAINS "
+                    "to restrict routing to trusted domains only. "
+                    "See documentation: .env.example lines 85-125 for security implications and mitigations."
+                )
+                _cross_gateway_auth_warning_logged = True
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: SSRF Protection - Validate endpoint before URL construction

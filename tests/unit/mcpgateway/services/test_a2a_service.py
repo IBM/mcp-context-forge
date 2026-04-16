@@ -5305,17 +5305,60 @@ class TestCrossGatewayRoutingCoverage:
                 interaction_type="request",
             )
 
-    async def test_invoke_remote_agent_ssrf_internal_ip(self, service):
-        """Test SSRF protection rejects internal IP addresses (127.0.0.1)."""
-        # Attack: Route to internal network IP
-        # Note: Internal IPs should be blocked by allowlist (empty allowlist allows all)
-        # Example UAID: "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
-        # Operators should configure UAID_ALLOWED_DOMAINS to prevent internal routing
-        # This test documents the behavior - operators must set allowlist explicitly
+    async def test_invoke_remote_agent_ssrf_internal_ip_empty_allowlist(self, service, monkeypatch):
+        """Test internal IP routing when allowlist is empty (unsafe default)."""
+        # When UAID_ALLOWED_DOMAINS is empty, internal IPs are technically allowed
+        # This documents the unsafe default behavior - operators must configure allowlist
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
 
-        # With empty allowlist, internal IPs are technically allowed
-        # This is a deployment/operations concern, not a code-level block
-        # Production deployments should ALWAYS configure UAID_ALLOWED_DOMAINS
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "allowed"}
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])  # Empty allowlist
+
+        # With empty allowlist, the call succeeds (unsafe behavior)
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+
+        assert result == {"result": "allowed"}
+        # Verify the internal IP was used in the URL
+        call_args = mock_client.post.call_args
+        assert "127.0.0.1" in call_args[0][0]
+
+    async def test_invoke_remote_agent_ssrf_internal_ip_blocked_by_allowlist(self, service):
+        """Test internal IP routing is blocked when allowlist is configured (safe behavior)."""
+        # When UAID_ALLOWED_DOMAINS is configured, internal IPs should be blocked
+        # by the allowlist validation (they won't match any allowed domain)
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
+
+        # Configure allowlist with only trusted domains
+        # First-Party
+        from mcpgateway.config import settings
+
+        original_domains = settings.uaid_allowed_domains
+        try:
+            settings.uaid_allowed_domains = ["trusted.example.com", "gateway.example.org"]
+
+            # The call should be rejected because 127.0.0.1 is not in allowlist
+            with pytest.raises(A2AAgentError, match="not in UAID_ALLOWED_DOMAINS"):
+                await service._invoke_remote_agent(
+                    uaid=uaid,
+                    parameters={"test": "data"},
+                    interaction_type="request",
+                )
+        finally:
+            # Restore original setting
+            settings.uaid_allowed_domains = original_domains
 
     async def test_invoke_remote_agent_port_allowed(self, service, monkeypatch):
         """Test legitimate custom ports are allowed (gateway.example.com:8443)."""

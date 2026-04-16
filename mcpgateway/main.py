@@ -1875,6 +1875,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about unsafe UAID configuration if A2A is enabled
+        if settings.a2a_enabled:
+            uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if not uaid_allowed_domains:
+                logger.warning(
+                    "⚠️  SECURITY: UAID_ALLOWED_DOMAINS is empty - cross-gateway routing is unrestricted. "
+                    "This allows UAID-based routing to ANY domain, including internal networks. "
+                    "Production deployments MUST configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted.example.com","gateway.example.org"]'
+                )
+
         _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
