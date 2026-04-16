@@ -57,7 +57,7 @@
       // Configure HTMX to include credentials and JWT tokens
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
-        evt.detail.credentials = "same-origin";
+        evt.detail.credentials = "same-origin"; // pragma: allowlist secret
         evt.detail.headers = evt.detail.headers || {};
 
         // Add JWT token from cookie if available
@@ -1649,7 +1649,7 @@
       <!-- Performance Panel -->
       {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
-           hx-get="{{ root_path }}/admin/performance/stats" hx-swap="innerHTML"
+           hx-get="{{ root_path }}/admin/performance/stats"
            hx-trigger="revealed once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
@@ -1665,7 +1665,7 @@
       <!-- Observability Panel -->
       {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
-           hx-get="{{ root_path }}/admin/observability/partial" hx-swap="innerHTML"
+           hx-get="{{ root_path }}/admin/observability/partial"
            hx-trigger="revealed once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
@@ -2021,7 +2021,7 @@
           <div id="llm-settings-content-providers" class="llm-settings-content">
             <div
               id="llm-providers-container"
-              hx-get="{{ root_path }}/admin/llm/providers/html" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/llm/providers/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2039,7 +2039,7 @@
           <div id="llm-settings-content-models" class="llm-settings-content hidden">
             <div
               id="llm-models-container"
-              hx-get="{{ root_path }}/admin/llm/models/html" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/llm/models/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2057,7 +2057,7 @@
           <div id="llm-settings-content-test" class="llm-settings-content hidden">
             <div
               id="llm-test-container"
-              hx-get="{{ root_path }}/admin/llm/api-info/html" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/llm/api-info/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2389,7 +2389,7 @@
               checked
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
-              hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('servers-search-input')?.value || '', tags: document.getElementById('servers-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
@@ -2500,7 +2500,7 @@
             + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
 
           <div id="servers-pagination-controls"
-              hx-get="{{ controls_url }}" hx-swap="innerHTML"
+              hx-get="{{ controls_url }}"
               hx-trigger="refreshControls"
               hx-target="#servers-pagination-controls"
               hx-swap="outerHTML"
@@ -2903,7 +2903,7 @@
                   <div
                     id="associatedGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -2983,7 +2983,7 @@
                   <div
                     id="associatedTools"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                     hx-on:htmx:after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
@@ -3055,7 +3055,7 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on:htmx:after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
@@ -3122,7 +3122,7 @@
                 <div
                   id="associatedPrompts"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on:htmx:after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
@@ -3414,7 +3414,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
-              hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
               hx-target="#tools-table"
               hx-swap="outerHTML"
@@ -3505,7 +3505,7 @@
             + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
 
           <div id="tools-pagination-controls"
-              hx-get="{{ controls_url }}" hx-swap="innerHTML"
+              hx-get="{{ controls_url }}"
               hx-trigger="refreshControls"
               hx-target="#tools-pagination-controls"
               hx-swap="outerHTML"
@@ -4198,7 +4198,7 @@
                     id="show-inactive-tools-toolops"
                     name="include_inactive"
                     class="mr-2 show-inactive-toggle"
-                    hx-get="{{ root_path }}/admin/tool-ops/partial?page=1" hx-swap="innerHTML"
+                    hx-get="{{ root_path }}/admin/tool-ops/partial?page=1"
                     hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools-toolops').checked}"
                     hx-trigger="change"
                     hx-target="#tool-ops-main-content-wrapper"
@@ -4434,7 +4434,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
               hx-target="#resources-table"
               hx-swap="outerHTML"
@@ -4686,7 +4686,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
@@ -4942,7 +4942,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <!-- Overview Panel -->
       {% if 'overview' not in hidden_sections %}
       <div id="overview-panel" class="tab-panel"
-           hx-get="{{ root_path }}/admin/overview/partial" hx-swap="innerHTML"
+           hx-get="{{ root_path }}/admin/overview/partial"
            hx-trigger="load"
            hx-swap="innerHTML">
         <div class="flex items-center justify-center py-12">
@@ -4977,7 +4977,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               checked
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
-              hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
@@ -5069,7 +5069,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
 
           <div id="gateways-pagination-controls"
-              hx-get="{{ controls_url }}" hx-swap="innerHTML"
+              hx-get="{{ controls_url }}"
               hx-trigger="refreshControls"
               hx-target="#gateways-pagination-controls"
               hx-swap="outerHTML"
@@ -6199,7 +6199,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <form
               id="create-user-form"
-              hx-post="{{ root_path }}/admin/users" hx-swap="innerHTML"
+              hx-post="{{ root_path }}/admin/users"
               hx-target="#user-creation-messages"
               hx-swap="innerHTML"
               class="space-y-4"
@@ -6406,7 +6406,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <!-- Users list container -->
             <div
               id="users-list-container"
-              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#users-loading"
@@ -6439,7 +6439,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               name="include_inactive"
               x-init="syncCheckboxFromUrl('tokens', 'show-inactive-tokens')"
               @change="updateInactiveUrlState('tokens', $el.checked)"
-              hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
               hx-target="#tokens-table"
               hx-swap="innerHTML"
@@ -6739,7 +6739,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               + ('&q=' + q if q else '') %}
 
             <div id="tokens-pagination-controls"
-                hx-get="{{ controls_url }}" hx-swap="innerHTML"
+                hx-get="{{ controls_url }}"
                 hx-trigger="refreshControls"
                 hx-target="#tokens-pagination-controls"
                 hx-swap="outerHTML"
@@ -6780,7 +6780,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               name="include_inactive"
               x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
-              hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+              hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
               hx-target="#agents-table"
               hx-swap="outerHTML"
@@ -6886,7 +6886,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
 
             <div id="agents-pagination-controls"
-                hx-get="{{ controls_url }}" hx-swap="innerHTML"
+                hx-get="{{ controls_url }}"
                 hx-trigger="refreshControls"
                 hx-target="#agents-pagination-controls"
                 hx-swap="outerHTML"
@@ -8127,7 +8127,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- System Metrics Content (loaded via HTMX) -->
           <div
-            hx-get="{{ root_path }}/admin/system/stats" hx-swap="innerHTML"
+            hx-get="{{ root_path }}/admin/system/stats"
             hx-trigger="revealed once"
             hx-swap="outerHTML"
           >
@@ -8191,7 +8191,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-tools" class="top-performers-panel">
             <div class="overflow-x-auto">
               <div id="top-tools-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=tools&page=1&per_page=10" hx-swap="innerHTML"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=tools&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-tools-loading-visible">
@@ -8207,7 +8207,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-resources" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-resources-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=resources&page=1&per_page=10" hx-swap="innerHTML"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=resources&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-resources-loading-visible">
@@ -8223,7 +8223,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-prompts" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-prompts-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=prompts&page=1&per_page=10" hx-swap="innerHTML"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=prompts&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-prompts-loading-visible">
@@ -8239,7 +8239,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-servers" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-servers-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=servers&page=1&per_page=10" hx-swap="innerHTML"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=servers&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-servers-loading-visible">
@@ -11252,7 +11252,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div
                     id="associatedEditGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -11331,7 +11331,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -11406,7 +11406,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
@@ -11473,7 +11473,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}" hx-swap="innerHTML"
+                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
@@ -12591,7 +12591,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH || ""}/admin/logs/export?${params}`,
             {
               headers: headers,
-              credentials: "same-origin",
+              credentials: "same-origin", // pragma: allowlist secret
             },
           );
 
@@ -14127,7 +14127,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
             <form
               id="create-team-form"
-              hx-post="{{ root_path }}/admin/teams" hx-swap="innerHTML"
+              hx-post="{{ root_path }}/admin/teams"
               hx-target="#create-team-error"
               hx-swap="innerHTML"
               data-team-validation="true"
@@ -14755,7 +14755,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // by Admin.initResourceSelect() and Admin.initPromptSelect() functions in admin.js.
       // Those functions properly fetch ALL IDs from the server and maintain state,
       // so items that load via pagination are also included in the selection.
-      // The handlers are attached via HTMX's hx-on::after-swap attribute.
+      // The handlers are attached via HTMX's hx-on:htmx:after-swap attribute.
 
       // Download sample JSON for bulk import
       function downloadSampleJSON() {

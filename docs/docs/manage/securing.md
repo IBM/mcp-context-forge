@@ -385,7 +385,7 @@ MCP Gateway implements Subresource Integrity for all external CDN resources to c
 - **DNS Hijacking**: Redirection to malicious CDN servers
 - **Version Drift**: Unexpected changes to CDN content
 
-**Protected Resources** (15 total):
+**Protected Resources** (14 total):
 
 - HTMX (2.0.3) - Dynamic interactions (bundled via npm/Vite)
 - Alpine.js (3.14.1) - Reactive framework
