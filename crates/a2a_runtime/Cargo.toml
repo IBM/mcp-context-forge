@@ -1,0 +1,48 @@
+[package]
+name = "contextforge_a2a_runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Experimental Rust A2A runtime sidecar for ContextForge"
+
+[[bin]]
+name = "contextforge-a2a-runtime"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = "0.10"
+async-trait = "0.1"
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+dashmap = "6"
+futures.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream = "0.1"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio.workspace = true
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "invoke"
+harness = false

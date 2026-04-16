@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -4820,10 +4820,16 @@ class A2AAgent(Base):
     # Associated tool ID (A2A agents are automatically registered as tools)
     tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True)
 
+    # Multi-tenant and display fields
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    icon_url: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
+
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="agent", cascade="all, delete-orphan")
+    auth_config: Mapped[Optional["A2AAgentAuth"]] = relationship("A2AAgentAuth", back_populates="agent", uselist=False, cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
@@ -4934,6 +4940,143 @@ class A2AAgent(Base):
             "<A2AAgent(id='123', name='test-agent', agent_type='custom')>"
         """
         return f"<A2AAgent(id='{self.id}', name='{self.name}', agent_type='{self.agent_type}')>"
+
+
+class A2ATask(Base):
+    """Persists task state snapshots from A2A agent interactions."""
+
+    __tablename__ = "a2a_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    context_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    state: Mapped[str] = mapped_column(String(50), nullable=False, default="submitted", index=True)
+    payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    latest_message: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "task_id", name="uq_a2a_tasks_agent_task"),
+        Index("ix_a2a_tasks_state_updated", "state", "updated_at"),
+    )
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="tasks")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2ATask instance."""
+        return f"<A2ATask(id='{self.id}', task_id='{self.task_id}', state='{self.state}')>"
+
+
+class ServerTaskMapping(Base):
+    """Maps server-level task IDs to downstream agent task IDs for A2A federation."""
+
+    __tablename__ = "server_task_mappings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mappings_server_task"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ServerTaskMapping instance."""
+        return f"<ServerTaskMapping(id='{self.id}', server_task_id='{self.server_task_id}', agent_task_id='{self.agent_task_id}')>"
+
+
+class ServerInterface(Base):
+    """Protocol-specific interface configuration per virtual server."""
+
+    __tablename__ = "server_interfaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    protocol: Mapped[str] = mapped_column(String(50), nullable=False)
+    binding: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("server_id", "protocol", "binding", name="uq_server_interfaces_server_protocol_binding"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ServerInterface instance."""
+        return f"<ServerInterface(id='{self.id}', protocol='{self.protocol}', binding='{self.binding}')>"
+
+
+class A2AAgentAuth(Base):
+    """Extracted 1:1 auth configuration for an A2A agent."""
+
+    __tablename__ = "a2a_agent_auth"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), unique=True, nullable=False)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    auth_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auth_query_params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="auth_config")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2AAgentAuth instance."""
+        return f"<A2AAgentAuth(id='{self.id}', a2a_agent_id='{self.a2a_agent_id}', auth_type='{self.auth_type}')>"
+
+
+class A2APushNotificationConfig(Base):
+    """Push notification webhook configuration for A2A task state changes."""
+
+    __tablename__ = "a2a_push_notification_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    auth_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    events: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("a2a_agent_id", "task_id", "webhook_url", name="uq_push_config_agent_task_url"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2APushNotificationConfig instance."""
+        return f"<A2APushNotificationConfig(id='{self.id}', task_id='{self.task_id}', webhook_url='{self.webhook_url}')>"
+
+
+class A2ATaskEvent(Base):
+    """Persistent event log for A2A streaming task interactions."""
+
+    __tablename__ = "a2a_task_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=True, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (Index("ix_a2a_task_events_task_seq", "task_id", "sequence"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2ATaskEvent instance."""
+        return f"<A2ATaskEvent(id='{self.id}', task_id='{self.task_id}', sequence={self.sequence})>"
 
 
 class GrpcService(Base):

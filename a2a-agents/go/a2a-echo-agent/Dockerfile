@@ -4,7 +4,6 @@ FROM golang:1.26.2 AS builder
 ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /src
 COPY go.mod ./
-COPY go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/bin/a2a-echo-agent .

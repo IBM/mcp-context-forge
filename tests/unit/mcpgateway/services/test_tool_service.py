@@ -300,7 +300,7 @@ class TestToolServiceHelpersExtended:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(service, "_record_tool_metric_by_id") as mock_record:
             service._record_tool_metric_sync("tool-1", 1.23, True, None)
@@ -366,6 +366,40 @@ def mock_gateway():
     gw.enabled = True
     gw.reachable = True
     return gw
+
+
+class TestToolServiceA2A:
+    """Focused tests for A2A helper paths inside tool_service."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_call_a2a_agent_uses_v1_send_message_payload(self, mock_get_client, tool_service):
+        """A2A tool calls should default to A2A v1 payloads for v1 agents."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            name="a2a-agent",
+            endpoint_url="https://example.com/",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+        )
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"ok": True}
+        outbound_json = mock_client.post.call_args.kwargs["json"]
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_json["method"] == "SendMessage"
+        assert outbound_json["params"]["message"]["role"] == "ROLE_USER"
+        assert outbound_json["params"]["message"]["parts"] == [{"text": "hello"}]
+        assert outbound_headers["A2A-Version"] == "1.0"
 
 
 @pytest.fixture
@@ -3440,7 +3474,7 @@ class TestToolService:
 
         # Start subscription in background
         subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        subscription_task = asyncio.create_task(anext(subscriber))
 
         # Give a moment for subscription to be registered
         await asyncio.sleep(0.01)
@@ -5087,14 +5121,7 @@ class TestRestToolQueryParamHandling:
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
-            await tool_service.invoke_tool(
-                test_db,
-                "test_tool",
-                {
-                    "api_key": "input_value", # pragma: allowlist secret
-                    "q": "search"
-                },
-                request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"api_key": "input_value", "q": "search"}, request_headers=None)  # pragma: allowlist secret
 
             assert "conflicting parameters" in caplog.text.lower()
             assert "api_key" in caplog.text
@@ -5576,7 +5603,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()

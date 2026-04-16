@@ -15984,19 +15984,8 @@ async def admin_test_a2a_agent(
 
         # Prepare test parameters based on agent type and endpoint
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC format for agents that expect it
-            test_params = {
-                "method": "message/send",
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "messageId": f"admin-test-{int(time.time())}",
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": user_query}],
-                    }
-                },
-            }
+            # Let the A2A protocol helper choose v1 or legacy wire format from the agent record.
+            test_params = {"query": user_query}
         else:
             # Generic test format
             test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}

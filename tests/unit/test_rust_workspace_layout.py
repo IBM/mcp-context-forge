@@ -69,7 +69,7 @@ def test_dockerignore_and_containerfile_keep_rust_servers_out_of_workspace_image
 
 def test_crates_directory_is_flat() -> None:
     remaining = [path.name for path in _top_level_crate_dirs()]
-    assert remaining == ["mcp_runtime", "request_logging_masking_native_extension", "wrapper"], f"Expected only direct crate folders under crates/: {remaining}"
+    assert remaining == ["a2a_runtime", "mcp_runtime", "request_logging_masking_native_extension", "wrapper"], f"Expected only direct crate folders under crates/: {remaining}"
 
 
 def test_gateway_rs_services_directory_is_empty() -> None:

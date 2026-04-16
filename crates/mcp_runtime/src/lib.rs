@@ -10406,7 +10406,7 @@ mod unit_tests {
     fn app_state_new_rejects_invalid_database_url() {
         let mut config = test_config();
         config.database_url =
-            Some("postgresql+psycopg://user:pass@127.0.0.1:notaport/db".to_string());
+            Some("postgresql+psycopg://user:pass@127.0.0.1:notaport/db".to_string()); // pragma: allowlist secret
 
         let Err(error) = AppState::new(&config) else {
             panic!("invalid db url should fail");
@@ -10424,7 +10424,7 @@ mod unit_tests {
     fn app_state_new_accepts_database_url_with_sslmode_require() {
         let mut config = test_config();
         config.database_url =
-            Some("postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require".to_string());
+            Some("postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require".to_string()); // pragma: allowlist secret
 
         let state = AppState::new(&config).expect("state");
 
@@ -10435,7 +10435,7 @@ mod unit_tests {
     fn app_state_new_rejects_missing_sslrootcert_file() {
         let mut config = test_config();
         config.database_url = Some(
-            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslrootcert=/tmp/contextforge-missing-root-ca.pem".to_string(),
+            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslrootcert=/tmp/contextforge-missing-root-ca.pem".to_string(), // pragma: allowlist secret
         );
 
         let Err(error) = AppState::new(&config) else {
@@ -10499,7 +10499,7 @@ mod unit_tests {
     fn app_state_new_rejects_unsupported_client_certificate_parameters() {
         let mut config = test_config();
         config.database_url = Some(
-            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslcert=/tmp/client.pem&sslkey=/tmp/client.key".to_string(),
+            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslcert=/tmp/client.pem&sslkey=/tmp/client.key".to_string(), // pragma: allowlist secret
         );
 
         let Err(error) = AppState::new(&config) else {
@@ -10517,8 +10517,7 @@ mod unit_tests {
     #[test]
     fn normalize_postgres_database_url_strips_tls_only_query_parameters() {
         let (normalized_url, tls_options) = normalize_postgres_database_url(
-            // pragma: allowlist secret
-            "postgresql+psycopg://user:pass@db.example.com:5432/mcp?sslmode=require&options=-c%20search_path%3Dmcp_gateway&sslrootcert=/tmp/root-ca.pem",
+            "postgresql+psycopg://user:pass@db.example.com:5432/mcp?sslmode=require&options=-c%20search_path%3Dmcp_gateway&sslrootcert=/tmp/root-ca.pem", // pragma: allowlist secret
         )
         .expect("normalized");
         let parsed = Url::parse(&normalized_url).expect("parsed");

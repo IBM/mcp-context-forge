@@ -66,7 +66,7 @@ def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
     fake = types.ModuleType("fake_psutil")
     fake.virtual_memory = lambda: _MemInfo(8 * 1_073_741_824, 4 * 1_073_741_824)
     fake.swap_memory = lambda: _MemInfo(2 * 1_073_741_824, 1 * 1_073_741_824)
-    fake.cpu_freq = lambda: _CPUFreq()
+    fake.cpu_freq = _CPUFreq
     fake.cpu_percent = lambda interval=0.0: 12.3
     fake.cpu_count = lambda logical=True: 8
     fake.boot_time = lambda: 0
@@ -200,7 +200,8 @@ def test_database_version_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def execute(self, stmt):  # noqa: D401
             class _Res:
-                scalar = lambda self: "15.0"  # noqa: D401
+                def scalar(self):  # noqa: D401
+                    return "15.0"
 
             return _Res()
 
@@ -418,25 +419,6 @@ def test_login_html_rendering() -> None:
     assert '<button type="submit">Login</button>' in html
 
 
-def test_version_endpoint_redis_conditions() -> None:
-    """Test conditions that would trigger Redis health check branches."""
-    # First-Party
-
-    # Test the Redis health check conditions directly
-    # This tests the logic branches without async complexity
-    # Test 1: Redis not available
-    assert not (False and "redis" == "redis" and "redis://localhost")
-
-    # Test 2: Redis available, cache_type is redis, redis_url exists
-    assert True and "redis" == "redis" and "redis://localhost"
-
-    # Test 3: Redis available, but cache_type not redis
-    assert not (True and "memory" == "redis" and "redis://localhost")
-
-    # Test 4: Redis available, cache_type is redis, but no redis_url
-    assert not (True and "redis" == "redis" and None)
-
-
 def test_is_secret_comprehensive() -> None:
     """Test _is_secret with comprehensive coverage of all branches."""
     # First-Party
@@ -510,6 +492,7 @@ def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cover the branch where app.state.templates is already configured (version.py:846->853)."""
+    # Third-Party
     from fastapi.responses import HTMLResponse
 
     # First-Party
@@ -547,6 +530,7 @@ def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.Mo
 
 def test_version_redis_client_not_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cover the redis health-check branch where redis is reachable but client factory returns None."""
+    # First-Party
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
@@ -574,6 +558,7 @@ def test_version_redis_client_not_available(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_version_redis_not_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cover the redis health-check branch where the availability check returns False."""
+    # First-Party
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
@@ -597,6 +582,7 @@ def test_version_redis_not_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_version_redis_availability_check_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cover the redis health-check exception handler."""
+    # First-Party
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
@@ -649,3 +635,115 @@ def test_version_module_import_error_branches_runpy(monkeypatch: pytest.MonkeyPa
 # These lines cover the import error branches and specific edge cases
 # Lines 80-81, 88-90 are covered by the import behavior itself
 # Lines 817-819, 824-825 are covered by integration tests elsewhere
+
+
+# --------------------------------------------------------------------------- #
+# A2A Runtime diagnostics                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestA2ARuntimeDiagnostics:
+    """Cover the A2A runtime diagnostic helpers added by the Rust A2A PR."""
+
+    def test_a2a_runtime_mode_python_default(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_runtime_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", False)
+        monkeypatch.setattr("mcpgateway.version._rust_build_included", lambda: False)
+        assert _current_a2a_runtime_mode() == "python"
+
+    def test_a2a_runtime_mode_python_rust_built_disabled(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_runtime_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", False)
+        monkeypatch.setattr("mcpgateway.version._rust_build_included", lambda: True)
+        assert _current_a2a_runtime_mode() == "python-rust-built-disabled"
+
+    def test_a2a_runtime_mode_rust_managed(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_runtime_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.version._rust_a2a_runtime_managed", lambda: True)
+        assert _current_a2a_runtime_mode() == "rust-managed"
+
+    def test_a2a_runtime_mode_rust_external(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_runtime_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.version._rust_a2a_runtime_managed", lambda: False)
+        assert _current_a2a_runtime_mode() == "rust-external"
+
+    def test_a2a_invoke_mode_python(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_invoke_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", False)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_delegate_enabled", False)
+        assert _current_a2a_invoke_mode() == "python"
+
+    def test_a2a_invoke_mode_rust(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _current_a2a_invoke_mode
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_delegate_enabled", True)
+        assert _current_a2a_invoke_mode() == "rust"
+
+    def test_a2a_runtime_status_payload_disabled(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _a2a_runtime_status_payload
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", False)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_delegate_enabled", False)
+        monkeypatch.setattr("mcpgateway.version._rust_build_included", lambda: False)
+        payload = _a2a_runtime_status_payload()
+        assert payload["mode"] == "python"
+        assert payload["invoke_mode"] == "python"
+        assert payload["rust_runtime_enabled"] is False
+        assert payload["rust_delegate_enabled"] is False
+        assert "sidecar_transport" not in payload
+
+    def test_a2a_runtime_status_payload_enabled_http(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _a2a_runtime_status_payload
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_delegate_enabled", True)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_uds", None)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_url", "http://127.0.0.1:8788")
+        monkeypatch.setattr("mcpgateway.version._rust_a2a_runtime_managed", lambda: True)
+        payload = _a2a_runtime_status_payload()
+        assert payload["mode"] == "rust-managed"
+        assert payload["invoke_mode"] == "rust"
+        assert payload["sidecar_transport"] == "http"
+        assert payload["sidecar_target"] == "http://127.0.0.1:8788"
+
+    def test_a2a_runtime_status_payload_enabled_uds(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _a2a_runtime_status_payload
+
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_delegate_enabled", False)
+        monkeypatch.setattr("mcpgateway.version.settings.experimental_rust_a2a_runtime_uds", "/tmp/a2a.sock")
+        monkeypatch.setattr("mcpgateway.version._rust_a2a_runtime_managed", lambda: True)
+        payload = _a2a_runtime_status_payload()
+        assert payload["sidecar_transport"] == "uds"
+        assert payload["sidecar_target"] == "/tmp/a2a.sock"
+
+    def test_rust_a2a_runtime_managed_default(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _rust_a2a_runtime_managed
+
+        monkeypatch.delenv("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", raising=False)
+        assert _rust_a2a_runtime_managed() is True
+
+    def test_rust_a2a_runtime_managed_false(self, monkeypatch):
+        # First-Party
+        from mcpgateway.version import _rust_a2a_runtime_managed
+
+        monkeypatch.setenv("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", "false")
+        assert _rust_a2a_runtime_managed() is False

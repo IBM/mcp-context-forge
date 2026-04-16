@@ -1,44 +1,30 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Integration tests for A2A agent support using the official A2A Python SDK.
+"""Integration tests for A2A agent support using an in-memory ASGI fixture.
 
-This module tests Issue #840 features:
-1. User input field for A2A agent testing
-2. Tool visibility fix (defaulting to public)
-3. Transaction handling for agent registration
-
-These tests use the official a2a-sdk to create proper A2A servers and clients,
-ensuring compatibility with the A2A protocol specification.
+The public Python SDK bundled in this repo still targets the legacy A2A surface,
+so these tests exercise the v1 wire format directly while retaining a small set
+of legacy-compatibility assertions.
 """
-import socket
+
+# Standard
 from contextlib import closing
+import socket
+from typing import Any, Dict
 from unittest.mock import MagicMock
 
+# Third-Party
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 import httpx
 import pytest
 import pytest_asyncio
 
-# A2A SDK imports
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.apps import A2AFastAPIApplication
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from a2a.utils import new_agent_text_message
-
+# First-Party
 # ContextForge imports
 from mcpgateway.services.a2a_service import A2AAgentService
 from mcpgateway.services.tool_service import ToolService
 
-# Mark all tests in this module as integration tests
-# These tests require --with-integration flag to run
 pytestmark = pytest.mark.integration
-
-
-# =============================================================================
-# Test A2A Agent Implementation using Official SDK
-# =============================================================================
 
 
 class CalculatorAgent:
@@ -46,6 +32,7 @@ class CalculatorAgent:
 
     async def invoke(self, query: str) -> str:
         """Process a calculator query."""
+        # Standard
         import ast
         import operator
 
@@ -63,75 +50,29 @@ class CalculatorAgent:
                 if isinstance(node.value, (int, float)):
                     return node.value
                 raise ValueError(f"Invalid constant type: {type(node.value)}")
-            elif isinstance(node, ast.BinOp):
+            if isinstance(node, ast.BinOp):
                 if type(node.op) not in operators:
                     raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-                left = safe_eval(node.left)
-                right = safe_eval(node.right)
-                return operators[type(node.op)](left, right)
-            elif isinstance(node, ast.UnaryOp):
+                return operators[type(node.op)](safe_eval(node.left), safe_eval(node.right))
+            if isinstance(node, ast.UnaryOp):
                 if type(node.op) not in operators:
                     raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-                operand = safe_eval(node.operand)
-                return operators[type(node.op)](operand)
-            elif isinstance(node, ast.Expression):
+                return operators[type(node.op)](safe_eval(node.operand))
+            if isinstance(node, ast.Expression):
                 return safe_eval(node.body)
-            else:
-                raise ValueError(f"Unsupported expression type: {type(node).__name__}")
+            raise ValueError(f"Unsupported expression type: {type(node).__name__}")
 
-        # Extract expression from query
         expression = query.lower().replace("calc:", "").strip() if "calc:" in query.lower() else query
 
         try:
             tree = ast.parse(expression, mode="eval")
-            result = safe_eval(tree)
-            return str(result)
+            return str(safe_eval(tree))
         except (SyntaxError, ValueError) as e:
             return f"Error: {e}"
         except ZeroDivisionError:
             return "Error: Division by zero"
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive fallback
             return f"Error: {e}"
-
-
-class CalculatorAgentExecutor(AgentExecutor):
-    """Agent executor for the calculator agent."""
-
-    def __init__(self):
-        self.agent = CalculatorAgent()
-
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Execute the calculator agent."""
-        user_input = context.get_user_input()
-        result = await self.agent.invoke(user_input)
-        await event_queue.enqueue_event(new_agent_text_message(result))
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Handle cancellation."""
-        raise Exception("cancel not supported")
-
-
-def create_calculator_agent_card(port: int) -> AgentCard:
-    """Create an agent card for the calculator agent."""
-    skill = AgentSkill(
-        id="calculator",
-        name="Calculator",
-        description="Evaluates mathematical expressions safely",
-        tags=["math", "calculator"],
-        examples=["calc: 5*10+2", "calc: 100/4"],
-    )
-
-    return AgentCard(
-        name="Test Calculator Agent",
-        description="A test A2A agent with calculator functionality",
-        url=f"http://localhost:{port}/",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[skill],
-        supports_authenticated_extended_card=False,
-    )
 
 
 def find_available_port(start: int = 19000, end: int = 19100) -> int:
@@ -143,9 +84,202 @@ def find_available_port(start: int = 19000, end: int = 19100) -> int:
     raise RuntimeError(f"No available port found in range {start}-{end}")
 
 
-# =============================================================================
-# Fixtures
-# =============================================================================
+def is_v1(method: str, version_header: str) -> bool:
+    """Return whether a request should use v1 A2A semantics."""
+    if method in {"message/send", "message/stream", "tasks/get", "tasks/list", "tasks/cancel", "tasks/resubscribe", "agent/getExtendedCard", "agent/getAuthenticatedExtendedCard"}:
+        return False
+    if method in {"SendMessage", "SendStreamingMessage", "GetTask", "ListTasks", "CancelTask", "SubscribeToTask", "GetExtendedAgentCard"}:
+        return True
+    return not str(version_header or "").strip().startswith("0.")
+
+
+def render_role(role: str, use_v1: bool) -> str:
+    """Render an A2A message role in the requested protocol form."""
+    if use_v1:
+        return {"user": "ROLE_USER", "agent": "ROLE_AGENT", "system": "ROLE_SYSTEM"}.get(role, "ROLE_USER")
+    return role
+
+
+def render_state(state: str, use_v1: bool) -> str:
+    """Render an A2A task state in the requested protocol form."""
+    if use_v1:
+        return {
+            "submitted": "TASK_STATE_SUBMITTED",
+            "working": "TASK_STATE_WORKING",
+            "completed": "TASK_STATE_COMPLETED",
+            "canceled": "TASK_STATE_CANCELED",
+            "failed": "TASK_STATE_FAILED",
+        }.get(state, "TASK_STATE_COMPLETED")
+    return state
+
+
+def build_message(message_id: str, role: str, text: str, use_v1: bool) -> Dict[str, Any]:
+    """Build an A2A message object."""
+    message = {
+        "messageId": message_id,
+        "role": render_role(role, use_v1),
+        "parts": [{"text": text}] if use_v1 else [{"kind": "text", "text": text}],
+    }
+    if not use_v1:
+        message["kind"] = "message"
+    return message
+
+
+def build_task(task_id: str, output_text: str, use_v1: bool) -> Dict[str, Any]:
+    """Build a completed task object."""
+    task = {
+        "id": task_id,
+        "contextId": f"ctx-{task_id}",
+        "status": {
+            "state": render_state("completed", use_v1),
+            "message": build_message(f"{task_id}-response", "agent", output_text, use_v1),
+        },
+        "artifacts": [
+            {
+                "artifactId": f"{task_id}-artifact",
+                "name": "echo",
+                "description": "Echo response",
+                "parts": [{"text": output_text}] if use_v1 else [{"kind": "text", "text": output_text}],
+                **({} if use_v1 else {"kind": "artifact"}),
+            }
+        ],
+    }
+    if not use_v1:
+        task["kind"] = "task"
+    return task
+
+
+def build_agent_card(base_url: str, use_v1: bool) -> Dict[str, Any]:
+    """Build a protocol-specific agent card."""
+    skill = {
+        "id": "calculator",
+        "name": "Calculator",
+        "description": "Evaluates mathematical expressions safely",
+        "tags": ["math", "calculator"],
+        "examples": ["calc: 5*10+2", "calc: 100/4"],
+        "inputModes": ["text"],
+        "outputModes": ["text"],
+    }
+    capabilities = {
+        "streaming": False,
+        "pushNotifications": False,
+        "stateTransitionHistory": False,
+    }
+    common = {
+        "name": "Test Calculator Agent",
+        "description": "A test A2A agent with calculator functionality",
+        "url": f"{base_url}/",
+        "version": "1.0.0",
+        "protocolVersion": "1.0.0" if use_v1 else "0.3.0",
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "capabilities": capabilities,
+        "skills": [skill],
+        "supportsAuthenticatedExtendedCard": False,
+    }
+    if use_v1:
+        return {
+            **common,
+            "supportedInterfaces": [{"transport": "JSONRPC", "url": f"{base_url}/"}],
+            "securitySchemes": {},
+            "securityRequirements": [],
+        }
+    return {
+        **common,
+        "kind": "agent-card",
+        "preferredTransport": "JSONRPC",
+        "additionalInterfaces": [{"transport": "JSONRPC", "url": f"{base_url}/"}],
+    }
+
+
+def extract_text(params: Dict[str, Any]) -> str:
+    """Extract text input from A2A params."""
+    message = params.get("message")
+    if isinstance(message, dict):
+        parts = message.get("parts") or []
+        texts = []
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+        if texts:
+            return " ".join(texts)
+    for key in ("query", "text", "content"):
+        if isinstance(params.get(key), str):
+            return params[key]
+    return ""
+
+
+def create_calculator_app(port: int) -> FastAPI:
+    """Create an in-memory A2A calculator agent app."""
+    app = FastAPI()
+    agent = CalculatorAgent()
+    tasks: Dict[str, Dict[str, Any]] = {}
+    base_url = f"http://localhost:{port}"
+
+    @app.get("/.well-known/agent.json")
+    @app.get("/.well-known/agent-card.json")
+    async def agent_card(request: Request):
+        use_v1 = not str(request.headers.get("A2A-Version", "")).startswith("0.")
+        return JSONResponse(build_agent_card(base_url, use_v1))
+
+    @app.get("/extendedAgentCard")
+    async def extended_agent_card():
+        return JSONResponse(
+            {
+                **build_agent_card(base_url, True),
+                "documentationUrl": "https://a2a-protocol.org/latest/specification/",
+                "provider": {"organization": "ContextForge"},
+            }
+        )
+
+    @app.post("/")
+    async def rpc(request: Request):
+        body = await request.json()
+        method = body.get("method", "")
+        request_id = body.get("id")
+        params = body.get("params") or {}
+        use_v1 = is_v1(method, request.headers.get("A2A-Version", ""))
+
+        if method in {"SendMessage", "message/send", "SendStreamingMessage", "message/stream"}:
+            text = extract_text(params)
+            result_text = await agent.invoke(text)
+            task_id = f"task-{len(tasks) + 1}"
+            task = build_task(task_id, result_text, use_v1)
+            tasks[task_id] = task
+            return {"jsonrpc": "2.0", "id": request_id, "result": task}
+
+        if method in {"GetTask", "tasks/get"}:
+            task_id = str(params.get("id", ""))
+            task = tasks.get(task_id)
+            if task is None:
+                return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32004, "message": "task not found"}}
+            return {"jsonrpc": "2.0", "id": request_id, "result": build_task(task_id, task["status"]["message"]["parts"][0]["text"], use_v1)}
+
+        if method in {"ListTasks", "tasks/list"}:
+            status_filter = str(params.get("status", "")).replace("TASK_STATE_", "").lower()
+            listed = []
+            for task_id, task in tasks.items():
+                if status_filter and status_filter != "completed":
+                    continue
+                listed.append(build_task(task_id, task["status"]["message"]["parts"][0]["text"], use_v1))
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"tasks": listed}}
+
+        if method in {"CancelTask", "tasks/cancel"}:
+            task_id = str(params.get("id", ""))
+            task = tasks.get(task_id)
+            if task is None:
+                return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32004, "message": "task not found"}}
+            canceled_task = build_task(task_id, task["status"]["message"]["parts"][0]["text"], use_v1)
+            canceled_task["status"]["state"] = render_state("canceled", use_v1)
+            tasks[task_id] = canceled_task
+            return {"jsonrpc": "2.0", "id": request_id, "result": canceled_task}
+
+        if method in {"GetExtendedAgentCard", "agent/getExtendedCard", "agent/getAuthenticatedExtendedCard"}:
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"documentationUrl": "https://a2a-protocol.org/latest/specification/", **build_agent_card(base_url, use_v1)}}
+
+        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": f"method not supported: {method}"}}
+
+    return app
 
 
 @pytest.fixture
@@ -174,48 +308,17 @@ def tool_service():
     return ToolService()
 
 
-@pytest.fixture
-def calculator_agent_card():
-    """Create a calculator agent card for testing."""
-    port = find_available_port()
-    return create_calculator_agent_card(port)
-
-
 @pytest_asyncio.fixture
 async def calculator_a2a_server():
-    """Create and run a calculator A2A server using the official SDK.
-
-    This fixture creates a proper A2A-compliant server that can be used
-    for integration testing with ContextForge.
-    """
+    """Run the test A2A app in-memory via ASGITransport."""
     port = find_available_port()
-    agent_card = create_calculator_agent_card(port)
-
-    executor = CalculatorAgentExecutor()
-    handler = DefaultRequestHandler(
-        agent_executor=executor,
-        task_store=InMemoryTaskStore(),
-    )
-
-    app_builder = A2AFastAPIApplication(
-        agent_card=agent_card,
-        http_handler=handler,
-    )
-    app = app_builder.build()
-
-    # Use httpx ASGITransport for in-memory testing
+    app = create_calculator_app(port)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=f"http://localhost:{port}") as client:
         yield {
             "client": client,
             "port": port,
-            "agent_card": agent_card,
             "app": app,
         }
-
-
-# =============================================================================
-# Unit Tests for A2A Agent User Query Feature
-# =============================================================================
 
 
 class TestA2AUserQueryExtraction:
@@ -223,16 +326,12 @@ class TestA2AUserQueryExtraction:
 
     @pytest.mark.asyncio
     async def test_extract_user_query_from_body(self):
-        """Test that user query is correctly extracted from request body."""
-
-        # Simulate request body parsing
         body = {"query": "calc: 7*8"}
         user_query = body.get("query", "default")
         assert user_query == "calc: 7*8"
 
     @pytest.mark.asyncio
     async def test_default_query_when_body_empty(self):
-        """Test that default query is used when body is empty."""
         body = {}
         default_message = "Hello from ContextForge Admin UI test!"
         user_query = body.get("query", default_message) if body else default_message
@@ -240,16 +339,10 @@ class TestA2AUserQueryExtraction:
 
     @pytest.mark.asyncio
     async def test_default_query_when_body_none(self):
-        """Test that default query is used when body is None."""
         body = None
         default_message = "Hello from ContextForge Admin UI test!"
         user_query = body.get("query", default_message) if body else default_message
         assert user_query == default_message
-
-
-# =============================================================================
-# Unit Tests for Tool Visibility Fix
-# =============================================================================
 
 
 class TestToolVisibilityFix:
@@ -257,8 +350,6 @@ class TestToolVisibilityFix:
 
     @pytest.mark.asyncio
     async def test_tool_visibility_defaults_to_public_when_agent_visibility_none(self, mock_db, tool_service):
-        """Test that tool visibility defaults to 'public' when agent visibility is None."""
-        # Create a mock agent with None visibility
         mock_agent = MagicMock()
         mock_agent.id = "test-agent-id"
         mock_agent.name = "Test Agent"
@@ -266,43 +357,29 @@ class TestToolVisibilityFix:
         mock_agent.description = "Test description"
         mock_agent.endpoint_url = "http://localhost:9000/run"
         mock_agent.agent_type = "custom"
-        mock_agent.visibility = None  # Key: visibility is None
+        mock_agent.visibility = None
         mock_agent.tags = ["a2a"]
         mock_agent.team_id = None
         mock_agent.owner_email = None
         mock_agent.auth_type = None
         mock_agent.auth_value = None
 
-        # Mock execute to return None (no existing tool)
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        # The visibility should default to "public"
         tool_visibility = mock_agent.visibility or "public"
         assert tool_visibility == "public"
 
     @pytest.mark.asyncio
     async def test_tool_visibility_respects_agent_visibility_when_set(self, mock_db, tool_service):
-        """Test that tool visibility respects agent visibility when explicitly set."""
-        # Create a mock agent with explicit visibility
         mock_agent = MagicMock()
-        mock_agent.visibility = "team"  # Explicitly set
-
-        tool_visibility = mock_agent.visibility or "public"
-        assert tool_visibility == "team"
+        mock_agent.visibility = "team"
+        assert (mock_agent.visibility or "public") == "team"
 
     @pytest.mark.asyncio
     async def test_tool_visibility_public_when_agent_visibility_empty_string(self, mock_db, tool_service):
-        """Test that tool visibility defaults to 'public' when agent visibility is empty string."""
         mock_agent = MagicMock()
-        mock_agent.visibility = ""  # Empty string is falsy
-
-        tool_visibility = mock_agent.visibility or "public"
-        assert tool_visibility == "public"
-
-
-# =============================================================================
-# Unit Tests for Transaction Handling
-# =============================================================================
+        mock_agent.visibility = ""
+        assert (mock_agent.visibility or "public") == "public"
 
 
 class TestTransactionHandling:
@@ -310,66 +387,16 @@ class TestTransactionHandling:
 
     @pytest.mark.asyncio
     async def test_agent_committed_before_tool_creation(self, mock_db, a2a_service):
-        """Test that agent is committed before tool creation is attempted.
-
-        This ensures that if tool creation fails (and calls rollback),
-        the agent registration is not lost.
-        """
-        # Track the order of operations
-        operation_order = []
-
-        def track_add(*args):
-            operation_order.append("add")
-
-        def track_commit():
-            operation_order.append("commit")
-
-        def track_flush():
-            operation_order.append("flush")
-
-        mock_db.add.side_effect = track_add
-        mock_db.commit.side_effect = track_commit
-        mock_db.flush.side_effect = track_flush
-
-        # The expected order after the fix is:
-        # 1. add (agent)
-        # 2. commit (agent - BEFORE tool creation)
-        # NOT: add -> flush -> [tool creation] -> commit/rollback
-
-        # Verify the fix ensures commit happens before tool creation
-        # by checking the code structure
+        # Standard
         import inspect
 
         source = inspect.getsource(a2a_service.register_agent)
-
-        # The fix changes "db.flush()" to "db.commit()" before tool creation
-        # Check that we have the pattern: db.add -> db.commit -> tool creation
         assert "db.add(new_agent)" in source
         assert "db.commit()" in source
-        # The critical fix: commit should appear before create_tool_from_a2a_agent
-        add_pos = source.find("db.add(new_agent)")
-        commit_pos = source.find("db.commit()")
-        tool_creation_pos = source.find("create_tool_from_a2a_agent")
-
-        # Ensure commit comes between add and tool creation
-        assert add_pos < commit_pos < tool_creation_pos, "Agent should be committed before tool creation"
+        assert source.find("db.add(new_agent)") < source.find("db.commit()") < source.find("create_tool_from_a2a_agent")
 
     @pytest.mark.asyncio
     async def test_agent_survives_tool_creation_failure(self, mock_db):
-        """Test that agent registration succeeds even if tool creation fails.
-
-        After the transaction handling fix, the agent is committed BEFORE
-        tool creation, so even if ToolService.register_tool calls rollback,
-        the agent persists.
-        """
-        # This test verifies the expected behavior after the fix:
-        # 1. Agent is added and committed
-        # 2. Tool creation is attempted
-        # 3. If tool creation fails (rollback), agent still exists
-
-        # The key insight is that after commit, a rollback only affects
-        # uncommitted changes, not the already-committed agent
-
         agent_committed = False
 
         def track_commit():
@@ -377,147 +404,179 @@ class TestTransactionHandling:
             agent_committed = True
 
         mock_db.commit.side_effect = track_commit
-
-        # Simulate the flow:
-        # 1. Add agent
-        mock_db.add(MagicMock())  # new_agent
-        # 2. Commit agent (the fix!)
+        mock_db.add(MagicMock())
         mock_db.commit()
-        assert agent_committed, "Agent should be committed before tool creation"
-
-        # 3. Tool creation fails and calls rollback
+        assert agent_committed is True
         mock_db.rollback()
-
-        # 4. Agent should still be committed (rollback doesn't undo committed transaction)
-        assert agent_committed, "Agent should survive tool creation failure"
+        assert agent_committed is True
 
 
-# =============================================================================
-# Integration Tests with A2A SDK Server
-# =============================================================================
-
-
-class TestA2ASDKIntegration:
-    """Integration tests using the official A2A SDK."""
+class TestA2AAgentIntegration:
+    """Integration tests for v1 A2A behavior with legacy compatibility."""
 
     @pytest.mark.asyncio
-    async def test_calculator_agent_card_endpoint(self, calculator_a2a_server):
-        """Test that the A2A agent card is served correctly."""
+    async def test_calculator_agent_card_endpoint_defaults_to_v1(self, calculator_a2a_server):
         client = calculator_a2a_server["client"]
-
         response = await client.get("/.well-known/agent.json")
-        assert response.status_code == 200
 
+        assert response.status_code == 200
         card = response.json()
         assert card["name"] == "Test Calculator Agent"
-        assert card["capabilities"]["streaming"] is True
-        assert len(card["skills"]) == 1
-        assert card["skills"][0]["id"] == "calculator"
+        assert card["protocolVersion"] == "1.0.0"
+        assert "supportedInterfaces" in card
+        assert "kind" not in card
+        assert card["capabilities"]["streaming"] is False
 
     @pytest.mark.asyncio
-    async def test_calculator_agent_message_send(self, calculator_a2a_server):
-        """Test sending a message to the calculator agent via JSON-RPC."""
+    async def test_calculator_agent_card_legacy_compatibility(self, calculator_a2a_server):
         client = calculator_a2a_server["client"]
+        response = await client.get("/.well-known/agent-card.json", headers={"A2A-Version": "0.3"})
 
-        # Send a calculation request using JSON-RPC protocol
+        assert response.status_code == 200
+        card = response.json()
+        assert card["protocolVersion"] == "0.3.0"
+        assert card["kind"] == "agent-card"
+        assert card["preferredTransport"] == "JSONRPC"
+
+    @pytest.mark.asyncio
+    async def test_calculator_agent_send_message_v1(self, calculator_a2a_server):
+        client = calculator_a2a_server["client"]
         response = await client.post(
             "/",
             json={
                 "jsonrpc": "2.0",
                 "id": "test-1",
-                "method": "message/send",
+                "method": "SendMessage",
                 "params": {
                     "message": {
                         "messageId": "msg-test-1",
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "calc: 7*8"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "calc: 7*8"}],
                     }
                 },
             },
+            headers={"A2A-Version": "1.0"},
         )
 
         assert response.status_code == 200
-        data = response.json()
-        assert "result" in data or "error" not in data
+        result = response.json()["result"]
+        assert result["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert result["status"]["message"]["role"] == "ROLE_AGENT"
+        assert result["artifacts"][0]["parts"] == [{"text": "56"}]
 
     @pytest.mark.asyncio
-    async def test_calculator_agent_streaming(self, calculator_a2a_server):
-        """Test streaming response from calculator agent."""
+    async def test_calculator_agent_send_message_legacy_compatibility(self, calculator_a2a_server):
         client = calculator_a2a_server["client"]
-
-        # Request with streaming
         response = await client.post(
             "/",
             json={
                 "jsonrpc": "2.0",
-                "id": "test-2",
+                "id": "test-legacy",
                 "method": "message/send",
                 "params": {
                     "message": {
-                        "messageId": "msg-test-2",
+                        "messageId": "msg-test-legacy",
                         "role": "user",
-                        "parts": [{"kind": "text", "text": "calc: 100/4+25"}],
+                        "parts": [{"kind": "text", "text": "calc: 10-3"}],
                     }
                 },
             },
-            headers={"Accept": "text/event-stream"},
+            headers={"A2A-Version": "0.3"},
         )
 
-        # Either streaming or non-streaming response is valid
         assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "task"
+        assert result["status"]["state"] == "completed"
+        assert result["status"]["message"]["role"] == "agent"
+
+    @pytest.mark.asyncio
+    async def test_get_task_and_list_tasks_use_v1_shapes(self, calculator_a2a_server):
+        client = calculator_a2a_server["client"]
+        send = await client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": "test-2",
+                "method": "SendMessage",
+                "params": {
+                    "message": {
+                        "messageId": "msg-test-2",
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "calc: 100/4+25"}],
+                    }
+                },
+            },
+        )
+        task_id = send.json()["result"]["id"]
+
+        get_task = await client.post("/", json={"jsonrpc": "2.0", "id": "test-3", "method": "GetTask", "params": {"id": task_id}})
+        list_tasks = await client.post("/", json={"jsonrpc": "2.0", "id": "test-4", "method": "ListTasks", "params": {"status": "TASK_STATE_COMPLETED"}})
+
+        assert get_task.status_code == 200
+        assert get_task.json()["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert list_tasks.status_code == 200
+        assert len(list_tasks.json()["result"]["tasks"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_keeps_jsonrpc_success_shape(self, calculator_a2a_server):
+        client = calculator_a2a_server["client"]
+        send = await client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": "test-5",
+                "method": "SendMessage",
+                "params": {
+                    "message": {
+                        "messageId": "msg-test-5",
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "calc: 2+2"}],
+                    }
+                },
+            },
+        )
+        task_id = send.json()["result"]["id"]
+
+        cancel = await client.post("/", json={"jsonrpc": "2.0", "id": "test-6", "method": "CancelTask", "params": {"id": task_id}})
+
+        assert cancel.status_code == 200
+        assert cancel.json()["result"]["status"]["state"] == "TASK_STATE_CANCELED"
 
 
 class TestA2AProtocolCompliance:
     """Tests for A2A protocol compliance."""
 
     @pytest.mark.asyncio
-    async def test_agent_card_has_required_fields(self, calculator_a2a_server):
-        """Test that agent card has all required A2A protocol fields."""
+    async def test_agent_card_has_required_v1_fields(self, calculator_a2a_server):
         client = calculator_a2a_server["client"]
+        card = (await client.get("/.well-known/agent.json")).json()
 
-        response = await client.get("/.well-known/agent.json")
-        card = response.json()
-
-        # Required fields per A2A spec
-        required_fields = ["name", "description", "url", "version", "capabilities", "skills"]
-        for field in required_fields:
-            assert field in card, f"Missing required field: {field}"
+        for field in ["name", "description", "url", "version", "protocolVersion", "capabilities", "skills", "supportedInterfaces"]:
+            assert field in card
 
     @pytest.mark.asyncio
-    async def test_message_send_returns_task_or_message(self, calculator_a2a_server):
-        """Test that message/send returns either a Task or Message per A2A spec."""
+    async def test_send_message_returns_task(self, calculator_a2a_server):
         client = calculator_a2a_server["client"]
-
         response = await client.post(
             "/",
             json={
                 "jsonrpc": "2.0",
-                "id": "test-3",
-                "method": "message/send",
+                "id": "test-7",
+                "method": "SendMessage",
                 "params": {
                     "message": {
-                        "messageId": "msg-test-3",
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "calc: 2+2"}],
+                        "messageId": "msg-test-7",
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "calc: 2+2"}],
                     }
                 },
             },
         )
 
-        assert response.status_code == 200
-        data = response.json()
-
-        # Result should be either a Task (with id, status) or Message (with messageId, role, parts)
-        if "result" in data:
-            result = data["result"]
-            is_task = "id" in result and "status" in result
-            is_message = "messageId" in result and "role" in result and "parts" in result
-            assert is_task or is_message, "Result should be either Task or Message"
-
-
-# =============================================================================
-# Tests for ContextForge Admin A2A Test Endpoint
-# =============================================================================
+        result = response.json()["result"]
+        assert "id" in result
+        assert result["status"]["state"] == "TASK_STATE_COMPLETED"
 
 
 class TestContextForgeA2ATestEndpoint:
@@ -525,12 +584,8 @@ class TestContextForgeA2ATestEndpoint:
 
     @pytest.mark.asyncio
     async def test_admin_test_endpoint_sends_user_query(self):
-        """Test that admin test endpoint sends user-provided query to agent."""
-        # Mock the admin endpoint behavior
         user_query = "calc: 15*3"
         default_message = "Hello from ContextForge Admin UI test!"
-
-        # Simulate request body parsing (as done in admin.py)
         body = {"query": user_query}
         extracted_query = body.get("query", default_message) if body else default_message
 
@@ -539,67 +594,39 @@ class TestContextForgeA2ATestEndpoint:
 
     @pytest.mark.asyncio
     async def test_admin_test_endpoint_uses_default_when_no_query(self):
-        """Test that admin test endpoint uses default message when no query provided."""
         default_message = "Hello from ContextForge Admin UI test!"
-
-        # Empty body
-        body = {}
-        extracted_query = (body.get("query") if body else None) or default_message
-        assert extracted_query == default_message
-
-        # Body with empty query - should also use default
-        body = {"query": ""}
-        extracted_query = (body.get("query") if body else None) or default_message
-        assert extracted_query == default_message
-
-        # Body with None query
-        body = {"query": None}
-        extracted_query = (body.get("query") if body else None) or default_message
-        assert extracted_query == default_message
+        for body in ({}, {"query": ""}, {"query": None}, None):
+            extracted_query = (body.get("query") if body else None) or default_message
+            assert extracted_query == default_message
 
     @pytest.mark.asyncio
     async def test_jsonrpc_format_includes_user_query(self):
-        """Test that JSONRPC format includes user query in message parts."""
-        import time
-
         user_query = "calc: 100/5"
-
-        # Simulate JSONRPC format construction (as done in admin.py)
         test_params = {
-            "method": "message/send",
+            "method": "SendMessage",
             "params": {
                 "message": {
-                    "messageId": f"admin-test-{int(time.time())}",
-                    "role": "user",
-                    "parts": [{"type": "text", "text": user_query}],
+                    "messageId": "admin-test-1",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": user_query}],
                 }
             },
         }
 
-        # Verify query is in the message
-        message_text = test_params["params"]["message"]["parts"][0]["text"]
-        assert message_text == user_query
+        message_part = test_params["params"]["message"]["parts"][0]
+        assert message_part["text"] == user_query
+        assert "kind" not in message_part
 
     @pytest.mark.asyncio
     async def test_custom_agent_format_includes_user_query(self):
-        """Test that custom agent format includes user query in parameters."""
         user_query = "weather: Dallas"
-
-        # Simulate custom format construction (as done in admin.py)
         test_params = {
             "interaction_type": "admin_test",
             "parameters": {"query": user_query, "message": user_query},
             "protocol_version": "1.0",
         }
-
-        # Verify query is in parameters
         assert test_params["parameters"]["query"] == user_query
         assert test_params["parameters"]["message"] == user_query
-
-
-# =============================================================================
-# Calculator Agent Unit Tests
-# =============================================================================
 
 
 class TestCalculatorAgent:
@@ -607,9 +634,7 @@ class TestCalculatorAgent:
 
     @pytest.mark.asyncio
     async def test_basic_arithmetic(self):
-        """Test basic arithmetic operations."""
         agent = CalculatorAgent()
-
         assert await agent.invoke("calc: 2+2") == "4"
         assert await agent.invoke("calc: 10-3") == "7"
         assert await agent.invoke("calc: 5*6") == "30"
@@ -617,41 +642,27 @@ class TestCalculatorAgent:
 
     @pytest.mark.asyncio
     async def test_complex_expressions(self):
-        """Test complex mathematical expressions."""
         agent = CalculatorAgent()
-
         assert await agent.invoke("calc: 7*8") == "56"
         assert await agent.invoke("calc: 100/4+25") == "50.0"
         assert await agent.invoke("calc: (2+3)*4") == "20"
 
     @pytest.mark.asyncio
     async def test_negative_numbers(self):
-        """Test negative number handling."""
         agent = CalculatorAgent()
-
         assert await agent.invoke("calc: -5") == "-5"
         assert await agent.invoke("calc: -5+10") == "5"
 
     @pytest.mark.asyncio
     async def test_division_by_zero(self):
-        """Test division by zero error handling."""
-        agent = CalculatorAgent()
-
-        result = await agent.invoke("calc: 10/0")
+        result = await CalculatorAgent().invoke("calc: 10/0")
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_invalid_expression(self):
-        """Test invalid expression error handling."""
-        agent = CalculatorAgent()
-
-        result = await agent.invoke("calc: invalid")
+        result = await CalculatorAgent().invoke("calc: invalid")
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_query_without_prefix(self):
-        """Test that queries without 'calc:' prefix still work."""
-        agent = CalculatorAgent()
-
-        # Direct expression
-        assert await agent.invoke("5*5") == "25"
+        assert await CalculatorAgent().invoke("5*5") == "25"

@@ -51,6 +51,10 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
         chmod +x /build/target/release/contextforge-mcp-runtime; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-a2a-runtime; \
+        printf 'echo "Rust A2A runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-a2a-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-a2a-runtime; \
+        chmod +x /build/target/release/contextforge-a2a-runtime; \
         exit 0; \
     fi
 
@@ -128,6 +132,14 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
+# Build the experimental Rust A2A runtime binary (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        cargo build --release -p contextforge_a2a_runtime && \
+        echo "✅ Rust A2A runtime built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust A2A runtime build"; \
+    fi
+
 FROM rust-builder-base AS rust-builder
 
 ###########################
@@ -203,6 +215,7 @@ COPY plugins/requirements.txt /app/plugins/requirements.txt
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
 
 # ----------------------------------------------------------------------------
 # Copy frontend build artifacts from frontend-builder stage

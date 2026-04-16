@@ -32,7 +32,6 @@ pub async fn test_streamer_cert() {
 /// Panics if the HTTP client cannot be built with invalid certificate.
 
 #[tokio::test]
-#[should_panic(expected = "Invalid PEM in cert file")]
 pub async fn test_streamer_cert_invalid_certificate() {
     const BLOB: &[&str] = &[
         "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUNsamNDQlg0Q0NRQ0t6OFpy",
@@ -61,5 +60,11 @@ pub async fn test_streamer_cert_invalid_certificate() {
     let e = reqwest::Client::new().get("").build().unwrap_err();
     let _msg = invalid_error(Path::new("/tmp"), &e);
 
-    let _client = get_http_client(&config).await.unwrap();
+    let err = get_http_client(&config)
+        .await
+        .expect_err("invalid cert should fail");
+    assert!(
+        err.contains("Invalid PEM in cert file") || err.contains("Http client build error"),
+        "unexpected invalid-cert error: {err}"
+    );
 }

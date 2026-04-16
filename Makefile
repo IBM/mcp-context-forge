@@ -8732,6 +8732,18 @@ rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
 	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
 
+rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
+	@echo "🦀 Building experimental Rust A2A runtime..."
+	@cd crates/a2a_runtime && cargo build --release
+
+rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
+	@echo "🧪 Running Rust A2A runtime tests..."
+	@cd crates/a2a_runtime && cargo test --release
+
+rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
+	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
+	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
+
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh

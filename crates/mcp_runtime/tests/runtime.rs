@@ -1538,7 +1538,6 @@ async fn session_core_transport_denies_non_owner_before_backend_dispatch() {
     let runtime_url = spawn_router(runtime).await;
     let owner_auth = URL_SAFE_NO_PAD.encode(
         // pragma: allowlist secret
-        // pragma: allowlist secret
         serde_json::to_vec(&json!({
             "email": "owner@example.com", // pragma: allowlist secret
             "teams": ["team-a"],
@@ -1548,6 +1547,7 @@ async fn session_core_transport_denies_non_owner_before_backend_dispatch() {
         .expect("owner auth context json"),
     );
     let intruder_auth = URL_SAFE_NO_PAD.encode(
+        // pragma: allowlist secret
         serde_json::to_vec(&json!({
             "email": "intruder@example.com",
             "teams": ["team-a"],
@@ -1639,8 +1639,8 @@ async fn session_core_transport_denies_same_email_with_different_auth_binding() 
         build_router(AppState::new(&config).expect("state"))
     };
     let runtime_url = spawn_router(runtime).await;
-    // pragma: allowlist secret
     let owner_auth = URL_SAFE_NO_PAD.encode(
+        // pragma: allowlist secret
         serde_json::to_vec(&json!({
             "email": "owner@example.com", // pragma: allowlist secret
             "teams": ["team-a"],
@@ -5084,8 +5084,7 @@ async fn tools_call_reuses_shared_upstream_session_without_client_session_id() {
                             "transport": "streamablehttp",
                             "serverUrl": format!("{upstream_url}/mcp"),
                             "remoteToolName": "echo_remote",
-                            // pragma: allowlist secret
-                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "headers": {"x-upstream-auth": "rust-plan"}, // pragma: allowlist secret
                             "timeoutMs": 30000
                         }))
                     }
@@ -5293,7 +5292,7 @@ async fn tools_call_reinitializes_upstream_session_after_cached_session_failure(
                         "transport": "streamablehttp",
                         "serverUrl": format!("{upstream_url}/mcp"),
                         "remoteToolName": "echo_remote",
-                        "headers": {"x-upstream-auth": "rust-plan"},
+                        "headers": {"x-upstream-auth": "rust-plan"}, // pragma: allowlist secret
                         "timeoutMs": 30000
                     }))
                 }

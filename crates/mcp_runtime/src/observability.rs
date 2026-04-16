@@ -595,7 +595,7 @@ fn derive_langfuse_tags(context: &TraceRequestContext) -> Vec<String> {
     }
     // pragma: allowlist secret
     if let Some(auth_method) = &context.auth_method {
-        tags.push(format!("auth:{auth_method}"));
+        tags.push(format!("auth:{auth_method}")); // pragma: allowlist secret
     }
     if !config().deployment_env.is_empty() {
         tags.push(format!("env:{}", config().deployment_env));
