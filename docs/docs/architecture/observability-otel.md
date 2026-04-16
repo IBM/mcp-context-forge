@@ -657,9 +657,22 @@ async def tool_pre_invoke(self, payload, context):
     return PluginResult(continue_processing=True)
 ```
 
-## References
+## Related Documentation
 
+### User Guides
+
+- [Observability Overview](../manage/observability.md) - Choosing the right observability approach
+- [OpenTelemetry Integration](../manage/observability/opentelemetry.md) - User-facing OTEL setup guide
+- [Internal Observability](../manage/observability/internal.md) - Built-in database-backed tracing
+- [Prometheus Metrics](../manage/observability/prometheus.md) - Time-series monitoring
+- [Langfuse Integration](../manage/observability/langfuse.md) - LLM observability platform
+- [Phoenix Integration](../manage/observability/phoenix.md) - AI/LLM-focused observability
+
+### Technical References
+
+- [OTEL Span Attributes Reference](otel-span-attributes.md) - Complete list of span attributes used in ContextForge
 - [OpenTelemetry Specification](https://opentelemetry.io/docs/specs/otel/)
 - [W3C Trace Context](https://www.w3.org/TR/trace-context/)
+- [W3C Baggage](https://www.w3.org/TR/baggage/)
 - [Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
 - [Langfuse OTEL Integration](https://langfuse.com/docs/integrations/opentelemetry)
