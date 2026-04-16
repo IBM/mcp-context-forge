@@ -54,7 +54,7 @@ thiserror = "2.0.16"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url = "2.5.7"
-uuid = { version = "=1.10.0", features = ["v4"] }
+uuid = { version = "=1.23.0", features = ["v4"] }
 
 [workspace.lints.clippy]
 multiple_crate_versions = "allow"

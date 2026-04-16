@@ -263,8 +263,8 @@ mod tests {
         );
     }
 
-    fn encrypt_raw_payload(plaintext: &[u8], secret: &str) -> String { // pragma: allowlist secret
-        let cipher = cipher_for(secret);
+    fn encrypt_raw_payload(plaintext: &[u8], key_material: &str) -> String {
+        let cipher = cipher_for(key_material);
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher.encrypt(&nonce, plaintext).unwrap();
         let mut combined = nonce.to_vec();
