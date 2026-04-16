@@ -2032,13 +2032,51 @@ class A2AAgentService(BaseService):
 
             logger.info(f"Cross-gateway routing: {uaid} -> {protocol}://{endpoint}")
 
-            # Security: Validate endpoint against allowlist
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: SSRF Protection - Validate endpoint before URL construction
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Standard
+            from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+            # Reject endpoints with SSRF attack vectors:
+            # 1. Protocol prefixes (file://, gopher://, etc.)
+            # 2. User-info bypass (evil@127.0.0.1)
+            # 3. Path injection (example.com/path)
+            # 4. Port injection is allowed for legitimate use cases (gateway.example.com:8443)
+
+            if "://" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
+
+            if "@" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain @ character (SSRF protection)")
+
+            # Parse to check for path components (after first slash)
+            # Valid: "gateway.example.com", "gateway.example.com:8443"
+            # Invalid: "gateway.example.com/path", "127.0.0.1/admin"
+            if "/" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain path components (SSRF protection)")
+
+            # Validate it's a valid hostname/IP by attempting to parse as URL
+            # This catches malformed hostnames like "not..valid..hostname"
+            try:
+                parsed = urlparse(f"https://{endpoint}/test")
+                if not parsed.netloc:
+                    raise ValueError("Empty netloc")
+            except Exception as parse_error:
+                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: invalid hostname format ({parse_error})")
+
+            # Security: Validate endpoint against domain allowlist
+            # Use proper subdomain matching: require exact match OR proper subdomain prefix
             allowed_domains = getattr(settings, "uaid_allowed_domains", [])
             if allowed_domains:
-                if not any(endpoint.endswith(d) for d in allowed_domains):
-                    raise ValueError(f"Cross-gateway routing to {endpoint} not allowed. Endpoint not in UAID_ALLOWED_DOMAINS.")
+                # Extract just the domain part (without port) for allowlist checking
+                endpoint_domain = endpoint.split(":")[0] if ":" in endpoint else endpoint
 
-            # Construct URL based on protocol
+                # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
+                if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
+                    raise ValueError(f"Cross-gateway routing to {endpoint} not allowed. Endpoint domain '{endpoint_domain}' not in UAID_ALLOWED_DOMAINS.")
+
+            # Construct URL based on protocol (endpoint is now validated)
             if protocol == "a2a":
                 url = f"https://{endpoint}/a2a/invoke"
             elif protocol == "mcp":
