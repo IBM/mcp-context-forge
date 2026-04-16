@@ -52,7 +52,7 @@ jobs:
       # -----------------------------------------------------------
       - name: 📥  Install client dependencies
         working-directory: ./client
-        run: npm install
+        run: npm ci
 
       # -----------------------------------------------------------
       # 2️⃣  Run Prettier Check
