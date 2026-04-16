@@ -350,10 +350,12 @@ class TestMetaServerService:
         """Test that meta-tool definitions are returned correctly."""
         service = MetaServerService()
         defs = service.get_meta_tool_definitions()
-        assert len(defs) == 6
+        assert len(defs) == 12
         names = {d["name"] for d in defs}
         assert "search_tools" in names
         assert "execute_tool" in names
+        assert "list_resources" in names
+        assert "authorize_gateway" in names
 
     def test_is_meta_server(self):
         """Test is_meta_server check."""

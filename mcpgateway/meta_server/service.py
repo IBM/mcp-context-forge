@@ -35,11 +35,8 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Set
 
-# Third-Party
-from sqlalchemy import or_
-
 # First-Party
-from mcpgateway.db import fresh_db_session, get_db, Tool, ToolEmbedding
+from mcpgateway.db import fresh_db_session, get_db, Tool
 from mcpgateway.meta_server.schemas import (
     AuthorizeAllGatewaysResponse,
     AuthorizeGatewayResponse,
@@ -84,7 +81,7 @@ class MetaServerService:
         >>> defs = service.get_meta_tool_definitions()
         >>> isinstance(defs, list)
         True
-        >>> len(defs) == 6
+        >>> len(defs) == 12
         True
     """
 
@@ -96,12 +93,6 @@ class MetaServerService:
 
         Returns:
             List of meta-tool definition dicts with keys: name, description, inputSchema.
-
-        Examples:
-            >>> service = MetaServerService()
-            >>> tools = service.get_meta_tool_definitions()
-            >>> {t["name"] for t in tools} == {"search_tools", "list_tools", "describe_tool", "execute_tool", "get_tool_categories", "get_similar_tools"}
-            True
         """
         return [{"name": name, "description": defn["description"], "inputSchema": defn["input_schema"]} for name, defn in META_TOOL_DEFINITIONS.items()]
 
@@ -281,6 +272,34 @@ class MetaServerService:
             kwargs.get("token_teams"),
             kwargs.get("request_headers"),
         )
+
+    @staticmethod
+    def _resolve_effective_email(
+        user_email: Optional[str],
+        request_headers: Optional[Dict[str, str]],
+    ) -> Optional[str]:
+        """Resolve effective user email from explicit param or JWT in Authorization header.
+
+        Prefers the explicit ``user_email`` parameter. Falls back to extracting
+        the email claim from the Bearer JWT in the Authorization header.
+        The JWT signature is NOT verified here — upstream middleware is responsible
+        for authentication. This is only used for user identity resolution.
+        """
+        if user_email:
+            return user_email.strip().lower() if isinstance(user_email, str) else None
+        if not request_headers:
+            return None
+        auth_header = request_headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None
+        try:
+            import jwt as pyjwt  # pylint: disable=import-outside-toplevel
+            token = auth_header[7:]
+            payload = pyjwt.decode(token, options={"verify_signature": False})
+            email = payload.get("email") or payload.get("sub")
+            return email.strip().lower() if email else None
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Implemented handlers
@@ -1085,19 +1104,7 @@ class MetaServerService:
         from mcpgateway.services.token_storage_service import TokenStorageService
 
         # Resolve user_email: prefer explicit param, fall back to JWT in request_headers
-        effective_email = user_email
-        if not effective_email and request_headers:
-            auth_header = request_headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                try:
-                    import jwt as pyjwt  # pylint: disable=import-outside-toplevel
-                    token = auth_header[7:]
-                    payload = pyjwt.decode(token, options={"verify_signature": False})
-                    effective_email = payload.get("email") or payload.get("sub")
-                    if effective_email:
-                        effective_email = effective_email.strip().lower()
-                except Exception:
-                    pass
+        effective_email = self._resolve_effective_email(user_email, request_headers)
 
         gateway_name = arguments.get("gateway_name", "")
         if not gateway_name:
@@ -1210,19 +1217,7 @@ class MetaServerService:
         from mcpgateway.services.token_storage_service import TokenStorageService
 
         # Resolve user_email from JWT if not provided
-        effective_email = user_email
-        if not effective_email and request_headers:
-            auth_header = request_headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                try:
-                    import jwt as pyjwt  # pylint: disable=import-outside-toplevel
-                    token = auth_header[7:]
-                    payload = pyjwt.decode(token, options={"verify_signature": False})
-                    effective_email = payload.get("email") or payload.get("sub")
-                    if effective_email:
-                        effective_email = effective_email.strip().lower()
-                except Exception:
-                    pass
+        effective_email = self._resolve_effective_email(user_email, request_headers)
 
         try:
             db_gen = get_db()

@@ -16,6 +16,7 @@ Examples:
 """
 
 # Standard
+import json
 import time
 from typing import Any, Dict, Optional
 
@@ -58,6 +59,16 @@ logger = logging_service.get_logger(__name__)
 
 # Create router
 router = APIRouter(prefix="/meta", tags=["Meta Tools"])
+
+
+def _apply_scope_header(arguments: Dict[str, Any], x_scope: Optional[str]) -> Dict[str, Any]:
+    """Apply X-Scope header to arguments dict, parsing JSON if provided."""
+    if x_scope:
+        try:
+            arguments["scope"] = json.loads(x_scope)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Invalid X-Scope header: {x_scope}")
+    return arguments
 
 
 @router.post("/describe_tool", response_model=DescribeToolResponse)
@@ -198,13 +209,7 @@ async def search_tools(
         meta_service = get_meta_server_service()
         
         # Build arguments dict with scope from header if provided
-        arguments = req.model_dump()
-        if x_scope:
-            try:
-                import json
-                arguments["scope"] = json.loads(x_scope)
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid X-Scope header: {x_scope}")
+        arguments = _apply_scope_header(req.model_dump(), x_scope)
         
         # Call the service handler
         result = await meta_service._search_tools(arguments)
@@ -241,13 +246,7 @@ async def list_tools(
         meta_service = get_meta_server_service()
         
         # Build arguments dict with scope from header if provided
-        arguments = req.model_dump()
-        if x_scope:
-            try:
-                import json
-                arguments["scope"] = json.loads(x_scope)
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid X-Scope header: {x_scope}")
+        arguments = _apply_scope_header(req.model_dump(), x_scope)
         
         # Call the service handler
         result = await meta_service._list_tools(arguments)
@@ -284,13 +283,7 @@ async def get_similar_tools(
         meta_service = get_meta_server_service()
         
         # Build arguments dict with scope from header if provided
-        arguments = req.model_dump()
-        if x_scope:
-            try:
-                import json
-                arguments["scope"] = json.loads(x_scope)
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid X-Scope header: {x_scope}")
+        arguments = _apply_scope_header(req.model_dump(), x_scope)
         
         # Call the service handler
         result = await meta_service._get_similar_tools(arguments)
