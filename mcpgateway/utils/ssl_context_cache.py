@@ -19,7 +19,6 @@ import logging
 import os
 import ssl
 import tempfile
-from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +27,11 @@ _ssl_context_cache: OrderedDict[str, ssl.SSLContext] = OrderedDict()
 _ssl_context_cache_timestamps: OrderedDict[str, datetime] = OrderedDict()
 
 _SSL_CONTEXT_CACHE_MAX_SIZE = int(os.getenv("SSL_CONTEXT_CACHE_MAX_SIZE", "100"))
-_SSL_CONTEXT_CACHE_TTL = os.getenv("SSL_CONTEXT_CACHE_TTL")
-if _SSL_CONTEXT_CACHE_TTL is not None and _SSL_CONTEXT_CACHE_TTL.strip() != "":
+_SSL_CONTEXT_CACHE_TTL_STR = os.getenv("SSL_CONTEXT_CACHE_TTL")
+_SSL_CONTEXT_CACHE_TTL: int | None
+if _SSL_CONTEXT_CACHE_TTL_STR is not None and _SSL_CONTEXT_CACHE_TTL_STR.strip() != "":
     try:
-        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL)
+        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL_STR)
     except ValueError:
         raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds")
 else:

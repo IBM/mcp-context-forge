@@ -368,10 +368,10 @@ def test_cache_eviction_preserves_current_entry_timestamp(monkeypatch):
         key_hash.update(b"|client_key:")
         key_hash.update(b"")
         cache_key = key_hash.hexdigest()
-        
+
         timestamp = ssl_context_cache._ssl_context_cache_timestamps[cache_key]
         assert before_time <= timestamp <= after_time
-        
+
         # Verify oldest entry was evicted
         assert "key0" not in ssl_context_cache._ssl_context_cache
 
