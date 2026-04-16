@@ -1,0 +1,80 @@
+# CrunchyData PostgresCluster CR
+# Tuned to match VM benchmark Postgres configuration
+# Apply with: oc apply -n <namespace> -f charts/mcp-stack/profiles/ocp/manifests/pgo-postgrescluster.yaml
+# Requires: CrunchyData PGO operator installed
+#           nfs-client StorageClass available (dynamic provisioner)
+apiVersion: postgres-operator.crunchydata.com/v1beta1
+kind: PostgresCluster
+metadata:
+  name: gp-postgres
+spec:
+  postgresVersion: 17
+  instances:
+    - name: instance1
+      replicas: 1
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "2"
+          memory: 4Gi
+      dataVolumeClaimSpec:
+        storageClassName: nfs-client
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+  patroni:
+    dynamicConfiguration:
+      postgresql:
+        parameters:
+          shared_buffers: "512MB"
+          work_mem: "16MB"
+          effective_cache_size: "1536MB"
+          maintenance_work_mem: "128MB"
+          max_connections: "800"
+          synchronous_commit: "off"
+          commit_delay: "100"
+          checkpoint_completion_target: "0.9"
+          wal_buffers: "16MB"
+          random_page_cost: "1.1"
+          effective_io_concurrency: "200"
+          idle_in_transaction_session_timeout: "300000"
+          statement_timeout: "120000"
+  backups:
+    pgbackrest:
+      repos:
+        - name: repo1
+          volume:
+            volumeClaimSpec:
+              storageClassName: nfs-client
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 2Gi
+  proxy:
+    pgBouncer:
+      replicas: 1
+      port: 6432
+      config:
+        global:
+          default_pool_size: "600"
+          min_pool_size: "100"
+          reserve_pool_size: "150"
+          reserve_pool_timeout: "2"
+          max_client_conn: "5000"
+          max_db_connections: "700"
+          server_lifetime: "3600"
+          server_idle_timeout: "600"
+          query_wait_timeout: "60"
+          client_idle_timeout: "120"
+          idle_transaction_timeout: "30"
+  users:
+    - name: admin
+      databases:
+        - postgresdb
+      password:
+        type: AlphaNumeric

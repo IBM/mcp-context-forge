@@ -13,6 +13,8 @@ APP_ROOT="${APP_ROOT:-/app}"
 RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
 RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
 RUST_MCP_SESSION_AUTH_REUSE="${RUST_MCP_SESSION_AUTH_REUSE:-}"
+RUST_A2A_MODE="${RUST_A2A_MODE:-off}"
+RUST_A2A_LOG="${RUST_A2A_LOG:-warn}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}"
@@ -23,6 +25,12 @@ EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_E
 EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED="${EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_URL="${EXPERIMENTAL_RUST_A2A_RUNTIME_URL:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_UDS="${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS:-}"
+EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS="${EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS:-30}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_LISTEN_HTTP="${MCP_RUST_LISTEN_HTTP:-}"
@@ -37,6 +45,26 @@ MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}"
 MCP_RUST_AFFINITY_CORE_ENABLED="${MCP_RUST_AFFINITY_CORE_ENABLED:-}"
 MCP_RUST_SESSION_AUTH_REUSE_ENABLED="${MCP_RUST_SESSION_AUTH_REUSE_ENABLED:-}"
 MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS="${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS:-}"
+A2A_RUST_LISTEN_HTTP="${A2A_RUST_LISTEN_HTTP:-}"
+A2A_RUST_LISTEN_UDS="${A2A_RUST_LISTEN_UDS:-}"
+A2A_RUST_LOG="${A2A_RUST_LOG:-}"
+A2A_RUST_REQUEST_TIMEOUT_MS="${A2A_RUST_REQUEST_TIMEOUT_MS:-}"
+A2A_RUST_AUTH_SECRET="${A2A_RUST_AUTH_SECRET:-${AUTH_ENCRYPTION_SECRET:-}}"
+A2A_RUST_BACKEND_BASE_URL="${A2A_RUST_BACKEND_BASE_URL:-}"
+A2A_RUST_MAX_CONCURRENT="${A2A_RUST_MAX_CONCURRENT:-}"
+A2A_RUST_MAX_QUEUED="${A2A_RUST_MAX_QUEUED:-}"
+A2A_RUST_CIRCUIT_FAILURE_THRESHOLD="${A2A_RUST_CIRCUIT_FAILURE_THRESHOLD:-}"
+A2A_RUST_CIRCUIT_COOLDOWN_SECS="${A2A_RUST_CIRCUIT_COOLDOWN_SECS:-}"
+A2A_RUST_REDIS_URL="${A2A_RUST_REDIS_URL:-${REDIS_URL:-}}"
+A2A_RUST_L2_CACHE_TTL_SECS="${A2A_RUST_L2_CACHE_TTL_SECS:-}"
+A2A_RUST_CACHE_INVALIDATION_CHANNEL="${A2A_RUST_CACHE_INVALIDATION_CHANNEL:-}"
+A2A_RUST_SESSION_ENABLED="${A2A_RUST_SESSION_ENABLED:-}"
+A2A_RUST_SESSION_TTL_SECS="${A2A_RUST_SESSION_TTL_SECS:-}"
+A2A_RUST_SESSION_FINGERPRINT_HEADERS="${A2A_RUST_SESSION_FINGERPRINT_HEADERS:-}"
+A2A_RUST_EVENT_STORE_MAX_EVENTS="${A2A_RUST_EVENT_STORE_MAX_EVENTS:-}"
+A2A_RUST_EVENT_STORE_TTL_SECS="${A2A_RUST_EVENT_STORE_TTL_SECS:-}"
+A2A_RUST_EVENT_FLUSH_INTERVAL_MS="${A2A_RUST_EVENT_FLUSH_INTERVAL_MS:-}"
+A2A_RUST_EVENT_FLUSH_BATCH_SIZE="${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -45,6 +73,7 @@ cd "${SCRIPT_DIR}" || {
 }
 
 RUST_MCP_PID=""
+RUST_A2A_PID=""
 SERVER_PID=""
 
 apply_rust_mcp_mode_defaults() {
@@ -190,6 +219,88 @@ apply_rust_mcp_mode_defaults() {
     export MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS
 }
 
+apply_rust_a2a_mode_defaults() {
+    local normalized_mode="${RUST_A2A_MODE,,}"
+    local runtime_enabled_default="false"
+    local delegate_default="false"
+    local managed_default="true"
+
+    case "${normalized_mode}" in
+        ""|off)
+            ;;
+        shadow)
+            runtime_enabled_default="true"
+            ;;
+        edge|full)
+            runtime_enabled_default="true"
+            delegate_default="true"
+            ;;
+        *)
+            echo "ERROR: Unknown RUST_A2A_MODE value: ${RUST_A2A_MODE}"
+            echo "Valid options: off, shadow, edge, full"
+            exit 1
+            ;;
+    esac
+
+    if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED="${runtime_enabled_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED="${delegate_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" ]]; then
+        EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED="${managed_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_A2A_RUNTIME_URL}" ]]; then
+        EXPERIMENTAL_RUST_A2A_RUNTIME_URL="http://127.0.0.1:8788"
+    fi
+    # Default to TCP — both compose nginx and the Helm chart's
+    # nginx upstream point at the sidecar via TCP (gateway:8788).
+    # UDS is opt-in: set EXPERIMENTAL_RUST_A2A_RUNTIME_UDS explicitly to
+    # bind a Unix socket instead.  Note: `listen_target()` in the runtime
+    # currently picks one or the other; an explicit UDS override will
+    # disable the TCP listener and break the nginx upstream until the
+    # nginx config is also updated to proxy via the same socket.
+    if [[ -z "${A2A_RUST_LISTEN_HTTP}" ]]; then
+        A2A_RUST_LISTEN_HTTP="127.0.0.1:8788"
+    fi
+    if [[ -z "${A2A_RUST_LISTEN_UDS}" && -n "${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS}" ]]; then
+        A2A_RUST_LISTEN_UDS="${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS}"
+    fi
+    if [[ -z "${A2A_RUST_LOG}" ]]; then
+        A2A_RUST_LOG="${RUST_A2A_LOG}"
+    fi
+
+    export RUST_A2A_MODE
+    export RUST_A2A_LOG
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_URL
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_UDS
+    export EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS
+    export A2A_RUST_LISTEN_HTTP
+    export A2A_RUST_LISTEN_UDS
+    export A2A_RUST_LOG
+    export A2A_RUST_REQUEST_TIMEOUT_MS
+    export A2A_RUST_AUTH_SECRET
+    export A2A_RUST_BACKEND_BASE_URL
+    export A2A_RUST_MAX_CONCURRENT
+    export A2A_RUST_MAX_QUEUED
+    export A2A_RUST_CIRCUIT_FAILURE_THRESHOLD
+    export A2A_RUST_CIRCUIT_COOLDOWN_SECS
+    export A2A_RUST_REDIS_URL
+    export A2A_RUST_L2_CACHE_TTL_SECS
+    export A2A_RUST_CACHE_INVALIDATION_CHANNEL
+    export A2A_RUST_SESSION_ENABLED
+    export A2A_RUST_SESSION_TTL_SECS
+    export A2A_RUST_SESSION_FINGERPRINT_HEADERS
+    export A2A_RUST_EVENT_STORE_MAX_EVENTS
+    export A2A_RUST_EVENT_STORE_TTL_SECS
+    export A2A_RUST_EVENT_FLUSH_INTERVAL_MS
+    export A2A_RUST_EVENT_FLUSH_BATCH_SIZE
+}
+
 cleanup() {
     local pids=()
 
@@ -198,6 +309,9 @@ cleanup() {
     fi
     if [[ -n "${RUST_MCP_PID}" ]] && kill -0 "${RUST_MCP_PID}" 2>/dev/null; then
         pids+=("${RUST_MCP_PID}")
+    fi
+    if [[ -n "${RUST_A2A_PID}" ]] && kill -0 "${RUST_A2A_PID}" 2>/dev/null; then
+        pids+=("${RUST_A2A_PID}")
     fi
 
     if [[ ${#pids[@]} -gt 0 ]]; then
@@ -264,6 +378,36 @@ print_mcp_runtime_mode() {
     fi
 
     echo "MCP runtime mode: ${runtime_mode} (Rust MCP artifacts not built into this image)"
+}
+
+print_a2a_runtime_mode() {
+    local runtime_mode="python"
+    local invoke_mode="python"
+
+    if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED}" = "true" ]]; then
+        invoke_mode="rust"
+    fi
+
+    if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" ]]; then
+        if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" = "true" ]]; then
+            runtime_mode="rust-managed"
+            echo "A2A runtime mode: ${runtime_mode} (sidecar managed in this container, invoke path: ${invoke_mode})"
+        else
+            runtime_mode="rust-external"
+            echo "A2A runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS:-${EXPERIMENTAL_RUST_A2A_RUNTIME_URL}}, invoke path: ${invoke_mode})"
+        fi
+        return
+    fi
+
+    if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" = "true" ]]; then
+        runtime_mode="python-rust-built-disabled"
+        echo "WARNING: A2A runtime mode: ${runtime_mode}"
+        echo "WARNING: Rust A2A artifacts are present in this image, but EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=false so A2A invocations will stay on the Python client."
+        echo "WARNING: Set RUST_A2A_MODE=shadow, RUST_A2A_MODE=edge, or RUST_A2A_MODE=full to activate the Rust A2A runtime."
+        return
+    fi
+
+    echo "A2A runtime mode: ${runtime_mode} (Rust A2A artifacts not built into this image)"
 }
 
 build_server_command() {
@@ -450,23 +594,112 @@ install_plugin_requirements() {
     return 1
 }
 
+start_managed_rust_a2a_runtime() {
+    local runtime_bin="/app/bin/contextforge-a2a-runtime"
+    local rust_listen_http="${A2A_RUST_LISTEN_HTTP:-127.0.0.1:8788}"
+    local rust_listen_uds="${A2A_RUST_LISTEN_UDS:-${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS:-}}"
+
+    if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" != "true" ]]; then
+        echo "ERROR: EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true but this image was built without Rust artifacts."
+        echo "Rebuild with RUST_MCP_BUILD=1 or --build-arg ENABLE_RUST=true, or set EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED=false to use an external sidecar."
+        exit 1
+    fi
+
+    if [[ ! -x "${runtime_bin}" ]]; then
+        echo "ERROR: Rust A2A runtime binary not found at ${runtime_bin}"
+        exit 1
+    fi
+
+    export A2A_RUST_LISTEN_HTTP="${rust_listen_http}"
+    if [[ -n "${rust_listen_uds}" ]]; then
+        export A2A_RUST_LISTEN_UDS="${rust_listen_uds}"
+    else
+        unset A2A_RUST_LISTEN_UDS || true
+        unset EXPERIMENTAL_RUST_A2A_RUNTIME_UDS || true
+    fi
+    if [[ -z "${A2A_RUST_REQUEST_TIMEOUT_MS}" ]]; then
+        export A2A_RUST_REQUEST_TIMEOUT_MS="$(( EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS * 1000 ))"
+    fi
+    if [[ -n "${A2A_RUST_LOG:-}" ]]; then
+        export A2A_RUST_LOG="${A2A_RUST_LOG}"
+    fi
+
+    if [[ -n "${rust_listen_uds}" ]]; then
+        echo "Starting experimental Rust A2A runtime on unix://${A2A_RUST_LISTEN_UDS}..."
+    else
+        echo "Starting experimental Rust A2A runtime on ${A2A_RUST_LISTEN_HTTP}..."
+    fi
+    "${runtime_bin}" &
+    RUST_A2A_PID=$!
+
+    python3 - <<'PY'
+import httpx
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+base_url = os.environ.get("EXPERIMENTAL_RUST_A2A_RUNTIME_URL", "http://127.0.0.1:8788").rstrip("/")
+health_url = f"{base_url}/health"
+uds_path = os.environ.get("EXPERIMENTAL_RUST_A2A_RUNTIME_UDS") or os.environ.get("A2A_RUST_LISTEN_UDS")
+
+for _ in range(60):
+    if uds_path:
+        try:
+            with httpx.Client(transport=httpx.HTTPTransport(uds=uds_path), timeout=2.0) as client:
+                response = client.get(health_url)
+                if response.status_code == 200:
+                    sys.exit(0)
+        except OSError:
+            time.sleep(0.5)
+        except httpx.HTTPError:
+            time.sleep(0.5)
+    else:
+        try:
+            with urllib.request.urlopen(health_url, timeout=2) as response:
+                if response.status == 200:
+                    sys.exit(0)
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
+
+print(f"ERROR: Experimental Rust A2A runtime failed health check at {health_url}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
 if [[ "${CONTEXTFORGE_TEST_ONLY_SOURCE:-false}" = "true" ]]; then
     return 0 2>/dev/null || exit 0
 fi
 
 apply_rust_mcp_mode_defaults
+apply_rust_a2a_mode_defaults
 install_plugin_requirements
 build_server_command "$@"
 print_mcp_runtime_mode
+print_a2a_runtime_mode
 
-if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
+if [[ ( "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ) || ( "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" = "true" ) ]]; then
     trap cleanup EXIT INT TERM
-    start_managed_rust_mcp_runtime
+    if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
+        start_managed_rust_mcp_runtime
+    fi
+    if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" = "true" ]]; then
+        start_managed_rust_a2a_runtime
+    fi
     "${SERVER_CMD[@]}" &
     SERVER_PID=$!
 
+    WAIT_PIDS=("${SERVER_PID}")
+    if [[ -n "${RUST_MCP_PID}" ]]; then
+        WAIT_PIDS+=("${RUST_MCP_PID}")
+    fi
+    if [[ -n "${RUST_A2A_PID}" ]]; then
+        WAIT_PIDS+=("${RUST_A2A_PID}")
+    fi
+
     set +e
-    wait -n "${SERVER_PID}" "${RUST_MCP_PID}"
+    wait -n "${WAIT_PIDS[@]}"
     STATUS=$?
     set -e
 

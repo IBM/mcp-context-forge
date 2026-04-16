@@ -139,7 +139,8 @@ exclude CLAUDE.*
 exclude llms-full.txt
 exclude AGENTS.md
 
-# Exclude deployment, mcp-servers, agent_runtimes and llms
+# Exclude deployment, mcp-servers, agent_runtimes, ansible and llms
+prune ansible
 prune deployment
 prune mcp-servers
 prune a2a-agents

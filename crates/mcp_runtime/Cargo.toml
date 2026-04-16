@@ -14,9 +14,9 @@ rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
 
 [dependencies]
 async-stream = "0.3.6"
-axum = "0.8.8"
+axum.workspace = true
 base64.workspace = true
-bytes = "1.11.1"
+bytes.workspace = true
 clap.workspace = true
 deadpool-postgres = "0.14.1"
 futures-util.workspace = true
@@ -25,7 +25,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
 opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
 rand.workspace = true
 regex.workspace = true
-redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
+redis.workspace = true
 reqwest.workspace = true
 reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"], optional = true }
 rmcp = { workspace = true, optional = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
@@ -42,7 +42,7 @@ tonic = { version = "0.14.1", default-features = false }
 tracing.workspace = true
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber.workspace = true
-url = "2.5.7"
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
