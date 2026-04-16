@@ -6,13 +6,6 @@ on:
     pull_request:
         branches: [main]
         types: [opened, synchronize, reopened]
-        paths:
-            - "crates/wrapper/**"
-            - "mcp-servers/go/fast-time-server/**"
-            - "Cargo.toml"
-            - "Cargo.lock"
-            - "rust-toolchain.toml"
-            - ".github/workflows/wrapper.yml"
     workflow_dispatch:
 
 permissions:
