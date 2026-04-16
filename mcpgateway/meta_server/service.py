@@ -264,6 +264,24 @@ class MetaServerService:
 
         return {_to_snake(k): v for k, v in arguments.items()}
 
+    @staticmethod
+    def _extract_user_context(kwargs: Dict[str, Any]) -> tuple:
+        """Extract access-control parameters from handler kwargs.
+
+        ``handle_meta_tool_call`` passes ``user_email``, ``token_teams``,
+        and ``request_headers`` through to every handler.  This helper
+        provides a single extraction point so handlers don't repeat the
+        pattern.
+
+        Returns:
+            Tuple of (user_email, token_teams, request_headers).
+        """
+        return (
+            kwargs.get("user_email"),
+            kwargs.get("token_teams"),
+            kwargs.get("request_headers"),
+        )
+
     # ------------------------------------------------------------------
     # Implemented handlers
     # ------------------------------------------------------------------
@@ -297,6 +315,9 @@ class MetaServerService:
         tags = arguments.get("tags", [])
         include_metrics = arguments.get("include_metrics", False)
 
+        # -- Extract user context for access control --
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
+
         # -- Step 1: Semantic search --
         semantic_results = []
         try:
@@ -309,39 +330,44 @@ class MetaServerService:
         # -- Step 2: Keyword fallback search --
         keyword_results = []
         try:
+            from mcpgateway.services.tool_service import ToolService as _KwToolService  # pylint: disable=import-outside-toplevel
+            _kw_ts = _KwToolService()
+
             db_gen = get_db()
             db = next(db_gen)
             try:
-                search_pattern = f"%{query}%"
-                keyword_tools = (
-                    db.query(Tool)
-                    .filter(
-                        Tool.enabled.is_(True),
-                        or_(
-                            Tool._computed_name.ilike(search_pattern),
-                            Tool.description.ilike(search_pattern),
-                        ),
-                    )
-                    .limit(limit)
-                    .all()
+                # Use ToolService.list_tools for consistent access control
+                kw_result = await _kw_ts.list_tools(
+                    db=db,
+                    include_inactive=False,
+                    limit=limit,
+                    user_email=user_email,
+                    token_teams=token_teams,
                 )
+                kw_tools_list, _ = kw_result if isinstance(kw_result, tuple) else (kw_result, None)
 
                 query_lower = query.lower()
-                for tool in keyword_tools:
+                search_pattern = query_lower
+                for tool in kw_tools_list:
+                    tool_name = getattr(tool, "name", "")
+                    tool_desc = getattr(tool, "description", "") or ""
+                    # Filter to only matching tools
+                    if search_pattern not in tool_name.lower() and search_pattern not in tool_desc.lower():
+                        continue
                     # Score 1.0 for exact name match, 0.5 for partial match
-                    if tool._computed_name.lower() == query_lower:
+                    if tool_name.lower() == query_lower:
                         score = 1.0
-                    elif query_lower in tool.name.lower():
+                    elif query_lower in tool_name.lower():
                         score = 0.7
                     else:
                         score = 0.5
 
                     keyword_results.append(
                         ToolSearchResult(
-                            tool_name=tool.name,
-                            description=tool.description,
-                            server_id=tool.gateway_id,
-                            server_name=tool.gateway.name if tool.gateway else None,
+                            tool_name=tool_name,
+                            description=tool_desc,
+                            server_id=getattr(tool, "gateway_id", None),
+                            server_name=None,
                             similarity_score=score,
                         )
                     )
@@ -413,6 +439,9 @@ class MetaServerService:
         # -- Parse request params --
         tool_name = arguments.get("tool_name", "")
         limit = arguments.get("limit", 10)
+
+        # -- Extract user context for access control --
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
 
         if not tool_name:
             return GetSimilarToolsResponse(
@@ -500,6 +529,34 @@ class MetaServerService:
 
         # -- Step 4: Filter out the reference tool itself --
         similar_results = [r for r in similar_results if r.tool_name != tool_name][:limit]
+
+        # -- Step 4.5: Apply access-control filtering --
+        # Build set of tool names the user can access, then discard the rest.
+        if user_email is not None or token_teams is not None:
+            try:
+                from mcpgateway.services.tool_service import ToolService as _AcToolService  # pylint: disable=import-outside-toplevel
+
+                _ac_ts = _AcToolService()
+                db_gen = get_db()
+                db = next(db_gen)
+                try:
+                    ac_result = await _ac_ts.list_tools(
+                        db=db,
+                        include_inactive=False,
+                        limit=0,
+                        user_email=user_email,
+                        token_teams=token_teams,
+                    )
+                    ac_tools_list, _ = ac_result if isinstance(ac_result, tuple) else (ac_result, None)
+                    accessible_names = {getattr(t, "name", "") for t in ac_tools_list}
+                    similar_results = [r for r in similar_results if r.tool_name in accessible_names]
+                finally:
+                    try:
+                        next(db_gen)
+                    except StopIteration:
+                        pass
+            except Exception as e:
+                logger.warning(f"Access control filtering failed for similar tools: {e}")
 
         # -- Step 5: Apply scope filtering --
         filtered_results = self._apply_scope_filtering(similar_results, arguments.get("scope"))
@@ -738,6 +795,9 @@ class MetaServerService:
         sort_order = arguments.get("sort_order", "desc")
         include_schema = arguments.get("include_schema", False)
 
+        # -- Extract user context for access control --
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
+
         # -- Step 1: Query tools from database using ToolService --
         # First-Party
         from mcpgateway.services.tool_service import ToolService
@@ -759,6 +819,8 @@ class MetaServerService:
                     tags=tags if tags else None,
                     gateway_id=server_id,
                     limit=query_limit,
+                    user_email=user_email,
+                    token_teams=token_teams,
                 )
 
                 # Extract tools from result (could be tuple or dict)
@@ -838,6 +900,8 @@ class MetaServerService:
         # First-Party
         from mcpgateway.services.meta_tool_service import MetaToolService
 
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
+
         try:
             db_gen = get_db()
             db = next(db_gen)
@@ -847,6 +911,8 @@ class MetaServerService:
                     tool_name=arguments.get("tool_name", ""),
                     include_metrics=arguments.get("include_metrics", False),
                     scope=arguments.get("scope"),
+                    user_email=user_email,
+                    token_teams=token_teams,
                 )
                 return result.model_dump(by_alias=True)
             finally:
@@ -1278,17 +1344,25 @@ class MetaServerService:
             ListResourcesResponse as dict.
         """
         from mcpgateway.db import Resource  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_service import ResourceService as _RsService  # pylint: disable=import-outside-toplevel
 
         limit = arguments.get("limit", 50)
         offset = arguments.get("offset", 0)
         tags = arguments.get("tags", [])
         mime_type = arguments.get("mime_type")
 
+        # Extract user context for access control
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
+
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
                 query = db.query(Resource).filter(Resource.enabled.is_(True))
+
+                # Apply access control
+                _rs = _RsService()
+                query = await _rs._apply_access_control(query, db, user_email, token_teams)
 
                 if mime_type:
                     query = query.filter(Resource.mime_type == mime_type)
@@ -1347,6 +1421,7 @@ class MetaServerService:
         """
         from mcpgateway.db import Resource  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.observability_service import ObservabilityService, current_trace_id  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_service import ResourceService as _RsService  # pylint: disable=import-outside-toplevel
 
         uri = arguments.get("uri", "")
         if not uri:
@@ -1355,6 +1430,9 @@ class MetaServerService:
                 name="",
                 text="Error: uri is required",
             ).model_dump(by_alias=True)
+
+        # Extract user context for access control
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
 
         start_time = time.monotonic()
         success = False
@@ -1393,6 +1471,16 @@ class MetaServerService:
                 )
 
                 if resource is None:
+                    error_message = f"Resource not found: {uri}"
+                    return ReadResourceResponse(
+                        uri=uri,
+                        name="",
+                        text=error_message,
+                    ).model_dump(by_alias=True)
+
+                # Check access control
+                _rs = _RsService()
+                if not await _rs._check_resource_access(db, resource, user_email, token_teams):
                     error_message = f"Resource not found: {uri}"
                     return ReadResourceResponse(
                         uri=uri,
@@ -1457,16 +1545,25 @@ class MetaServerService:
             ListPromptsResponse as dict.
         """
         from mcpgateway.db import Prompt  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.prompt_service import PromptService as _PsService  # pylint: disable=import-outside-toplevel
 
         limit = arguments.get("limit", 50)
         offset = arguments.get("offset", 0)
         tags = arguments.get("tags", [])
+
+        # Extract user context for access control
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
 
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
                 query = db.query(Prompt).filter(Prompt.enabled.is_(True))
+
+                # Apply access control
+                _ps = _PsService()
+                query = await _ps._apply_access_control(query, db, user_email, token_teams)
+
                 all_prompts = query.order_by(Prompt.created_at.desc()).all()
 
                 # Apply tag filtering in Python (tags stored as JSON)
@@ -1519,6 +1616,7 @@ class MetaServerService:
         """
         from mcpgateway.db import Prompt  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.observability_service import ObservabilityService, current_trace_id  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.prompt_service import PromptService as _PsService  # pylint: disable=import-outside-toplevel
 
         name = arguments.get("name", "")
         prompt_args = arguments.get("arguments", {})
@@ -1529,6 +1627,9 @@ class MetaServerService:
                 template="",
                 description="Error: name is required",
             ).model_dump(by_alias=True)
+
+        # Extract user context for access control
+        user_email, token_teams, _ = self._extract_user_context(kwargs)
 
         start_time = time.monotonic()
         success = False
@@ -1568,6 +1669,16 @@ class MetaServerService:
                 )
 
                 if prompt is None:
+                    error_message = f"Prompt not found: {name}"
+                    return GetPromptResponse(
+                        name=name,
+                        template="",
+                        description=error_message,
+                    ).model_dump(by_alias=True)
+
+                # Check access control
+                _ps = _PsService()
+                if not await _ps._check_prompt_access(db, prompt, user_email, token_teams):
                     error_message = f"Prompt not found: {name}"
                     return GetPromptResponse(
                         name=name,
