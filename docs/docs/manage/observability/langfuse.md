@@ -396,7 +396,8 @@ If the gateway exits during startup with a Langfuse credential error:
 
 ## Next Steps
 
-- [OpenTelemetry Overview](observability.md) - All supported backends
+- [OpenTelemetry Overview](opentelemetry.md) - All supported backends
 - [Phoenix Integration](phoenix.md) - Alternative AI observability backend
-- [Internal Observability](internal-observability.md) - Built-in database-backed observability
+- [Internal Observability](internal.md) - Built-in database-backed observability
+- [Prometheus Metrics](prometheus.md) - Time-series monitoring
 - [Langfuse Documentation](https://langfuse.com/docs) - Full Langfuse documentation
