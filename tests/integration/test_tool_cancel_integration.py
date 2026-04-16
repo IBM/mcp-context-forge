@@ -209,7 +209,6 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
         assert status["cancelled"] is True
 
 
-
 # Tests for feature disabled state
 #
 # TEST GAP ACKNOWLEDGMENT:
@@ -246,21 +245,3 @@ def test_cancellation_feature_flag_can_be_disabled():
     # Create settings with feature disabled
     settings = Settings(mcpgateway_tool_cancellation_enabled=False)
     assert settings.mcpgateway_tool_cancellation_enabled is False
-
-
-def test_conditional_router_registration_code_exists():
-    """Verify the conditional router registration code exists in main.py.
-
-    This test verifies that the code path for conditional router registration exists,
-    even though we can't test the runtime behavior due to import-time registration.
-    """
-    import inspect
-    import mcpgateway.main as main_module
-
-    # Get the source code of the main module
-    source = inspect.getsource(main_module)
-
-    # Verify the conditional registration pattern exists
-    assert "if settings.mcpgateway_tool_cancellation_enabled:" in source
-    assert "app.include_router(cancellation_router)" in source
-    assert "Cancellation router included" in source

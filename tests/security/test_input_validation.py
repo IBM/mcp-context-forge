@@ -29,6 +29,8 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import patch
 
 # Third-Party
@@ -2169,8 +2171,8 @@ class TestSensitiveLoggingRegressions:
         expr = ast.parse("credentials.credentials").body[0].value
         assert self._contains_sensitive_identifier(expr) is True
 
-    def test_runtime_logger_scan_reports_sensitive_interpolation(self, tmp_path, monkeypatch):
-        """Scanner should fail when a runtime logger call interpolates token data."""
+    def test_runtime_logger_scan_reports_sensitive_interpolation(self, tmp_path):
+        """Scanner script should fail when a runtime logger call interpolates token data."""
         bad_file = tmp_path / "bad_runtime_log.py"
         bad_file.write_text(
             "import logging\n"
@@ -2180,53 +2182,10 @@ class TestSensitiveLoggingRegressions:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(Path, "rglob", lambda _self, _pattern: [bad_file])
-
-        with pytest.raises(AssertionError, match="Potential sensitive value logging detected"):
-            self.test_runtime_logger_calls_do_not_embed_sensitive_values()
-
-    def test_runtime_logger_calls_do_not_embed_sensitive_values(self):
-        """Scan runtime logger calls to ensure sensitive values are not interpolated."""
-        source_root = Path(__file__).resolve().parents[2] / "mcpgateway"
-        violations = []
-        sensitive_needles = tuple(self.SENSITIVE_IDENTIFIERS) + ("credentials",)
-
-        for file_path in source_root.rglob("*.py"):
-            source = file_path.read_text(encoding="utf-8")
-            if "logger." not in source:
-                continue
-            # Cheap text pre-filter: only parse files that could plausibly
-            # log a sensitive identifier. Avoids ~100 AST parses per run.
-            if not any(needle in source for needle in sensitive_needles):
-                continue
-            tree = ast.parse(source, filename=str(file_path))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                if not isinstance(node.func, ast.Attribute):
-                    continue
-                if node.func.attr not in {"debug", "info", "warning", "error", "exception", "critical"}:
-                    continue
-                if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
-                    continue
-
-                expressions_to_check = []
-
-                if node.args:
-                    message_expr = node.args[0]
-                    if isinstance(message_expr, ast.JoinedStr):
-                        for value in message_expr.values:
-                            if isinstance(value, ast.FormattedValue):
-                                expressions_to_check.append(value.value)
-                    # %-style / positional log args
-                    expressions_to_check.extend(node.args[1:])
-
-                for expr in expressions_to_check:
-                    if self._contains_sensitive_identifier(expr):
-                        violations.append(f"{file_path}:{node.lineno}")
-                        break
-
-        assert not violations, "Potential sensitive value logging detected:\n" + "\n".join(sorted(violations))
+        script = Path(__file__).resolve().parents[2] / "scripts" / "pre-commit" / "check_sensitive_logging.py"
+        result = subprocess.run([sys.executable, str(script), str(bad_file)], capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "Sensitive variable interpolation" in result.stderr
 
 
 if __name__ == "__main__":
