@@ -102,6 +102,8 @@ def test_common_dependencies_are_inherited_from_workspace() -> None:
                     continue
                 if dep_value == {"workspace": True}:
                     continue
+                if isinstance(dep_value, dict) and dep_value.get("workspace") is True:
+                    continue
                 offenders.append(f"{rel}::{section_name}.{dep_name}")
 
     assert offenders == [], f"Common Rust dependencies should be inherited from workspace: {offenders}"
