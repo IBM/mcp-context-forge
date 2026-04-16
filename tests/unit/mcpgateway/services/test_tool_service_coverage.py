@@ -7236,13 +7236,13 @@ class TestInvokeToolGatewayQueryParams:
 
 class TestInvokeToolA2AErrorHandling:
     """Regression guards for Trap 1: A2A 200-OK branch must detect JSONRPC error envelopes.
-    
+
     Before the fix, the A2A branch unconditionally set is_error=False and success=True
     for all 200-OK responses, regardless of whether the body contained a JSONRPC error
     envelope or application-level error indicator. This caused metrics to record
     success=True for responses the caller sees as errors, inflating tool success rates
     and masking real failures in observability.
-    
+
     The fix routes A2A responses through _coerce_to_tool_result and computes
     success = not tool_result.is_error, symmetric with the REST and direct-proxy paths.
     """
@@ -7250,11 +7250,11 @@ class TestInvokeToolA2AErrorHandling:
     @pytest.mark.asyncio
     async def test_a2a_jsonrpc_error_envelope_records_success_false_in_metrics(self, tool_service):
         """A2A agent returning JSONRPC error envelope in 200-OK must record success=False.
-        
+
         Regression guard for Trap 1. Before the fix, the A2A 200-OK branch set
         is_error=False and success=True unconditionally, causing every JSONRPC error
         to be recorded as a successful invocation in metrics.
-        
+
         The fix detects {"error": {...}} envelopes and routes through _coerce_to_tool_result
         to ensure is_error=True and success=False are recorded correctly.
         """
@@ -7323,7 +7323,7 @@ class TestInvokeToolA2AErrorHandling:
     @pytest.mark.asyncio
     async def test_a2a_application_level_is_error_true_records_success_false(self, tool_service):
         """A2A agent returning application-level isError=true must record success=False.
-        
+
         Regression guard for Trap 1. Some A2A agents use application-level error
         indicators like {"isError": true} or {"is_error": true} instead of JSONRPC
         error envelopes. The fix detects both patterns.
@@ -7385,7 +7385,7 @@ class TestInvokeToolA2AErrorHandling:
     @pytest.mark.asyncio
     async def test_a2a_non_200_response_explicitly_sets_success_false(self, tool_service):
         """A2A agent returning non-200 HTTP status must explicitly set success=False.
-        
+
         Regression guard for Trap 1. Before the fix, the non-200 branch created
         is_error=True but never explicitly set success=False, relying on scope
         fall-through. The fix adds explicit success=False assignment.
@@ -7664,15 +7664,15 @@ class TestInvokeToolPluginPostInvokeSerialization:
 
 class TestInvokeToolPluginPostInvokeErrorState:
     """Regression guards for Trap 2: Plugin TOOL_POST_INVOKE must preserve is_error state.
-    
+
     Before the fix, the plugin post-invoke reconstruction dropped is_error entirely
     (Pydantic defaults it to False), and the success flag computed before plugin
     invocation was never re-synced with the plugin-modified state. This caused:
-    
+
     1. Validation plugins that flip success→error to have their intent erased
     2. Recovery plugins that flip error→success to still record success=False
     3. Metrics divergence between user-visible payload and recorded success flag
-    
+
     The fix preserves is_error during reconstruction and re-syncs success after
     the plugin runs, symmetric with the A2A and REST fixes.
     """
@@ -7680,7 +7680,7 @@ class TestInvokeToolPluginPostInvokeErrorState:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_flips_error_to_success_records_success_true(self, tool_service):
         """Plugin flipping is_error True→False must record success=True in metrics.
-        
+
         Regression guard for Trap 2. A recovery plugin that transforms an upstream
         error into a successful fallback response should have success=True recorded
         in metrics, not success=False from the pre-plugin state.
@@ -7699,12 +7699,12 @@ class TestInvokeToolPluginPostInvokeErrorState:
 
         # Plugin post-invoke flips error to success (recovery plugin pattern)
         plugin_manager = MagicMock()
-        
+
         def _has_hooks_for(hook_type):
             # First-Party
             from mcpgateway.plugins.framework import ToolHookType
             return hook_type == ToolHookType.TOOL_POST_INVOKE
-        
+
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(
             result={
@@ -7756,7 +7756,7 @@ class TestInvokeToolPluginPostInvokeErrorState:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_flips_success_to_error_records_success_false(self, tool_service):
         """Plugin flipping is_error False→True must record success=False in metrics.
-        
+
         Regression guard for Trap 2. A validation plugin that detects an uncaught
         bad response and transforms it into an error should have success=False
         recorded in metrics, not success=True from the pre-plugin state.
@@ -7775,12 +7775,12 @@ class TestInvokeToolPluginPostInvokeErrorState:
 
         # Plugin post-invoke detects invalid response and flips to error (validation plugin pattern)
         plugin_manager = MagicMock()
-        
+
         def _has_hooks_for(hook_type):
             # First-Party
             from mcpgateway.plugins.framework import ToolHookType
             return hook_type == ToolHookType.TOOL_POST_INVOKE
-        
+
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(
             result={
