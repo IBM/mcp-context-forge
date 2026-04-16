@@ -66,7 +66,6 @@ export const viewServer = async function (serverId) {
         const serverDesc = document.createElement("p");
         serverDesc.className = "text-sm text-gray-600 dark:text-gray-400 mt-1";
         serverDesc.textContent = decodeHtml(server.description);
-        serverDesc.textContent = server.description;
         headerTextDiv.appendChild(serverDesc);
       }
 
