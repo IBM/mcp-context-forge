@@ -604,6 +604,7 @@ repos:
         name: 🔐 IBM Detect Secrets
         description: Detects secrets within a repository using IBM's detect-secrets.
         args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
+        pass_filenames: false
         types: [text]
         # Keep in sync with DETECT_SECRETS_FILES_EXCLUDE in Makefile.
         # (.secrets.baseline is auto-excluded by detect-secrets itself.)
