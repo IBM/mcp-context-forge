@@ -1,0 +1,303 @@
+name: Wrapper E2E
+
+on:
+    push:
+        branches: [main]
+        paths:
+            - "crates/wrapper/**"
+            - "mcp-servers/go/fast-time-server/**"
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
+            - ".github/workflows/wrapper.yml"
+    pull_request:
+        branches: [main]
+        types: [opened, synchronize, reopened]
+        paths:
+            - "crates/wrapper/**"
+            - "mcp-servers/go/fast-time-server/**"
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
+            - ".github/workflows/wrapper.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    wrapper-e2e:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: Wrapper E2E
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        steps:
+            - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+              with:
+                persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+              with:
+                  enable-cache: true
+
+            - name: Cache uv virtual environment
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: .venv
+                  key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
+                  restore-keys: |
+                      venv-${{ runner.os }}-python-3.12-
+                      venv-${{ runner.os }}-
+
+            - name: Generate JWT secret
+              run: |
+                  SECRET=$(openssl rand -base64 32)
+                  echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
+
+            - name: Start gateway
+              env:
+                  GUNICORN_WORKERS: 1
+                  MCPGATEWAY_UI_ENABLED: true
+                  MCPGATEWAY_ADMIN_API_ENABLED: true
+                  # Disabled: localhost-only test, no external requests
+                  SSRF_PROTECTION_ENABLED: false
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
+                  PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+              run: |
+                  make venv
+                  make install
+                  make stop-serve
+                  make serve &
+
+                  echo "Waiting for gateway to start..."
+                  for i in {1..60}; do
+                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
+                      echo "Gateway is up!"
+                      break
+                    fi
+                    echo "Waiting for port 4444 to open... (attempt $i)"
+                    sleep 1
+                  done
+
+                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    echo "ERROR: gateway failed to start"
+                    exit 1
+                  fi
+
+            - name: Generate JWT token
+              id: generate_jwt
+              env:
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+              run: |
+                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+                  echo "::add-mask::$TOKEN"
+                  echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
+                  echo "JWT token generated successfully"
+
+            - name: Verify gateway is responding
+              run: |
+                  curl -sf -X GET http://localhost:4444/version \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -H "Content-Type: application/json"
+
+            - name: Setup Go
+              uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+              with:
+                  go-version: "1.23"
+                  cache-dependency-path: mcp-servers/go/fast-time-server/go.sum
+                  cache: true
+
+            - name: Build fast-time-server
+              working-directory: mcp-servers/go/fast-time-server
+              run: |
+                  go build -o fast-time-server .
+                  chmod +x fast-time-server
+
+            - name: Start fast_test_server
+              run: |
+                  pkill -9 -f "fast-test-server" 2>/dev/null || true
+                  pkill -9 -f "fast_time_server" 2>/dev/null || true
+                  sleep 1
+
+                  # Start the Rust fast_test_server binary (pre-built)
+                  nohup mcp-servers/rust/fast-test-server/target/release/fast_test_server \
+                    > fast_test_server.log 2>&1 &
+                  echo $! > fast_test_server.pid
+
+                  echo "Waiting for fast_test_server..."
+                  for i in {1..30}; do
+                    if curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                      echo "fast_test_server is up!"
+                      break
+                    fi
+                    echo "Waiting for fast_test_server... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                    echo "ERROR: fast_test_server failed to start"
+                    cat fast_test_server.log
+                    exit 1
+                  fi
+                  echo "fast_test_server PID: $(cat fast_test_server.pid)"
+
+            - name: Register gateway and create virtual server
+              env:
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+              run: |
+                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
+
+                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                    echo "ERROR: fast_test_server is not running"
+                    exit 1
+                  fi
+
+                  # Register gateway and create virtual server using Python
+                  python3 -c "
+                  import urllib.error
+                  import urllib.request
+                  import json
+                  import os
+                  import time
+
+                  token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '${TOKEN}')
+                  gateway_url = 'http://localhost:4444'
+
+                  def api_request(method, path, data=None):
+                      url = f'{gateway_url}{path}'
+                      req = urllib.request.Request(url, method=method)
+                      req.add_header('Authorization', f'Bearer {token}')
+                      req.add_header('Content-Type', 'application/json')
+                      if data:
+                          req.data = json.dumps(data).encode('utf-8')
+                      with urllib.request.urlopen(req) as response:
+                          return json.loads(response.read().decode('utf-8'))
+
+                  def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
+                      for attempt in range(1, retries + 1):
+                          try:
+                              return api_request(method, path, data)
+                          except urllib.error.HTTPError as exc:
+                              if exc.code in retry_statuses and attempt < retries:
+                                  print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
+                                  time.sleep(delay)
+                                  continue
+                              raise
+                          except Exception:
+                              if attempt < retries:
+                                  print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
+                                  time.sleep(delay)
+                                  continue
+                              raise
+
+                  VIRTUAL_SERVER_ID = 'b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8'
+
+                  # Delete existing gateway if present
+                  try:
+                      gateways = api_request_with_retry('GET', '/gateways')
+                      for gw in gateways:
+                          if gw.get('name') == 'fast_test':
+                              print(f'Deleting existing gateway {gw[\"id\"]}...')
+                              api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
+                  except Exception as e:
+                      print(f'Note: {e}')
+
+                  # Delete existing virtual server if present
+                  try:
+                      api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+                      print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
+                  except Exception as e:
+                      print(f'Note: No existing virtual server to delete (or error: {e})')
+
+                  # Register the gateway
+                  print('Registering fast_test gateway...')
+                  result = api_request_with_retry('POST', '/gateways', {
+                      'name': 'fast_test',
+                      'url': 'http://localhost:8880/mcp',
+                      'transport': 'STREAMABLEHTTP'
+                  })
+                  gateway_id = result.get('id', '')
+                  print(f'✅ Registered fast_test_server (gateway_id: {gateway_id})')
+
+                  # Wait for tools to sync
+                  print('Waiting for tools to sync...')
+                  for i in range(30):
+                      time.sleep(1)
+                      try:
+                          tools = api_request_with_retry('GET', '/tools')
+                          fast_test_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
+                          if fast_test_tools:
+                              print(f'Found {len(fast_test_tools)} tools from fast_test gateway')
+                              break
+                      except Exception:
+                          pass
+                      print(f'Waiting for sync... ({i+1}/30)')
+
+                  # Collect tool IDs
+                  tool_ids = []
+                  try:
+                      tools = api_request_with_retry('GET', '/tools')
+                      tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
+                      print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
+                  except Exception as e:
+                      print(f'Failed to fetch tools: {e}')
+
+                  if not tool_ids:
+                      print('❌ No tools synced from gateway')
+                      exit(1)
+
+                  # Create virtual server
+                  print('Creating virtual server...')
+                  server_payload = {
+                      'server': {
+                          'id': VIRTUAL_SERVER_ID,
+                          'name': 'Fast Test Server',
+                          'description': 'Virtual server exposing Fast Test MCP tools (echo, time, stats)',
+                          'associated_tools': tool_ids,
+                          'associated_resources': [],
+                          'associated_prompts': []
+                      }
+                  }
+                  result = api_request_with_retry('POST', '/servers', server_payload)
+                  print(f'✅ Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
+                  "
+
+            - name: Run SQL injection test with mcp-inspector
+              env:
+                  TOKEN: ${{ steps.generate_jwt.outputs.token }}
+              run: |
+                  TOOL_URL="http://localhost:4444/servers/b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8/mcp"
+
+                  # mcp-inspector
+                  npx @modelcontextprotocol/inspector \
+                     --cli "$TOOL_URL" \
+                     --method tools/call \
+                     --tool-name fast-test-echo \
+                     --tool-arg "message='DROP table asdf'" \
+                     --header "Authorization: Bearer $TOKEN"
+
+            - name: Upload logs on failure
+              if: failure()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: wrapper-test-logs
+                  path: |
+                      fast_test_server.log
+                      wrapper_output.json
+                      wrapper_test.log
+                  retention-days: 7
