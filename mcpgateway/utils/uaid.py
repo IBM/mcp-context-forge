@@ -92,8 +92,9 @@ def parse_uaid(uaid: str) -> UaidComponents:
     if not is_uaid(uaid):
         raise ValueError(f"Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:', got: {uaid}")
 
-    # Split on first two colons to get method and rest
-    parts = uaid.split(":", 3)
+    # Split only on the first two colons to get prefix and remainder
+    # Do NOT split on all colons as that would break port numbers in nativeId (e.g., gateway.example.com:8443)
+    parts = uaid.split(":", 2)  # Split on first 2 colons only: "uaid" : "aid" : "rest..."
     if len(parts) < 3:
         raise ValueError(f"Invalid UAID format: expected 'uaid:METHOD:...' format, got: {uaid}")
 

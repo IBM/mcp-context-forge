@@ -5274,7 +5274,7 @@ class TestCrossGatewayRoutingCoverage:
         # Attack: Inject protocol prefix to access local files or other protocols
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=file:///etc/passwd"
 
-        with pytest.raises(A2AAgentError, match="cannot contain protocol prefix.*SSRF protection"):
+        with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed.*cannot contain protocol prefix.*SSRF protection"):
             await service._invoke_remote_agent(
                 uaid=uaid,
                 parameters={"test": "data"},
@@ -5286,7 +5286,7 @@ class TestCrossGatewayRoutingCoverage:
         # Attack: Use @ to bypass hostname validation and route to internal IP
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=evil.com@127.0.0.1"
 
-        with pytest.raises(A2AAgentError, match="cannot contain @ character.*SSRF protection"):
+        with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed.*cannot contain @ character.*SSRF protection"):
             await service._invoke_remote_agent(
                 uaid=uaid,
                 parameters={"test": "data"},
@@ -5298,7 +5298,7 @@ class TestCrossGatewayRoutingCoverage:
         # Attack: Inject path to access internal endpoints
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com/admin"
 
-        with pytest.raises(A2AAgentError, match="cannot contain path components.*SSRF protection"):
+        with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed.*cannot contain path components.*SSRF protection"):
             await service._invoke_remote_agent(
                 uaid=uaid,
                 parameters={"test": "data"},
