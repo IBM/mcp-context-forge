@@ -19,9 +19,9 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
-    wrapper-e2e:
+    sql-sanitizer-e2e:
         if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-        name: Wrapper E2E
+        name: SQL Sanitizer E2E
         runs-on: ubuntu-latest
         timeout-minutes: 30
 
@@ -49,9 +49,71 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Generate JWT secret
+            - name: Install Rust stable
               run: |
-                  SECRET=$(openssl rand -base64 32)
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+                source $HOME/.cargo/env
+                rustc --version
+
+
+            - name: Cache Cargo
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-wrapper-${{ hashFiles('Cargo.lock', 'crates/wrapper/Cargo.toml') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-wrapper-
+
+            - name: Build fast-test-server
+              working-directory: mcp-servers/rust/fast-test-server
+              run: |
+                  cargo build --message-format=json
+
+            - name: Debug Binary Location
+              working-directory: mcp-servers/rust/fast-test-server
+              run: |
+                echo "Current directory: $(pwd)"
+                echo "Looking for executable in target/debug:"
+                # Проверяем конкретно папку debug
+                ls -lF target/debug/fast-test-server || echo "Binary not found in debug folder!"
+
+            - name: Start fast-test-server
+              working-directory: mcp-servers/rust/fast-test-server
+              run: |
+                  pkill -9 -f "fast-test-server" 2>/dev/null || true
+                  sleep 1
+
+                  # Start the Rust fast-test-server binary (pre-built)
+                  nohup ./target/debug/fast-test-server \
+                    > fast-test-server.log 2>&1 &
+                  echo $! > fast-test-server.pid
+
+                  echo "Waiting for fast-test-server..."
+                  for i in {1..30}; do
+                    if curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                      echo "fast-test-server is up!"
+                      break
+                    fi
+                    echo "Waiting for fast-test-server... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                    echo "ERROR: fast-test-server failed to start"
+                    cat fast-test-server.log
+                    exit 1
+                  fi
+                  echo "fast-test-server PID: $(cat fast-test-server.pid)"
+
+
+            - name: Generate JWT secret
+              # remove single quotes after debug  
+              run: |
+                  SECRET='$(openssl rand -base64 32)'
                   echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
 
             - name: Start gateway
@@ -101,46 +163,6 @@ jobs:
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json"
 
-            - name: Setup Go
-              uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-              with:
-                  go-version: "1.23"
-                  cache-dependency-path: mcp-servers/go/fast-time-server/go.sum
-                  cache: true
-
-            - name: Build fast-time-server
-              working-directory: mcp-servers/go/fast-time-server
-              run: |
-                  go build -o fast-time-server .
-                  chmod +x fast-time-server
-
-            - name: Start fast_test_server
-              run: |
-                  pkill -9 -f "fast-test-server" 2>/dev/null || true
-                  pkill -9 -f "fast_time_server" 2>/dev/null || true
-                  sleep 1
-
-                  # Start the Rust fast_test_server binary (pre-built)
-                  nohup mcp-servers/rust/fast-test-server/target/release/fast_test_server \
-                    > fast_test_server.log 2>&1 &
-                  echo $! > fast_test_server.pid
-
-                  echo "Waiting for fast_test_server..."
-                  for i in {1..30}; do
-                    if curl -s http://localhost:8880/health >/dev/null 2>&1; then
-                      echo "fast_test_server is up!"
-                      break
-                    fi
-                    echo "Waiting for fast_test_server... (attempt $i)"
-                    sleep 2
-                  done
-
-                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
-                    echo "ERROR: fast_test_server failed to start"
-                    cat fast_test_server.log
-                    exit 1
-                  fi
-                  echo "fast_test_server PID: $(cat fast_test_server.pid)"
 
             - name: Register gateway and create virtual server
               env:
@@ -149,7 +171,7 @@ jobs:
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
 
                   if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
-                    echo "ERROR: fast_test_server is not running"
+                    echo "ERROR: fast-test-server is not running"
                     exit 1
                   fi
 
@@ -218,7 +240,7 @@ jobs:
                       'transport': 'STREAMABLEHTTP'
                   })
                   gateway_id = result.get('id', '')
-                  print(f'✅ Registered fast_test_server (gateway_id: {gateway_id})')
+                  print(f'✅ Registered fast-test-server (gateway_id: {gateway_id})')
 
                   # Wait for tools to sync
                   print('Waiting for tools to sync...')
@@ -283,7 +305,7 @@ jobs:
               with:
                   name: wrapper-test-logs
                   path: |
-                      fast_test_server.log
+                      fast-test-server.log
                       wrapper_output.json
                       wrapper_test.log
                   retention-days: 7
