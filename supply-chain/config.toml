@@ -39,6 +39,8 @@ criteria = "safe-to-deploy"
 
 [[exemptions.aes-gcm]]
 version = "0.10.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.ar_archive_writer]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
@@ -77,6 +79,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
 version = "2.11.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.block-buffer]]
+version = "0.10.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.block-buffer]]
@@ -160,6 +166,10 @@ version = "0.1.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.digest]]
+version = "0.10.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.digest]]
 version = "0.11.2"
 criteria = "safe-to-deploy"
 
@@ -237,6 +247,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hermit-abi]]
 version = "0.3.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.hmac]]
+version = "0.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.hmac]]
@@ -329,6 +343,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.matrixmultiply]]
 version = "0.3.10"
+criteria = "safe-to-deploy"
+
+[[exemptions.md-5]]
+version = "0.10.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.md-5]]
@@ -433,6 +451,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.portable-atomic-util]]
 version = "0.2.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.postgres-protocol]]
+version = "0.6.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.ppv-lite86]]
@@ -541,6 +563,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.sha2]]
+version = "0.10.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.sha2]]
@@ -675,6 +701,9 @@ criteria = "safe-to-deploy"
 version = "2.1.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.windows-sys]]
+version = "0.59.0"
+criteria = "safe-to-deploy"
 [[exemptions.wiremock]]
 version = "0.6.5"
 criteria = "safe-to-run"
