@@ -62,7 +62,10 @@ jobs:
           - id: vulture
             cmd: 'uv tool run vulture==$VULTURE_VERSION $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
           - id: pylint
-            cmd: "uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION pylint==$PYLINT_VERSION $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
+            cmd: >-
+              uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION
+              pylint==$PYLINT_VERSION $TARGET
+              --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10 --jobs=0
           - id: interrogate
             cmd: "uv tool run interrogate==$INTERROGATE_VERSION -vv $TARGET --fail-under 100"
           - id: radon
