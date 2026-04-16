@@ -82,8 +82,8 @@ def test_get_cached_ssl_context_handles_non_string_objects_via_str() -> None:
 
 
 def test_get_cached_ssl_context_clears_cache_when_over_limit() -> None:
-    # Pre-fill cache so len(cache) > 100 is true when inserting a new entry.
-    ssl_context_cache._ssl_context_cache.update({f"key{i}": Mock() for i in range(101)})  # noqa: SLF001 - testing internal cache behavior
+    # Pre-fill cache to capacity (100 entries)
+    ssl_context_cache._ssl_context_cache.update({f"key{i}": Mock() for i in range(100)})  # noqa: SLF001 - testing internal cache behavior
 
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
@@ -101,7 +101,10 @@ def test_get_cached_ssl_context_clears_cache_when_over_limit() -> None:
     key_hash.update(b"")
     expected_hash = key_hash.hexdigest()
 
-    assert list(ssl_context_cache._ssl_context_cache.keys()) == [expected_hash]  # noqa: SLF001 - testing internal cache behavior
+    # LRU eviction: oldest entry removed, new entry added, so cache size stays at 100
+    assert len(ssl_context_cache._ssl_context_cache) == 100  # noqa: SLF001 - testing internal cache behavior
+    assert expected_hash in ssl_context_cache._ssl_context_cache  # noqa: SLF001 - testing internal cache behavior
+    assert "key0" not in ssl_context_cache._ssl_context_cache  # noqa: SLF001 - oldest entry evicted
 
 
 def test_clear_ssl_context_cache_forces_recreate() -> None:
@@ -337,12 +340,12 @@ def test_expired_entry_gets_refreshed(monkeypatch):
 
 
 def test_cache_eviction_preserves_current_entry_timestamp(monkeypatch):
-    """Test that cache eviction preserves the timestamp of the newly added entry."""
+    """Test that LRU cache eviction preserves the timestamp of the newly added entry."""
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 3600)
 
-    # Pre-fill cache to trigger eviction
-    ssl_context_cache._ssl_context_cache.update({f"key{i}": Mock() for i in range(101)})
-    ssl_context_cache._ssl_context_cache_timestamps.update({f"key{i}": datetime.now() for i in range(101)})
+    # Pre-fill cache to capacity (100 entries)
+    ssl_context_cache._ssl_context_cache.update({f"key{i}": Mock() for i in range(100)})
+    ssl_context_cache._ssl_context_cache_timestamps.update({f"key{i}": datetime.now() for i in range(100)})
 
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
@@ -352,14 +355,25 @@ def test_cache_eviction_preserves_current_entry_timestamp(monkeypatch):
         _ = ssl_context_cache.get_cached_ssl_context("NEWCERT")
         after_time = datetime.now()
 
-        # Verify only one entry remains
-        assert len(ssl_context_cache._ssl_context_cache) == 1
-        assert len(ssl_context_cache._ssl_context_cache_timestamps) == 1
+        # LRU eviction: oldest entry removed, new entry added, cache size stays at 100
+        assert len(ssl_context_cache._ssl_context_cache) == 100
+        assert len(ssl_context_cache._ssl_context_cache_timestamps) == 100
 
-        # Verify timestamp was preserved
-        cache_key = list(ssl_context_cache._ssl_context_cache.keys())[0]
+        # Verify new entry has correct timestamp
+        key_hash = hashlib.sha256()
+        key_hash.update(b"ca_cert:")
+        key_hash.update(b"NEWCERT")
+        key_hash.update(b"|client_cert:")
+        key_hash.update(b"")
+        key_hash.update(b"|client_key:")
+        key_hash.update(b"")
+        cache_key = key_hash.hexdigest()
+        
         timestamp = ssl_context_cache._ssl_context_cache_timestamps[cache_key]
         assert before_time <= timestamp <= after_time
+        
+        # Verify oldest entry was evicted
+        assert "key0" not in ssl_context_cache._ssl_context_cache
 
 
 def test_is_expired_returns_false_when_no_timestamp(monkeypatch):

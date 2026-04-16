@@ -14,7 +14,7 @@ Tests will FAIL until implementation is complete.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import httpx
@@ -967,6 +967,9 @@ class TestOAuthManagerRefreshToken:
         manager = OAuthManager(max_retries=1)
         credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
         response = _make_response(status_code=400, text="bad")
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            "Bad Request", request=Mock(), response=response
+        ))
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
@@ -980,18 +983,21 @@ class TestOAuthManagerRefreshToken:
         credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "resource": ["https://api1", "https://api2"]}
 
         response = _make_response(status_code=500, text="oops")
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            "Internal Server Error", request=Mock(), response=response
+        ))
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
 
-        with pytest.raises(OAuthError, match="Failed to refresh token"):
+        with pytest.raises(OAuthError, match="Failed to refresh token after .* attempts"):
             await manager.refresh_token("refresh", credentials)
 
         call_data = client.post.call_args[1]["data"]
         assert isinstance(call_data, list)
 
         client.post = AsyncMock(side_effect=httpx.HTTPError("boom"))
-        with pytest.raises(OAuthError, match="Failed to refresh token"):
+        with pytest.raises(OAuthError, match="Failed to refresh token after .* attempts"):
             await manager.refresh_token("refresh", credentials)
 
 
@@ -2126,11 +2132,14 @@ class TestRefreshTokenEdgeCases:
         credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
 
         response = _make_response(status_code=500, text="server error")
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            "Internal Server Error", request=Mock(), response=response
+        ))
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
 
-        with pytest.raises(OAuthError, match="Failed to refresh token after all retry attempts"):
+        with pytest.raises(OAuthError, match="Failed to refresh token after .* attempts"):
             await manager.refresh_token("refresh", credentials)
 
     @pytest.mark.asyncio
