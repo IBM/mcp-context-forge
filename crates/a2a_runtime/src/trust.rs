@@ -223,6 +223,8 @@ pub(crate) fn reqwest_headers(map: &HashMap<String, String>) -> reqwest::header:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn compute_trust_header_matches_python_format() {
@@ -257,6 +259,66 @@ mod tests {
     #[test]
     fn decode_auth_context_rejects_invalid_base64() {
         assert!(decode_auth_context("not-valid-base64!!!").is_err());
+    }
+
+    #[test]
+    fn decode_auth_context_rejects_non_json_payload() {
+        let encoded = URL_SAFE_NO_PAD.encode(br#"not-json"#);
+        let err = decode_auth_context(&encoded).expect_err("should reject");
+        assert!(err.to_string().contains("JSON parse"));
+    }
+
+    #[tokio::test]
+    async fn authenticate_rejects_malformed_json_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/authenticate"))
+            .and(header(RUNTIME_HEADER, "rust"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let request = AuthenticateRequest {
+            method: "POST".to_string(),
+            path: "/a2a/agent/invoke".to_string(),
+            query_string: String::new(),
+            headers: HashMap::new(),
+            client_ip: Some("127.0.0.1".to_string()),
+        };
+
+        let err = authenticate(&Client::new(), &server.uri(), "secret", &request)
+            .await
+            .expect_err("should reject");
+        assert!(err.to_string().contains("invalid JSON response"));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_unexpected_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/invoke/authz"))
+            .and(header(RUNTIME_HEADER, "rust"))
+            .respond_with(ResponseTemplate::new(418).set_body_string("teapot"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let err = authorize(
+            &Client::new(),
+            &server.uri(),
+            "secret",
+            &serde_json::json!({"sub": "user@example.com"}),
+            "invoke",
+        )
+        .await
+        .expect_err("should reject");
+        assert!(
+            err.to_string()
+                .contains("unexpected authz response HTTP 418")
+        );
+        server.verify().await;
     }
 
     #[test]

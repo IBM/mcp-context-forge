@@ -20,7 +20,7 @@ repository = "https://github.com/IBM/mcp-context-forge"
 
 [workspace.dependencies]
 anyhow = "1.0"
-axum = "0.8.8"
+axum = "0.8.9"
 base64 = "0.22.1"
 bytes = "1.11.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
@@ -34,11 +34,10 @@ rand = "0.8"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 regex = "1.12.2"
 rmcp = { version = "=1.2.0", default-features = false }
-sha2 = "0.11.0"
+sha2 = "0.10.9"
 
 # HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)
 reqwest = { version = "0.12.28", default-features = false, features = [
-    "native-tls",
     "json",
     "stream",
     "http2",
@@ -55,10 +54,10 @@ thiserror = "2.0.16"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url = "2.5.7"
-uuid = { version = "1.19.0", features = ["v4"] }
+uuid = { version = "=1.10.0", features = ["v4"] }
 
 [workspace.lints.clippy]
-multiple_crate_versions = "warn"
+multiple_crate_versions = "allow"
 
 [profile.release]
 opt-level = 3

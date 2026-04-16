@@ -1674,6 +1674,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn proxy_to_backend_strips_smuggling_headers_on_request_and_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/a2a/agent/tasks"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("connection", "close")
+                    .append_header("proxy-authorization", "Basic leaked")
+                    .append_header("transfer-encoding", "chunked")
+                    .append_header("upgrade", "websocket")
+                    .append_header("x-safe", "ok")
+                    .set_body_string("backend-body"),
+            )
+            .mount(&server)
+            .await;
+
+        let state = test_state(server.uri());
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "evil.example".parse().unwrap());
+        headers.insert("proxy-authorization", "Basic attacker".parse().unwrap());
+        headers.insert("content-length", "123".parse().unwrap());
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("x-safe", "yes".parse().unwrap());
+
+        let response = proxy_to_backend(
+            &state,
+            Method::POST,
+            "agent/tasks",
+            &headers,
+            Bytes::from_static(br#"{"ok":true}"#),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("x-safe").unwrap(), "ok");
+        assert!(response.headers().get("connection").is_none());
+        assert!(response.headers().get("proxy-authorization").is_none());
+        assert!(response.headers().get("transfer-encoding").is_none());
+        assert!(response.headers().get("upgrade").is_none());
+    }
+
+    #[tokio::test]
     async fn handle_streaming_method_replays_from_store_when_last_event_id_is_present() {
         let mut state = test_state("http://127.0.0.1:1".to_string());
         state.event_store = Some(Arc::new(crate::event_store::EventStore::seeded_for_test(

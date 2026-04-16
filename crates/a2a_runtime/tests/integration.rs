@@ -26,6 +26,13 @@ fn test_app(config: RuntimeConfig) -> axum::Router {
     contextforge_a2a_runtime::test_support::build_app(config)
 }
 
+fn test_app_with_session_manager(
+    config: RuntimeConfig,
+    session_manager: Option<Arc<contextforge_a2a_runtime::session::SessionManager>>,
+) -> axum::Router {
+    contextforge_a2a_runtime::test_support::build_app_with_session_manager(config, session_manager)
+}
+
 /// Helper: make a JSON POST request to the app and return (status, body JSON).
 async fn post_json(app: axum::Router, uri: &str, body: Value) -> (StatusCode, Value) {
     let request = Request::builder()
@@ -109,6 +116,23 @@ async fn healthz_returns_ok() {
     let (status, body) = get_json(app, "/healthz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn health_and_healthz_return_full_schema_with_uds() {
+    let mut config = default_test_config();
+    config.listen_http = "127.0.0.1:9876".to_string();
+    config.listen_uds = Some(std::path::PathBuf::from("/tmp/contextforge-a2a.sock"));
+    let app = test_app(config);
+
+    for path in ["/health", "/healthz"] {
+        let (status, body) = get_json(app.clone(), path).await;
+        assert_eq!(status, StatusCode::OK, "{path} failed: {body}");
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["runtime"], "contextforge-a2a-runtime");
+        assert_eq!(body["listen_http"], "127.0.0.1:9876");
+        assert_eq!(body["listen_uds"], "/tmp/contextforge-a2a.sock");
+    }
 }
 
 #[tokio::test]
@@ -391,6 +415,141 @@ async fn test_invoke_applies_decrypted_auth_header_to_upstream() {
             "headers": {},
             "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
             "auth_headers_encrypted": encrypted_blob,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    agent_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_applies_decrypted_auth_query_param_to_upstream() {
+    use contextforge_a2a_runtime::auth::encrypt_auth_for_tests; // pragma: allowlist secret
+
+    let secret = "test-shared-secret"; // pragma: allowlist secret
+    let encrypted_query_blob = encrypt_auth_for_tests(
+        &std::collections::HashMap::from([("api_key".to_string(), "secret-qp".to_string())]),
+        secret,
+    );
+
+    let agent_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent"))
+        .and(wiremock::matchers::query_param("api_key", "secret-qp"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&agent_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.auth_secret = Some(secret.to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": format!("{}/agent", agent_server.uri()),
+            "headers": {},
+            "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
+            "auth_query_params_encrypted": {
+                "api_key": encrypted_query_blob // pragma: allowlist secret
+            },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    agent_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_rejects_malformed_encrypted_auth_header_without_upstream_call() {
+    let agent_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(0)
+        .mount(&agent_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.auth_secret = Some("test-shared-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": format!("{}/agent", agent_server.uri()),
+            "headers": {},
+            "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
+            "auth_headers_encrypted": "%%%not-base64%%%" // pragma: allowlist secret
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body["error"].as_str().unwrap_or("").contains("base64"));
+    agent_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_rejects_malformed_encrypted_auth_query_params_without_upstream_call() {
+    let agent_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(0)
+        .mount(&agent_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.auth_secret = Some("test-shared-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": format!("{}/agent", agent_server.uri()),
+            "headers": {},
+            "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
+            "auth_query_params_encrypted": {
+                "api_key": "%%%not-base64%%%" // pragma: allowlist secret
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body["error"].as_str().unwrap_or("").contains("base64"));
+    agent_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_forwards_correlation_and_trace_headers() {
+    let agent_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent"))
+        .and(header("x-correlation-id", "corr-123"))
+        .and(header("traceparent", "00-abc-def-01"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&agent_server)
+        .await;
+
+    let app = test_app(default_test_config());
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": format!("{}/agent", agent_server.uri()),
+            "headers": {},
+            "json_body": {"jsonrpc": "2.0", "method": "SendMessage"},
+            "correlation_id": "corr-123",
+            "traceparent": "00-abc-def-01"
         }),
     )
     .await;
@@ -986,6 +1145,168 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
     mock_server.verify().await;
 }
 
+#[tokio::test]
+async fn test_a2a_invoke_get_task_missing_task_id_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/get$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "task_id is required"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTask",
+            "id": 12,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "task_id is required");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_get_task_not_found_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/get$"))
+        .and(body_json(json!({
+            "id": "missing-task",
+            "task_id": "missing-task",
+            "agent_id": "agent-001"
+        })))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "task not found"})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTask",
+            "id": 19,
+            "params": {"id": "missing-task"}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 404);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "task not found");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_get_task_agent_not_found_short_circuits_before_proxy() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("agent not registered"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/get$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTask",
+            "id": 23,
+            "params": {"id": "task-1"}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404, body: {body}");
+    assert!(body["error"].as_str().unwrap_or("").contains("not found"));
+    mock_server.verify().await;
+}
+
 /// ListTasks routes to the Python `/_internal/a2a/tasks/list` endpoint.
 #[tokio::test]
 async fn test_a2a_invoke_list_tasks_routes_to_python() {
@@ -1068,6 +1389,63 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
     assert_eq!(jsonrpc["result"]["tasks"][0]["task_id"], "task-1");
     assert_eq!(jsonrpc["result"]["tasks"][1]["task_id"], "task-2");
 
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_list_tasks_invalid_state_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*list/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/list$"))
+        .and(body_json(json!({"state": 123, "agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "state must be a string"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "ListTasks",
+            "id": 13,
+            "params": {"state": 123}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "state must be a string");
     mock_server.verify().await;
 }
 
@@ -1241,6 +1619,112 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
     assert_eq!(jsonrpc["result"]["task_id"], "task-1");
     assert_eq!(jsonrpc["result"]["state"], "canceled");
 
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_cancel_task_missing_task_id_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/cancel$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "task_id is required"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CancelTask",
+            "id": 14,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "task_id is required");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_cancel_task_not_found_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*tasks/cancel$"))
+        .and(body_json(json!({
+            "id": "missing-task",
+            "task_id": "missing-task",
+            "agent_id": "agent-001"
+        })))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "task not found"})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CancelTask",
+            "id": 20,
+            "params": {"id": "missing-task"}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 404);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "task not found");
     mock_server.verify().await;
 }
 
@@ -1667,6 +2151,66 @@ async fn test_a2a_invoke_get_authenticated_card_not_found_returns_error_envelope
     mock_server.verify().await;
 }
 
+#[tokio::test]
+async fn test_a2a_invoke_get_authenticated_card_routes_successfully() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/card$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": "test-agent",
+            "description": "authenticated card",
+            "url": "https://example.com/agent",
+            "version": "1",
+            "protocolVersion": "1.0",
+            "defaultInputModes": ["text"],
+            "defaultOutputModes": ["text"],
+            "capabilities": {"streaming": false, "pushNotifications": false, "stateTransitionHistory": false},
+            "skills": [],
+            "supportsAuthenticatedExtendedCard": true,
+            "auth": {"required": true} // pragma: allowlist secret
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "agent/getAuthenticatedExtendedCard",
+            "id": 8,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert_eq!(body["status_code"], 200);
+    assert_eq!(body["json"]["result"]["name"], "test-agent");
+    assert_eq!(body["json"]["result"]["auth"]["required"], true);
+    mock_server.verify().await;
+}
+
 // ---------------------------------------------------------------------------
 // Push notification config routing tests
 // ---------------------------------------------------------------------------
@@ -1749,6 +2293,165 @@ async fn test_a2a_invoke_create_push_config_routes_to_python() {
 }
 
 #[tokio::test]
+async fn test_a2a_invoke_create_push_config_missing_required_fields_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/create$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_json(json!({"error": "task_id and webhook_url are required"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CreateTaskPushNotificationConfig",
+            "id": 15,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(
+        body["json"]["error"]["message"],
+        "task_id and webhook_url are required"
+    );
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_create_push_config_invalid_schema_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/create$"))
+        .and(body_json(json!({
+            "task_id": "task-1",
+            "webhook_url": "not-a-url",
+            "agent_id": "agent-001"
+        })))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "invalid push config"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CreateTaskPushNotificationConfig",
+            "id": 16,
+            "params": {
+                "task_id": "task-1",
+                "webhook_url": "not-a-url"
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "invalid push config");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_create_push_config_agent_not_found_short_circuits_before_proxy() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("agent not registered"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/create$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CreateTaskPushNotificationConfig",
+            "id": 24,
+            "params": {
+                "task_id": "task-1",
+                "webhook_url": "https://example.com/hook"
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404, body: {body}");
+    assert!(body["error"].as_str().unwrap_or("").contains("not found"));
+    mock_server.verify().await;
+}
+
+#[tokio::test]
 async fn test_a2a_invoke_get_push_config_routes_to_python() {
     let mock_server = MockServer::start().await;
 
@@ -1811,6 +2514,123 @@ async fn test_a2a_invoke_get_push_config_routes_to_python() {
     assert_eq!(body["status_code"], 200);
     assert_eq!(body["json"]["id"], 9);
     assert_eq!(body["json"]["result"]["config_id"], "cfg-1");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_get_push_config_missing_task_id_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/get$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "task_id is required"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTaskPushNotificationConfig",
+            "id": 17,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "task_id is required");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_get_push_config_not_found_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*get/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/get$"))
+        .and(body_json(json!({
+            "task_id": "missing-task",
+            "agent_id": "agent-001"
+        })))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(json!({"error": "push config not found"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "GetTaskPushNotificationConfig",
+            "id": 21,
+            "params": {"task_id": "missing-task"}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 404);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "push config not found");
     mock_server.verify().await;
 }
 
@@ -1941,6 +2761,113 @@ async fn test_a2a_invoke_delete_push_config_routes_to_python() {
     assert_eq!(body["status_code"], 200);
     assert_eq!(body["json"]["id"], 11);
     assert_eq!(body["json"]["result"]["deleted"], true);
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_delete_push_config_missing_config_id_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/delete$"))
+        .and(body_json(json!({"agent_id": "agent-001"})))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": "config_id is required"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "DeleteTaskPushNotificationConfig",
+            "id": 18,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 400);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "config_id is required");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_delete_push_config_not_found_returns_error_envelope() {
+    let mock_server = MockServer::start().await;
+
+    setup_auth_mock(&mock_server, 1).await;
+    setup_authz_mock(&mock_server, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json("http://unused")),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*push/delete$"))
+        .and(body_json(json!({
+            "config_id": "missing-config",
+            "agent_id": "agent-001"
+        })))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(json!({"error": "push config not found"})),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "DeleteTaskPushNotificationConfig",
+            "id": 22,
+            "params": {"config_id": "missing-config"}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 envelope, body: {body}"
+    );
+    assert_eq!(body["status_code"], 404);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["json"]["error"]["message"], "push config not found");
     mock_server.verify().await;
 }
 
@@ -2216,6 +3143,142 @@ async fn test_session_fallback_without_redis() {
     assert!(body2["success"].as_bool().unwrap_or(false));
 
     // Verify authenticate was called exactly twice — the fallback path works.
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_session_fingerprint_mismatch_invalidates_old_session_and_reauthenticates() {
+    ensure_queue_initialized();
+    let mock_server = MockServer::start().await;
+    let agent_path = "/session-mismatch-agent-endpoint";
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/session-mismatch-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"status": "ok"}
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.session_enabled = true;
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let session_manager = Arc::new(
+        contextforge_a2a_runtime::session::SessionManager::new_ephemeral_for_tests(
+            300,
+            "authorization,x-forwarded-for",
+        ),
+    );
+    let app = test_app_with_session_manager(config, Some(Arc::clone(&session_manager)));
+
+    let first_request = Request::builder()
+        .method("POST")
+        .uri("/a2a/session-mismatch-agent/invoke")
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer first-token")
+        .header("x-forwarded-for", "10.0.0.1")
+        .body(Body::from(
+            serde_json::to_vec(
+                &json!({"jsonrpc": "2.0", "method": "SendMessage", "id": 1, "params": {}}),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    let first_response = app.clone().oneshot(first_request).await.unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_bytes = first_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let first_body: Value = serde_json::from_slice(&first_bytes).unwrap();
+    let first_session_id = first_body["session_id"]
+        .as_str()
+        .expect("first response should include session id")
+        .to_string();
+    assert!(
+        session_manager.lookup(&first_session_id).await.is_some(),
+        "first session should be stored"
+    );
+
+    let second_request = Request::builder()
+        .method("POST")
+        .uri("/a2a/session-mismatch-agent/invoke")
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer second-token")
+        .header("x-forwarded-for", "10.0.0.1")
+        .header("x-a2a-session-id", &first_session_id)
+        .body(Body::from(
+            serde_json::to_vec(
+                &json!({"jsonrpc": "2.0", "method": "SendMessage", "id": 2, "params": {}}),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    let second_response = app.oneshot(second_request).await.unwrap();
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_bytes = second_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let second_body: Value = serde_json::from_slice(&second_bytes).unwrap();
+    let second_session_id = second_body["session_id"]
+        .as_str()
+        .expect("second response should include new session id")
+        .to_string();
+
+    assert_ne!(
+        first_session_id, second_session_id,
+        "fingerprint mismatch should issue a fresh session id"
+    );
+    assert!(
+        session_manager.lookup(&first_session_id).await.is_none(),
+        "old session should be invalidated after fingerprint mismatch"
+    );
+    assert!(
+        session_manager.lookup(&second_session_id).await.is_some(),
+        "new session should be persisted"
+    );
+
     mock_server.verify().await;
 }
 

@@ -405,6 +405,54 @@ mod tests {
     }
 
     #[test]
+    fn correlation_headers_do_not_override_existing_values() {
+        let mut dto = minimal_dto("https://agent.example.com/invoke");
+        dto.headers.insert(
+            "x-correlation-id".to_string(),
+            "existing-correlation".to_string(),
+        );
+        dto.headers.insert(
+            "traceparent".to_string(),
+            "existing-traceparent".to_string(),
+        );
+        dto.correlation_id = Some("new-correlation".to_string());
+        dto.traceparent = Some("00-new-parent".to_string());
+
+        let resolved = resolve_requests(&[dto], None).unwrap();
+        assert_eq!(
+            resolved[0].headers.get("x-correlation-id").unwrap(),
+            "existing-correlation"
+        );
+        assert_eq!(
+            resolved[0].headers.get("traceparent").unwrap(),
+            "existing-traceparent"
+        );
+    }
+
+    #[test]
+    fn resolve_requests_preserves_request_metadata_fields() {
+        let mut dto = minimal_dto("https://agent.example.com/invoke");
+        dto.id = 42;
+        dto.timeout_seconds = Some(9);
+        dto.agent_name = Some("demo-agent".to_string());
+        dto.agent_id = Some("agent-123".to_string());
+        dto.interaction_type = Some("query".to_string());
+        dto.scope_id = Some("team-a".to_string());
+        dto.request_id = Some("req-1".to_string());
+        dto.correlation_id = Some("corr-1".to_string());
+
+        let resolved = resolve_requests(&[dto], None).unwrap();
+        assert_eq!(resolved[0].id, 42);
+        assert_eq!(resolved[0].timeout_seconds, Some(9));
+        assert_eq!(resolved[0].agent_name.as_deref(), Some("demo-agent"));
+        assert_eq!(resolved[0].agent_id.as_deref(), Some("agent-123"));
+        assert_eq!(resolved[0].interaction_type.as_deref(), Some("query"));
+        assert_eq!(resolved[0].scope_id.as_deref(), Some("team-a"));
+        assert_eq!(resolved[0].request_id.as_deref(), Some("req-1"));
+        assert_eq!(resolved[0].correlation_id.as_deref(), Some("corr-1"));
+    }
+
+    #[test]
     fn resolve_requests_decrypts_auth_and_applies_to_url_and_headers() {
         let secret = "secret-123"; // pragma: allowlist secret
         let mut dto = minimal_dto("https://agent.example.com/invoke?existing=1");

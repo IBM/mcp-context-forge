@@ -263,6 +263,35 @@ mod tests {
         );
     }
 
+    fn encrypt_raw_payload(plaintext: &[u8], secret: &str) -> String { // pragma: allowlist secret
+        let cipher = cipher_for(secret);
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, plaintext).unwrap();
+        let mut combined = nonce.to_vec();
+        combined.extend_from_slice(&ciphertext);
+        URL_SAFE_NO_PAD.encode(&combined)
+    }
+
+    #[test]
+    fn decrypt_rejects_non_utf8_plaintext() {
+        let encrypted = encrypt_raw_payload(&[0xf0, 0x28, 0x8c, 0x28], "utf8-secret");
+        let result = decrypt_auth(&encrypted, "utf8-secret");
+        assert!(
+            matches!(result, Err(AuthError::Utf8(_))),
+            "expected Utf8 error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn decrypt_rejects_non_json_plaintext() {
+        let encrypted = encrypt_raw_payload(br#"not-json"#, "json-secret");
+        let result = decrypt_auth(&encrypted, "json-secret");
+        assert!(
+            matches!(result, Err(AuthError::Json(_))),
+            "expected Json error, got {result:?}"
+        );
+    }
+
     #[test]
     fn apply_invoke_auth_rejects_file_scheme() {
         let mut headers = HashMap::new();

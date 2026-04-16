@@ -234,12 +234,28 @@ pub mod test_support {
 
     /// Build the Axum app without starting a listener.
     pub fn build_app(config: RuntimeConfig) -> axum::Router {
-        build_app_with_event_store(config, None)
+        build_app_with_overrides(config, None, None)
     }
 
     /// Build the Axum app with a test-supplied event store.
     pub fn build_app_with_event_store(
         config: RuntimeConfig,
+        event_store: Option<Arc<crate::event_store::EventStore>>,
+    ) -> axum::Router {
+        build_app_with_overrides(config, None, event_store)
+    }
+
+    /// Build the Axum app with a test-supplied session manager.
+    pub fn build_app_with_session_manager(
+        config: RuntimeConfig,
+        session_manager: Option<Arc<crate::session::SessionManager>>,
+    ) -> axum::Router {
+        build_app_with_overrides(config, session_manager, None)
+    }
+
+    fn build_app_with_overrides(
+        config: RuntimeConfig,
+        session_manager: Option<Arc<crate::session::SessionManager>>,
         event_store: Option<Arc<crate::event_store::EventStore>>,
     ) -> axum::Router {
         let client = build_http_client(&config).expect("failed to build reqwest client");
@@ -277,7 +293,7 @@ pub mod test_support {
             worker_state,
             redis_pool: None,
             agent_cache,
-            session_manager: None,
+            session_manager,
             event_store,
         };
 

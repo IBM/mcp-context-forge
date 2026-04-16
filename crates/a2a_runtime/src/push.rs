@@ -402,6 +402,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_webhooks_sends_matching_webhook_without_authorization_when_token_is_null() {
+        let mock_server = MockServer::start().await;
+        let client = Client::new();
+
+        Mock::given(method("POST"))
+            .and(path("/_internal/a2a/push/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "configs": [
+                    {
+                        "webhook_url": format!("{}/hook-no-auth", mock_server.uri()),
+                        "auth_token": null,
+                        "events": ["completed"],
+                        "enabled": true
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/hook-no-auth"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        dispatch_webhooks(
+            &client,
+            &mock_server.uri(),
+            "secret",
+            "task-4b",
+            "agent-4b",
+            "completed",
+            &json!({"task_id": "task-4b", "state": "completed"}),
+            Arc::new(MetricsCollector::new(None)),
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
     async fn dispatch_webhooks_skips_non_matching_configs_and_does_not_retry_4xx() {
         let mock_server = MockServer::start().await;
         let client = Client::new();

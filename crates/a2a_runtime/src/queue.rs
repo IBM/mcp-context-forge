@@ -580,6 +580,15 @@ mod tests {
         assert_eq!(QueueError::Shutdown.to_string(), "queue is shutting down");
     }
 
+    #[test]
+    fn try_submit_batch_rejects_when_queue_not_initialized() {
+        let err = try_submit_batch(vec![], Duration::from_millis(10)).expect_err("should reject");
+        assert!(matches!(
+            err,
+            QueueError::NotInitialized | QueueError::Shutdown
+        ));
+    }
+
     #[tokio::test]
     async fn coalesce_jobs_collects_follow_on_jobs_and_preserves_shutdown() {
         let (tx, mut rx) = mpsc::channel(4);

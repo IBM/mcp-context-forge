@@ -66,6 +66,18 @@ struct RedisSessionStorage {
     redis: RedisPool,
 }
 
+struct MemorySessionStorage {
+    values: std::sync::Mutex<HashMap<String, String>>,
+}
+
+impl Default for MemorySessionStorage {
+    fn default() -> Self {
+        Self {
+            values: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
 #[async_trait]
 impl SessionStorage for RedisSessionStorage {
     async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String> {
@@ -93,6 +105,44 @@ impl SessionStorage for RedisSessionStorage {
     }
 }
 
+#[async_trait]
+impl SessionStorage for MemorySessionStorage {
+    async fn set_ex(&self, key: &str, value: &str, _ttl_secs: u64) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "memory session storage lock poisoned".to_string())?
+            .insert(key.to_string(), value.to_string());
+        Ok(())
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "memory session storage lock poisoned".to_string())?
+            .get(key)
+            .cloned())
+    }
+
+    async fn expire(&self, key: &str, _ttl_secs: u64) -> Result<bool, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "memory session storage lock poisoned".to_string())?
+            .contains_key(key))
+    }
+
+    async fn del(&self, key: &str) -> Result<u32, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "memory session storage lock poisoned".to_string())?
+            .remove(key)
+            .map(|_| 1)
+            .unwrap_or(0))
+    }
+}
+
 pub struct SessionManager {
     storage: Arc<dyn SessionStorage>,
     ttl: Duration,
@@ -113,6 +163,15 @@ impl SessionManager {
     pub fn new(redis: RedisPool, ttl_secs: u64, fingerprint_headers: &str) -> Self {
         Self::new_with_storage(
             Arc::new(RedisSessionStorage { redis }),
+            ttl_secs,
+            fingerprint_headers,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn new_ephemeral_for_tests(ttl_secs: u64, fingerprint_headers: &str) -> Self {
+        Self::new_with_storage(
+            Arc::new(MemorySessionStorage::default()),
             ttl_secs,
             fingerprint_headers,
         )

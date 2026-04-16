@@ -390,6 +390,22 @@ mod tests {
     }
 
     #[test]
+    fn validate_cross_field_rejects_zero_agent_cache_entries() {
+        let mut config = test_config();
+        config.agent_cache_max_entries = 0;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("AGENT_CACHE_MAX_ENTRIES"));
+    }
+
+    #[test]
+    fn validate_cross_field_rejects_zero_circuit_failure_threshold() {
+        let mut config = test_config();
+        config.circuit_failure_threshold = 0;
+        let err = config.validate_cross_field().expect_err("should reject");
+        assert!(err.contains("CIRCUIT_FAILURE_THRESHOLD"));
+    }
+
+    #[test]
     fn validate_cross_field_allows_zero_session_ttl_when_sessions_disabled() {
         let mut config = test_config();
         config.session_enabled = false;
