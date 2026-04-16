@@ -482,10 +482,12 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    def test_health_check_db_error(self):
+    @pytest.mark.asyncio
+    async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -508,8 +510,10 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = mcpgateway_main.healthcheck()
-        assert response["status"] == "unhealthy"
+            response_obj = FastAPIResponse()
+            result = mcpgateway_main.healthcheck(response_obj)
+        assert result["status"] == "unhealthy"
+        assert "error" in result
         assert session.invalidate_called is True
 
     @pytest.mark.asyncio
@@ -517,6 +521,7 @@ class TestHealthAndInfrastructure:
         """Test readiness check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -538,12 +543,11 @@ class TestHealthAndInfrastructure:
                 pass
 
         session = DummySession()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=session),
-            patch("mcpgateway.main.asyncio.to_thread", side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)),
-        ):
-            response = await mcpgateway_main.readiness_check()
-        assert response.status_code == 503
+        with patch("mcpgateway.main.SessionLocal", return_value=session):
+            response_obj = FastAPIResponse()
+            result = await mcpgateway_main.readiness_check(response_obj)
+        assert result.status == "unready"
+        assert response_obj.status_code == 503
         assert session.invalidate_called is True
 
     def test_root_redirect(self, test_client):
