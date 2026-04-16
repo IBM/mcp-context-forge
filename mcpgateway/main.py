@@ -81,7 +81,10 @@ from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent as DbA2AAgent, A2APushNotificationConfig, A2ATask as DbA2ATask, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2APushNotificationConfig
+from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -111,8 +114,8 @@ from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
-    A2APushNotificationConfigCreate,
     A2AAgentUpdate,
+    A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -145,8 +148,8 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.a2a_server_service import A2AServerService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
@@ -11169,57 +11172,6 @@ async def readiness_check(response: Response):
 
     _apply_runtime_mode_headers(response)
     return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
-
-@app.get("/ready")
-async def readiness_check():
-    """
-    Perform a readiness check to verify if the application is ready to receive traffic.
-
-    Creates and manages its own session inside the worker thread to ensure all DB
-    operations (create, execute, commit, rollback, close) happen in the same thread.
-    This avoids cross-thread session issues and double-commit from get_db.
-
-    Returns:
-        JSONResponse with status 200 if ready, 503 if not.
-    """
-
-    def _check_db() -> str | None:
-        """Check database connectivity by executing a simple query.
-
-        Returns:
-            None if successful, error message string if failed.
-        """
-        # Create session in this thread - all DB operations stay in the same thread.
-        db = SessionLocal()
-        try:
-            db.execute(text("SELECT 1"))
-            # Explicitly commit to release PgBouncer backend connection.
-            db.commit()
-            return None  # Success
-        except Exception as e:
-            # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
-            try:
-                db.rollback()
-            except Exception:
-                try:
-                    db.invalidate()
-                except Exception:
-                    pass  # nosec B110 - Best effort cleanup on connection failure
-            return str(e)
-        finally:
-            db.close()
-
-    # Run the blocking DB check in a thread to avoid blocking the event loop.
-    error = await asyncio.to_thread(_check_db)
-    if error:
-        error_message = f"Readiness check failed: {error}"
-        logger.error(error_message)
-        response = ORJSONResponse(content={"status": "not ready", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}, status_code=503)
-        _apply_runtime_mode_headers(response)
-        return response
-    response = ORJSONResponse(content={"status": "ready", "mcp_runtime": _mcp_runtime_status_payload()}, status_code=200)
-    _apply_runtime_mode_headers(response)
-    return response
 
 
 @app.get("/health/security", tags=["health"])
