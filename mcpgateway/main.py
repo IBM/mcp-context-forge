@@ -1876,7 +1876,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("All services initialized successfully")
 
         # Warn about unsafe UAID configuration if A2A is enabled
-        if settings.a2a_enabled:
+        if settings.mcpgateway_a2a_enabled:
             uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
             if not uaid_allowed_domains:
                 logger.warning(
