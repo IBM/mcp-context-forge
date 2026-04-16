@@ -2075,6 +2075,13 @@ class A2AAgentService(BaseService):
                 # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
                 if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
                     raise ValueError(f"Cross-gateway routing to {endpoint} not allowed. Endpoint domain '{endpoint_domain}' not in UAID_ALLOWED_DOMAINS.")
+            else:
+                # WARNING: Empty allowlist permits arbitrary cross-gateway routing
+                # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
+                logger.warning(
+                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint} without domain validation. "
+                    "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+                )
 
             # Construct URL based on protocol (endpoint is now validated)
             if protocol == "a2a":

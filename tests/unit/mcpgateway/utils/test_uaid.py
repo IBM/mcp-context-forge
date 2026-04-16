@@ -425,24 +425,25 @@ class TestUaidDoSProtection:
         with pytest.raises(ValueError, match="exceeds maximum length of 2048"):
             parse_uaid(long_uaid)
 
-    def test_parse_uaid_config_exceeds_db_limit(self, monkeypatch, caplog):
-        """Test parsing warns when UAID_MAX_LENGTH exceeds database limit."""
-        # Standard
-        import logging
+    def test_parse_uaid_respects_configured_max_length(self, monkeypatch):
+        """Test parsing respects UAID_MAX_LENGTH configuration.
 
+        Note: In production, settings.uaid_max_length is enforced by Pydantic Field(le=2048)
+        which prevents configuration exceeding the database column limit. This test uses
+        monkeypatch to verify the validation logic, but in real deployments the Pydantic
+        constraint would prevent misconfiguration at startup.
+        """
         # First-Party
         from mcpgateway.config import settings
 
-        # Explicitly set log level for the uaid module logger to ensure capture in CI/CD
-        caplog.set_level(logging.WARNING, logger="mcpgateway.utils.uaid")
-        monkeypatch.setattr(settings, "uaid_max_length", 5000)  # Exceeds DB limit of 2048
+        # Set a lower limit for testing
+        monkeypatch.setattr(settings, "uaid_max_length", 100)
 
-        valid_uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+        # Create a UAID longer than 100 characters
+        long_uaid = "uaid:aid:" + "x" * 150
 
-        result = parse_uaid(valid_uaid)  # Should succeed but warn
-
-        assert "exceeds database column limit" in caplog.text
-        assert result.method == "aid"
+        with pytest.raises(ValueError, match="exceeds maximum length of 100"):
+            parse_uaid(long_uaid)
 
     def test_parse_uaid_invalid_method_dos_context(self):
         """Test UAID parsing rejects invalid methods in DoS context."""

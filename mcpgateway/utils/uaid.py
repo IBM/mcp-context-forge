@@ -82,17 +82,11 @@ def parse_uaid(uaid: str) -> UaidComponents:
     # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-    # Database column hard limit (source of truth)
-    DB_UAID_COLUMN_LENGTH = 2048
-
-    max_length = min(settings.uaid_max_length, DB_UAID_COLUMN_LENGTH)
-
-    # Safety check: catch misconfigurations
-    if settings.uaid_max_length > DB_UAID_COLUMN_LENGTH:
-        logger.warning(f"UAID_MAX_LENGTH ({settings.uaid_max_length}) exceeds database column limit " f"({DB_UAID_COLUMN_LENGTH}). Using database limit for safety.")
-
-    if len(uaid) > max_length:
-        raise ValueError(f"UAID exceeds maximum length of {max_length} characters. " f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID.")
+    # Note: settings.uaid_max_length is enforced by Pydantic Field(le=2048) in config.py
+    # which matches the database column limit (a2a_agents.uaid String(2048)).
+    # If database schema changes, Alembic migration will fail visibly.
+    if len(uaid) > settings.uaid_max_length:
+        raise ValueError(f"UAID exceeds maximum length of {settings.uaid_max_length} characters. " f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID.")
 
     # Existing validation continues...
     if not is_uaid(uaid):
