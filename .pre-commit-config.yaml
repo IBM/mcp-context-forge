@@ -423,6 +423,7 @@ repos:
         name: 🐍 Black - Python Code Formatter
         description: The uncompromising Python code formatter.
         language_version: python3
+        files: ^mcpgateway/
 
   # - repo: https://github.com/pycqa/isort
   #   rev: 6.0.1
@@ -535,6 +536,7 @@ repos:
       - id: interrogate
         args: [--quiet, --fail-under=100]
         files: ^mcpgateway/
+        exclude: ^mcpgateway/plugins/framework/external/grpc/proto/.*_pb2.*\.py$
 
   # -----------------------------------------------------------------------------
   #  🔐 Security - Static Code Policy Checks

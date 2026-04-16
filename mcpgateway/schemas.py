@@ -8255,7 +8255,7 @@ class PluginPolicyItem(BaseModel):
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ...,
-        description="Plugin-specific configuration. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
+        description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
     binding_reference_id: Optional[str] = Field(
         None,
