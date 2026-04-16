@@ -85,7 +85,7 @@
 <!-- Infinite scroll trigger -->
 <div
   id="{{ scroll_trigger_id }}-{{ pagination.page }}"
-  hx-get="{{ next_page_url }}" hx-swap="innerHTML"
+  hx-get="{{ next_page_url }}"
   hx-trigger="intersect once"
   hx-swap="outerHTML"
   class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
