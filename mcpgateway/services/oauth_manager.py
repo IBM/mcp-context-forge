@@ -1326,7 +1326,25 @@ class OAuthManager:
                 client = await self._get_client()
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 if response.status_code == 200:
-                    token_response = response.json()
+                    # Handle both JSON and form-encoded responses
+                    content_type = response.headers.get("content-type", "")
+                    if "application/x-www-form-urlencoded" in content_type:
+                        # Parse form-encoded response
+                        text_response = response.text
+                        token_response = {}
+                        for pair in text_response.split("&"):
+                            if "=" in pair:
+                                key, value = pair.split("=", 1)
+                                token_response[key] = value
+                    else:
+                        # Try JSON response
+                        try:
+                            token_response = response.json()
+                        except Exception as e:
+                            logger.warning(f"Failed to parse JSON response: {e}")
+                            # Fallback to text parsing
+                            text_response = response.text
+                            token_response = {"raw_response": text_response}
 
                     # Validate required fields
                     if "access_token" not in token_response:

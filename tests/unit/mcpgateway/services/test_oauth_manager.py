@@ -449,6 +449,7 @@ async def test_exchange_code_for_token_no_secret(oauth_manager):
 async def test_refresh_token_success(oauth_manager):
     mock_response = MagicMock()
     mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/json"}
     mock_response.json.return_value = {"access_token": "new-tok", "refresh_token": "new-rt"}
 
     mock_client = AsyncMock()
@@ -458,6 +459,46 @@ async def test_refresh_token_success(oauth_manager):
             "old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"}
         )
     assert result["access_token"] == "new-tok"
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_form_encoded_response(oauth_manager):
+    """Token endpoints that return application/x-www-form-urlencoded are parsed correctly."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/x-www-form-urlencoded; charset=utf-8"}
+    mock_response.text = "access_token=new-tok&token_type=bearer&refresh_token=new-rt&scope=repo"
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager.refresh_token(
+            "old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"}
+        )
+
+    assert result["access_token"] == "new-tok"
+    assert result["refresh_token"] == "new-rt"
+    assert result["token_type"] == "bearer"
+    # JSON parser must not be invoked for form-encoded responses
+    mock_response.json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_non_json_non_form_raises(oauth_manager):
+    """An unexpected response body falls back to raw capture and raises when access_token is absent."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "text/plain"}
+    mock_response.text = "something unexpected"
+    mock_response.json.side_effect = ValueError("not JSON")
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        with pytest.raises(OAuthError, match="No access_token"):
+            await oauth_manager.refresh_token(
+                "old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"}
+            )
 
 
 @pytest.mark.asyncio
