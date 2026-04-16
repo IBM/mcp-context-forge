@@ -14,11 +14,11 @@ import pytest
 
 # First-Party
 from mcpgateway.utils.uaid import (
-    UaidComponents,
     extract_routing_info,
     generate_uaid,
     is_uaid,
     parse_uaid,
+    UaidComponents,
     validate_uaid,
 )
 
@@ -414,6 +414,7 @@ class TestUaidDoSProtection:
 
     def test_parse_uaid_exceeds_max_length(self, monkeypatch):
         """Test UAID parsing rejects strings exceeding UAID_MAX_LENGTH."""
+        # First-Party
         from mcpgateway.config import settings
 
         monkeypatch.setattr(settings, "uaid_max_length", 2048)
@@ -426,8 +427,10 @@ class TestUaidDoSProtection:
 
     def test_parse_uaid_config_exceeds_db_limit(self, monkeypatch, caplog):
         """Test parsing warns when UAID_MAX_LENGTH exceeds database limit."""
+        # Standard
         import logging
 
+        # First-Party
         from mcpgateway.config import settings
 
         # Explicitly set log level for the uaid module logger to ensure capture in CI/CD
@@ -461,6 +464,7 @@ class TestUaidDoSProtection:
 
     def test_parse_uaid_normal_config_length(self, monkeypatch):
         """Test UAID parsing uses settings when within DB limit (covers lines 84, 88)."""
+        # First-Party
         from mcpgateway.config import settings
 
         # Set config to value within DB limit (normal case)
