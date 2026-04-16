@@ -515,6 +515,93 @@ repos:
         files: ^mcpgateway/
 
   # -----------------------------------------------------------------------------
+  #  🔐 Security - Static Code Policy Checks
+  # -----------------------------------------------------------------------------
+  #  AST-based and text-based scans that enforce project-specific security and
+  #  architecture invariants.  See scripts/pre-commit/ for implementations.
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: check-sensitive-logging
+        name: 🔐 Check Sensitive Logging
+        description: Detects sensitive variable interpolation in logger calls.
+        entry: python3 scripts/pre-commit/check_sensitive_logging.py
+        language: system
+        types: [python]
+        files: ^mcpgateway/
+
+      - id: check-framework-imports
+        name: 🔐 Check Framework Import Isolation
+        description: Ensures plugin framework does not import from mcpgateway.common or mcpgateway.utils.
+        entry: python3 scripts/pre-commit/check_framework_imports.py
+        language: system
+        types: [python]
+        files: ^mcpgateway/plugins/framework/
+
+      - id: check-machine-paths
+        name: 🔐 Check Machine-Specific Paths
+        description: Rejects hardcoded machine-specific home directory paths.
+        entry: python3 scripts/pre-commit/check_machine_paths.py
+        language: system
+        types: [text]
+
+      - id: check-no-os-system
+        name: 🔐 Check No os.system in run_mutmut
+        description: Ensures run_mutmut.py does not use the os module or os.system().
+        entry: python3 scripts/pre-commit/check_no_os_system.py
+        language: system
+        types: [python]
+        files: ^run_mutmut\.py$
+
+      - id: check-rbac-decorators
+        name: 🔐 Check RBAC Decorator Coverage
+        description: Verifies RBAC permission decorators and admin bypass settings.
+        entry: python3 scripts/pre-commit/check_rbac_decorators.py
+        language: system
+        pass_filenames: false
+        files: ^mcpgateway/(main|admin)\.py$|^mcpgateway/routers/
+
+      - id: check-migration-patterns
+        name: 🔐 Check Migration Patterns
+        description: Verifies Alembic migration naming, hashes, and source patterns.
+        entry: python3 scripts/pre-commit/check_migration_patterns.py
+        language: system
+        pass_filenames: false
+        files: ^mcpgateway/alembic/
+
+      - id: check-rust-workspace
+        name: 🔐 Check Rust Workspace Layout
+        description: Verifies Rust workspace structure, Cargo.toml inheritance, and build config.
+        entry: python3 scripts/pre-commit/check_rust_workspace.py
+        language: system
+        pass_filenames: false
+        files: (Cargo\.toml|Makefile|Containerfile|\.dockerignore|deny\.toml)$
+
+      - id: check-ci-workflows
+        name: 🔐 Check CI Workflows
+        description: Verifies CI workflow YAML structure and SHA pinning.
+        entry: python3 scripts/pre-commit/check_ci_workflows.py
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/|^Makefile$
+
+      - id: check-logo-assets
+        name: 🔐 Check Logo Assets
+        description: Verifies logo and image asset references resolve to existing files.
+        entry: python3 scripts/pre-commit/check_logo_assets.py
+        language: system
+        pass_filenames: false
+        files: ^mcpgateway/(templates|static)/|^docs/|^README\.md$|Chart\.yaml$
+
+      - id: check-source-patterns
+        name: 🔐 Check Source Code Patterns
+        description: Verifies cross-module source code invariants.
+        entry: python3 scripts/pre-commit/check_source_patterns.py
+        language: system
+        pass_filenames: false
+        files: ^mcpgateway/(main|services/).*\.py$
+
+  # -----------------------------------------------------------------------------
   #  🔐 Security - Detect Secrets
   # -----------------------------------------------------------------------------
   #  IBM Detect Secrets - https://github.com/ibm/detect-secrets

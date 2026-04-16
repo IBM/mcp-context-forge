@@ -386,16 +386,6 @@ class TestTransactionHandling:
     """Tests for transaction handling during A2A agent registration."""
 
     @pytest.mark.asyncio
-    async def test_agent_committed_before_tool_creation(self, mock_db, a2a_service):
-        # Standard
-        import inspect
-
-        source = inspect.getsource(a2a_service.register_agent)
-        assert "db.add(new_agent)" in source
-        assert "db.commit()" in source
-        assert source.find("db.add(new_agent)") < source.find("db.commit()") < source.find("create_tool_from_a2a_agent")
-
-    @pytest.mark.asyncio
     async def test_agent_survives_tool_creation_failure(self, mock_db):
         agent_committed = False
 
