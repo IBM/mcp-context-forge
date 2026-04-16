@@ -189,7 +189,7 @@ def build_execution_plan(repo_root: Path, changed_files: list[str] | None = None
     """Map selected jobs to concrete local commands plus parity metadata."""
 
     selected_jobs = select_ci_jobs(repo_root=repo_root, changed_files=changed_files, pr_draft=pr_draft, base_ref=base_ref)
-    return [_plan_job(repo_root, job, base_ref=base_ref) for job in selected_jobs]
+    return [_plan_job(job, base_ref=base_ref) for job in selected_jobs]
 
 
 def derive_changed_files(repo_root: Path, base_ref: str = DEFAULT_BASE_REF) -> list[str]:
@@ -214,7 +214,7 @@ def _multiline(*lines: str) -> str:
     return "set -euo pipefail\n" + "\n".join(lines)
 
 
-def _plan_job(repo_root: Path, job: SelectedJob, base_ref: str) -> PlannedJob:  # noqa: PLR0911
+def _plan_job(job: SelectedJob, base_ref: str) -> PlannedJob:  # noqa: PLR0911
     """Map one selected workflow job to a local execution strategy."""
 
     workflow_file = job.workflow_file
