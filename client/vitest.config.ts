@@ -11,8 +11,12 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     css: true,
+    // Vitest runs Testing-Library specs under src/; Playwright specs live
+    // under e2e/ and must not be picked up here (they use @playwright/test).
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: ["node_modules", "dist", "e2e", "playwright-report", "test-results"],
     typecheck: {
-      include: ["**/*.test.{ts,tsx}"],
+      include: ["src/**/*.test.{ts,tsx}"],
     },
     coverage: {
       provider: "v8",
