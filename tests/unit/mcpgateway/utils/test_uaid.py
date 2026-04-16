@@ -472,3 +472,36 @@ class TestUaidDoSProtection:
         # Should succeed without warning
         assert result.method == "aid"
         assert result.registry == "context-forge"
+
+    def test_parse_uaid_too_few_parts_after_is_uaid_bypass(self, monkeypatch):
+        """Test UAID parsing with too few parts after colon split (covers line 104).
+
+        This is a defensive check that should never be reached in normal operation
+        since is_uaid() checks for proper format. We bypass is_uaid() via mocking
+        to test the defensive code path.
+        """
+        # Mock is_uaid to return True to bypass the initial check
+        monkeypatch.setattr("mcpgateway.utils.uaid.is_uaid", lambda x: True)
+
+        # Create a malformed UAID that would pass is_uaid() if mocked but fails split check
+        # When split with maxsplit=3, "uaid:x" gives ["uaid", "x"] which is < 3 parts
+        malformed_uaid = "uaid:x"
+
+        with pytest.raises(ValueError, match="Invalid UAID format: expected 'uaid:METHOD:...' format"):
+            parse_uaid(malformed_uaid)
+
+    def test_parse_uaid_invalid_method_after_is_uaid_bypass(self, monkeypatch):
+        """Test UAID parsing with invalid method (covers line 108).
+
+        This is a defensive check that should never be reached in normal operation
+        since is_uaid() checks for 'uaid:aid:' or 'uaid:did:' prefix. We bypass
+        is_uaid() via mocking to test the defensive code path.
+        """
+        # Mock is_uaid to return True to bypass the initial check
+        monkeypatch.setattr("mcpgateway.utils.uaid.is_uaid", lambda x: True)
+
+        # Create a malformed UAID with invalid method
+        malformed_uaid = "uaid:invalid:hash;uid=0;registry=test;proto=a2a;nativeId=example.com"
+
+        with pytest.raises(ValueError, match="Invalid UAID method: expected 'aid' or 'did'"):
+            parse_uaid(malformed_uaid)

@@ -4916,6 +4916,31 @@ class TestUAIDGenerationCoverage:
         db.add = MagicMock()
         return db
 
+    @pytest.fixture
+    def sample_db_agent(self):
+        """Sample database A2A agent."""
+        agent_id = uuid.uuid4().hex
+        return DbA2AAgent(
+            id=agent_id,
+            name="test-agent",
+            slug="test-agent",
+            description="Test agent for unit tests",
+            endpoint_url="https://api.example.com/agent",
+            agent_type="custom",
+            protocol_version="1.0",
+            capabilities={"chat": True, "tools": False},
+            config={"max_tokens": 1000},
+            auth_type="basic",
+            auth_value="encoded-auth-value",
+            enabled=True,
+            reachable=True,
+            tags=[{"id": "test", "label": "test"}, {"id": "ai", "label": "ai"}],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            metrics=[],
+        )
+
     async def test_register_agent_with_uaid_generation(self, service, mock_db, monkeypatch):
         """Test agent registration with UAID generation enabled."""
         # Standard
@@ -5005,6 +5030,7 @@ class TestUAIDGenerationCoverage:
         # Verify fallback to UUID (id should be None, letting SQLAlchemy generate UUID)
         assert captured_agent is not None
         assert captured_agent.id is None  # Falls back to UUID generation
+
 
 
 class TestCrossGatewayRoutingCoverage:
@@ -5294,6 +5320,56 @@ async def test_invoke_agent_access_denied_by_team(module_service, module_mock_db
             parameters={"query": "test"},
             token_teams=["different-team"]  # Wrong team
         )
+
+
+async def test_invoke_agent_by_id_not_found(module_service, module_mock_db):
+    """Test invoking agent by ID when get_for_update returns None (covers line 1566)."""
+    from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+    from unittest.mock import patch
+
+    # Mock get_for_update to return None
+    with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
+        mock_get_for_update.return_value = None
+
+        # Should raise A2AAgentNotFoundError
+        with pytest.raises(A2AAgentNotFoundError, match="A2A Agent not found"):
+            await module_service.invoke_agent(
+                db=module_mock_db,
+                agent_name="",  # Empty name when using agent_id
+                parameters={"query": "test"},
+                agent_id="non-existent-id",  # Use agent_id not agent_name
+            )
+
+
+async def test_invoke_agent_by_id_access_denied(module_service, module_mock_db):
+    """Test invoking agent by ID with access denied (covers line 1578)."""
+    from mcpgateway.db import A2AAgent as DbA2AAgent
+    from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+    from unittest.mock import patch
+
+    # Create team-scoped agent
+    agent = DbA2AAgent(
+        id="test-agent-id",
+        name="team-agent",
+        endpoint_url="https://example.com",
+        visibility="team",
+        team_id="team-123",
+        enabled=True
+    )
+
+    # Mock get_for_update to return the agent
+    with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
+        mock_get_for_update.return_value = agent
+
+        # Invoke by ID (not name) with wrong team - should hit line 1578
+        with pytest.raises(A2AAgentNotFoundError, match="A2A Agent not found"):
+            await module_service.invoke_agent(
+                db=module_mock_db,
+                agent_name="",  # Empty name when using agent_id
+                parameters={"query": "test"},
+                agent_id="test-agent-id",  # Use agent_id not agent_name
+                token_teams=["different-team"]  # Wrong team
+            )
 
 
 async def test_invoke_remote_agent_unsupported_protocol(module_service, monkeypatch):
