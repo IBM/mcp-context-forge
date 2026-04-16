@@ -493,6 +493,8 @@ class A2AAgentService(BaseService):
                 if auth_type == "query_param":
                     # Standard
                     from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+                    # First-Party
+                    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
@@ -1290,6 +1292,8 @@ class A2AAgentService(BaseService):
             if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+                # First-Party
+                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
