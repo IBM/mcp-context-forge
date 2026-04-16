@@ -205,7 +205,7 @@ jobs:
                                   continue
                               raise
 
-                  VIRTUAL_SERVER_ID = 'b8e3f1a2c4d5e6'+'f7a1b2c3d4e5f6a7b8'
+                  VIRTUAL_SERVER_ID = 'b8e3f1a2-c4d5-e6f7-a1b2-c3d4e5f6a7b8'.replace('-','')
 
                   # Delete existing gateway if present
                   try:
