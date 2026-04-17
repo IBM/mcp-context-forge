@@ -3979,6 +3979,65 @@ class TestDeleteToolPermissionAndPurge:
         assert mock_delete.call_count == 2  # ToolMetric + ToolMetricsHourly
 
 
+class TestDeleteToolServerAssociationCleanup:
+    """Tests for delete_tool cleaning up server_tool_association rows (issue #4261)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        service._event_service = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_delete_tool_cleans_server_tool_association(self, tool_service):
+        """delete_tool must remove server_tool_association rows before deleting the tool."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "a2a_test_agent"
+        mock_tool.url = "http://example.com"
+        mock_tool.tags = ["a2a", "agent"]
+        mock_tool.team_id = None
+        mock_tool.gateway_id = None
+
+        db.get.return_value = mock_tool
+
+        # Track execute calls to verify ordering
+        execute_calls = []
+        assoc_result = MagicMock()
+        assoc_result.rowcount = 1  # One association row removed
+        delete_result = MagicMock()
+        delete_result.rowcount = 1
+
+        def track_execute(stmt):
+            execute_calls.append(str(stmt))
+            # First call is association cleanup, second is tool DELETE
+            if len(execute_calls) == 1:
+                return assoc_result
+            return delete_result
+
+        db.execute.side_effect = track_execute
+
+        mock_admin_cache = MagicMock()
+        mock_admin_cache.invalidate_tags = AsyncMock()
+        mock_metrics_cache = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service._get_registry_cache") as mock_rc,
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tlc,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", mock_admin_cache),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache", mock_metrics_cache),
+        ):
+            mock_rc.return_value = AsyncMock()
+            mock_tlc.return_value = AsyncMock()
+            await tool_service.delete_tool(db, "tool-1")
+
+        # Must have 2 execute calls: association cleanup then tool DELETE
+        assert db.execute.call_count == 2
+        db.commit.assert_called()
+
+
 # ============================================================================
 # convert_tool_to_read with metrics
 # ============================================================================
@@ -6576,7 +6635,7 @@ class TestInvokeToolRestSuccess:
             # Positional fallback: the `success` argument is the 3rd positional
             # after (tool_id, start_time, success) in the recorder signature.
             recorded_success = metrics_record.call_args.args[2]
-        assert recorded_success is False, f"Expected metrics success=False for REST isError=true response, got {recorded_success}. " "This regression would silently inflate tool success rates."
+        assert recorded_success is False, f"Expected metrics success=False for REST isError=true response, got {recorded_success}. This regression would silently inflate tool success rates."
 
     @pytest.mark.asyncio
     async def test_mcp_non_direct_proxy_iserror_records_success_false_in_metrics(self, tool_service):
@@ -6688,7 +6747,7 @@ class TestInvokeToolRestSuccess:
         assert metrics_record.called, "record_tool_metric was not invoked"
         recorded_success = metrics_record.call_args.kwargs.get("success")
         assert recorded_success is False, (
-            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. " "This would silently inflate federated-tool success rates."
+            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
         )
 
 
