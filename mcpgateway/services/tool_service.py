@@ -204,6 +204,8 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     re.compile(r"^content-length$", re.IGNORECASE),
     re.compile(r"^connection$", re.IGNORECASE),
     re.compile(r"^upgrade$", re.IGNORECASE),
+    # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
+    re.compile(r"^content-type$", re.IGNORECASE),
 )
 
 
@@ -6035,7 +6037,7 @@ class ToolService(BaseService):
         """Coerce a payload value to string for form/multipart encoding."""
         if v is None:
             return ""
-        if isinstance(v, (dict, list)):
+        if isinstance(v, (dict, list, bool)):
             return orjson.dumps(v).decode()
         return str(v)
 
