@@ -2925,6 +2925,49 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_modified_path_set_to_app_relative_path(self):
+        """Regression test for #4266: modified_path should be app-relative for server_id extraction."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/servers/abc123/mcp",
+            "root_path": "/gateway",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # modified_path MUST be app-relative (without root_path prefix)
+        # so streamablehttp_transport can extract server_id via regex
+        assert scope["modified_path"] == "/servers/abc123/mcp"
+        # path is rewritten with root_path prefix preserved
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_modified_path_without_root_path(self):
+        """When no root_path, modified_path equals original path."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/servers/xyz789/mcp",
+            "headers": []
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # Without root_path, modified_path should equal the normalized path
+        assert scope["modified_path"] == "/servers/xyz789/mcp"
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_security_arbitrary_prefix_not_rewritten(self):
         """PR #3892 security: Arbitrary paths ending with /mcp are NOT rewritten."""
         app_mock = AsyncMock()
