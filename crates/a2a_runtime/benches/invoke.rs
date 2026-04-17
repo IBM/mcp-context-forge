@@ -58,6 +58,10 @@ fn default_bench_config() -> RuntimeConfig {
         event_store_ttl_secs: 3600,
         event_flush_interval_ms: 1000,
         event_flush_batch_size: 100,
+        uaid_allowed_domains: String::new(),
+        uaid_allowed_domains_cache: Default::default(),
+        uaid_max_length: 2048,
+        uaid_max_federation_hops: 3,
         log_filter: "error".to_string(),
         exit_after_startup_ms: None,
     }

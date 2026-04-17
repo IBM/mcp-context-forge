@@ -14,10 +14,15 @@ import pytest
 
 # First-Party
 from mcpgateway.utils.uaid import (
+    HOP_HEADER,
+    _HOP_MAX,
     extract_routing_info,
     generate_uaid,
     is_uaid,
+    parse_hop_count,
     parse_uaid,
+    read_hop_count,
+    stamp_hop,
     UaidComponents,
     validate_uaid,
 )
@@ -91,6 +96,29 @@ class TestParseUaid:
         """Test parsing invalid UAID format."""
         with pytest.raises(ValueError, match="Invalid UAID format"):
             parse_uaid("not-a-uaid")
+
+    @pytest.mark.parametrize(
+        "injected",
+        [
+            "\n",  # LF — primary log-injection vector
+            "\r",  # CR
+            "\r\n",  # CRLF
+            "\x00",  # NUL
+            "\t",  # horizontal tab (also rejected per HCS-14 printable-field rule)
+            "\x7f",  # DEL
+        ],
+        ids=["lf", "cr", "crlf", "nul", "tab", "del"],
+    )
+    def test_parse_uaid_rejects_ascii_control_characters(self, injected):
+        """Control characters turn UAIDs into log-injection vectors; the
+        parser must reject them wholesale before any downstream formatting.
+        Rust's `parse_uaid` enforces the same contract in
+        `crates/a2a_runtime/src/uaid.rs` — this parity is security-critical.
+        Without the check a malicious UAID carrying CRLF could forge log
+        lines or HTTP headers downstream."""
+        uaid = f"uaid:aid:HASH{injected};uid=0;registry=cf;proto=a2a;nativeId=agent.example.com"
+        with pytest.raises(ValueError, match="ASCII control characters"):
+            parse_uaid(uaid)
 
     def test_parse_uaid_missing_method(self):
         """Test parsing UAID with missing method (too few colons)."""
@@ -510,3 +538,194 @@ class TestUaidDoSProtection:
 
         with pytest.raises(ValueError, match="Invalid UAID method: expected 'aid' or 'did'"):
             parse_uaid(malformed_uaid)
+
+
+class TestHopCounter:
+    """Tests for the federation-loop hop counter parse/stamp helpers.
+
+    These are the security-critical API that both Python and Rust
+    runtimes must agree on byte-for-byte — a lenient parser on one side
+    creates a split-brain where an attacker-controlled intermediate can
+    pad header values to reset the counter on one runtime but not the
+    other.
+    """
+
+    def test_parse_hop_count_missing_returns_zero(self):
+        assert parse_hop_count(None) == 0
+
+    def test_parse_hop_count_empty_returns_zero(self):
+        assert parse_hop_count("") == 0
+
+    def test_parse_hop_count_plain_digits(self):
+        assert parse_hop_count("0") == 0
+        assert parse_hop_count("3") == 3
+        assert parse_hop_count("999") == 999
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            " 3",  # leading whitespace
+            "3 ",  # trailing whitespace
+            "+3",  # leading plus
+            "-1",  # leading minus
+            "3.0",  # decimal
+            "0x10",  # hex
+            "NaN",  # text
+            "   5",  # tab
+            "five",  # spelled-out
+            "\uff11",  # fullwidth digit 1 (U+FF11) — str.isdigit()=True
+            "\uff12\uff13",  # fullwidth "23"
+            "\u0663",  # Arabic-Indic 3 (U+0663) — str.isdigit()=True
+            "1\uff12",  # mixed ASCII + fullwidth
+        ],
+        ids=[
+            "leading-space",
+            "trailing-space",
+            "leading-plus",
+            "leading-minus",
+            "decimal",
+            "hex",
+            "nan",
+            "leading-tab",
+            "spelled",
+            "fullwidth-1",
+            "fullwidth-23",
+            "arabic-3",
+            "mixed-ascii-fullwidth",
+        ],
+    )
+    def test_parse_hop_count_rejects_malformed_to_zero(self, bad):
+        """Strict parse: anything that is not pure ASCII digits → 0.
+
+        Matches the Rust `parse_hop_count` in `crates/a2a_runtime/src/server.rs`
+        (`bytes().all(|b| b.is_ascii_digit())`).  Python `str.isdigit()`
+        alone is too permissive — it returns True for fullwidth,
+        Arabic-Indic, and other Unicode digit characters that `int()`
+        also parses.  Without the `raw.isascii()` gate an attacker
+        could send `"１"` and have Python count it as hop 1 while Rust
+        treats it as 0, defeating the federation guard.
+        """
+        assert parse_hop_count(bad) == 0
+
+    def test_parse_hop_count_saturates_on_overflow(self):
+        """Astronomical integers saturate to _HOP_MAX rather than
+        silently falling back to 0 (the loop guard must fire)."""
+        assert parse_hop_count("999999999999999999999") == _HOP_MAX
+        assert parse_hop_count(str(_HOP_MAX + 1)) == _HOP_MAX
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("0,10", 10),  # coalesced, no spaces
+            ("0, 10", 10),  # RFC 7230 OWS
+            ("10, 0", 10),  # order-agnostic
+            (" 10 , 0 ", 10),  # leading/trailing OWS on tokens
+            ("\t3,\t7", 7),  # tab OWS (RFC 7230 §3.2.6)
+            ("3,garbage,10", 10),  # garbage token ignored, good tokens counted
+            ("garbage, 5", 5),  # bad token skipped; good one wins
+            ("-1, 0", 0),  # both invalid/low; max=0 (first rejected, second valid)
+            ("1, \uff12", 1),  # fullwidth digit rejected; ASCII 1 survives
+            (",", 0),  # comma alone → empty tokens → 0
+            ("3,", 3),  # trailing comma OK
+            (",3", 3),  # leading comma OK
+        ],
+        ids=[
+            "coalesced-no-space",
+            "coalesced-ows",
+            "reverse-order",
+            "outer-ows",
+            "tab-ows",
+            "mid-garbage",
+            "leading-garbage",
+            "both-invalid-low",
+            "unicode-fullwidth-skipped",
+            "comma-only",
+            "trailing-comma",
+            "leading-comma",
+        ],
+    )
+    def test_parse_hop_count_handles_coalesced_form(self, raw, expected):
+        """RFC 7230 §3.2.2 combined-form duplicate headers.
+
+        A proxy may legally combine `X-Hop: 0` and `X-Hop: 10` into
+        `X-Hop: 0, 10`.  The parser must split on `,`, trim OWS per
+        §3.2.6, apply the single-value strict rules per token, and
+        return the MAX so a smuggled low value can't mask a real high
+        one.  Malformed tokens inside the list are ignored (not
+        fatal), because otherwise an attacker could pair a good hop
+        with `garbage` to force the whole header to 0.
+        """
+        assert parse_hop_count(raw) == expected
+
+    def test_read_hop_count_uses_canonical_header_name(self):
+        assert read_hop_count({HOP_HEADER: "4"}) == 4
+        assert read_hop_count({}) == 0
+
+    def test_stamp_hop_increments_and_writes(self):
+        headers: dict[str, str] = {}
+        stamp_hop(headers, 2)
+        assert headers[HOP_HEADER] == "3"
+
+    def test_stamp_hop_saturates_near_ceiling(self):
+        headers: dict[str, str] = {}
+        stamp_hop(headers, _HOP_MAX)
+        assert headers[HOP_HEADER] == str(_HOP_MAX)
+        stamp_hop(headers, _HOP_MAX + 100)  # defensive: treat as at ceiling
+        assert headers[HOP_HEADER] == str(_HOP_MAX)
+
+    def test_read_hop_count_takes_max_across_case_variants(self):
+        """Header smuggling defense: an attacker who sends multiple
+        case variants with different values must not be able to pick
+        the lowest via HashMap iteration order."""
+        headers = {
+            "X-Contextforge-UAID-Hop": "0",  # attacker-crafted low value
+            "x-contextforge-uaid-hop": "10",  # real value
+        }
+        assert read_hop_count(headers) == 10
+
+    def test_read_hop_count_takes_max_from_starlette_getlist(self):
+        """With a starlette-style `getlist` API, all duplicate values
+        are visible — take the max defensively."""
+
+        class FakeHeaders:
+            def __init__(self, values):
+                self._values = values
+
+            def getlist(self, name):
+                if name == HOP_HEADER:
+                    return list(self._values)
+                return []
+
+            def items(self):
+                # Not exercised in this branch but satisfies the protocol.
+                return []
+
+        assert read_hop_count(FakeHeaders(["0", "7", "3"])) == 7
+        assert read_hop_count(FakeHeaders([])) == 0
+
+    def test_read_hop_count_handles_truthy_but_empty_iterable(self):
+        """Regression guard: an object whose `getlist` returns a value
+        that is truthy yet iterates to empty (MagicMock default, some
+        Header proxy types) must not crash with `max([])`.  Previously
+        the iterator was consumed after the truthiness check, then `max`
+        raised `ValueError` — surfaced by unit tests that mock
+        `request.headers` with a bare `MagicMock`.
+        """
+
+        class TruthyEmpty:
+            """Truthy object whose iterator yields nothing — mimics a
+            MagicMock passed in as a headers stand-in."""
+
+            def __bool__(self):
+                return True
+
+            def __iter__(self):
+                return iter(())
+
+        class FakeHeaders:
+            def getlist(self, name):
+                # Returns a truthy-but-empty iterable to exercise the
+                # fall-through branch.
+                return TruthyEmpty()
+
+        assert read_hop_count(FakeHeaders()) == 0

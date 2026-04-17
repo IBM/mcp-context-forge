@@ -598,6 +598,20 @@ class Settings(BaseSettings):
         ),
     )
 
+    uaid_max_federation_hops: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum UAID cross-gateway federation hops. Each outbound hop stamps "
+            "`X-Contextforge-UAID-Hop: N+1`; inbound calls at hop >= this limit are "
+            "rejected with 404 to break recursion. Covers both A→B→A loops and "
+            "self-referential `endpoint_url` loops. Default 5 accommodates "
+            "multi-tenant partner chains (Prod → Partner1 → Partner2 → Partner3) "
+            "while still terminating loops quickly (a ping-pong trips in 4 hops)."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")

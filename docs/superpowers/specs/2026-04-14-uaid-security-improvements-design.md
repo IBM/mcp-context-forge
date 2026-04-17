@@ -1,8 +1,8 @@
 # UAID Security Improvements Design
 
-**Date:** 2026-04-14  
-**Status:** Approved  
-**PR:** #4125  
+**Date:** 2026-04-14
+**Status:** Approved
+**PR:** #4125
 **Related Issue:** #3956
 
 ## Overview
@@ -135,7 +135,7 @@ uaid_max_length: int = Field(
 ```python
 def parse_uaid(uaid: str) -> UaidComponents:
     """Parse UAID string into components.
-    
+
     Parses both aid-based and did-based UAIDs:
         - aid: uaid:aid:{hash};uid={uid};registry={registry};proto={proto};nativeId={endpoint}
         - did: uaid:did:{did};uid={uid};proto={proto};nativeId={endpoint}
@@ -152,29 +152,29 @@ def parse_uaid(uaid: str) -> UaidComponents:
     # DoS Protection: Reject excessively long UAIDs before parsing
     # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-    
+
     # Database column hard limit (source of truth)
     DB_UAID_COLUMN_LENGTH = 2048
-    
+
     max_length = min(settings.uaid_max_length, DB_UAID_COLUMN_LENGTH)
-    
+
     # Safety check: catch misconfigurations where config exceeds database limit
     if settings.uaid_max_length > DB_UAID_COLUMN_LENGTH:
         logger.warning(
             f"UAID_MAX_LENGTH ({settings.uaid_max_length}) exceeds database column limit "
             f"({DB_UAID_COLUMN_LENGTH}). Using database limit for safety."
         )
-    
+
     if len(uaid) > max_length:
         raise ValueError(
             f"UAID exceeds maximum length of {max_length} characters. "
             f"Received {len(uaid)} characters. This may indicate a malformed or malicious UAID."
         )
-    
+
     # Existing validation continues...
     if not is_uaid(uaid):
         raise ValueError(f"Invalid UAID format: must start with 'uaid:aid:' or 'uaid:did:', got: {uaid}")
-    
+
     # ... rest of existing function
 ```
 
@@ -193,10 +193,10 @@ def parse_uaid(uaid: str) -> UaidComponents:
 # UAID Cross-Gateway Routing Security
 # =====================================
 # ⚠️  SECURITY WARNING: Cross-gateway UAID routing is currently UNAUTHENTICATED
-# 
+#
 # When a UAID agent is not found locally, the gateway will route requests to
 # remote gateways based on the endpoint embedded in the UAID. However, these
-# cross-gateway calls do NOT currently include authentication (bearer token 
+# cross-gateway calls do NOT currently include authentication (bearer token
 # forwarding or mutual TLS will be added in a future release).
 #
 # RECOMMENDED CONFIGURATION:
@@ -236,9 +236,9 @@ UAID_MAX_LENGTH=2048
 
 ⚠️ **Important Security Notice**: UAID cross-gateway routing is currently **unauthenticated**.
 
-When a UAID-identified agent is not found locally, ContextForge will route requests to 
-remote gateways based on the endpoint embedded in the UAID. However, these cross-gateway 
-calls do NOT currently include authentication mechanisms (bearer token forwarding and 
+When a UAID-identified agent is not found locally, ContextForge will route requests to
+remote gateways based on the endpoint embedded in the UAID. However, these cross-gateway
+calls do NOT currently include authentication mechanisms (bearer token forwarding and
 mutual TLS support are planned for a future release).
 
 **Security Implications:**
@@ -309,8 +309,8 @@ if correlation_id:
 
 **Current Limitation:** Cross-gateway UAID routing is **unauthenticated** in this release.
 
-When invoking a UAID agent not found locally, the gateway routes the request to the 
-remote endpoint embedded in the UAID. However, these cross-gateway calls do not 
+When invoking a UAID agent not found locally, the gateway routes the request to the
+remote endpoint embedded in the UAID. However, these cross-gateway calls do not
 currently include authentication mechanisms.
 
 **Risks:**
@@ -351,10 +351,10 @@ def test_parse_uaid_exceeds_max_length(monkeypatch):
     """Test UAID parsing rejects strings exceeding UAID_MAX_LENGTH."""
     from mcpgateway.config import settings
     monkeypatch.setattr(settings, "uaid_max_length", 2048)
-    
+
     # Create UAID exceeding limit
     long_uaid = "uaid:aid:" + "x" * 3000
-    
+
     with pytest.raises(ValueError, match="exceeds maximum length of 2048"):
         parse_uaid(long_uaid)
 
@@ -363,7 +363,7 @@ def test_parse_uaid_invalid_method():
     """Test UAID parsing rejects invalid methods (not 'aid' or 'did')."""
     # Covers line 88: method not in ("aid", "did")
     invalid_uaid = "uaid:invalid:hash123;uid=0;registry=test;proto=a2a;nativeId=example.com"
-    
+
     with pytest.raises(ValueError, match="Invalid UAID method"):
         parse_uaid(invalid_uaid)
 
@@ -372,7 +372,7 @@ def test_parse_uaid_too_short():
     """Test UAID parsing rejects strings without sufficient parts."""
     # Covers line 84: len(parts) < 3
     short_uaid = "uaid:aid"  # Missing hash and parameters
-    
+
     with pytest.raises(ValueError, match="expected 'uaid:METHOD:...' format"):
         parse_uaid(short_uaid)
 
@@ -381,9 +381,9 @@ def test_parse_uaid_config_exceeds_db_limit(monkeypatch, caplog):
     """Test parsing warns when UAID_MAX_LENGTH exceeds database limit."""
     from mcpgateway.config import settings
     monkeypatch.setattr(settings, "uaid_max_length", 5000)  # Exceeds DB limit of 2048
-    
+
     valid_uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
-    
+
     parse_uaid(valid_uaid)  # Should succeed but warn
     assert "exceeds database column limit" in caplog.text
 ```
@@ -398,12 +398,12 @@ def test_parse_uaid_config_exceeds_db_limit(monkeypatch, caplog):
 async def test_invoke_agent_cross_gateway_routing_http_error(service, mock_db, monkeypatch):
     """Test cross-gateway routing handles HTTP errors gracefully."""
     # Covers lines 1839, 1861: error handling in _invoke_remote_agent
-    
+
     def mock_extract_routing(*args, **kwargs):
         return {"protocol": "a2a", "endpoint": "remote.example.com", "registry": "test"}
-    
+
     monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
-    
+
     # Mock HTTP client to return error
     async def mock_post(*args, **kwargs):
         class MockResponse:
@@ -411,13 +411,13 @@ async def test_invoke_agent_cross_gateway_routing_http_error(service, mock_db, m
             def json(self):
                 return {"error": "Internal server error"}
         return MockResponse()
-    
+
     mock_client = type('obj', (object,), {'post': mock_post})()
-    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", 
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client",
                        lambda: mock_client)
-    
+
     uaid = "uaid:aid:hash;uid=0;registry=test;proto=a2a;nativeId=remote.example.com"
-    
+
     with pytest.raises(A2AAgentError, match="Cross-gateway routing failed"):
         await service.invoke_agent(
             db=mock_db,
@@ -431,14 +431,14 @@ async def test_invoke_agent_uaid_disallowed_domain(service, mock_db, monkeypatch
     """Test cross-gateway routing rejects disallowed domains."""
     from mcpgateway.config import settings
     monkeypatch.setattr(settings, "uaid_allowed_domains", ["trusted.com"])
-    
+
     def mock_extract_routing(*args, **kwargs):
         return {"protocol": "a2a", "endpoint": "untrusted.example.com", "registry": "test"}
-    
+
     monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
-    
+
     uaid = "uaid:aid:hash;uid=0;registry=test;proto=a2a;nativeId=untrusted.example.com"
-    
+
     with pytest.raises(ValueError, match="not allowed.*not in UAID_ALLOWED_DOMAINS"):
         await service.invoke_agent(
             db=mock_db,
@@ -451,7 +451,7 @@ async def test_invoke_agent_uaid_disallowed_domain(service, mock_db, monkeypatch
 async def test_invoke_agent_access_denied_by_team(service, mock_db):
     """Test agent invocation respects team visibility."""
     # Covers lines 1566, 1578: access check edge cases
-    
+
     # Create team-scoped agent
     agent = DbA2AAgent(
         id="test-agent-id",
@@ -462,7 +462,7 @@ async def test_invoke_agent_access_denied_by_team(service, mock_db):
     )
     mock_db.add(agent)
     mock_db.commit()
-    
+
     # Invoke with different team (should fail with 404, not 403)
     with pytest.raises(A2AAgentNotFoundError):
         await service.invoke_agent(

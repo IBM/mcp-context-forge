@@ -81,6 +81,34 @@ def test_sso_entra_graph_timeout_and_max_groups_validation():
         Settings(sso_entra_graph_api_max_groups=-1, _env_file=None)
 
 
+@pytest.mark.parametrize("bad_value", [0, 11, 100])
+def test_uaid_max_federation_hops_rejects_out_of_range(bad_value):
+    """`uaid_max_federation_hops` must stay within `1..=10`.
+
+    Parity guard with the Rust sidecar's `validate_cross_field` check
+    in `crates/a2a_runtime/src/config.rs` (rejects 0 and >10).  Without
+    this test a future edit that raised the Python ceiling or relaxed
+    the floor would silently diverge from Rust and let an operator
+    configure a range the sidecar will then refuse at startup.
+    """
+    # Third-Party
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(uaid_max_federation_hops=bad_value, _env_file=None)
+
+
+@pytest.mark.parametrize("good_value", [1, 5, 10])
+def test_uaid_max_federation_hops_accepts_bounds(good_value):
+    """Boundary values (1 and 10) plus the default (5) must all be accepted.
+
+    Inclusive bounds — regression guard against an off-by-one on the
+    `le=10` constraint.
+    """
+    settings = Settings(uaid_max_federation_hops=good_value, _env_file=None)
+    assert settings.uaid_max_federation_hops == good_value
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #

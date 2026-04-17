@@ -14,11 +14,13 @@ and interactions with A2A-compatible agents.
 
 # Standard
 import binascii
+import json
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 # Third-Party
+import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -543,7 +545,7 @@ class A2AAgentService(BaseService):
                             "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
                             "uaid_native_id": agent_data.endpoint_url,
                         }
-                        logger.info(f"Generated UAID for agent {agent_data.name}: {uaid}")
+                        logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
                     except Exception as uaid_error:
                         logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID only.")
                         uaid_metadata = {}
@@ -1366,7 +1368,7 @@ class A2AAgentService(BaseService):
                     agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
                     agent.uaid_native_id = agent.endpoint_url
 
-                    logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid}")
+                    logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
                 except Exception as uaid_error:
                     logger.warning(f"Failed to generate UAID for agent {agent.name}: {uaid_error}. Continuing without UAID.")
 
@@ -1640,6 +1642,7 @@ class A2AAgentService(BaseService):
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent by name or ID (UUID/UAID).
 
@@ -1653,6 +1656,11 @@ class A2AAgentService(BaseService):
             user_email: Email of the user initiating the call.
             token_teams: Teams from JWT token. None = admin (no filtering),
                          [] = public-only, [...] = team-scoped access.
+            hop_count: Federation hop counter from the inbound
+                `X-Contextforge-UAID-Hop` header. Calls at or above
+                `settings.uaid_max_federation_hops` are rejected to break
+                UAID cross-gateway loops (A->B->A and self-referential
+                `endpoint_url`). Outbound calls stamp `hop_count + 1`.
 
         Returns:
             Agent response.
@@ -1666,6 +1674,30 @@ class A2AAgentService(BaseService):
         is_name_lookup = bool(not agent_id and agent_name)
 
         # ═══════════════════════════════════════════════════════════════════════════
+        # FEDERATION LOOP GUARD
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Every outbound cross-gateway invocation stamps
+        # `X-Contextforge-UAID-Hop: N+1` on its request headers.  The entry
+        # handler reads the header and forwards the integer here.  If we've
+        # already traversed `uaid_max_federation_hops` hops, refuse.  This
+        # check catches BOTH:
+        #   (a) A→B→A style federation ping-pong (nativeId of a missing
+        #       UAID points back at a peer that doesn't own it), and
+        #   (b) self-referential `endpoint_url` loops where a locally-
+        #       registered agent's endpoint routes right back into this
+        #       handler.  A binary "is-federated" marker would miss (b)
+        #       because the UAID still resolves locally on every hop.
+        max_hops = settings.uaid_max_federation_hops
+        if hop_count >= max_hops:
+            logger.warning(
+                "UAID federation hop limit reached: hop_count=%d >= max=%d for identifier %r",
+                hop_count,
+                max_hops,
+                identifier,
+            )
+            raise A2AAgentNotFoundError(f"A2A Agent not found (federation hop limit reached): {identifier}")
+
+        # ═══════════════════════════════════════════════════════════════════════════
         # UAID HANDLING: Check if identifier is UAID format
         # ═══════════════════════════════════════════════════════════════════════════
         # First-Party
@@ -1676,8 +1708,10 @@ class A2AAgentService(BaseService):
             agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
 
             if not agent_row:
-                # Not found locally - attempt cross-gateway routing
-                logger.info(f"UAID agent not found locally, attempting cross-gateway routing: {identifier}")
+                # Not found locally — attempt cross-gateway routing.
+                # Hop-count enforcement above already rejected requests
+                # that came in at the limit, so this path is safe.
+                logger.info(f"UAID agent not found locally, attempting cross-gateway routing: {identifier!r}")
                 return await self._invoke_remote_agent(
                     uaid=identifier,
                     parameters=parameters,
@@ -1685,6 +1719,7 @@ class A2AAgentService(BaseService):
                     user_id=user_id,
                     user_email=user_email,
                     token_teams=token_teams,
+                    hop_count=hop_count,
                 )
 
             # Found locally - continue with normal invocation
@@ -1785,6 +1820,46 @@ class A2AAgentService(BaseService):
         }
         if is_input_capture_enabled("a2a.invoke"):
             span_attributes["langfuse.observation.input"] = serialize_trace_payload(parameters or {})
+
+        # Stamp the outbound hop counter when the target is a known CF
+        # peer — a locally-registered agent whose `endpoint_url` points
+        # back at this gateway (misconfiguration or attack) would
+        # otherwise loop without limit; the hop guard at the top of
+        # `invoke_agent` catches the re-entry once this header arrives.
+        #
+        # Stamping responsibility depends on who actually emits the
+        # outbound HTTP request:
+        #   - Non-delegate (Python emits): stamp N+1 via `stamp_hop`
+        #     so the downstream sees the incremented value.
+        #   - Delegate to Rust runtime: pass N as-is (the inbound
+        #     value).  Rust's `handle_invoke` reads it, re-checks the
+        #     guard, and emits N+1 itself.  If Python also stamped,
+        #     the counter would advance twice per logical hop and the
+        #     guard would trip `max_hops/2` levels deep — breaking
+        #     legitimate federation chains.  Stamping is unconditional:
+        #     gating on `uaid_allowed_domains` would skip the header on
+        #     any gateway reached via a host alias missing from the
+        #     allowlist, and that path self-loops without bound.  The
+        #     header is a ContextForge-internal marker and is safe for
+        #     third-party agents to receive (they ignore it).
+        # First-Party
+        from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
+
+        # Use `_should_delegate_a2a_to_rust()` (not the raw settings flags)
+        # so this branch stays in lockstep with the dispatch decision below
+        # (`if _should_delegate_a2a_to_rust(): ...`).  The helper also
+        # honors the runtime-mutable `A2A_MODE` override introduced by
+        # `mcpgateway.version`; reading raw flags here would desync the
+        # hop-stamp contract from the dispatch contract when an operator
+        # flips the mode at runtime (e.g., `PATCH /admin/runtime/a2a-mode
+        # {mode: "shadow"}` while delegate flags are boot-true).  That
+        # desync would let Python emit the HTTP POST while the header
+        # was stamped for the Rust-delegate path — downstream gateways
+        # would then trip the guard at half the configured depth.
+        if _should_delegate_a2a_to_rust():
+            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)
+        else:
+            uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
@@ -2000,6 +2075,7 @@ class A2AAgentService(BaseService):
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
+        hop_count: int = 0,
     ) -> Dict[str, Any]:
         """Invoke agent on remote gateway via UAID cross-gateway routing.
 
@@ -2010,6 +2086,10 @@ class A2AAgentService(BaseService):
             user_id: Identifier of the user initiating the call
             user_email: Email of the user initiating the call
             token_teams: Teams from JWT token
+            hop_count: Current federation hop depth (from the inbound
+                `X-Contextforge-UAID-Hop` header). The outbound request
+                stamps `hop_count + 1` so the receiving gateway can
+                enforce `uaid_max_federation_hops`.
 
         Returns:
             Agent response from remote gateway
@@ -2027,7 +2107,7 @@ class A2AAgentService(BaseService):
             endpoint = routing["endpoint"]
             registry = routing.get("registry")
 
-            logger.info(f"Cross-gateway routing: {uaid} -> {protocol}://{endpoint}")
+            logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY WARNING: Log authentication gap on first cross-gateway call
@@ -2054,16 +2134,21 @@ class A2AAgentService(BaseService):
             # 4. Port injection is allowed for legitimate use cases (gateway.example.com:8443)
 
             if "://" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
 
             if "@" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain @ character (SSRF protection)")
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain @ character (SSRF protection)")
 
             # Parse to check for path components (after first slash)
             # Valid: "gateway.example.com", "gateway.example.com:8443"
             # Invalid: "gateway.example.com/path", "127.0.0.1/admin"
-            if "/" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: endpoint cannot contain path components (SSRF protection)")
+            # Also reject `?` and `#` — those would smuggle query/fragment
+            # data into the constructed URL path and let an attacker
+            # attach arbitrary params to the downstream `/a2a/{uaid}/invoke`
+            # call.  The Rust parser already rejects the same characters
+            # in `uaid::resolve_routing`; mirror that here.
+            if "/" in endpoint or "?" in endpoint or "#" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain path/query/fragment components (SSRF protection)")
 
             # Validate it's a valid hostname/IP by attempting to parse as URL
             # This catches malformed hostnames like "not..valid..hostname"
@@ -2072,7 +2157,7 @@ class A2AAgentService(BaseService):
                 if not parsed.netloc:
                     raise ValueError("Empty netloc")
             except Exception as parse_error:
-                raise ValueError(f"Cross-gateway routing to {endpoint} rejected: invalid hostname format ({parse_error})")
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
 
             # Security: Validate endpoint against domain allowlist
             # Use proper subdomain matching: require exact match OR proper subdomain prefix
@@ -2087,26 +2172,35 @@ class A2AAgentService(BaseService):
 
                 # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
                 if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
-                    raise ValueError(f"Cross-gateway routing to {endpoint} not allowed. Endpoint domain '{endpoint_domain}' not in UAID_ALLOWED_DOMAINS.")
+                    raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
             else:
                 # WARNING: Empty allowlist permits arbitrary cross-gateway routing
                 # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
                 logger.warning(
-                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint} without domain validation. "
+                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint!r} without domain validation. "
                     "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
                 )
 
-            # Construct URL based on protocol (endpoint is now validated)
+            # Construct URL based on protocol (endpoint is now validated).
+            # ContextForge-to-ContextForge federation: target the receiving
+            # gateway's existing public invoke route so the UAID is routed
+            # through the same `is_uaid()` branch on the other side.
+            #
+            # URL-encode the UAID before embedding it in the path so a
+            # malformed identifier containing `/`, `?`, or `#` cannot
+            # smuggle extra path segments or query/fragment data. The
+            # parser already validates structure; this is defence in depth.
             if protocol == "a2a":
-                url = f"https://{endpoint}/a2a/invoke"
+                url = f"https://{endpoint}/a2a/{quote(uaid, safe='')}/invoke"
             elif protocol == "mcp":
                 url = f"https://{endpoint}/mcp/tools/call"
             else:
                 raise ValueError(f"Unsupported protocol in UAID: {protocol}")
 
-            # Prepare request payload
+            # Prepare request payload — matches the receiving gateway's
+            # `/a2a/{agent_name}/invoke` body signature. The UAID is carried
+            # in the URL path; no need to duplicate it in the body.
             request_data = {
-                "agent_id": uaid,
                 "parameters": parameters,
                 "interaction_type": interaction_type,
             }
@@ -2116,7 +2210,17 @@ class A2AAgentService(BaseService):
             from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
             client = await get_http_client()
+            # Stamp the outbound hop count so the receiving gateway can
+            # enforce `uaid_max_federation_hops` and break recursion —
+            # covers both A→B→A pingpong and self-referential
+            # `endpoint_url` loops.  Uses the shared `stamp_hop` helper
+            # so Python and Rust agree on header name and overflow
+            # semantics.
+            # First-Party
+            from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
+
             headers = {"Content-Type": "application/json"}
+            uaid_utils.stamp_hop(headers, hop_count)
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
@@ -2162,7 +2266,7 @@ class A2AAgentService(BaseService):
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(
                 level="INFO",
-                message=f"Cross-gateway call started: {uaid}",
+                message=f"Cross-gateway call started: {uaid!r}",
                 component="a2a_service",
                 user_id=user_id,
                 user_email=user_email,
@@ -2180,13 +2284,82 @@ class A2AAgentService(BaseService):
             http_response = await client.post(url, json=request_data, headers=headers, timeout=30.0)
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
-            if http_response.status_code == 200:
-                response = http_response.json()
+            # Any 2xx is success.  Restricting to status 200 would
+            # spuriously reject legitimate 201/202/204 responses — an
+            # A2A agent returning `201 Created` for an accepted task
+            # would otherwise hit the failure sink below.
+            if 200 <= http_response.status_code < 300:
+                # Empty-body 2xx responses (most importantly `204 No
+                # Content`, which is spec-forbidden from carrying a body,
+                # and any 2xx that legitimately returns `Content-Length: 0`)
+                # have nothing to parse.  Calling `.json()` on an empty
+                # body raises `JSONDecodeError` and the block below would
+                # then treat this as "2xx with unparseable body" — the
+                # exact failure the stop-hook caught.  Short-circuit to
+                # an empty dict so the call registers as a clean success
+                # with no payload.
+                if not http_response.content:
+                    response = {}
+                    structured_logger.log(
+                        level="INFO",
+                        message=f"Cross-gateway call completed: {uaid!r}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        metadata={
+                            "event": "cross_gateway_call_completed",
+                            "uaid": uaid,
+                            "endpoint": endpoint,
+                            "status_code": http_response.status_code,
+                            "success": True,
+                            "empty_body": True,
+                        },
+                    )
+                    return response
+                # Wrap `.json()` so a 2xx-with-malformed-body lands in
+                # the same dual-sink diagnostic block as a non-2xx
+                # remote error.  Without this, JSONDecodeError would
+                # skip the structured log + body-snippet capture and
+                # land at the terse transport-error sink in the outer
+                # except, losing operator-useful context (the advertised
+                # 2xx status + the bytes that didn't parse).
+                try:
+                    response = http_response.json()
+                except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+                    # `log_error_message` goes to the STRUCTURED log
+                    # payload (operators filter on `error_message`) and
+                    # so includes status prose for context.  The
+                    # unstructured `logger.error` below passes the RAW
+                    # `remote_body_snippet` so its `body=%r` field shape
+                    # matches the non-200 sink at line 2358 — log parsers
+                    # can key on `body=%r` uniformly across both paths.
+                    remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                    log_error_message = f"HTTP {http_response.status_code} but body failed to decode as JSON: {decode_error}"
+                    logger.error("Cross-gateway HTTP %d from endpoint=%r uaid=%r body=%r", http_response.status_code, endpoint, uaid, remote_body_snippet)
+                    structured_logger.log(
+                        level="ERROR",
+                        message=f"Cross-gateway call failed: {uaid!r}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        error_details={"error_type": "CrossGatewayDecodeError", "error_message": log_error_message},
+                        metadata={
+                            "event": "cross_gateway_call_failed",
+                            "uaid": uaid,
+                            "endpoint": endpoint,
+                            "status_code": http_response.status_code,
+                        },
+                    )
+                    raise A2AAgentError(f"Cross-gateway routing failed: remote returned HTTP {http_response.status_code} with unparseable body") from decode_error
 
                 # Log successful cross-gateway call
                 structured_logger.log(
                     level="INFO",
-                    message=f"Cross-gateway call completed: {uaid}",
+                    message=f"Cross-gateway call completed: {uaid!r}",
                     component="a2a_service",
                     user_id=user_id,
                     user_email=user_email,
@@ -2203,18 +2376,35 @@ class A2AAgentService(BaseService):
 
                 return response
 
-            error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+            # Capture the remote body for operator-side structured logging
+            # (so failures can be diagnosed) but keep the body out of the
+            # exception we raise to the caller: a cross-gateway response
+            # may contain a stack trace, internal hostnames, or partially
+            # trusted data, and surfacing that to the end user is a leak.
+            # The public message exposes only the HTTP status.
+            remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+            # `log_error_message` embeds status for the structured-log
+            # payload (which operators may filter on the bare field);
+            # the positional `%d` log below carries status separately so
+            # we don't double-stamp it in the formatted string.
+            log_error_message = f"HTTP {http_response.status_code}: {remote_body_snippet}"
+            public_error_message = f"HTTP {http_response.status_code}"
 
-            # Log failed cross-gateway call
+            # Log failed cross-gateway call.  Dual-sink to both the
+            # structured logger AND the standard `logger` so the body
+            # snippet survives even if structured logging is disabled,
+            # mocked out, or misconfigured.  The public exception
+            # carries only the status; the body is operator-only.
+            logger.error("Cross-gateway HTTP %d from endpoint=%r uaid=%r body=%r", http_response.status_code, endpoint, uaid, remote_body_snippet)
             structured_logger.log(
                 level="ERROR",
-                message=f"Cross-gateway call failed: {uaid}",
+                message=f"Cross-gateway call failed: {uaid!r}",
                 component="a2a_service",
                 user_id=user_id,
                 user_email=user_email,
                 correlation_id=correlation_id,
                 duration_ms=call_duration_ms,
-                error_details={"error_type": "CrossGatewayHTTPError", "error_message": error_message},
+                error_details={"error_type": "CrossGatewayHTTPError", "error_message": log_error_message},
                 metadata={
                     "event": "cross_gateway_call_failed",
                     "uaid": uaid,
@@ -2223,13 +2413,38 @@ class A2AAgentService(BaseService):
                 },
             )
 
-            raise A2AAgentError(f"Cross-gateway routing failed: {error_message}")
+            raise A2AAgentError(f"Cross-gateway routing failed: {public_error_message}")
 
+        # `A2AAgentError` raised inside the try body (e.g., from the
+        # 2xx-with-unparseable-body inner except) propagates naturally
+        # because it's a direct `Exception` subclass and no handler
+        # below catches a superclass of it.
+        #
+        # Order matters: `JSONDecodeError` and `UnicodeDecodeError` are
+        # both subclasses of `ValueError`, so they must be handled
+        # BEFORE the generic `ValueError` catch — otherwise they'd be
+        # swallowed with the wrong error message.
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Stray decode failures from `http_response.text` on the
+            # non-2xx path (the 2xx path's inner try already converts
+            # these into `A2AAgentError`).  A remote that lies about
+            # its Content-Type charset lands here.
+            logger.error(f"Cross-gateway routing response decode failure: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: response decode error: {e}")
         except ValueError as e:
             logger.error(f"Failed to parse UAID or validate endpoint: {e}")
             raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {e}")
-        except Exception as e:
-            logger.error(f"Cross-gateway routing failed: {e}")
+        except (httpx.HTTPError, OSError) as e:
+            # Narrowed from a bare `except Exception` so we no longer
+            # swallow programmer errors (AttributeError, KeyError,
+            # asyncio.CancelledError, etc.).  Covered failure modes:
+            #   - httpx.HTTPError: parent of TransportError / TimeoutException
+            #     / all httpx-level wire failures
+            #   - OSError: underlying socket layer
+            # Decode errors are caught by the dedicated handler above.
+            # Programmer errors and asyncio.CancelledError deliberately
+            # propagate.
+            logger.error(f"Cross-gateway routing transport failure: {e}")
             raise A2AAgentError(f"Cross-gateway routing failed: {e}")
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:

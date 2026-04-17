@@ -11,6 +11,7 @@ Tests for A2A Agent Service functionality.
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import json
 import uuid
 
 # Third-Party
@@ -5077,11 +5078,223 @@ class TestCrossGatewayRoutingCoverage:
             agent_id=uaid,
         )
 
-        # Verify cross-gateway routing was called
+        # Verify cross-gateway routing was called. The UAID is URL-
+        # encoded in the path as a defence-in-depth measure against
+        # path-segment smuggling.
+        # Standard
+        from urllib.parse import quote  # pylint: disable=import-outside-toplevel
+
         assert result == {"result": "cross-gateway success"}
         assert mock_client.post.called
         call_args = mock_client.post.call_args
-        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+        assert f"https://agent.example.com/a2a/{quote(uaid, safe='')}/invoke" in str(call_args)
+        # Hop counter must be stamped on outbound requests so the
+        # receiving gateway can enforce `uaid_max_federation_hops`
+        # and break recursion.  First outbound from a direct client
+        # call stamps hop 1.
+        sent_headers = call_args.kwargs.get("headers") or (call_args.args[2] if len(call_args.args) > 2 else {})
+        assert sent_headers.get("X-Contextforge-UAID-Hop") == "1", f"missing/wrong hop counter in: {sent_headers}"
+
+    async def test_invoke_agent_rejects_uaid_at_hop_limit(self, service, mock_db):
+        """A UAID invocation whose inbound hop count has reached
+        `uaid_max_federation_hops` must abort — otherwise a misrouted
+        UAID loops the receiving gateway (either A→B→A via
+        `_invoke_remote_agent` or self-referential `endpoint_url` via
+        `_execute_agent_request`)."""
+        uaid = "uaid:aid:LOOP;uid=0;registry=context-forge;proto=a2a;nativeId=us.example.com"
+
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        with pytest.raises(A2AAgentNotFoundError, match="hop limit"):
+            await service.invoke_agent(
+                db=mock_db,
+                agent_name="unused",
+                parameters={"test": "data"},
+                interaction_type="request",
+                agent_id=uaid,
+                hop_count=settings.uaid_max_federation_hops,
+            )
+
+    async def test_local_agent_invoke_stamps_hop_on_prepared_headers(self, service, monkeypatch):
+        """The local-agent path (`_execute_agent_request`) must also stamp
+        `X-Contextforge-UAID-Hop` on the outbound request, not just the
+        cross-gateway path.  A self-referential `endpoint_url` would
+        otherwise loop through `invoke_agent` without the counter ever
+        reaching the re-entry's guard."""
+        # First-Party
+        from mcpgateway.services import a2a_service as a2a_service_module  # pylint: disable=import-outside-toplevel
+
+        captured_headers: dict[str, str] = {}
+
+        class FakeResponse:
+            status_code = 200
+            text = "{}"
+
+            def json(self):
+                return {"result": "ok"}
+
+        class FakeClient:
+            async def post(self, url, json=None, headers=None):  # pylint: disable=redefined-outer-name,unused-argument
+                captured_headers.update(headers or {})
+                return FakeResponse()
+
+        async def mock_get_http_client():
+            return FakeClient()
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Build a minimal locally-registered agent row.
+        agent = MagicMock()
+        agent.id = "agent-id-local-loop"
+        agent.name = "self-looping-agent"
+        agent.endpoint_url = "https://federation.example.com/a2a/self-looping-agent/invoke"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.enabled = True
+        agent.visibility = "public"
+        agent.owner_email = None
+        agent.team_id = None
+        agent.tags = []
+
+        mock_db = MagicMock(spec=Session)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = agent.id
+        mock_db.execute.return_value = result
+        monkeypatch.setattr(a2a_service_module, "get_for_update", lambda db, model, pk: agent)
+
+        await service.invoke_agent(
+            db=mock_db,
+            agent_name="self-looping-agent",
+            parameters={"query": "hi"},
+            interaction_type="query",
+            hop_count=1,  # inbound claims we're on hop 1
+        )
+
+        assert captured_headers.get("X-Contextforge-UAID-Hop") == "2", f"local-agent outbound must stamp hop+1; headers={captured_headers!r}"
+
+    async def test_local_agent_invoke_delegate_path_passes_hop_unincremented(self, service, monkeypatch):
+        """When Python delegates to the Rust runtime (POST /invoke), the
+        hop header handed to Rust must carry the CURRENT hop value, not
+        hop+1.  Rust's `handle_invoke` re-reads the header, enforces the
+        guard, and emits the single +1 increment on its outbound HTTP
+        call.  Double-stamping here would advance the counter twice per
+        logical hop and halve the effective federation chain length.
+
+        Regression guard for a revision where Python stamped
+        unconditionally — breaking the delegate path.
+        """
+        # First-Party
+        from mcpgateway.services import a2a_service as a2a_service_module  # pylint: disable=import-outside-toplevel
+
+        captured_prepared: dict = {}
+
+        async def fake_invoke(prepared, *, timeout_seconds=None):  # pylint: disable=unused-argument
+            captured_prepared["headers"] = dict(prepared.headers)
+            return {"status_code": 200, "json": {"ok": True}, "text": ""}
+
+        fake_client = MagicMock()
+        fake_client.invoke = AsyncMock(side_effect=fake_invoke)
+
+        monkeypatch.setattr(a2a_service_module, "get_rust_a2a_runtime_client", lambda: fake_client)
+        monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True)
+
+        agent = MagicMock()
+        agent.id = "agent-id-delegate"
+        agent.name = "delegated-agent"
+        agent.endpoint_url = "https://peer.example.com/a2a/delegated-agent/invoke"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.enabled = True
+        agent.visibility = "public"
+        agent.owner_email = None
+        agent.team_id = None
+        agent.tags = []
+
+        mock_db = MagicMock(spec=Session)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = agent.id
+        mock_db.execute.return_value = result
+        monkeypatch.setattr(a2a_service_module, "get_for_update", lambda db, model, pk: agent)
+
+        await service.invoke_agent(
+            db=mock_db,
+            agent_name="delegated-agent",
+            parameters={"q": "hi"},
+            interaction_type="query",
+            hop_count=2,  # inbound says hop 2
+        )
+
+        # Python must hand Rust the raw inbound hop so Rust's
+        # handle_invoke performs the single +1 increment.  If Python
+        # had also stamped, Rust would see "3" and emit "4" downstream —
+        # that's the regression this test defends against.
+        assert captured_prepared["headers"].get("X-Contextforge-UAID-Hop") == "2", f"delegate path must pass hop unincremented; headers={captured_prepared['headers']!r}"
+
+    async def test_federation_chain_increments_hop_and_rejects_at_max(self, service, mock_db, monkeypatch):
+        """Three-hop chain locks in the stamp-N+1 vs reject-at-max
+        off-by-one contract.  Starting at hop 0 (fresh client request)
+        with the default limit of 5, each outbound POST should carry
+        hop 1, 2, 3, ... until the inbound guard fires.  A regression
+        that flips `>=` to `>` or `+1` to `+0` changes the chain length
+        and this test catches it."""
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        uaid = "uaid:aid:CHAIN;uid=0;registry=context-forge;proto=a2a;nativeId=peer.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        max_hops = settings.uaid_max_federation_hops
+
+        # Each permitted hop increments exactly once.  A chain with the
+        # inbound hop one below the max must still outbound as max-1+1
+        # = max, which is what the next receiver reads and rejects on.
+        for inbound_hop in range(max_hops):
+            mock_client.post.reset_mock()
+            await service.invoke_agent(
+                db=mock_db,
+                agent_name="dummy",
+                parameters={},
+                interaction_type="query",
+                agent_id=uaid,
+                hop_count=inbound_hop,
+            )
+            assert mock_client.post.called
+            call_args = mock_client.post.call_args
+            sent_headers = call_args.kwargs.get("headers") or {}
+            assert sent_headers.get("X-Contextforge-UAID-Hop") == str(inbound_hop + 1), f"hop {inbound_hop} should stamp {inbound_hop + 1} outbound, got: {sent_headers}"
+
+        # At the limit: no outbound call, service raises.
+        mock_client.post.reset_mock()
+        with pytest.raises(A2AAgentNotFoundError, match="hop limit"):
+            await service.invoke_agent(
+                db=mock_db,
+                agent_name="dummy",
+                parameters={},
+                interaction_type="query",
+                agent_id=uaid,
+                hop_count=max_hops,
+            )
+        assert not mock_client.post.called, "rejected request must not issue any outbound POST"
 
     async def test_invoke_remote_agent_success(self, service, monkeypatch):
         """Test _invoke_remote_agent with successful response."""
@@ -5185,10 +5398,17 @@ class TestCrossGatewayRoutingCoverage:
 
     async def test_invoke_remote_agent_network_error(self, service, monkeypatch):
         """Test _invoke_remote_agent with network error."""
+        # Third-Party
+        import httpx
+
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(side_effect=Exception("Network error"))
+        # Use `httpx.ConnectError` (not a bare `Exception`) — the handler
+        # now narrows from `except Exception` to wire-level failures, so
+        # we must raise something in the httpx/OSError hierarchy to
+        # exercise the wrapping path.
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Network error"))
 
         async def mock_get_http_client():
             return mock_client
@@ -5202,6 +5422,163 @@ class TestCrossGatewayRoutingCoverage:
                 parameters={"test": "data"},
                 interaction_type="request",
             )
+
+    @pytest.mark.parametrize(
+        "status_code",
+        [200, 201, 202, 206],
+        ids=["200_ok", "201_created", "202_accepted", "206_partial"],
+    )
+    @pytest.mark.parametrize(
+        "decode_error_cls,decode_error_args",
+        [
+            # A remote returning HTML (e.g., reverse-proxy error page) with
+            # a 2xx status — realistic in production behind misconfigured
+            # CDNs that swallow upstream errors.
+            (json.JSONDecodeError, ("Expecting value", "<html>502</html>", 0)),
+            # A remote advertising UTF-8 Content-Type but returning bytes
+            # that httpx can't decode when we touch `.text`.
+            (UnicodeDecodeError, ("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")),
+        ],
+        ids=["json_decode_error", "unicode_decode_error"],
+    )
+    async def test_invoke_remote_agent_2xx_with_unparseable_body(self, service, monkeypatch, status_code, decode_error_cls, decode_error_args):
+        """Any 2xx response with a body that fails to decode must land in
+        the dual-sink diagnostic path (not the terse transport-error sink)
+        and raise an `A2AAgentError` whose error message reports the
+        ACTUAL status code, not a hardcoded "200".  An earlier revision
+        misreported non-200 success responses as `"remote returned 200
+        with unparseable body"` — this parametrization catches that
+        regression across all 2xx status codes the handler accepts.
+        """
+        # First-Party
+        from mcpgateway.services import a2a_service as a2a_service_module
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        # Non-empty body so the empty-body short-circuit doesn't swallow it.
+        mock_response.content = b"<html>502 Bad Gateway</html>"
+        mock_response.json.side_effect = decode_error_cls(*decode_error_args)
+        mock_response.text = "<html>502 Bad Gateway</html>"
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        # Capture structured_logger.log calls so we can assert the
+        # decode path fires the distinct `CrossGatewayDecodeError` event
+        # (as opposed to `CrossGatewayHTTPError` on the non-2xx path).
+        logged_events = []
+
+        def capture_log(**kwargs):
+            logged_events.append(kwargs)
+
+        monkeypatch.setattr(a2a_service_module.structured_logger, "log", capture_log)
+
+        with pytest.raises(A2AAgentError, match=rf"remote returned HTTP {status_code} with unparseable body") as exc_info:
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
+
+        # Cause chain: A2AAgentError `raise ... from decode_error` must
+        # attach the original decode exception as `__cause__`, not drop it.
+        assert isinstance(exc_info.value.__cause__, decode_error_cls)
+
+        # Structured log must carry the decode-specific error_type so
+        # operators can distinguish this class of failure from the
+        # generic HTTP error path, and must reference the actual status.
+        decode_events = [e for e in logged_events if e.get("error_details", {}).get("error_type") == "CrossGatewayDecodeError"]
+        assert len(decode_events) == 1, f"expected exactly one CrossGatewayDecodeError event, got: {logged_events!r}"
+        assert str(status_code) in decode_events[0]["error_details"]["error_message"], f"log must cite actual status {status_code}, not hardcoded 200"
+        assert decode_events[0]["metadata"]["status_code"] == status_code
+
+    @pytest.mark.parametrize(
+        "status_code,description",
+        [
+            (204, "204 No Content — spec-forbidden from carrying a body"),
+            (202, "202 Accepted with empty body (async task acknowledgement)"),
+            (200, "200 OK with Content-Length: 0 (null success)"),
+        ],
+        ids=["204_no_content", "202_accepted_empty", "200_empty_body"],
+    )
+    async def test_invoke_remote_agent_accepts_empty_body_2xx(self, service, monkeypatch, status_code, description):
+        """An empty-body 2xx response must be treated as clean success.
+
+        Without the empty-body short-circuit, `.json()` on `b""` raises
+        `JSONDecodeError` and the response would incorrectly land in the
+        "2xx with unparseable body" sink.  This regression caught a real
+        failure against agents that acknowledge requests with `204 No
+        Content` per HTTP spec.
+        """
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        # Empty body — the bytes httpx actually exposes on the wire.
+        mock_response.content = b""
+        # `.json()` and `.text` would normally be reached only after our
+        # empty-body short-circuit returns, but set them to realistic
+        # failure modes so a future regression that removes the
+        # short-circuit surfaces immediately as a test failure.
+        mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        mock_response.text = ""
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+        # Empty-body 2xx maps to an empty dict — callers receive a
+        # success signal with no payload rather than a spurious error.
+        assert result == {}, f"{description}: expected empty dict, got {result!r}"
+
+    async def test_invoke_remote_agent_accepts_201_as_success(self, service, monkeypatch):
+        """Legitimate 2xx-other responses (201, 202, 204) must flow
+        through the success path, not the failure sink.
+
+        Regression guard: a pre-fix `status_code == 200` check turned
+        every `201 Created` from an A2A agent into a spurious
+        `A2AAgentError`.  The handler now accepts the full 2xx range.
+        """
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"id": "task-001", "status": "accepted"}
+        mock_response.text = '{"id": "task-001", "status": "accepted"}'
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+        )
+        assert result == {"id": "task-001", "status": "accepted"}
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Security: SSRF and Domain Allowlist Bypass Tests
@@ -5293,12 +5670,27 @@ class TestCrossGatewayRoutingCoverage:
                 interaction_type="request",
             )
 
-    async def test_invoke_remote_agent_ssrf_path_injection(self, service):
-        """Test SSRF protection blocks path injection (example.com/admin)."""
-        # Attack: Inject path to access internal endpoints
-        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=example.com/admin"
+    @pytest.mark.parametrize(
+        "native_id,attack_name",
+        [
+            ("example.com/admin", "path"),
+            ("example.com?token=stolen", "query"),
+            ("example.com#fragment", "fragment"),
+        ],
+    )
+    async def test_invoke_remote_agent_ssrf_path_query_fragment_rejection(self, service, native_id, attack_name):
+        """SSRF protection blocks path, query, and fragment injection.
 
-        with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed.*cannot contain path components.*SSRF protection"):
+        The implementation rejects all three characters together (`/`,
+        `?`, `#`) so a regression that splits the check into three
+        separate `if` statements and drops one of them would only be
+        caught if we parametrize across all three.  Without this test
+        a path-only regression test would miss `?token=` and `#frag`
+        smuggling.
+        """
+        uaid = f"uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId={native_id}"
+
+        with pytest.raises(A2AAgentError, match=r"Invalid UAID or endpoint not allowed.*cannot contain path/query/fragment components.*SSRF protection"):
             await service._invoke_remote_agent(
                 uaid=uaid,
                 parameters={"test": "data"},
@@ -5427,10 +5819,13 @@ async def test_invoke_agent_cross_gateway_routing_http_error(module_service, mod
     # Allow all domains (empty list means no restrictions)
     monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
 
-    # Mock HTTP client to return 500 error
+    # Mock HTTP client to return 500 error.  The service now reads
+    # `.text` for the (redacted, operator-only) error log body, so the
+    # mock must expose it alongside `.json()`.
     async def mock_post(*args, **kwargs):
         class MockResponse:
             status_code = 500
+            text = '{"error": "Internal server error"}'
 
             def json(self):
                 return {"error": "Internal server error"}

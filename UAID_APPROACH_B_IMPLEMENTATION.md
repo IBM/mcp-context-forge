@@ -26,7 +26,7 @@ Successfully implemented Approach B: UUID as primary key, UAID in separate field
 class A2AAgent(Base):
     # Primary key: always UUID (String(36))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    
+
     # UAID fields (optional, for cross-gateway routing)
     uaid: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, unique=True)
     uaid_registry: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -48,7 +48,7 @@ def upgrade():
     # Add uaid column with unique index
     op.add_column("a2a_agents", sa.Column("uaid", sa.String(512), nullable=True))
     op.create_index("ix_a2a_agents_uaid", "a2a_agents", ["uaid"], unique=True)
-    
+
     # Add metadata columns
     op.add_column("a2a_agents", sa.Column("uaid_registry", sa.String(255), nullable=True))
     op.add_column("a2a_agents", sa.Column("uaid_proto", sa.String(50), nullable=True))
@@ -70,7 +70,7 @@ if getattr(agent_data, "generate_uaid", False):
         native_id=agent_data.endpoint_url,
         skills=getattr(agent_data, "uaid_skills", None) or [],
     )
-    
+
     # Store UAID in separate field, UUID in id (optimal indexing and routing)
     uaid_metadata = {
         "uaid": uaid,
@@ -107,30 +107,30 @@ assert captured_agent.uaid_registry == "context-forge"
 
 ## Benefits Achieved
 
-1. **Fixes 404 Error** ✅  
-   URLs use clean UUIDs: `/admin/a2a/123e4567-...`  
+1. **Fixes 404 Error** ✅
+   URLs use clean UUIDs: `/admin/a2a/123e4567-...`
    No special characters (`:`, `;`, `=`, `https://`)
 
-2. **Optimal Performance** ✅  
+2. **Optimal Performance** ✅
    - Fixed 36-char primary key (fast btree index)
    - Fixed 36-char foreign keys (efficient joins)
    - No VARCHAR(512) bloat in metrics tables
 
-3. **Simple Migration** ✅  
+3. **Simple Migration** ✅
    - Only adds columns (no ALTER PRIMARY KEY)
    - No foreign key changes required
    - Idempotent and reversible
 
-4. **Clean Separation** ✅  
+4. **Clean Separation** ✅
    - `id`: Internal identifier (database, API, URLs)
    - `uaid`: External identifier (cross-gateway routing)
 
-5. **Backward Compatible** ✅  
+5. **Backward Compatible** ✅
    - Existing UUID agents unchanged
    - UAID field nullable
    - Mixed UUID/UAID agents in same table
 
-6. **Future Proof** ✅  
+6. **Future Proof** ✅
    - Can add other external identifiers later
    - Dual lookup support (by UUID or UAID)
    - Standard database design pattern
