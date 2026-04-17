@@ -342,6 +342,11 @@ def get_predefined_sso_providers() -> List[Dict]:
         }
         if settings.sso_generic_jwks_uri:
             provider_config["jwks_uri"] = settings.sso_generic_jwks_uri
+        provider_config["provider_metadata"] = {
+            "groups_claim": settings.sso_generic_groups_claim,
+            "role_mappings": settings.sso_generic_role_mappings,
+            "default_role": settings.sso_generic_default_role,
+        }
         providers.append(provider_config)
 
     return providers
