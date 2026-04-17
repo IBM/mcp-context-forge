@@ -2617,8 +2617,15 @@ class TestToolService:
         assert "mcp.client.response" in span_names
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_mcp_pooled_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
-        """Pooled MCP sessions must NOT receive traceparent/tracestate to prevent context pollution."""
+    async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
+        """Registry-reused MCP sessions must NOT receive traceparent/tracestate (#4205).
+
+        The registry reuses one upstream ClientSession across multiple tool calls
+        in a downstream session. Per-request trace headers would be pinned to the
+        first call and replayed on unrelated later ones, corrupting distributed
+        traces. The tool_service therefore skips per-request header injection
+        on the registry path.
+        """
         mock_gateway = SimpleNamespace(
             id="42",
             name="test_gateway",
@@ -2656,46 +2663,161 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(content=[TextContent(type="text", text="pooled ok")])
-        pooled_session_mock = AsyncMock()
-        pooled_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
 
-        captured_pool_headers = {}
+        captured_registry_headers = {}
 
         @asynccontextmanager
-        async def mock_pool_session(**kwargs):
-            captured_pool_headers.update(kwargs.get("headers") or {})
-            pooled = SimpleNamespace(session=pooled_session_mock)
-            yield pooled
+        async def mock_registry_acquire(**kwargs):
+            captured_registry_headers.update(kwargs.get("headers") or {})
+            upstream = SimpleNamespace(session=upstream_session_mock)
+            yield upstream
 
-        mock_pool = MagicMock()
-        mock_pool.session = mock_pool_session
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_registry_acquire
 
         @contextmanager
         def noop_span(name, _attributes=None):
             yield MagicMock()
 
+        # Pin a downstream session id in the ContextVar so the registry path is taken.
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sess-xyz"})
+
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
+                patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+            ):
+                mock_settings.default_passthrough_headers = []
+                mock_settings.tool_timeout = 60
+
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result.content[0].text == "registry ok"
+        # Core assertion (#4205 trace-pinning trade-off): the registry path must not
+        # receive per-request trace headers, since the reused transport will carry
+        # the first call's headers on every subsequent call.
+        assert "traceparent" not in captured_registry_headers, "traceparent must not be injected into registry-reused sessions"
+        assert "tracestate" not in captured_registry_headers, "tracestate must not be injected into registry-reused sessions"
+        assert "X-Correlation-ID" not in captured_registry_headers, "X-Correlation-ID must not be injected into registry-reused sessions"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_two_downstream_sessions_hit_registry_with_distinct_ids(self, tool_service, mock_tool, test_db):
+        """Two downstream MCP sessions must key the registry separately — the #4205 invariant.
+
+        Today's regression: the old pool keyed upstream sessions by user identity,
+        so two browser tabs held by the same user shared an upstream session and
+        leaked counter state between each other. This test pins the fix in
+        tool_service: each downstream Mcp-Session-Id makes the service ask the
+        registry for a DIFFERENT upstream session.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="gw-42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        def make_returns():
+            return [mock_tool, mock_gateway, mock_gateway]
+
+        returns = []
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected = ToolResult(content=[TextContent(type="text", text="ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+
+        observed_keys: list[tuple[str, str]] = []
+
+        @asynccontextmanager
+        async def mock_acquire(**kwargs):
+            observed_keys.append((kwargs["downstream_session_id"], kwargs["gateway_id"]))
+            yield SimpleNamespace(session=upstream_session_mock)
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_acquire
+
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
-            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
-            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
         ):
-            mock_settings.mcp_session_pool_enabled = True
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            # Downstream session A
+            returns[:] = make_returns()
+            token_a = request_headers_var.set({"mcp-session-id": "downstream-A"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_a)
 
-        assert result.content[0].text == "pooled ok"
-        # The critical assertion: pooled path must NOT have traceparent/tracestate
-        assert "traceparent" not in captured_pool_headers, "traceparent must not be injected into pooled sessions"
-        assert "tracestate" not in captured_pool_headers, "tracestate must not be injected into pooled sessions"
-        # Correlation ID must also be absent from pooled headers (pinned transport)
-        assert "X-Correlation-ID" not in captured_pool_headers, "X-Correlation-ID must not be injected into pooled sessions"
+            # Downstream session B (same user, same gateway)
+            returns[:] = make_returns()
+            token_b = request_headers_var.set({"mcp-session-id": "downstream-B"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_b)
+
+        # The registry was asked for two distinct keys, one per downstream session
+        # — and both pointed at the same gateway. This is exactly the isolation
+        # #4205's reproducer needs.
+        assert len(observed_keys) == 2
+        session_ids = [k[0] for k in observed_keys]
+        gateway_ids = [k[1] for k in observed_keys]
+        assert session_ids == ["downstream-A", "downstream-B"]
+        assert gateway_ids[0] == gateway_ids[1]
+        assert gateway_ids[0]  # non-empty
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
