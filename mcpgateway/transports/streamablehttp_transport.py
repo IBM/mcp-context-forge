@@ -72,7 +72,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.metrics import mcp_auth_cache_events_counter, oauth_verify_events_counter
+from mcpgateway.services.metrics import mcp_auth_cache_events_counter, oauth_verify_events_counter, transport_get_rejected_counter
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
@@ -2939,7 +2939,17 @@ class SessionManagerWrapper:
                 if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
                     logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
                     mcp_session_id = "not-provided"
-            except Exception:
+            except Exception as exc:
+                # A real failure here (pool import broken, DB/Redis timeout in
+                # a future validator) would otherwise be silently rendered as
+                # the #4205 405 with no log line. Warn at least once per
+                # request so ops can correlate a 405 storm with the root
+                # cause; we still fall through to treat the session as
+                # unprovided (the safe behaviour) rather than 5xx'ing.
+                logger.warning(
+                    "Session id validation failed; treating request as session-less: %s",
+                    exc,
+                )
                 mcp_session_id = "not-provided"
 
         # Log session manager ID for debugging
@@ -2969,6 +2979,49 @@ class SessionManagerWrapper:
         # affinity branches would bypass the 404 and get empty-scoped results.
         validated = await self._validate_server_id(match, path, scope, receive, send)
         if validated is _REJECT:
+            return
+
+        # #4205: Passive GET SSE stream fallback. The MCP spec allows servers
+        # to return 405 on GET when they cannot anchor a passive stream to a
+        # session. Two branches land here:
+        #   (a) stateful sessions disabled globally (no session infrastructure);
+        #   (b) no Mcp-Session-Id — the sentinel "not-provided" covers both a
+        #       missing header and an invalid id that the affinity check reset.
+        # Why 405 rather than 404/400: the `/mcp` path exists and the GET is
+        # syntactically valid; 405 + `Allow: POST, DELETE` tells the client the
+        # resource is real and which verbs it supports, which is exactly what
+        # the MCP Streamable HTTP spec (2025-03-26 rev.) sanctions here.
+        # Placed after server-id validation and RBAC so bogus server IDs still
+        # 404 and unauthorized callers still 403 before we advertise the
+        # endpoint via the Allow header.
+        if method == "GET" and (not settings.use_stateful_sessions or mcp_session_id == "not-provided"):
+            if not settings.use_stateful_sessions:
+                detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
+                reject_outcome = "stateful_disabled"
+            else:
+                detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+                reject_outcome = "no_session_id"
+            transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
+            # Log level split by reason: stateful-disabled is an operator-facing
+            # config condition (warn); missing session id is routine probing
+            # from strict MCP clients before `initialize` and would flood
+            # info-level logs (debug).
+            if reject_outcome == "stateful_disabled":
+                logger.warning(
+                    "Rejecting GET %s with 405 — stateful sessions disabled",
+                    path,
+                )
+            else:
+                logger.debug(
+                    "Rejecting GET %s with 405 — no session id presented",
+                    path,
+                )
+            response = ORJSONResponse(
+                {"detail": detail},
+                status_code=405,
+                headers={"Allow": "POST, DELETE"},
+            )
+            await response(scope, receive, send)
             return
 
         if is_internally_forwarded:

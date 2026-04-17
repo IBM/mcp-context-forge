@@ -6359,9 +6359,11 @@ async def test_handle_streamable_http_non_tuple_header_skipped(monkeypatch):
     await wrapper.initialize()
 
     send, messages = _make_send_collector()
+    # POST so the request bypasses the GET 405 guard (#4205) and actually
+    # exercises the malformed-header branch this test targets.
     scope = {
         "type": "http",
-        "method": "GET",
+        "method": "POST",
         "path": "/mcp",
         "modified_path": "/mcp",
         "query_string": b"",
@@ -6372,7 +6374,10 @@ async def test_handle_streamable_http_non_tuple_header_skipped(monkeypatch):
     }
     await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
     await wrapper.shutdown()
-    assert any(m["type"] == "http.response.start" for m in messages)
+    # 200 from the SDK confirms we reached handle_request (i.e. got past the
+    # header-parsing loop without raising on the malformed entry).
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 200
 
 
 @pytest.mark.asyncio
@@ -6393,9 +6398,11 @@ async def test_handle_streamable_http_non_bytes_header_skipped(monkeypatch):
     await wrapper.initialize()
 
     send, messages = _make_send_collector()
+    # POST so the request bypasses the GET 405 guard (#4205) and actually
+    # exercises the non-bytes-header branch this test targets.
     scope = {
         "type": "http",
-        "method": "GET",
+        "method": "POST",
         "path": "/mcp",
         "modified_path": "/mcp",
         "query_string": b"",
@@ -6406,7 +6413,8 @@ async def test_handle_streamable_http_non_bytes_header_skipped(monkeypatch):
     }
     await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
     await wrapper.shutdown()
-    assert any(m["type"] == "http.response.start" for m in messages)
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 200
 
 
 # ---------------------------------------------------------------------------
@@ -6476,6 +6484,165 @@ async def test_handle_streamable_http_session_validation_exception(monkeypatch):
 
     await wrapper.shutdown()
     assert any(m["type"] == "http.response.start" for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Issue #4205: GET passive SSE stream 405 fallback
+# ---------------------------------------------------------------------------
+
+
+def _allow_header(start_message):
+    """Return the Allow header value from an ASGI http.response.start message."""
+    for k, v in start_message.get("headers", []):
+        if k.lower() == b"allow":
+            return v.decode("latin-1")
+    return None
+
+
+class _CountingSessionManager:
+    """Test double for StreamableHTTPSessionManager that records whether it was called."""
+
+    def __init__(self):
+        self._server_instances = {}
+        self.called = False
+
+    @asynccontextmanager
+    async def run(self):
+        yield self
+
+    async def handle_request(self, scope, receive, send_func):
+        self.called = True
+        await send_func({"type": "http.response.start", "status": 200, "headers": []})
+        await send_func({"type": "http.response.body", "body": b"ok"})
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_returns_405_when_stateless(monkeypatch, caplog):
+    """GET on /mcp 405s with branch-specific detail when stateful sessions are disabled (#4205).
+
+    Also asserts the Prometheus counter ticks with the `stateful_disabled`
+    outcome label and that the operator-facing WARNING log is emitted — if a
+    future refactor deletes either, this test fails rather than silently
+    dropping ops visibility on a deployment-config condition.
+    """
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="stateful_disabled")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET"), _make_receive(b""), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 405
+    assert _allow_header(starts[0]) == "POST, DELETE"
+    body = next(m for m in messages if m["type"] == "http.response.body")
+    assert b"Stateful sessions disabled" in body["body"]
+    assert counter._value.get() == before + 1
+    assert "stateful sessions disabled" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_returns_405_when_no_session_id(monkeypatch, caplog):
+    """GET on /mcp in stateful mode 405s when no Mcp-Session-Id is presented (#4205).
+
+    Also asserts the Prometheus counter ticks with the `no_session_id` outcome
+    label and that the DEBUG log (intentionally quieter than the stateful-
+    disabled branch — this one fires on every strict-client probe) is emitted.
+    """
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="no_session_id")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET"), _make_receive(b""), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 405
+    assert _allow_header(starts[0]) == "POST, DELETE"
+    body = next(m for m in messages if m["type"] == "http.response.body")
+    assert b"Mcp-Session-Id" in body["body"]
+    assert counter._value.get() == before + 1
+    assert "no session id presented" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_name", [b"mcp-session-id", b"x-mcp-session-id"])
+async def test_handle_streamable_http_get_passes_through_with_session(monkeypatch, header_name):
+    """GET on /mcp with either Mcp-Session-Id alias reaches the SDK in stateful mode (#4205)."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="GET", headers=[(header_name, b"abc-123-valid-session")])
+    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    await wrapper.shutdown()
+
+    assert sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_server_scoped_405_after_validation(monkeypatch):
+    """Server-scoped GET /servers/{id}/mcp 405s only after server-id validates successfully (#4205)."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    await wrapper.handle_streamable_http(_make_scope("/servers/abc/mcp", method="GET"), _make_receive(b""), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 405
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_nonexistent_server_returns_404_not_405(monkeypatch):
+    """GET /servers/{bogus}/mcp still 404s — 405 must not mask server-id validation (#4205)."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=False))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    await wrapper.handle_streamable_http(_make_scope("/servers/bogus/mcp", method="GET"), _make_receive(b""), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 404
+    # A 404 must not leak an `Allow` header — that header is exclusive to the
+    # 405 branch and advertises endpoint existence. If it appeared here, a
+    # client probing for valid server IDs would learn "the server doesn't
+    # exist, but POST/DELETE are allowed," which is a small enumeration leak.
+    assert _allow_header(starts[0]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -10450,6 +10617,60 @@ async def test_handle_streamable_http_server_scope_requires_servers_use(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_handle_streamable_http_server_scope_rbac_forbidden_on_get(monkeypatch):
+    """#4205 regression guard: GET without RBAC permission must 403, not 405.
+
+    The 405 block at #4205 runs AFTER the RBAC gate, so an unauthorized caller
+    issuing a GET must see 403 — not a 405 that leaks endpoint existence via
+    `Allow: POST, DELETE`. A future refactor that moves the 405 above RBAC
+    would silently pass every existing 405 test while breaking this invariant.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    dummy_manager = DummySessionManager()
+    dummy_manager.handle_request = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    # Stateless mode ensures the 405 would fire if RBAC were bypassed.
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+
+        scope = _make_scope("/servers/abc-123-def/mcp", method="GET", headers=[])
+        receive = _make_receive(orjson.dumps({}))
+        send, messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        starts = [m for m in messages if m["type"] == "http.response.start"]
+        assert starts and starts[0]["status"] == tr.HTTP_403_FORBIDDEN
+        # No Allow header — 403 must not advertise endpoint affordances.
+        assert _allow_header(starts[0]) is None
+        dummy_manager.handle_request.assert_not_awaited()
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_handle_streamable_http_server_scope_checks_any_team_for_team_api_token(monkeypatch):
     """Server-scoped MCP requests should check RBAC across token teams for API tokens."""
     # Third-Party
@@ -11386,6 +11607,44 @@ async def test_streamable_http_auth_rejects_unauthenticated_oauth_server(monkeyp
     www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
     assert "resource_metadata=" in www_auth
     assert "abc123def" in www_auth
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_unauthenticated_oauth_server_on_get(monkeypatch):
+    """#4205 parity guard: GET to an oauth_enabled server must 401, not 405.
+
+    Without this guard, a future change that moved the 405 shortcut in front
+    of the OAuth layer would silently expose oauth_enabled servers via 405
+    + `Allow: POST, DELETE` to unauthenticated callers, even with
+    `MCP_REQUIRE_AUTH=false`.
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp", method="GET")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert called and called[0]["status"] == 401
+    # Must not leak an `Allow: POST, DELETE` header here — that would only be
+    # emitted by the 405 branch, which must never run before OAuth enforcement.
+    hdrs = dict(called[0].get("headers", []))
+    assert b"allow" not in {k.lower() if isinstance(k, (bytes, bytearray)) else k for k in hdrs}
 
 
 @pytest.mark.asyncio
