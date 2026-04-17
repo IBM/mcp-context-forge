@@ -23,7 +23,7 @@ import anyio
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import MCPSessionPool, PooledSession, TransportType
+from mcpgateway.services.session_affinity import MCPSessionPool, PooledSession, TransportType
 
 
 class TestOwnerTaskLifecycle:
@@ -43,8 +43,8 @@ class TestOwnerTaskLifecycle:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 pooled = await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
         assert pooled.owner_task is not None
@@ -150,7 +150,7 @@ class TestOwnerTaskLifecycle:
         )
 
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool._get_cleanup_timeout", return_value=0.01):
+        with patch("mcpgateway.services.session_affinity._get_cleanup_timeout", return_value=0.01):
             await pool._close_session(pooled)
 
         assert task.done()
@@ -164,7 +164,7 @@ class TestOwnerTaskLifecycle:
         transport_ctx.__aenter__ = AsyncMock(side_effect=ConnectionRefusedError("refused"))
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
             with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                 await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -350,7 +350,7 @@ class TestCreateSessionCancelledError:
         transport_ctx.__aenter__ = hang_forever
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
             with patch("asyncio.create_task", side_effect=tracking_create_task):
                 with pytest.raises((asyncio.TimeoutError, RuntimeError)):
                     await asyncio.wait_for(
@@ -391,8 +391,8 @@ class TestCreateSessionCancelledError:
             with original_move_on(delay, *args, **kwargs):
                 yield
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -489,8 +489,8 @@ class TestPromptPooledRegression:
         session_instance.initialize = AsyncMock(return_value=None)
         session_instance.get_prompt = AsyncMock(return_value=mock_prompt_result)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 async with pool.session(
                     url="http://test:8080",
                     headers={},

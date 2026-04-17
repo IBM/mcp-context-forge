@@ -134,7 +134,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
+from mcpgateway.services.session_affinity import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service

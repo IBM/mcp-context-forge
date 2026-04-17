@@ -1524,8 +1524,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
         try:
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import MCPSessionPool  # pylint: disable=import-outside-toplevel
 
             if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
                 logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
@@ -2934,7 +2934,7 @@ class SessionManagerWrapper:
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import MCPSessionPool  # pylint: disable=import-outside-toplevel
 
                 if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
                     logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
@@ -3140,7 +3140,7 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
@@ -3418,7 +3418,7 @@ class SessionManagerWrapper:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
                         # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.session_affinity import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()
                         await pool.register_pool_session_owner(session_to_register)

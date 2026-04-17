@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
     # First-Party
-    from mcpgateway.services.mcp_session_pool import MCPSessionPool
+    from mcpgateway.services.session_affinity import MCPSessionPool
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ class ServerClassificationService:
         try:
             # Get MCP session pool
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
+            from mcpgateway.services.session_affinity import get_mcp_session_pool
 
             try:
                 pool = get_mcp_session_pool()

@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import (
+from mcpgateway.services.session_affinity import (
     _get_cleanup_timeout,
     close_mcp_session_pool,
     drain_mcp_session_pool,
@@ -40,13 +40,13 @@ class TestGetCleanupTimeout:
 
     def test_cleanup_timeout_from_settings(self):
         """When settings.mcp_session_pool_cleanup_timeout exists, use it."""
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcp_session_pool_cleanup_timeout = 12.5
             assert _get_cleanup_timeout() == 12.5
 
     def test_cleanup_timeout_fallback_on_generic_exception(self):
         """When settings raises any exception, fall back to 5.0."""
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             # Make the attribute access raise an exception
             type(mock_settings).mcp_session_pool_cleanup_timeout = property(lambda self: (_ for _ in ()).throw(RuntimeError("config error")))
             assert _get_cleanup_timeout() == 5.0
@@ -61,7 +61,7 @@ class TestIdentityHashSessionAffinity:
     def test_session_affinity_uses_x_mcp_session_id(self):
         """When session affinity is enabled & header present, uses session ID."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             result = pool._compute_identity_hash({"x-mcp-session-id": "abc123"})
             expected = hashlib.sha256(b"abc123").hexdigest()
@@ -70,7 +70,7 @@ class TestIdentityHashSessionAffinity:
     def test_session_affinity_disabled_skips(self):
         """When session affinity is disabled, falls through to header hash."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = pool._compute_identity_hash({"x-mcp-session-id": "abc123", "Authorization": "Bearer tok"})
             session_hash = hashlib.sha256(b"abc123").hexdigest()
@@ -84,7 +84,7 @@ class TestIdentityHashSessionAffinity:
         pool = MCPSessionPool(identity_headers=frozenset(["authorization"]))
         headers = {"Authorization": "Bearer tok"}
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             result = pool._compute_identity_hash(headers)
 
@@ -153,7 +153,7 @@ class TestRegisterSessionMapping:
     async def test_register_session_mapping_affinity_disabled(self):
         """Should return early when affinity is disabled."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             await pool.register_session_mapping("valid-id", "http://test:8080", "gw-1", "streamablehttp")
 
@@ -161,7 +161,7 @@ class TestRegisterSessionMapping:
     async def test_register_session_mapping_invalid_session_id(self):
         """Should return early for invalid session IDs."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             await pool.register_session_mapping("invalid id!!", "http://test:8080", "gw-1", "streamablehttp")
 
@@ -173,7 +173,7 @@ class TestRegisterSessionMapping:
         mock_redis.setex = AsyncMock()
         mock_redis.set = AsyncMock(return_value=True)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -192,7 +192,7 @@ class TestRegisterSessionMapping:
         mock_redis.set = AsyncMock(return_value=False)
         mock_redis.get = AsyncMock(return_value=b"other-worker:1234")
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -205,7 +205,7 @@ class TestRegisterSessionMapping:
         """Redis failure should be non-fatal."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Redis down")):
@@ -216,7 +216,7 @@ class TestRegisterSessionMapping:
         """Should work without Redis (local-only mapping)."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
@@ -254,7 +254,7 @@ class TestAcquireSessionAffinity:
             gateway_id=gateway_id,
         )
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
@@ -303,7 +303,7 @@ class TestAcquireSessionAffinity:
             gateway_id=gateway_id,
         )
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -334,7 +334,7 @@ class TestAcquireSessionAffinity:
             headers={},
         )
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Redis down")):
@@ -364,7 +364,7 @@ class TestAcquireSessionAffinity:
             gateway_id=gateway_id,
         )
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -394,7 +394,7 @@ class TestAcquireSessionAffinity:
             gateway_id=gateway_id,
         )
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value=None) as mock_owner:
@@ -419,11 +419,11 @@ class TestAcquireOwnershipCheck:
         pool = MCPSessionPool()
         url = "http://test:8080"
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="other-worker:5678"):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker:1234"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker:1234"):
                     with pytest.raises(RuntimeError, match="Session owned by another worker"):
                         await pool.acquire(url, headers={"x-mcp-session-id": "validid123"})
         await pool.close_all()
@@ -878,8 +878,8 @@ class TestCreateSessionHeaderStripping:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.streamablehttp_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 pooled = await pool._create_session(
                     "http://test:8080",
                     {"x-mcp-session-id": "should-be-stripped", "mcp-session-id": "also-stripped", "Authorization": "Bearer tok"},
@@ -906,8 +906,8 @@ class TestCreateSessionHeaderStripping:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx) as mock_sse:
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx) as mock_sse:
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 pooled = await pool._create_session(
                     "http://test:8080",
                     None,
@@ -934,8 +934,8 @@ class TestCreateSessionHeaderStripping:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx) as mock_sh:
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.streamablehttp_client", return_value=transport_ctx) as mock_sh:
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 pooled = await pool._create_session(
                     "http://test:8080",
                     None,
@@ -969,8 +969,8 @@ class TestCreateSessionCancelledError:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(side_effect=asyncio.CancelledError())
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -1000,8 +1000,8 @@ class TestCreateSessionCleanupErrors:
         session_instance.__aexit__ = AsyncMock(side_effect=RuntimeError("cleanup boom"))
         session_instance.initialize = AsyncMock(side_effect=RuntimeError("init boom"))
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -1019,8 +1019,8 @@ class TestCreateSessionCleanupErrors:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(side_effect=RuntimeError("init boom"))
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance):
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -1033,7 +1033,7 @@ class TestCreateSessionCleanupErrors:
         transport_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("enter boom"))
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
+        with patch("mcpgateway.services.session_affinity.sse_client", return_value=transport_ctx):
             with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                 await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
@@ -1073,9 +1073,9 @@ class TestCloseSessionRedisCleanup:
         pooled.session.__aexit__ = AsyncMock(return_value=None)
         pooled.transport_context.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
-            with patch("mcpgateway.services.mcp_session_pool.anyio.move_on_after", return_value=DummyScope()):
+            with patch("mcpgateway.services.session_affinity.anyio.move_on_after", return_value=DummyScope()):
                 with patch.object(pool, "_cleanup_pool_session_owner", new_callable=AsyncMock) as mock_cleanup:
                     await pool._close_session(pooled)
         mock_cleanup.assert_awaited_once_with("validid123")
@@ -1106,9 +1106,9 @@ class TestCloseSessionRedisCleanup:
         pooled.session.__aexit__ = AsyncMock(return_value=None)
         pooled.transport_context.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
-            with patch("mcpgateway.services.mcp_session_pool.anyio.move_on_after", return_value=DummyScope()):
+            with patch("mcpgateway.services.session_affinity.anyio.move_on_after", return_value=DummyScope()):
                 with patch.object(pool, "_cleanup_pool_session_owner", new_callable=AsyncMock) as mock_cleanup:
                     await pool._close_session(pooled)
 
@@ -1130,7 +1130,7 @@ class TestCleanupPoolSessionOwner:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "myworker:1"):
+            with patch("mcpgateway.services.session_affinity.WORKER_ID", "myworker:1"):
                 await pool._cleanup_pool_session_owner("validid123")
 
         mock_redis.delete.assert_awaited_once()
@@ -1144,7 +1144,7 @@ class TestCleanupPoolSessionOwner:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "myworker:1"):
+            with patch("mcpgateway.services.session_affinity.WORKER_ID", "myworker:1"):
                 await pool._cleanup_pool_session_owner("validid123")
 
         mock_redis.delete.assert_not_awaited()
@@ -1343,7 +1343,7 @@ class TestDrainAll:
     async def test_drain_mcp_session_pool_calls_drain_all(self):
         """Module-level drain_mcp_session_pool() calls drain_all on the singleton."""
         # First-Party
-        import mcpgateway.services.mcp_session_pool as pool_mod
+        import mcpgateway.services.session_affinity as pool_mod
 
         mock_pool = MagicMock()
         mock_pool.drain_all = AsyncMock()
@@ -1359,7 +1359,7 @@ class TestDrainAll:
     async def test_drain_mcp_session_pool_noop_when_no_pool(self):
         """Module-level drain_mcp_session_pool() is a no-op when pool is None."""
         # First-Party
-        import mcpgateway.services.mcp_session_pool as pool_mod
+        import mcpgateway.services.session_affinity as pool_mod
 
         original = pool_mod._mcp_session_pool
         try:
@@ -1379,7 +1379,7 @@ class TestRegisterPoolSessionOwner:
     async def test_register_owner_affinity_disabled(self):
         """Should return early when affinity is disabled."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             await pool.register_pool_session_owner("validid123")
 
@@ -1387,7 +1387,7 @@ class TestRegisterPoolSessionOwner:
     async def test_register_owner_invalid_session_id(self):
         """Should return early for invalid session IDs."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             await pool.register_pool_session_owner("invalid id!!")
 
@@ -1398,7 +1398,7 @@ class TestRegisterPoolSessionOwner:
         mock_redis = AsyncMock()
         mock_redis.eval = AsyncMock(return_value=1)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -1410,7 +1410,7 @@ class TestRegisterPoolSessionOwner:
     async def test_register_owner_redis_failure(self):
         """Redis failure should be non-fatal."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Redis down")):
@@ -1420,7 +1420,7 @@ class TestRegisterPoolSessionOwner:
     async def test_register_owner_no_redis(self):
         """No Redis client available should be a no-op."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
@@ -1437,7 +1437,7 @@ class TestGetPoolSessionOwner:
     async def test_get_owner_affinity_disabled(self):
         """Should return None when affinity is disabled."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = await pool._get_pool_session_owner("validid123")
         assert result is None
@@ -1446,7 +1446,7 @@ class TestGetPoolSessionOwner:
     async def test_get_owner_invalid_session_id(self):
         """Should return None for invalid session IDs."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             result = await pool._get_pool_session_owner("invalid id!!")
         assert result is None
@@ -1458,7 +1458,7 @@ class TestGetPoolSessionOwner:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=b"worker-1:1234")
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
                 result = await pool._get_pool_session_owner("validid123")
@@ -1471,7 +1471,7 @@ class TestGetPoolSessionOwner:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
                 result = await pool._get_pool_session_owner("validid123")
@@ -1481,7 +1481,7 @@ class TestGetPoolSessionOwner:
     async def test_get_owner_redis_failure(self):
         """Redis failure should return None."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Redis down")):
                 result = await pool._get_pool_session_owner("validid123")
@@ -1514,7 +1514,7 @@ class TestForwardRequestToOwner:
     async def test_forward_request_to_owner_invalid_session_id_returns_none(self):
         """Invalid session IDs should short-circuit to local execution (None)."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             result = await pool.forward_request_to_owner("invalid id!!", {"method": "tools/call"})
         assert result is None
@@ -1545,11 +1545,11 @@ class TestForwardRequestToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     result = await pool.forward_request_to_owner(mcp_session_id, request_data, timeout=0.5)
 
         assert result == expected
@@ -1563,7 +1563,7 @@ class TestForwardRequestToOwner:
         """Unexpected errors should be non-fatal and fall back to local execution (None)."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=RuntimeError("redis down")):
@@ -1596,11 +1596,11 @@ class TestForwardRequestToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.1  # Very short timeout
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     with pytest.raises(asyncio.TimeoutError):
                         await pool.forward_request_to_owner("sess-123", {"method": "tools/call"}, timeout=0.1)
 
@@ -1670,11 +1670,11 @@ class TestDeadWorkerOwnershipReclaim:
         mock_session.idle_seconds = 0
         mock_session.url = "http://test.com"
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
                         with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                             with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
@@ -1707,7 +1707,7 @@ class TestSessionOwnerCleanupTimeout:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+            with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                 await pool._cleanup_pool_session_owner("sess-123")
 
         mock_redis.delete.assert_awaited_once()
@@ -1722,7 +1722,7 @@ class TestSessionOwnerCleanupTimeout:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+            with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                 await pool._cleanup_pool_session_owner("sess-123")
 
         mock_redis.delete.assert_not_awaited()
@@ -1834,12 +1834,12 @@ class TestForwardRequestDeadOwner:
         mock_redis.exists = AsyncMock(return_value=0)  # Heartbeat missing = dead
         mock_redis.eval = AsyncMock(return_value=1)  # CAS succeeded
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None
@@ -1871,12 +1871,12 @@ class TestForwardRequestDeadOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         # Should have forwarded to the new owner, not executed locally
@@ -1896,12 +1896,12 @@ class TestForwardRequestDeadOwner:
         mock_redis.exists = AsyncMock(return_value=0)
         mock_redis.eval = AsyncMock(return_value=0)  # CAS failed
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None  # Key vanished - safe to execute locally
@@ -1917,12 +1917,12 @@ class TestForwardRequestDeadOwner:
         mock_redis.exists = AsyncMock(return_value=0)
         mock_redis.eval = AsyncMock(return_value=0)  # CAS failed
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None  # We're the owner - execute locally
@@ -1948,7 +1948,7 @@ class TestEvictionSessionMappingCleanup:
         pool._pool_last_used[pool_key] = 0  # Very old timestamp
         pool._mcp_session_mapping[mapping_key] = pool_key
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_pool_idle_evict_seconds = 1  # 1 second threshold
             await pool._maybe_evict_idle_pool_keys()
 
@@ -2012,7 +2012,7 @@ class TestHeartbeatStartup:
         """__aenter__ delegates to start_heartbeat(), which creates the task."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
                 result = await pool.__aenter__()
@@ -2031,7 +2031,7 @@ class TestHeartbeatStartup:
         """__aenter__ should not start heartbeat when session affinity is disabled."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = await pool.__aenter__()
 
@@ -2043,7 +2043,7 @@ class TestHeartbeatStartup:
         """start_heartbeat() should create a background task (production init path)."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
                 pool.start_heartbeat()
@@ -2060,7 +2060,7 @@ class TestHeartbeatStartup:
         """start_heartbeat() should be a no-op when session affinity is disabled."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             pool.start_heartbeat()
 
@@ -2071,7 +2071,7 @@ class TestHeartbeatStartup:
         """Calling start_heartbeat() twice should not create a second task."""
         pool = MCPSessionPool()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
                 pool.start_heartbeat()
@@ -2100,13 +2100,13 @@ class TestAcquireReclaim:
         mock_redis.exists = AsyncMock(return_value=0)  # Dead
         mock_redis.eval = AsyncMock(return_value=0)  # CAS failed — another worker won
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_max_sessions = 2
             mock_settings.mcpgateway_pool_semaphore_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                         with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
                             with pytest.raises(RuntimeError, match="reclaimed by another worker"):
@@ -2127,11 +2127,11 @@ class TestAcquireReclaim:
         mock_session.idle_seconds = 0
         mock_session.url = "http://test.com"
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "my-worker"):
                     with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
                         with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                             with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
@@ -2181,10 +2181,10 @@ class TestStartRpcListener:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock, return_value={"result": {"ok": True}}) as mock_exec_rpc:
                         with patch.object(pool, "_execute_forwarded_http_request", new_callable=AsyncMock) as mock_exec_http:
                             with pytest.raises(asyncio.CancelledError):
@@ -2205,7 +2205,7 @@ class TestStartRpcListener:
     async def test_start_rpc_listener_outer_exception_is_handled(self):
         """Errors setting up Redis/pubsub should be handled gracefully."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=RuntimeError("redis down")):
                 await pool.start_rpc_listener()
@@ -2224,10 +2224,10 @@ class TestStartRpcListener:
         mock_redis = AsyncMock()
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"):
                     await pool.start_rpc_listener()
 
         mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
@@ -2257,10 +2257,10 @@ class TestStartRpcListener:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock) as mock_exec:
                         with pytest.raises(asyncio.CancelledError):
                             await pool.start_rpc_listener()
@@ -2306,10 +2306,10 @@ class TestExecuteForwardedRequest:
 
         dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}))
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=dummy_client):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {"name": "t"}, "headers": {"x-test": "1"}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result == {"result": {"x": 1}}
@@ -2345,10 +2345,10 @@ class TestExecuteForwardedRequest:
 
         dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}))
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=dummy_client):
                 result = await pool._execute_forwarded_request({"method": "nope", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result == {"error": {"code": -32601, "message": "nope"}}
@@ -2371,10 +2371,10 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 raise httpx.TimeoutException("timeout")
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.1
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}})
 
         assert result["error"]["code"] == -32603
@@ -2403,10 +2403,10 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result == {"error": {"code": -32003, "message": "Token not authorized"}}
@@ -2435,10 +2435,10 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result["error"]["code"] == -32603
@@ -2469,10 +2469,10 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result["error"]["code"] == -32603
@@ -2503,10 +2503,10 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result["error"]["code"] == -32603
@@ -2564,10 +2564,10 @@ class TestExecuteForwardedHttpRequest:
             "original_worker": "worker-0",
         }
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=dummy_client):
                 await pool._execute_forwarded_http_request(request, mock_redis)
 
         # Verify internal request was built with query string + loop protection headers
@@ -2612,10 +2612,10 @@ class TestExecuteForwardedHttpRequest:
             "body": "",
         }
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 await pool._execute_forwarded_http_request(request, mock_redis)
 
         # Error response publish was attempted
@@ -2662,10 +2662,10 @@ class TestExecuteForwardedHttpRequest:
             "body": "",
         }
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=dummy_client):
                 await pool._execute_forwarded_http_request(request, redis=None)
 
         assert dummy_client.request_calls, "Expected an internal HTTP call to be made"
@@ -2695,10 +2695,10 @@ class TestExecuteForwardedHttpRequest:
             "body": "",
         }
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=DummyClient()):
                 await pool._execute_forwarded_http_request(request, redis=None)
 
 
@@ -2711,7 +2711,7 @@ class TestForwardStreamableHttpToOwner:
     @pytest.mark.asyncio
     async def test_forward_streamable_http_to_owner_affinity_disabled_returns_none(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = await pool.forward_streamable_http_to_owner(
                 owner_worker_id="worker-2",
@@ -2726,7 +2726,7 @@ class TestForwardStreamableHttpToOwner:
     @pytest.mark.asyncio
     async def test_forward_streamable_http_to_owner_invalid_session_id_returns_none(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             result = await pool.forward_streamable_http_to_owner(
                 owner_worker_id="worker-2",
@@ -2741,7 +2741,7 @@ class TestForwardStreamableHttpToOwner:
     @pytest.mark.asyncio
     async def test_forward_streamable_http_to_owner_no_redis_returns_none(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
@@ -2770,11 +2770,11 @@ class TestForwardStreamableHttpToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"):
                     result = await pool.forward_streamable_http_to_owner(
                         owner_worker_id="worker-2",
                         mcp_session_id="sess-123",
@@ -2813,7 +2813,7 @@ class TestForwardStreamableHttpToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -2843,7 +2843,7 @@ class TestForwardStreamableHttpToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock()
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -2872,7 +2872,7 @@ class TestForwardStreamableHttpToOwner:
         mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
         mock_redis.publish = AsyncMock(side_effect=RuntimeError("publish failed"))
 
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
@@ -3170,7 +3170,7 @@ class TestIdentityExtractor:
     def test_identity_extractor_returns_none(self):
         """Custom extractor returns None → falls through to header hash."""
         pool = MCPSessionPool(identity_extractor=lambda _h: None)
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = pool._compute_identity_hash({"Authorization": "Bearer tok"})
         assert result != "anonymous"
@@ -3178,7 +3178,7 @@ class TestIdentityExtractor:
     def test_identity_extractor_raises(self):
         """Custom extractor raises → falls through to header hash."""
         pool = MCPSessionPool(identity_extractor=lambda _h: (_ for _ in ()).throw(ValueError("nope")))
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = pool._compute_identity_hash({"Authorization": "Bearer tok"})
         assert result != "anonymous"
@@ -3186,7 +3186,7 @@ class TestIdentityExtractor:
     def test_no_identity_headers_returns_anonymous(self):
         """No identity headers → anonymous."""
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             result = pool._compute_identity_hash({"X-Request-ID": "12345"})
         assert result == "anonymous"
@@ -3200,14 +3200,14 @@ class TestMakePoolKey:
 
     def test_anonymous_user_identity(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             key = pool._make_pool_key("http://test:8080", None, TransportType.SSE, "anonymous")
         assert key[0] == "anonymous"
 
     def test_named_user_identity_hashed(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             key = pool._make_pool_key("http://test:8080", None, TransportType.SSE, "admin@example.com")
         expected_hash = hashlib.sha256(b"admin@example.com").hexdigest()
@@ -3215,7 +3215,7 @@ class TestMakePoolKey:
 
     def test_gateway_id_in_key(self):
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+        with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = False
             key = pool._make_pool_key("http://test:8080", None, TransportType.STREAMABLE_HTTP, "anonymous", gateway_id="gw-1")
         assert key[4] == "gw-1"
@@ -3376,8 +3376,8 @@ class TestCreateSessionMessageHandler:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
+        with patch("mcpgateway.services.session_affinity.streamablehttp_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance) as mock_cs:
                 pooled = await pool._create_session(
                     "http://test:8080",
                     None,
@@ -3407,8 +3407,8 @@ class TestCreateSessionMessageHandler:
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
-            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
+        with patch("mcpgateway.services.session_affinity.streamablehttp_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.session_affinity.ClientSession", return_value=session_instance) as mock_cs:
                 pooled = await pool._create_session(
                     "http://test:8080",
                     None,
@@ -3580,7 +3580,7 @@ class TestMaxTotalKeysLimit:
         # Create 8 pool keys to reach 80% threshold (warning at 8/10)
         # Patch the logger at the module level where it's imported
         # First-Party
-        import mcpgateway.services.mcp_session_pool as pool_module
+        import mcpgateway.services.session_affinity as pool_module
 
         with patch.object(pool_module, "logger") as mock_logger:
             # Warning fires when len(self._pools) BEFORE adding the new key >= threshold (8).

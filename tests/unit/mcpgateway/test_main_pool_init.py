@@ -70,7 +70,7 @@ class TestPoolInitAutoAlignment:
     async def test_init_mcp_session_pool_receives_correct_parameters(self):
         """Verify init_mcp_session_pool receives the calculated parameters."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import (
+        from mcpgateway.services.session_affinity import (
             close_mcp_session_pool,
             init_mcp_session_pool,
         )
@@ -96,7 +96,7 @@ class TestPoolInitAutoAlignment:
     async def test_pool_init_uses_all_settings(self):
         """Verify pool initialization uses all expected settings from config."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import (
+        from mcpgateway.services.session_affinity import (
             close_mcp_session_pool,
             init_mcp_session_pool,
         )
@@ -139,7 +139,7 @@ class TestPoolInitIntegration:
         """Test the actual code pattern used in main.py:457-478."""
         # First-Party
         from mcpgateway.config import Settings
-        from mcpgateway.services.mcp_session_pool import (
+        from mcpgateway.services.session_affinity import (
             close_mcp_session_pool,
             init_mcp_session_pool,
         )

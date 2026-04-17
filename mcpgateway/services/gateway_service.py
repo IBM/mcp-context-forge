@@ -101,7 +101,7 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import register_gateway_capabilities_for_notifications
+from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService

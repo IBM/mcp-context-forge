@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import (
+from mcpgateway.services.session_affinity import (
     MCPSessionPool,
     PooledSession,
     TransportType,
@@ -146,8 +146,8 @@ class TestPoolMetricsStructure:
     @pytest.mark.asyncio
     async def test_metrics_updated_after_operations(self, pool):
         """Metrics should be updated after pool operations."""
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                 mock_validate.return_value = True
                 mock_session = PooledSession(
                     session=MagicMock(),
@@ -193,8 +193,8 @@ class TestPoolMetricsEvictionTracking:
         pool._eviction_run_interval = 0  # Disable throttling
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_close_session', new_callable=AsyncMock):
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_close_session", new_callable=AsyncMock):
                     mock_session = PooledSession(
                         session=MagicMock(),
                         transport_context=MagicMock(),
@@ -238,8 +238,8 @@ class TestPoolMetricsEvictionTracking:
         pool._eviction_run_interval = 0
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_close_session', new_callable=AsyncMock):
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_close_session", new_callable=AsyncMock):
                     # Create expired session
                     mock_session = PooledSession(
                         session=MagicMock(),
@@ -330,7 +330,7 @@ class TestSecurityValidation:
         """Expired sessions should not be reused for any user."""
         pool._session_ttl = 0.001  # 1ms TTL
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             # Create an expired session
             expired_session = PooledSession(
                 session=MagicMock(),

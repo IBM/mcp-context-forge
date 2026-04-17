@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import (
+from mcpgateway.services.session_affinity import (
     MCPSessionPool,
     PooledSession,
     TransportType,
@@ -55,7 +55,7 @@ class TestCrossUserIsolation:
         identity_a = pool._compute_identity_hash(user_a_headers)
         identity_b = pool._compute_identity_hash(user_b_headers)
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             # Create unique sessions for each user
             session_a = PooledSession(
                 session=MagicMock(name="session_a"),
@@ -96,8 +96,8 @@ class TestCrossUserIsolation:
         """Same user should reuse pooled session (pool hit)."""
         user_headers = {"Authorization": "Bearer user-token"}
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                 mock_validate.return_value = True
                 mock_session = PooledSession(
                     session=MagicMock(),
@@ -206,7 +206,7 @@ class TestSessionLifecycle:
         user_a_headers = {"Authorization": "Bearer user-a-token"}
         user_b_headers = {"Authorization": "Bearer user-b-token"}
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             # Track sessions created
             sessions_created = []
 
@@ -242,8 +242,8 @@ class TestSessionLifecycle:
         """Sessions should only be reused for matching identity."""
         headers = {"Authorization": "Bearer token", "X-Tenant-ID": "tenant-1"}
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                 mock_validate.return_value = True
                 mock_session = PooledSession(
                     session=MagicMock(),
@@ -341,8 +341,8 @@ class TestPoolMetricsIsolation:
         user_a_headers = {"Authorization": "Bearer user-a"}
         user_b_headers = {"Authorization": "Bearer user-b"}
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                 mock_validate.return_value = True
 
                 # Create sessions for different users

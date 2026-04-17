@@ -31,7 +31,7 @@ import pytest_asyncio
 from mcp import ClientSession
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import (
+from mcpgateway.services.session_affinity import (
     MCPSessionPool,
     PooledSession,
     TransportType,
@@ -154,8 +154,8 @@ class TestIdleEvictionE2E:
         pool._eviction_run_interval = 0  # Disable throttling for test
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_close_session', new_callable=AsyncMock):
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_close_session", new_callable=AsyncMock):
                     mock_session = PooledSession(
                         session=MagicMock(),
                         transport_context=MagicMock(),
@@ -197,8 +197,8 @@ class TestIdleEvictionE2E:
         pool._eviction_run_interval = 0
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_close_session', new_callable=AsyncMock):
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_close_session", new_callable=AsyncMock):
                     # Create already-expired session
                     mock_session = PooledSession(
                         session=MagicMock(),
@@ -287,8 +287,8 @@ class TestPoolMetricsE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                     mock_validate.return_value = True
 
                     # Track created sessions per identity
@@ -376,8 +376,8 @@ class TestSessionReusePerfE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                     mock_validate.return_value = True
 
                     # Simulate session creation taking time
@@ -436,19 +436,14 @@ class TestNotificationE2E:
 
         # Mock GatewayService
         mock_gateway_service = AsyncMock()
-        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
-            return_value={"success": True, "tools_added": 1}
-        )
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True, "tools_added": 1})
         # _get_refresh_lock is synchronous and returns an asyncio.Lock
         mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
 
         # Register capabilities for gateway
         gateway_id = "test-gateway-1"
-        service.register_gateway_capabilities(
-            gateway_id,
-            {"tools": {"listChanged": True}}
-        )
+        service.register_gateway_capabilities(gateway_id, {"tools": {"listChanged": True}})
 
         # Create session pool
         pool = MCPSessionPool()
@@ -463,11 +458,7 @@ class TestNotificationE2E:
 
             # 2. Simulate incoming notification
             # Construct a raw notification object as ClientSession would receive
-            notification = mcp_types.ServerNotification(
-                root=mcp_types.ToolListChangedNotification(
-                    method="notifications/tools/list_changed"
-                )
-            )
+            notification = mcp_types.ServerNotification(root=mcp_types.ToolListChangedNotification(method="notifications/tools/list_changed"))
 
             # 3. Inject notification into handler
             await handler(notification)
@@ -501,9 +492,7 @@ class TestNotificationE2E:
         """Verify debouncing prevents multiple refreshes."""
         service = notification_env
         mock_gateway_service = AsyncMock()
-        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
-            return_value={"success": True}
-        )
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True})
         # _get_refresh_lock is synchronous and returns an asyncio.Lock
         mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
@@ -514,11 +503,7 @@ class TestNotificationE2E:
         handler = service.create_message_handler(gateway_id)
 
         # Fire multiple notifications rapidly
-        notification = mcp_types.ServerNotification(
-            root=mcp_types.ToolListChangedNotification(
-                method="notifications/tools/list_changed"
-            )
-        )
+        notification = mcp_types.ServerNotification(root=mcp_types.ToolListChangedNotification(method="notifications/tools/list_changed"))
 
         for _ in range(5):
             await handler(notification)
@@ -542,57 +527,33 @@ class TestNotificationE2E:
         """Verify different notification types trigger correct refresh flags."""
         service = notification_env
         mock_gateway_service = AsyncMock()
-        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
-            return_value={"success": True}
-        )
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True})
         # _get_refresh_lock is synchronous and returns an asyncio.Lock
         mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
 
         gateway_id = "test-gateway-types"
         # Register support for all
-        service.register_gateway_capabilities(gateway_id, {
-            "tools": {"listChanged": True},
-            "resources": {"listChanged": True},
-            "prompts": {"listChanged": True}
-        })
+        service.register_gateway_capabilities(gateway_id, {"tools": {"listChanged": True}, "resources": {"listChanged": True}, "prompts": {"listChanged": True}})
 
         handler = service.create_message_handler(gateway_id)
 
         # 1. Resources only
-        await handler(mcp_types.ServerNotification(
-            root=mcp_types.ResourceListChangedNotification(
-                method="notifications/resources/list_changed"
-            )
-        ))
+        await handler(mcp_types.ServerNotification(root=mcp_types.ResourceListChangedNotification(method="notifications/resources/list_changed")))
 
         await asyncio.sleep(0.2)
 
-        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
-            gateway_id=gateway_id,
-            created_via="notification_service",
-            include_resources=True,
-            include_prompts=False
-        )
+        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(gateway_id=gateway_id, created_via="notification_service", include_resources=True, include_prompts=False)
 
         # Reset mock
         mock_gateway_service.reset_mock()
 
         # 2. Prompts only
-        await handler(mcp_types.ServerNotification(
-            root=mcp_types.PromptListChangedNotification(
-                method="notifications/prompts/list_changed"
-            )
-        ))
+        await handler(mcp_types.ServerNotification(root=mcp_types.PromptListChangedNotification(method="notifications/prompts/list_changed")))
 
         await asyncio.sleep(0.2)
 
-        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
-            gateway_id=gateway_id,
-            created_via="notification_service",
-            include_resources=False,
-            include_prompts=True
-        )
+        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(gateway_id=gateway_id, created_via="notification_service", include_resources=False, include_prompts=True)
 
 
 class TestSessionAffinityE2E:
@@ -614,7 +575,7 @@ class TestSessionAffinityE2E:
             gateway_id = "gateway-abc"
             transport_type = "streamablehttp"
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_session_affinity_ttl = 3600
 
@@ -644,8 +605,8 @@ class TestSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                     mock_settings.mcpgateway_session_affinity_enabled = True
                     mock_settings.mcpgateway_session_affinity_ttl = 3600
 
@@ -719,7 +680,7 @@ class TestSessionAffinityE2E:
             gateway_id = "gateway-123"
             transport_type = "streamablehttp"
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
                 await pool.register_session_mapping(session_id, url, gateway_id, transport_type, "user@test.com")
@@ -736,8 +697,8 @@ class TestSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                     mock_settings.mcpgateway_session_affinity_enabled = True
                     mock_settings.mcpgateway_session_affinity_ttl = 3600
 
@@ -817,7 +778,7 @@ class TestSessionRegistryAffinityE2E:
 
                 with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_cache)}):
                     with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                             # Call _register_session_mapping with user_email (simulates respond() call)
                             await registry._register_session_mapping(session_id, message, user_email)
 
@@ -858,7 +819,7 @@ class TestSessionRegistryAffinityE2E:
                     mock_pool = MagicMock()
                     mock_pool.register_session_mapping = AsyncMock()
 
-                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                         await registry._register_session_mapping(session_id, message)
 
                         # Should NOT call register_session_mapping for non-tools/call
@@ -895,7 +856,7 @@ class TestSessionRegistryAffinityE2E:
                 mock_pool.register_session_mapping = AsyncMock()
 
                 with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                         # Should not raise
                         await registry._register_session_mapping(session_id, message)
 
@@ -942,7 +903,7 @@ class TestSessionRegistryAffinityE2E:
                 mock_pool.register_session_mapping = AsyncMock()
 
                 with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                         # Call broadcast (which no longer calls _register_session_mapping)
                         # In production, registration happens in respond()
                         await registry.broadcast(session_id, message)
@@ -971,7 +932,7 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_worker_id_is_process_id(self):
         """Verify WORKER_ID is set to hostname:pid format."""
         import socket
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.session_affinity import WORKER_ID
 
         # WORKER_ID format is "hostname:pid"
         expected = f"{socket.gethostname()}:{os.getpid()}"
@@ -985,7 +946,7 @@ class TestMultiWorkerSessionAffinityE2E:
         try:
             mcp_session_id = "test-session-disabled"
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
                 # Should return immediately without calling Redis
@@ -1000,13 +961,10 @@ class TestMultiWorkerSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
-                result = await pool.forward_request_to_owner(
-                    "test-session",
-                    {"method": "tools/call", "params": {"name": "test_tool"}}
-                )
+                result = await pool.forward_request_to_owner("test-session", {"method": "tools/call", "params": {"name": "test_tool"}})
 
                 assert result is None
         finally:
@@ -1015,7 +973,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_forward_request_returns_none_when_we_own_session(self):
         """Verify forward_request_to_owner returns None when we own the session."""
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.session_affinity import WORKER_ID
 
         pool = MCPSessionPool()
 
@@ -1026,7 +984,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_redis = AsyncMock()
             mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
 
@@ -1034,10 +992,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     return mock_redis
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    result = await pool.forward_request_to_owner(
-                        mcp_session_id,
-                        {"method": "tools/call", "params": {"name": "test_tool"}}
-                    )
+                    result = await pool.forward_request_to_owner(mcp_session_id, {"method": "tools/call", "params": {"name": "test_tool"}})
 
                     # Should return None (execute locally)
                     assert result is None
@@ -1056,7 +1011,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_redis = AsyncMock()
             mock_redis.get = AsyncMock(return_value=None)
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
 
@@ -1064,10 +1019,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     return mock_redis
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    result = await pool.forward_request_to_owner(
-                        mcp_session_id,
-                        {"method": "tools/call", "params": {"name": "test_tool"}}
-                    )
+                    result = await pool.forward_request_to_owner(mcp_session_id, {"method": "tools/call", "params": {"name": "test_tool"}})
 
                     # Should return None (execute locally - new session)
                     assert result is None
@@ -1080,7 +1032,7 @@ class TestMultiWorkerSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
 
@@ -1088,10 +1040,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     return None
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    result = await pool.forward_request_to_owner(
-                        "test-session",
-                        {"method": "tools/call", "params": {"name": "test_tool"}}
-                    )
+                    result = await pool.forward_request_to_owner("test-session", {"method": "tools/call", "params": {"name": "test_tool"}})
 
                     assert result is None
         finally:
@@ -1110,11 +1059,13 @@ class TestMultiWorkerSessionAffinityE2E:
 
         try:
             with patch.object(httpx_mod.AsyncClient, "post", side_effect=httpx_mod.ConnectError("Connection refused")):
-                result = await pool._execute_forwarded_request({
-                    "method": "unknown/method",
-                    "params": {},
-                    "headers": {},
-                })
+                result = await pool._execute_forwarded_request(
+                    {
+                        "method": "unknown/method",
+                        "params": {},
+                        "headers": {},
+                    }
+                )
 
             assert "error" in result
             # -32603 is the internal error code returned when HTTP call fails
@@ -1140,7 +1091,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
 
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=mock_client):
                 result = await pool._execute_forwarded_request(
                     {
                         "method": "tools/call",
@@ -1176,7 +1127,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
 
-            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            with patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=mock_client):
                 result = await pool._execute_forwarded_request(
                     {
                         "method": "tools/call",
@@ -1197,7 +1148,7 @@ class TestMultiWorkerSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
                 # Should return immediately without hanging
@@ -1211,7 +1162,7 @@ class TestMultiWorkerSessionAffinityE2E:
         pool = MCPSessionPool()
 
         try:
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
 
                 async def mock_get_redis():
@@ -1227,7 +1178,7 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_we_own_session(self, caplog):
         """Verify [AFFINITY] log is emitted when we own the session."""
         import logging
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.session_affinity import WORKER_ID
 
         pool = MCPSessionPool()
 
@@ -1238,7 +1189,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_redis = AsyncMock()
             mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
 
@@ -1246,11 +1197,8 @@ class TestMultiWorkerSessionAffinityE2E:
                     return mock_redis
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
-                        result = await pool.forward_request_to_owner(
-                            mcp_session_id,
-                            {"method": "tools/call", "params": {"name": "test_tool"}}
-                        )
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.session_affinity"):
+                        result = await pool.forward_request_to_owner(mcp_session_id, {"method": "tools/call", "params": {"name": "test_tool"}})
 
                         assert result is None
                         # Verify affinity log was emitted
@@ -1276,7 +1224,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_redis = AsyncMock()
             mock_redis.get = AsyncMock(return_value=None)
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
 
@@ -1284,11 +1232,8 @@ class TestMultiWorkerSessionAffinityE2E:
                     return mock_redis
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
-                        result = await pool.forward_request_to_owner(
-                            mcp_session_id,
-                            {"method": "resources/list", "params": {}}
-                        )
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.session_affinity"):
+                        result = await pool.forward_request_to_owner(mcp_session_id, {"method": "resources/list", "params": {}})
 
                         assert result is None
                         # Verify affinity log was emitted
@@ -1304,7 +1249,7 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_forwarding_to_another_worker(self, caplog):
         """Verify [AFFINITY] logs are emitted when forwarding to another worker."""
         import logging
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.session_affinity import WORKER_ID
 
         pool = MCPSessionPool()
 
@@ -1318,6 +1263,7 @@ class TestMultiWorkerSessionAffinityE2E:
 
             # Mock pubsub - make get_message raise TimeoutError after being called
             call_count = 0
+
             async def mock_get_message(*args, **kwargs):
                 nonlocal call_count
                 call_count += 1
@@ -1332,7 +1278,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
             mock_redis.publish = AsyncMock()
 
-            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
                 mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.5  # Short timeout for test
 
@@ -1340,12 +1286,9 @@ class TestMultiWorkerSessionAffinityE2E:
                     return mock_redis
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
-                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.session_affinity"):
                         try:
-                            await pool.forward_request_to_owner(
-                                mcp_session_id,
-                                {"method": "tools/call", "params": {"name": "test_tool"}}
-                            )
+                            await pool.forward_request_to_owner(mcp_session_id, {"method": "tools/call", "params": {"name": "test_tool"}})
                         except asyncio.TimeoutError:
                             pass  # Expected - no actual worker to respond
 
@@ -1376,19 +1319,14 @@ class TestMultiWorkerSessionAffinityE2E:
 
         import httpx as httpx_mod
 
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.session_affinity import WORKER_ID
 
         pool = MCPSessionPool()
 
         try:
-            with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+            with caplog.at_level(logging.INFO, logger="mcpgateway.services.session_affinity"):
                 with patch.object(httpx_mod.AsyncClient, "post", side_effect=httpx_mod.ConnectError("Connection refused")):
-                    result = await pool._execute_forwarded_request({
-                        "method": "tools/call",
-                        "params": {"name": "test_tool"},
-                        "mcp_session_id": "test-session-forwarded",
-                        "req_id": 1
-                    })
+                    result = await pool._execute_forwarded_request({"method": "tools/call", "params": {"name": "test_tool"}, "mcp_session_id": "test-session-forwarded", "req_id": 1})
 
                 # Should return error (connection refused)
                 assert "error" in result

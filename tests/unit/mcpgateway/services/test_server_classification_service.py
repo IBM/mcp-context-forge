@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_session_pool import MCPSessionPool, PooledSession, TransportType
+from mcpgateway.services.session_affinity import MCPSessionPool, PooledSession, TransportType
 from mcpgateway.services.server_classification_service import (
     ClassificationMetadata,
     ClassificationResult,
@@ -192,10 +192,7 @@ class TestClassificationLogic:
         now = time.time()
 
         # Create 5 servers (20% = 1 hot server)
-        sessions_by_url = {
-            f"http://server{i}:8080": [self._create_pooled_session(f"http://server{i}:8080", now - (i * 10), use_count=10 - i)]
-            for i in range(5)
-        }
+        sessions_by_url = {f"http://server{i}:8080": [self._create_pooled_session(f"http://server{i}:8080", now - (i * 10), use_count=10 - i)] for i in range(5)}
 
         pool = self._setup_pool_with_sessions(sessions_by_url)
         all_urls = list(sessions_by_url.keys())
@@ -543,8 +540,11 @@ class TestLeaderElection:
             assert is_leader is True
             mock_redis.script_load.assert_awaited_once()
             mock_redis.evalsha.assert_awaited_once_with(
-                "sha123", 1, ServerClassificationService.LEADER_KEY,
-                service._instance_id, str(180),
+                "sha123",
+                1,
+                ServerClassificationService.LEADER_KEY,
+                service._instance_id,
+                str(180),
             )
 
     @pytest.mark.asyncio
@@ -947,6 +947,7 @@ class TestRedisStateManagement:
             mock_redis.set.assert_awaited_once()
             args = mock_redis.set.await_args
             import hashlib
+
             url_hash = hashlib.sha256(b"http://test:8080").hexdigest()[:32]
             expected_key = f"mcpgateway:server_poll_state:{url_hash}:last_health"
             assert args[0][0] == expected_key
@@ -1039,7 +1040,6 @@ class TestServiceLifecycle:
         # stop() must not propagate the RuntimeError
         await service.stop()
         assert service._running is False
-
 
     @pytest.mark.asyncio
     async def test_on_classification_task_done_with_exception(self):
@@ -1288,7 +1288,7 @@ class TestErrorHandling:
         # _get_gateway_url_map is a method on the service instance
         with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={})):
             # get_mcp_session_pool is imported lazily inside _perform_classification
-            with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=MagicMock()):
+            with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=MagicMock()):
                 # Should return early without error
                 await service._perform_classification()
 
@@ -1310,10 +1310,7 @@ class TestErrorHandling:
         service = ServerClassificationService(redis_client=None)
 
         # Should not raise error when processing active sessions with unknown URLs
-        result = service._classify_servers_from_pool(
-            pool=mock_pool,
-            all_gateway_urls=["http://test:8080"]  # Only one URL in all_gateway_urls
-        )
+        result = service._classify_servers_from_pool(pool=mock_pool, all_gateway_urls=["http://test:8080"])  # Only one URL in all_gateway_urls
 
         # Should complete without error
         assert result is not None
@@ -1327,18 +1324,13 @@ class TestErrorHandling:
         mock_session.last_used = time.time()
 
         mock_pool = MagicMock()
-        mock_pool._idle = {
-            ("user@example.com", "http://test:8080"): deque([mock_session])
-        }
+        mock_pool._idle = {("user@example.com", "http://test:8080"): deque([mock_session])}
         mock_pool._active = {}
 
         service = ServerClassificationService(redis_client=None)
 
         # Should handle missing use_count attribute gracefully
-        result = service._classify_servers_from_pool(
-            pool=mock_pool,
-            all_gateway_urls=["http://test:8080"]
-        )
+        result = service._classify_servers_from_pool(pool=mock_pool, all_gateway_urls=["http://test:8080"])
 
         # Should complete without error
         assert result is not None
@@ -1354,18 +1346,8 @@ class TestErrorHandling:
 
         service = ServerClassificationService(redis_client=mock_redis)
 
-        metadata = ClassificationMetadata(
-            total_servers=2,
-            hot_cap=1,
-            hot_actual=1,
-            eligible_count=2,
-            timestamp=time.time()
-        )
-        result = ClassificationResult(
-            hot_servers=["http://hot:8080"],
-            cold_servers=["http://cold:8080"],
-            metadata=metadata
-        )
+        metadata = ClassificationMetadata(total_servers=2, hot_cap=1, hot_actual=1, eligible_count=2, timestamp=time.time())
+        result = ClassificationResult(hot_servers=["http://hot:8080"], cold_servers=["http://cold:8080"], metadata=metadata)
 
         # Should not raise exception, just log error
         await service._publish_classification_to_redis(result)
@@ -1415,7 +1397,7 @@ class TestErrorHandling:
         """Test _perform_classification returns early when pool not initialized (lines 188-190)."""
         service = ServerClassificationService(redis_client=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", side_effect=RuntimeError("pool not initialized")):
+        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", side_effect=RuntimeError("pool not initialized")):
             # Should return early without error
             await service._perform_classification()
 
@@ -1449,7 +1431,7 @@ class TestErrorHandling:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={f"gw-{i}": u for i, u in enumerate(all_urls)})):
-                with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                     await service._perform_classification()
 
         mock_redis.pipeline.assert_called()
@@ -1476,7 +1458,7 @@ class TestErrorHandling:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={"gw-1": "http://test:8080"})):
-                with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                     await service._perform_classification()
 
         # Redis pipeline should have been called to publish classification
@@ -1488,7 +1470,7 @@ class TestErrorHandling:
         service = ServerClassificationService(redis_client=None)
 
         with patch.object(service, "_get_gateway_url_map", AsyncMock(side_effect=RuntimeError("unexpected"))):
-            with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=MagicMock()):
+            with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=MagicMock()):
                 # Should not raise — exception is caught inside _perform_classification
                 await service._perform_classification()
 
@@ -1769,8 +1751,7 @@ class TestBoundsAndEdgeCases:
         now = time.time()
 
         # 5 servers, identical last_used/active/use_count — differ only by URL
-        urls = ["http://server-e:8080", "http://server-a:8080", "http://server-c:8080",
-                "http://server-b:8080", "http://server-d:8080"]
+        urls = ["http://server-e:8080", "http://server-a:8080", "http://server-c:8080", "http://server-b:8080", "http://server-d:8080"]
 
         pool = MagicMock()
         pool._active = {}
@@ -1952,7 +1933,7 @@ class TestMissingBranchCoverage:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={"gw-1": "http://server1:8080"})):
-                with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
                     # Must not raise; no Redis publish occurs (line 202->False->205)
                     await service._perform_classification()
 
