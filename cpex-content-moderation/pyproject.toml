@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpex-content-moderation"
+version = "0.1.0"
+description = "Content moderation plugin for ContextForge — AI-powered content safety using IBM Watson, IBM Granite Guardian, OpenAI, Azure, or AWS with configurable thresholds and actions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Manav Gupta"},
+]
+maintainers = [
+    {name = "ContextForge Developers"},
+]
+keywords = ["mcp", "contextforge", "plugin", "content-moderation", "ai-safety", "ibm", "watson", "granite"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = [
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+]
+
+[project.optional-dependencies]
+gateway = [
+    "mcp-contextforge-gateway>=1.0.0rc3",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "mypy>=1.15.0",
+    "black>=25.1.0",
+    "ruff>=0.11.0",
+    "bandit>=1.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/IBM/mcp-context-forge"
+Repository = "https://github.com/IBM/mcp-context-forge"
+Issues = "https://github.com/IBM/mcp-context-forge/issues"
+
+[tool.setuptools.packages.find]
+include = ["cpex_content_moderation*"]
+
+[tool.setuptools.package-data]
+cpex_content_moderation = ["plugin-manifest.yaml", "py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 200
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 200
+target-version = "py311"

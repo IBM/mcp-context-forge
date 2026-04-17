@@ -62,8 +62,8 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.config import settings
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.config import settings
 from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger

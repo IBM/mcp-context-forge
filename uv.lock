@@ -8,10 +8,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-05T10:56:06.379155Z"
+exclude-newer = "2026-04-07T14:17:22.35915Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
+cpex-content-moderation = "2026-04-17T23:59:59Z"
 langchain-core = "2026-04-11T23:59:59Z"
 cpex-retry-with-backoff = "2026-04-09T23:59:59Z"
 cpex-pii-filter = "2026-04-09T23:59:59Z"
@@ -818,6 +819,29 @@ wheels = [
 toml = [
     { name = "tomli", marker = "python_full_version <= '3.11'" },
 ]
+
+[[package]]
+name = "cpex-content-moderation"
+version = "0.1.0"
+source = { editable = "cpex-content-moderation" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.8.0" },
+    { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "mcp-contextforge-gateway", marker = "extra == 'gateway'", specifier = ">=1.0.0rc3" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.15.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
+]
+provides-extras = ["gateway", "dev"]
 
 [[package]]
 name = "cpex-encoded-exfil-detection"
@@ -2829,6 +2853,7 @@ asyncpg = [
     { name = "asyncpg" },
 ]
 dev-all = [
+    { name = "cpex-content-moderation" },
     { name = "cpex-encoded-exfil-detection" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
@@ -2876,6 +2901,7 @@ playwright = [
     { name = "python-owasp-zap-v2-4" },
 ]
 plugins = [
+    { name = "cpex-content-moderation" },
     { name = "cpex-encoded-exfil-detection" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
@@ -2979,6 +3005,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
     { name = "atheris", marker = "extra == 'fuzz-atheris'", specifier = ">=3.0.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
+    { name = "cpex-content-moderation", marker = "extra == 'plugins'", editable = "cpex-content-moderation" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.3" },

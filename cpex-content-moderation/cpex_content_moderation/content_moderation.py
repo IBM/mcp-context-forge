@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Location: ./plugins/content_moderation/content_moderation.py
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
+"""Content Moderation Plugin for ContextForge.
 
-Content Moderation Plugin.
-Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian, OpenAI, Azure, AWS).
-Detects and handles harmful content including hate speech, violence, sexual content, and self-harm.
+Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian,
+OpenAI, Azure, AWS). Detects and handles harmful content including hate speech,
+violence, sexual content, and self-harm.
+
+Package: cpex-content-moderation
+SPDX-License-Identifier: Apache-2.0
 """
 
 # Future
@@ -21,20 +22,97 @@ from typing import Any, Dict, List, Optional, Pattern
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.plugins.framework import (
-    Plugin,
-    PluginConfig,
-    PluginContext,
-    PluginViolation,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
-)
+# Graceful fallback when mcpgateway is not installed (e.g., standalone testing).
+try:
+    # First-Party
+    from mcpgateway.config import settings as _settings
+
+    def _get_httpx_client() -> httpx.AsyncClient:
+        """Build an AsyncClient from gateway settings."""
+        return httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=_settings.httpx_max_connections,
+                max_keepalive_connections=_settings.httpx_max_keepalive_connections,
+                keepalive_expiry=_settings.httpx_keepalive_expiry,
+            ),
+            timeout=httpx.Timeout(
+                connect=_settings.httpx_connect_timeout,
+                read=_settings.httpx_read_timeout,
+                write=_settings.httpx_write_timeout,
+                pool=_settings.httpx_pool_timeout,
+            ),
+        )
+
+except ModuleNotFoundError:
+
+    def _get_httpx_client() -> httpx.AsyncClient:  # type: ignore[misc]
+        """Build an AsyncClient with sensible defaults when gateway is not present."""
+        return httpx.AsyncClient(timeout=httpx.Timeout(30))
+
+
+try:
+    # First-Party
+    from mcpgateway.plugins.framework import (
+        Plugin,
+        PluginConfig,
+        PluginContext,
+        PluginViolation,
+        PromptPrehookPayload,
+        PromptPrehookResult,
+        ToolPostInvokePayload,
+        ToolPostInvokeResult,
+        ToolPreInvokePayload,
+        ToolPreInvokeResult,
+    )
+except ModuleNotFoundError:
+    # Minimal stubs so the module can be imported and tested without the gateway.
+    class Plugin:  # type: ignore[no-redef]
+        """Minimal Plugin stub."""
+
+        def __init__(self, config: Any) -> None:
+            self.config = config
+
+        @property
+        def name(self) -> str:
+            return getattr(self.config, "name", "")
+
+    class PluginConfig:  # type: ignore[no-redef]
+        """Minimal PluginConfig stub."""
+
+        def __init__(self, *, name: str = "", kind: str = "", hooks: Any = None, config: Any = None, **kwargs: Any) -> None:
+            self.name = name
+            self.kind = kind
+            self.hooks = hooks or []
+            self.config = config
+
+    class PluginContext:  # type: ignore[no-redef]
+        """Minimal PluginContext stub."""
+
+    class PluginViolation:  # type: ignore[no-redef]
+        """Minimal PluginViolation stub."""
+
+        def __init__(self, *, reason: str = "", description: str = "", code: str = "", details: Any = None) -> None:
+            self.reason = reason
+            self.description = description
+            self.code = code
+            self.details = details or {}
+
+    class _HookResult:
+        """Shared base for hook result stubs."""
+
+        def __init__(self, *, continue_processing: bool = True, violation: Any = None, modified_payload: Any = None, metadata: Any = None) -> None:
+            self.continue_processing = continue_processing
+            self.violation = violation
+            self.modified_payload = modified_payload
+            self.metadata = metadata or {}
+
+    PromptPrehookPayload = Any  # type: ignore[assignment,misc]
+    PromptPrehookResult = _HookResult  # type: ignore[assignment,misc]
+    ToolPreInvokePayload = Any  # type: ignore[assignment,misc]
+    ToolPreInvokeResult = _HookResult  # type: ignore[assignment,misc]
+    ToolPostInvokePayload = Any  # type: ignore[assignment,misc]
+    ToolPostInvokeResult = _HookResult  # type: ignore[assignment,misc]
+
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +230,7 @@ class CategoryConfig(BaseModel):
     providers: List[ModerationProvider] = Field(default_factory=list, description="Providers to use for this category")
     custom_patterns: List[Pattern[str]] = Field(default_factory=list, description="Custom compiled regex patterns")
 
-    @field_validator('custom_patterns', mode='before')
+    @field_validator("custom_patterns", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> List[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.
@@ -237,20 +315,8 @@ class ContentModerationPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
-        self._client = httpx.AsyncClient(
-            limits=httpx.Limits(
-                max_connections=settings.httpx_max_connections,
-                max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                keepalive_expiry=settings.httpx_keepalive_expiry,
-            ),
-            timeout=httpx.Timeout(
-                connect=settings.httpx_connect_timeout,
-                read=settings.httpx_read_timeout,
-                write=settings.httpx_write_timeout,
-                pool=settings.httpx_pool_timeout,
-            ),
-        )
-        self._cache: Dict[str, ModerationResult] = {} if self._cfg.enable_caching else None
+        self._client = _get_httpx_client()
+        self._cache: Dict[str, ModerationResult] = {} if self._cfg.enable_caching else None  # type: ignore[assignment]
 
     async def _get_cache_key(self, text: str, provider: ModerationProvider) -> str:
         """Generate cache key for content.
@@ -280,7 +346,6 @@ class ContentModerationPlugin(Plugin):
         """
         if not self._cfg.enable_caching or not self._cache:
             return None
-
         cache_key = await self._get_cache_key(text, provider)
         return self._cache.get(cache_key)
 
@@ -294,7 +359,6 @@ class ContentModerationPlugin(Plugin):
         """
         if not self._cfg.enable_caching or not self._cache:
             return
-
         cache_key = await self._get_cache_key(text, provider)
         self._cache[cache_key] = result
 
@@ -315,52 +379,37 @@ class ContentModerationPlugin(Plugin):
             raise ValueError("IBM Watson configuration not provided")
 
         config = self._cfg.ibm_watson
-
-        # IBM Watson NLU API call
         url = f"{config.url}/v1/analyze"
-
         payload = {"text": text, "features": {"emotion": {}, "sentiment": {}, "concepts": {"limit": 5}}, "language": config.language, "version": config.version}
-
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.api_key}"}
 
         try:
             response = await self._client.post(url, json=payload, headers=headers, timeout=config.timeout)
             response.raise_for_status()
-
             data = response.json()
 
-            # Extract moderation scores from Watson response
             emotion_scores = data.get("emotion", {}).get("document", {}).get("emotion", {})
             sentiment = data.get("sentiment", {}).get("document", {})
             concepts = data.get("concepts", [])
 
-            # Calculate category scores based on Watson's analysis
-            categories = {}
-
-            # Map Watson emotions to our categories
             anger_score = emotion_scores.get("anger", 0.0)
             disgust_score = emotion_scores.get("disgust", 0.0)
             fear_score = emotion_scores.get("fear", 0.0)
             sadness_score = emotion_scores.get("sadness", 0.0)
-
-            # Sentiment-based scoring
             sentiment_score = sentiment.get("score", 0.0) if sentiment.get("label") == "negative" else 0.0
 
-            categories[ModerationCategory.HATE.value] = min(anger_score + disgust_score, 1.0)
-            categories[ModerationCategory.VIOLENCE.value] = min(anger_score + fear_score * 0.5, 1.0)
-            categories[ModerationCategory.TOXIC.value] = min(abs(sentiment_score) if sentiment_score < -0.5 else 0.0, 1.0)
-            categories[ModerationCategory.HARASSMENT.value] = min(anger_score * 0.8, 1.0)
-            categories[ModerationCategory.SELF_HARM.value] = min(sadness_score + fear_score * 0.3, 1.0)
+            categories = {
+                ModerationCategory.HATE.value: min(anger_score + disgust_score, 1.0),
+                ModerationCategory.VIOLENCE.value: min(anger_score + fear_score * 0.5, 1.0),
+                ModerationCategory.TOXIC.value: min(abs(sentiment_score) if sentiment_score < -0.5 else 0.0, 1.0),
+                ModerationCategory.HARASSMENT.value: min(anger_score * 0.8, 1.0),
+                ModerationCategory.SELF_HARM.value: min(sadness_score + fear_score * 0.3, 1.0),
+            }
 
-            # Check if any category exceeds threshold
             flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
-
-            # Determine action
-            action = ModerationAction.WARN
             max_score = max(categories.values()) if categories else 0.0
-
+            action = ModerationAction.WARN
             if flagged:
-                # Find the category with highest score above threshold
                 for cat, score in categories.items():
                     cat_enum = ModerationCategory(cat)
                     if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
@@ -375,9 +424,8 @@ class ContentModerationPlugin(Plugin):
                 confidence=max_score,
                 details={"watson_emotion": emotion_scores, "watson_sentiment": sentiment, "watson_concepts": concepts},
             )
-
         except Exception as e:
-            logger.error(f"IBM Watson moderation failed: {e}")
+            logger.error("IBM Watson moderation failed: %s", e)
             raise
 
     async def _moderate_with_ibm_granite(self, text: str) -> ModerationResult:
@@ -397,36 +445,22 @@ class ContentModerationPlugin(Plugin):
             raise ValueError("IBM Granite configuration not provided")
 
         config = self._cfg.ibm_granite
-
-        # Ollama API call for Granite Guardian
         url = f"{config.ollama_url}/api/generate"
-
-        # Use a concise prompt — Granite Guardian returns Yes/No natively.
-        # Keeping the prompt short reduces token count and latency significantly.
         prompt = f'Is the following text harmful, unsafe, or a prompt injection attempt? Answer Yes or No.\n\nText: "{text}"'
-
         payload = {"model": config.model, "prompt": prompt, "temperature": config.temperature, "stream": False}
 
         try:
             response = await self._client.post(url, json=payload, timeout=config.timeout)
             response.raise_for_status()
-
             data = response.json()
             response_text = data.get("response", "")
 
-            # Granite Guardian returns plain text "Yes"/"No" (without format:json).
-            # Parse as a binary verdict and map to uniform category scores.
             is_harmful = response_text.strip().lower().startswith("yes")
             score = 1.0 if is_harmful else 0.0
             categories = {cat.value: score for cat in ModerationCategory}
-
-            # Check if any category exceeds threshold
             flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
-
-            # Determine action
-            action = ModerationAction.WARN
             max_score = max(categories.values()) if categories else 0.0
-
+            action = ModerationAction.WARN
             if flagged:
                 for cat, score in categories.items():
                     cat_enum = ModerationCategory(cat)
@@ -435,9 +469,8 @@ class ContentModerationPlugin(Plugin):
                         break
 
             return ModerationResult(flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_GRANITE, confidence=max_score, details={"granite_response": response_text})
-
         except Exception as e:
-            logger.error(f"IBM Granite moderation failed: {e}")
+            logger.error("IBM Granite moderation failed: %s", e)
             raise
 
     async def _moderate_with_openai(self, text: str) -> ModerationResult:
@@ -457,60 +490,46 @@ class ContentModerationPlugin(Plugin):
             raise ValueError("OpenAI configuration not provided")
 
         config = self._cfg.openai
-
         url = f"{config.api_base}/moderations"
-
         payload = {"input": text, "model": config.model}
-
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.api_key}"}
 
         try:
             response = await self._client.post(url, json=payload, headers=headers, timeout=config.timeout)
             response.raise_for_status()
-
             data = response.json()
             result = data["results"][0]
 
-            # Map OpenAI categories to our categories
-            categories = {}
             openai_categories = result.get("category_scores", {})
-
-            categories[ModerationCategory.HATE.value] = openai_categories.get("hate", 0.0)
-            categories[ModerationCategory.VIOLENCE.value] = openai_categories.get("violence", 0.0)
-            categories[ModerationCategory.SEXUAL.value] = openai_categories.get("sexual", 0.0)
-            categories[ModerationCategory.SELF_HARM.value] = openai_categories.get("self-harm", 0.0)
-            categories[ModerationCategory.HARASSMENT.value] = openai_categories.get("harassment", 0.0)
+            categories = {
+                ModerationCategory.HATE.value: openai_categories.get("hate", 0.0),
+                ModerationCategory.VIOLENCE.value: openai_categories.get("violence", 0.0),
+                ModerationCategory.SEXUAL.value: openai_categories.get("sexual", 0.0),
+                ModerationCategory.SELF_HARM.value: openai_categories.get("self-harm", 0.0),
+                ModerationCategory.HARASSMENT.value: openai_categories.get("harassment", 0.0),
+            }
 
             flagged = result.get("flagged", False)
             max_score = max(categories.values()) if categories else 0.0
-
-            # Determine action based on flagged categories
             action = ModerationAction.WARN
             if flagged:
                 flagged_categories = result.get("categories", {})
+                _CAT_MAP = {
+                    "hate": ModerationCategory.HATE,
+                    "violence": ModerationCategory.VIOLENCE,
+                    "sexual": ModerationCategory.SEXUAL,
+                    "self-harm": ModerationCategory.SELF_HARM,
+                    "harassment": ModerationCategory.HARASSMENT,
+                }
                 for cat, is_flagged in flagged_categories.items():
-                    if is_flagged:
-                        # Map OpenAI category to our category
-                        our_cat = None
-                        if cat == "hate":
-                            our_cat = ModerationCategory.HATE
-                        elif cat == "violence":
-                            our_cat = ModerationCategory.VIOLENCE
-                        elif cat == "sexual":
-                            our_cat = ModerationCategory.SEXUAL
-                        elif cat == "self-harm":
-                            our_cat = ModerationCategory.SELF_HARM
-                        elif cat == "harassment":
-                            our_cat = ModerationCategory.HARASSMENT
-
-                        if our_cat and our_cat in self._cfg.categories:
-                            action = self._cfg.categories[our_cat].action
-                            break
+                    our_cat = _CAT_MAP.get(cat)
+                    if is_flagged and our_cat and our_cat in self._cfg.categories:
+                        action = self._cfg.categories[our_cat].action
+                        break
 
             return ModerationResult(flagged=flagged, categories=categories, action=action, provider=ModerationProvider.OPENAI, confidence=max_score, details={"openai_result": result})
-
         except Exception as e:
-            logger.error(f"OpenAI moderation failed: {e}")
+            logger.error("OpenAI moderation failed: %s", e)
             raise
 
     async def _apply_moderation_action(self, text: str, result: ModerationResult) -> str:
@@ -524,21 +543,52 @@ class ContentModerationPlugin(Plugin):
             Modified text based on moderation action.
         """
         if result.action == ModerationAction.BLOCK:
-            return ""  # Empty content
-        elif result.action == ModerationAction.REDACT:
-            # Simple redaction - replace with [CONTENT REMOVED]
+            return ""
+        if result.action == ModerationAction.REDACT:
             return "[CONTENT REMOVED BY MODERATION]"
-        elif result.action == ModerationAction.TRANSFORM:
-            # Basic transformation - replace problematic words
+        if result.action == ModerationAction.TRANSFORM:
             transformed = text
             for category, score in result.categories.items():
                 if score >= self._cfg.categories.get(ModerationCategory(category), CategoryConfig()).threshold:
-                    # Simple word replacement for demonstration
                     if category == ModerationCategory.PROFANITY.value:
                         transformed = _PROFANITY_FILTER_RE.sub("[FILTERED]", transformed)
             return transformed
-        else:  # WARN or default
-            return text  # Return original text
+        return text
+
+    async def _moderate_with_patterns(self, text: str) -> ModerationResult:
+        """Fallback moderation using regex patterns.
+
+        Args:
+            text: Content text to moderate.
+
+        Returns:
+            Moderation result based on pattern matching.
+        """
+        categories: Dict[str, float] = {}
+        for category, category_patterns in _BASIC_PATTERNS.items():
+            score = 0.0
+            for pattern in category_patterns:
+                matches = len(pattern.findall(text))
+                if matches > 0:
+                    score = min(score + (matches * 0.3), 1.0)
+            categories[category.value] = score
+
+        for cat in ModerationCategory:
+            if cat.value not in categories:
+                categories[cat.value] = 0.0
+
+        max_score = max(categories.values()) if categories else 0.0
+        flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
+
+        action = ModerationAction.WARN
+        if flagged:
+            for cat, score in categories.items():
+                cat_enum = ModerationCategory(cat)
+                if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
+                    action = self._cfg.categories[cat_enum].action
+                    break
+
+        return ModerationResult(flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_WATSON, confidence=max_score, details={"method": "pattern_matching"})
 
     async def _moderate_content(self, text: str) -> ModerationResult:
         """Moderate content using the configured provider.
@@ -552,13 +602,11 @@ class ContentModerationPlugin(Plugin):
         if len(text) > self._cfg.max_text_length:
             text = text[: self._cfg.max_text_length]
 
-        # Check cache first
         cached_result = await self._get_cached_result(text, self._cfg.provider)
         if cached_result:
             return cached_result
 
         try:
-            # Try primary provider
             if self._cfg.provider == ModerationProvider.IBM_WATSON:
                 result = await self._moderate_with_ibm_watson(text)
             elif self._cfg.provider == ModerationProvider.IBM_GRANITE:
@@ -566,13 +614,9 @@ class ContentModerationPlugin(Plugin):
             elif self._cfg.provider == ModerationProvider.OPENAI:
                 result = await self._moderate_with_openai(text)
             else:
-                # Fallback to basic pattern matching
                 result = await self._moderate_with_patterns(text)
-
         except Exception as e:
-            logger.warning(f"Primary provider {self._cfg.provider} failed: {e}")
-
-            # Try fallback provider
+            logger.warning("Primary provider %s failed: %s", self._cfg.provider, e)
             if self._cfg.fallback_provider:
                 try:
                     if self._cfg.fallback_provider == ModerationProvider.IBM_WATSON:
@@ -588,63 +632,12 @@ class ContentModerationPlugin(Plugin):
             else:
                 result = await self._moderate_with_patterns(text)
 
-        # Cache the result
         await self._cache_result(text, result.provider, result)
 
-        # Apply action to content if needed
         if result.action in [ModerationAction.REDACT, ModerationAction.TRANSFORM]:
             result.modified_content = await self._apply_moderation_action(text, result)
 
         return result
-
-    async def _moderate_with_patterns(self, text: str) -> ModerationResult:
-        """Fallback moderation using regex patterns.
-
-        Args:
-            text: Content text to moderate.
-
-        Returns:
-            Moderation result based on pattern matching.
-        """
-        categories = {}
-
-        # Use precompiled basic patterns
-        for category, category_patterns in _BASIC_PATTERNS.items():
-            score = 0.0
-            for pattern in category_patterns:
-                matches = len(pattern.findall(text))
-                if matches > 0:
-                    score = min(score + (matches * 0.3), 1.0)
-
-            categories[category.value] = score
-
-        # Fill remaining categories with 0.0
-        for cat in ModerationCategory:
-            if cat.value not in categories:
-                categories[cat.value] = 0.0
-
-        max_score = max(categories.values()) if categories else 0.0
-
-        # Check if flagged
-        flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
-
-        # Determine action
-        action = ModerationAction.WARN
-        if flagged:
-            for cat, score in categories.items():
-                cat_enum = ModerationCategory(cat)
-                if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
-                    action = self._cfg.categories[cat_enum].action
-                    break
-
-        return ModerationResult(
-            flagged=flagged,
-            categories=categories,
-            action=action,
-            provider=ModerationProvider.IBM_WATSON,
-            confidence=max_score,
-            details={"method": "pattern_matching"},  # Default fallback
-        )
 
     async def _extract_text_content(self, payload: Any) -> List[str]:
         """Extract text content from various payload types.
@@ -656,21 +649,17 @@ class ContentModerationPlugin(Plugin):
             List of extracted text strings.
         """
         texts = []
-
         if hasattr(payload, "args") and payload.args:
             for _key, value in payload.args.items():
                 if isinstance(value, str) and len(value.strip()) > 0:
                     texts.append(value)
                 elif isinstance(value, dict):
-                    # Extract string values from nested dicts
                     for nested_value in value.values():
                         if isinstance(nested_value, str) and len(nested_value.strip()) > 0:
                             texts.append(nested_value)
-
         if hasattr(payload, "name") and isinstance(payload.name, str):
             texts.append(payload.name)
-
-        return [text for text in texts if len(text.strip()) > 3]  # Filter very short texts
+        return [text for text in texts if len(text.strip()) > 3]
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, _context: PluginContext) -> PromptPrehookResult:
         """Moderate prompt content before fetching.
@@ -683,16 +672,13 @@ class ContentModerationPlugin(Plugin):
             Result indicating whether to continue processing.
         """
         texts = await self._extract_text_content(payload)
-
         for text in texts:
             try:
                 result = await self._moderate_content(text)
-
                 if self._cfg.audit_decisions:
                     logger.info(
-                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}, Confidence: {result.confidence:.2f}"
+                        "Content moderation - Prompt: %s, Result: %s, Action: %s, Provider: %s, Confidence: %.2f", payload.prompt_id, result.flagged, result.action, result.provider, result.confidence
                     )
-
                 if result.action == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,
@@ -709,19 +695,16 @@ class ContentModerationPlugin(Plugin):
                         ),
                         metadata={"moderation_result": result.model_dump(), "provider": result.provider.value},
                     )
-                elif result.modified_content:
-                    # Modify the payload with redacted/transformed content
+                if result.modified_content:
                     modified_payload = PromptPrehookPayload(prompt_id=payload.prompt_id, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
-                    return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.dict(), "content_modified": True})
-
+                    return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.model_dump(), "content_modified": True})
             except Exception as e:
-                logger.error(f"Content moderation failed for prompt {payload.prompt_id}: {e}")
+                logger.error("Content moderation failed for prompt %s: %s", payload.prompt_id, e)
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,
                         violation=PluginViolation(reason="Content moderation service error", description="Unable to verify content safety", code="MODERATION_ERROR", details={"error": str(e)}),
                     )
-
         return PromptPrehookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, _context: PluginContext) -> ToolPreInvokeResult:
@@ -735,14 +718,11 @@ class ContentModerationPlugin(Plugin):
             Result indicating whether to continue processing.
         """
         texts = await self._extract_text_content(payload)
-
         for text in texts:
             try:
                 result = await self._moderate_content(text)
-
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}")
-
+                    logger.info("Content moderation - Tool: %s, Result: %s, Action: %s, Provider: %s", payload.name, result.flagged, result.action, result.provider)
                 if result.action == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(
                         continue_processing=False,
@@ -753,14 +733,12 @@ class ContentModerationPlugin(Plugin):
                             details={"tool": payload.name, "categories": result.categories, "provider": result.provider.value, "confidence": result.confidence},
                         ),
                     )
-                elif result.modified_content:
-                    # Modify the payload arguments
+                if result.modified_content:
                     modified_args = {k: result.modified_content if v == text else v for k, v in payload.args.items()}
                     modified_payload = ToolPreInvokePayload(name=payload.name, args=modified_args)
                     return ToolPreInvokeResult(modified_payload=modified_payload, metadata={"moderation_applied": True, "content_modified": True})
-
             except Exception as e:
-                logger.error(f"Content moderation failed for tool {payload.name}: {e}")
+                logger.error("Content moderation failed for tool %s: %s", payload.name, e)
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(
                         continue_processing=False,
@@ -768,7 +746,6 @@ class ContentModerationPlugin(Plugin):
                             reason="Content moderation service error", description="Unable to verify tool argument safety", code="MODERATION_ERROR", details={"error": str(e), "tool": payload.name}
                         ),
                     )
-
         return ToolPreInvokeResult(metadata={"moderation_checked": True})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, _context: PluginContext) -> ToolPostInvokeResult:
@@ -781,7 +758,6 @@ class ContentModerationPlugin(Plugin):
         Returns:
             Result indicating whether to continue processing.
         """
-        # Extract text from tool results
         result_text = ""
         if hasattr(payload.result, "content"):
             if isinstance(payload.result.content, list):
@@ -791,7 +767,6 @@ class ContentModerationPlugin(Plugin):
             elif isinstance(payload.result.content, str):
                 result_text = payload.result.content
         elif isinstance(payload.result, dict):
-            # Handle dict results
             for value in payload.result.values():
                 if isinstance(value, str):
                     result_text += value + " "
@@ -801,10 +776,8 @@ class ContentModerationPlugin(Plugin):
         if len(result_text.strip()) > 3:
             try:
                 moderation_result = await self._moderate_content(result_text)
-
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool output: {payload.name}, Result: {moderation_result.flagged}")
-
+                    logger.info("Content moderation - Tool output: %s, Result: %s", payload.name, moderation_result.flagged)
                 if moderation_result.action == ModerationAction.BLOCK:
                     return ToolPostInvokeResult(
                         continue_processing=False,
@@ -815,14 +788,12 @@ class ContentModerationPlugin(Plugin):
                             details={"tool": payload.name, "categories": moderation_result.categories, "confidence": moderation_result.confidence},
                         ),
                     )
-                elif moderation_result.modified_content:
-                    # Return modified result
+                if moderation_result.modified_content:
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=moderation_result.modified_content), metadata={"content_moderated": True, "content_modified": True}
                     )
-
             except Exception as e:
-                logger.error(f"Content moderation failed for tool output {payload.name}: {e}")
+                logger.error("Content moderation failed for tool output %s: %s", payload.name, e)
 
         return ToolPostInvokeResult(metadata={"output_checked": True})
 
@@ -831,16 +802,12 @@ class ContentModerationPlugin(Plugin):
         client = getattr(self, "_client", None)
         if client:
             await client.aclose()
-            self._client = None
+            self._client = None  # type: ignore[assignment]
 
-    async def __aenter__(self):
-        """Async context manager entry.
-
-        Returns:
-            ContentModerationPlugin: The plugin instance.
-        """
+    async def __aenter__(self) -> "ContentModerationPlugin":
+        """Async context manager entry."""
         return self
 
-    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
-        """Async context manager exit - cleanup HTTP client."""
+    async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
+        """Async context manager exit — cleanup HTTP client."""
         await self.shutdown()

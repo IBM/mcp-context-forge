@@ -81,7 +81,10 @@ from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent as DbA2AAgent, A2APushNotificationConfig, A2ATask as DbA2ATask, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2APushNotificationConfig
+from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -111,8 +114,8 @@ from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
-    A2APushNotificationConfigCreate,
     A2AAgentUpdate,
+    A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -143,8 +146,8 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.a2a_server_service import A2AServerService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
