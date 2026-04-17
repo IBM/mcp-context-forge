@@ -240,14 +240,14 @@ curl -s -X POST http://localhost:4444/admin/plugins/reload \
 
 ## Troubleshooting
 
-**Plugin not found / ImportError**  
+**Plugin not found / ImportError**
 Install the package: `pip install cpex-content-moderation`. Verify with `python -c "import cpex_content_moderation; print(cpex_content_moderation.ContentModerationPlugin)"`.
 
-**All requests blocked in enforce mode**  
+**All requests blocked in enforce mode**
 Check that the provider credentials are correct and the service is reachable. Set `fallback_on_error: "warn"` to allow traffic while debugging.
 
-**High latency**  
+**High latency**
 Enable caching (`enable_caching: true`) and consider using IBM Granite locally to avoid network round-trips.
 
-**Granite model not found**  
+**Granite model not found**
 Pull the model with Ollama: `ollama pull granite3-guardian`.
