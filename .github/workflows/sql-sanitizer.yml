@@ -266,7 +266,7 @@ jobs:
             - name: Test sql-sanitizer
               run: |
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
-                  SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
+                  SERVER_ID=$(echo "9779b669-8cbd-4b49-95ee-04a4fab38737" | tr -d '-')
                   URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
 
                   echo "Running SQL Injection attack test..."
