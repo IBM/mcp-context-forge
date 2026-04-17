@@ -29,7 +29,7 @@ jobs:
         steps:
             - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
               with:
-                persist-credentials: false
+                  persist-credentials: false
 
             - name: Install yq
               run: |
@@ -39,7 +39,7 @@ jobs:
             - name: Setup Node.js
               uses: actions/setup-node@v4
               with:
-                node-version: '22' 
+                  node-version: '22'
 
             - name: Setup Python
               uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -63,7 +63,7 @@ jobs:
 
                 echo "Config updated successfully:"
                 cat "$CONFIG_FILE" | grep -A 15 "SQLSanitizer"
-                cat "$CONFIG_FILE" | grep -A 15 "RetryWithBackoffPlugin"            
+                cat "$CONFIG_FILE" | grep -A 15 "RetryWithBackoffPlugin"
 
             - name: Cache uv virtual environment
               uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
@@ -268,9 +268,9 @@ jobs:
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
                   SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
                   URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
-                  
+
                   echo "Running SQL Injection attack test..."
-                  
+
                   # Execute the tool call via mcp-inspector
                   RESPONSE=$(npx @modelcontextprotocol/inspector@0.21.2  \
                     --cli "$URL" \
@@ -278,11 +278,11 @@ jobs:
                     --tool-name fast-time-echo \
                     --tool-arg message='DROP table asdf' \
                     --header "Authorization: Bearer $TOKEN")
-                  
+
                   echo "Gateway Response:"
                   echo "$RESPONSE" | jq .
 
-                  # Verify the block logic: 
+                  # Verify the block logic:
                   # 1. isError should be true
                   # 2. text should mention SQLSanitizer
                   IS_ERROR=$(echo "$RESPONSE" | jq -r '.isError')
