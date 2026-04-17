@@ -4622,26 +4622,37 @@ async fn forward_transport_request(
         }
     }
 
-    // #4205: Passive GET SSE stream fallback. The MCP spec allows servers to
-    // return 405 when they cannot anchor such a stream to a session. Two
-    // branches land here:
-    //   (a) session_core is disabled globally — Rust has no way to validate
-    //       a session it could anchor a stream to, and the live-stream relay
-    //       would commit to a `text/event-stream` response before discovering
-    //       the backend can't service the GET (empty-stream cascade).
-    //   (b) no session id was presented in either the `Mcp-Session-Id` header
-    //       or the `session_id` query parameter.
-    // Why 405 rather than 404/400: the `/mcp` path exists and the request is
-    // syntactically valid; 405 + `Allow: POST, DELETE` tells the client the
-    // resource is real and which verbs it supports, which is exactly what the
-    // MCP Streamable HTTP spec (2025-03-26 rev.) sanctions here.
-    // Counter (total + session-core-disabled subcount) and level-split logs
-    // let ops distinguish "no traffic" from "every client rejected"; capability
-    // headers keep parity with the other terminal responses in this function.
-    if method == reqwest::Method::GET {
-        let session_id_present = runtime_session_id_from_request(&incoming_headers, &uri).is_some();
-        let session_core_enabled = state.session_core_enabled();
-        if !session_core_enabled || !session_id_present {
+    if method == reqwest::Method::GET
+        && state.live_stream_core_enabled()
+        && accepts_sse(&incoming_headers)
+        && !incoming_headers.contains_key("last-event-id")
+    {
+        // #4205: Guard the live-stream relay with a 405 when we have no
+        // session to anchor a passive SSE stream to. Two branches land here:
+        //   (a) session_core is disabled globally — Rust has no session
+        //       infrastructure to validate against.
+        //   (b) session_core is enabled but no valid session id was presented
+        //       (neither `Mcp-Session-Id`/`x-mcp-session-id` header nor
+        //       `session_id` query parameter).
+        // Without this gate, `handle_live_stream_transport_request` commits
+        // to a `text/event-stream` response before discovering the backend
+        // can't anchor the stream, producing the empty-stream cascade that
+        // times out strict MCP clients (the #4205 symptom). For GETs that
+        // don't enter this branch (live_stream_core disabled, or no SSE
+        // Accept), we let the request fall through to the Python transport
+        // bridge, which has its own 405 logic — Rust must not pre-empt that
+        // proxy path.
+        //
+        // Why 405 rather than 404/400: the `/mcp` path exists and the
+        // request is syntactically valid; 405 + `Allow: POST, DELETE` tells
+        // the client the resource is real and which verbs it supports,
+        // which is what the MCP Streamable HTTP spec (2025-03-26 rev.)
+        // sanctions here. Counter (total + session-core-disabled subcount)
+        // and level-split logs let ops distinguish "no traffic" from "every
+        // client rejected"; capability headers keep parity with the other
+        // terminal responses in this function.
+        if session_id.is_none() {
+            let session_core_enabled = state.session_core_enabled();
             let reject_reason = if !session_core_enabled {
                 TransportGetRejectReason::SessionCoreDisabled
             } else {
@@ -4664,16 +4675,14 @@ async fn forward_transport_request(
                     warn!(
                         path = %public_path,
                         session_core_enabled = session_core_enabled,
-                        session_id_present = session_id_present,
-                        "rejecting GET with 405 — session_core disabled"
+                        "rejecting passive-stream GET with 405 — session_core disabled"
                     );
                 }
                 TransportGetRejectReason::NoSessionId => {
                     debug!(
                         path = %public_path,
                         session_core_enabled = session_core_enabled,
-                        session_id_present = session_id_present,
-                        "rejecting GET with 405 — no session id presented"
+                        "rejecting passive-stream GET with 405 — no session id presented"
                     );
                 }
             }
@@ -4695,13 +4704,7 @@ async fn forward_transport_request(
             );
             return response;
         }
-    }
 
-    if method == reqwest::Method::GET
-        && state.live_stream_core_enabled()
-        && accepts_sse(&incoming_headers)
-        && !incoming_headers.contains_key("last-event-id")
-    {
         return handle_live_stream_transport_request(
             state,
             &incoming_headers,
@@ -13556,12 +13559,20 @@ mod unit_tests {
         // id to anchor it to. 405 + Allow + capability headers + counter tick.
         // Also asserts the session-core-disabled subcounter does NOT tick on
         // this branch, so the split counter stays trustworthy for ops.
+        // The 405 gate sits INSIDE the live-stream branch — the request must
+        // present `accept: text/event-stream` to reach it; otherwise the GET
+        // falls through to the Python transport bridge proxy.
         let state = AppState::new(&test_config()).expect("state");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream"),
+        );
         let before = state.runtime_stats().snapshot().transport;
         let response = forward_transport_request(
             &state,
             reqwest::Method::GET,
-            HeaderMap::new(),
+            headers,
             "/mcp".to_string(),
             "/mcp".parse::<Uri>().expect("uri"),
         )
