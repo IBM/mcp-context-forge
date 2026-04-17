@@ -2971,6 +2971,34 @@ class SessionManagerWrapper:
         if validated is _REJECT:
             return
 
+        # #4205: Passive GET SSE stream fallback. The MCP spec allows servers
+        # to return 405 on GET when they cannot anchor a passive stream to a
+        # session. Two branches land here:
+        #   (a) stateful sessions disabled globally (no session infrastructure);
+        #   (b) no Mcp-Session-Id — the sentinel "not-provided" covers both a
+        #       missing header and an invalid id that the affinity check reset.
+        # Placed after server-id validation and RBAC so bogus server IDs still
+        # 404 and unauthorized callers still 403 before we advertise the
+        # endpoint via the Allow header.
+        if method == "GET" and (not settings.use_stateful_sessions or mcp_session_id == "not-provided"):
+            if not settings.use_stateful_sessions:
+                detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
+            else:
+                detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+            logger.info(
+                "Rejecting GET %s with 405 (stateful=%s, session_id_present=%s)",
+                path,
+                settings.use_stateful_sessions,
+                mcp_session_id != "not-provided",
+            )
+            response = ORJSONResponse(
+                {"detail": detail},
+                status_code=405,
+                headers={"Allow": "POST, DELETE"},
+            )
+            await response(scope, receive, send)
+            return
+
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
 

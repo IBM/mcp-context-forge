@@ -231,6 +231,13 @@ pub struct RuntimeStatsSnapshot {
     pub session_auth_reuse: SessionAuthReuseStatsSnapshot,
     pub session_access_denials: SessionAccessDenialStatsSnapshot,
     pub affinity: AffinityStatsSnapshot,
+    pub transport: TransportStatsSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TransportStatsSnapshot {
+    // #4205: GETs rejected with 405 because no session id was presented.
+    pub get_rejected_no_session: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -281,6 +288,7 @@ struct RuntimeStats {
     session_access_auth_binding_mismatches: AtomicU64,
     affinity_forward_attempts: AtomicU64,
     affinity_forwarded_requests: AtomicU64,
+    transport_get_rejected_no_session: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1175,6 +1183,11 @@ impl RuntimeStats {
                 forward_attempts: self.affinity_forward_attempts.load(Ordering::Relaxed),
                 forwarded_requests: self.affinity_forwarded_requests.load(Ordering::Relaxed),
             },
+            transport: TransportStatsSnapshot {
+                get_rejected_no_session: self
+                    .transport_get_rejected_no_session
+                    .load(Ordering::Relaxed),
+            },
         }
     }
 
@@ -1255,6 +1268,11 @@ impl RuntimeStats {
 
     fn record_affinity_forwarded_request(&self) {
         self.affinity_forwarded_requests
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_transport_get_rejected_no_session(&self) {
+        self.transport_get_rejected_no_session
             .fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -4575,6 +4593,55 @@ async fn forward_transport_request(
             );
             return response;
         }
+    }
+
+    // #4205: Passive GET SSE stream fallback. The MCP spec allows servers to
+    // return 405 when they cannot anchor such a stream to a session. Two
+    // branches land here:
+    //   (a) session_core is disabled globally — Rust has no way to validate
+    //       a session it could anchor a stream to, and the live-stream relay
+    //       would commit to a `text/event-stream` response before discovering
+    //       the backend can't service the GET (empty-stream cascade).
+    //   (b) no session id was presented in either the `Mcp-Session-Id` header
+    //       or the `session_id` query parameter.
+    // Counter + info log let ops distinguish "no traffic" from "every client
+    // rejected"; capability headers keep parity with the other terminal
+    // responses in this function.
+    if method == reqwest::Method::GET
+        && (!state.session_core_enabled()
+            || runtime_session_id_from_request(&incoming_headers, &uri).is_none())
+    {
+        state
+            .runtime_stats()
+            .record_transport_get_rejected_no_session();
+        let detail = if state.session_core_enabled() {
+            "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+        } else {
+            "Passive SSE stream not available: session management is disabled on this runtime."
+        };
+        info!(
+            path = %public_path,
+            session_core_enabled = state.session_core_enabled(),
+            session_id_present = runtime_session_id_from_request(&incoming_headers, &uri).is_some(),
+            "rejecting GET with 405"
+        );
+        let mut response =
+            json_response(StatusCode::METHOD_NOT_ALLOWED, json!({ "detail": detail }));
+        response.headers_mut().insert(
+            HeaderName::from_static("allow"),
+            HeaderValue::from_static("POST, DELETE"),
+        );
+        inject_runtime_capability_headers(
+            &mut response,
+            &[
+                (SESSION_CORE_HEADER, state.session_core_enabled()),
+                (EVENT_STORE_HEADER, state.event_store_enabled()),
+                (RESUME_CORE_HEADER, state.resume_core_enabled()),
+                (LIVE_STREAM_CORE_HEADER, state.live_stream_core_enabled()),
+                (AFFINITY_CORE_HEADER, state.affinity_core_enabled()),
+            ],
+        );
+        return response;
     }
 
     if method == reqwest::Method::GET
@@ -11116,15 +11183,41 @@ mod unit_tests {
 
         let mut config = test_config();
         config.backend_rpc_url = format!("{backend_url}/_internal/mcp/rpc");
-        config.session_core_enabled = false;
+        // Keep session_core_enabled=true: the 405 gate (#4205) now blocks
+        // GETs when session_core is disabled, so this test keeps session_core
+        // on and disables live_stream to still exercise the backend fallthrough.
         config.live_stream_core_enabled = false;
         let state = AppState::new(&config).expect("state");
 
+        upsert_runtime_session(
+            &state,
+            "scoped-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: Some("server-xyz".to_string()),
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        // GET requires a session id (see #4205); provide one so this test
+        // continues to exercise the server-id-header injection path.
+        let mut get_headers = HeaderMap::new();
+        get_headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("scoped-session"),
+        );
         let get_response = transport_get_server_scoped(
             State(state.clone()),
             AxumPath("server-xyz".to_string()),
             TrustedPeerAddr::default(),
-            HeaderMap::new(),
+            get_headers,
             "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
         )
         .await;
@@ -13402,6 +13495,220 @@ mod unit_tests {
             response_json(response).await["detail"],
             "mcp-session-id header or session_id query parameter is required for resumable GET /mcp"
         );
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_get_without_session_id_returns_method_not_allowed() {
+        // #4205: A passive GET SSE stream cannot be served without a session
+        // id to anchor it to. 405 + Allow + capability headers + counter tick.
+        let state = AppState::new(&test_config()).expect("state");
+        let before = state
+            .runtime_stats()
+            .snapshot()
+            .transport
+            .get_rejected_no_session;
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            HeaderMap::new(),
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            response
+                .headers()
+                .get("allow")
+                .and_then(|value| value.to_str().ok()),
+            Some("POST, DELETE")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-session-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust"),
+            "405 response should carry the same capability headers as other terminal responses"
+        );
+        let body_detail = response_json(response).await["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            body_detail.starts_with("Passive SSE stream requires an Mcp-Session-Id"),
+            "unexpected 405 detail: {body_detail}"
+        );
+        let after = state
+            .runtime_stats()
+            .snapshot()
+            .transport
+            .get_rejected_no_session;
+        assert_eq!(after, before + 1, "counter should tick on 405");
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_get_returns_405_when_session_core_disabled_even_with_header()
+    {
+        // #4205 regression guard: without session_core, Rust can't anchor an
+        // SSE stream to a validated session. Even a GET that presents a
+        // session header must be 405'd — otherwise live_stream_core would
+        // commit to a `text/event-stream` response and relay an empty stream.
+        let mut config = test_config();
+        config.session_core_enabled = false;
+        config.live_stream_core_enabled = true;
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("client-supplied-id"),
+        );
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream"),
+        );
+
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let body_detail = response_json(response).await["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            body_detail.contains("session management is disabled"),
+            "unexpected 405 detail: {body_detail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_get_with_session_id_reaches_live_stream_branch() {
+        // #4205 regression guard: the 405 short-circuit must not pre-empt the
+        // live-stream branch when a session id IS presented. We set up a
+        // backend that returns a valid SSE response so handle_live_stream
+        // streams it back.
+        let backend = Router::new().route(
+            "/_internal/mcp/transport",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::OK,
+                    [(
+                        "content-type",
+                        HeaderValue::from_static("text/event-stream"),
+                    )],
+                    "data: ok\n\n",
+                )
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        config.affinity_core_enabled = false;
+        let state = AppState::new(&config).expect("state");
+
+        upsert_runtime_session(
+            &state,
+            "live-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("live-session"),
+        );
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream"),
+        );
+
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-live-stream-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_get_with_session_id_query_param_is_accepted() {
+        // #4205: A session id provided via query parameter should be accepted
+        // (mirrors runtime_session_id_from_request which checks both header
+        // and `session_id` query param).
+        let backend = Router::new().route(
+            "/_internal/mcp/transport",
+            axum::routing::get(|| async { Json(json!({"ok": true})) }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        config.live_stream_core_enabled = false;
+        config.affinity_core_enabled = false;
+        let state = AppState::new(&config).expect("state");
+
+        upsert_runtime_session(
+            &state,
+            "qp-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            HeaderMap::new(),
+            "/mcp".to_string(),
+            "/mcp?session_id=qp-session".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
