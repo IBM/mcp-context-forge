@@ -267,18 +267,14 @@ fn normalize_task_proxy_params(action: &str, body: &Value, resolved_agent_id: &s
 
     if let Value::Object(ref mut map) = params {
         match action {
-            "get" | "cancel" => {
-                if !map.contains_key("task_id") {
-                    if let Some(task_id) = map.get("id").cloned() {
-                        map.insert("task_id".to_string(), task_id);
-                    }
+            "get" | "cancel" if !map.contains_key("task_id") => {
+                if let Some(task_id) = map.get("id").cloned() {
+                    map.insert("task_id".to_string(), task_id);
                 }
             }
-            "list" => {
-                if !map.contains_key("state") {
-                    if let Some(state) = map.get("status").cloned() {
-                        map.insert("state".to_string(), state);
-                    }
+            "list" if !map.contains_key("state") => {
+                if let Some(state) = map.get("status").cloned() {
+                    map.insert("state".to_string(), state);
                 }
             }
             _ => {}
