@@ -117,6 +117,22 @@ def full_boot(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: True)
 
 
+@pytest.fixture
+def shadow_boot(monkeypatch: pytest.MonkeyPatch):
+    """Make the boot mode look like ``shadow`` for both runtimes.
+
+    A shadow-boot deployment has the Rust sidecar present but
+    ``session_auth_reuse_enabled`` / ``delegate_enabled`` are False — so the
+    safety invariant for routing public traffic to Rust is NOT met. The
+    router must reject PATCH attempts with 409 rather than apply an override
+    that would silently fail to take effect at the transport layer.
+    """
+    monkeypatch.setattr(router_module.version_module, "boot_mcp_runtime_mode", lambda: "shadow")
+    monkeypatch.setattr(router_module.version_module, "boot_a2a_runtime_mode", lambda: "shadow")
+    monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "python")
+    monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: False)
+
+
 # ---------------------------------------------------------------------------
 # GET endpoints
 # ---------------------------------------------------------------------------
@@ -212,6 +228,29 @@ async def test_patch_mcp_mode_409_when_boot_mode_full(allow_admin, full_boot, ad
         await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
     assert exc.value.status_code == 409
     assert "full" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_patch_mcp_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
+    """Safety invariant: boot=shadow didn't opt into session-auth-reuse, so edge override can't take effect."""
+    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
+    body = router_module.RuntimeModeUpdate(mode="edge")
+    with pytest.raises(HTTPException) as exc:
+        await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
+    assert exc.value.status_code == 409
+    assert "shadow" in exc.value.detail
+    assert "session-auth-reuse" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_patch_a2a_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
+    """Safety invariant (A2A): boot=shadow didn't opt into delegate-enabled."""
+    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
+    body = router_module.RuntimeModeUpdate(mode="edge")
+    with pytest.raises(HTTPException) as exc:
+        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
+    assert exc.value.status_code == 409
+    assert "shadow" in exc.value.detail
 
 
 # ---------------------------------------------------------------------------

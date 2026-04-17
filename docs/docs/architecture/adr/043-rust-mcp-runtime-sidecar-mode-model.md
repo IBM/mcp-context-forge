@@ -197,9 +197,12 @@ We additionally allow an authenticated admin to flip the public `/mcp` ingress
 runtime via `PATCH /admin/runtime/mcp-mode` and
 `PATCH /admin/runtime/a2a-mode` (`admin.system_config` permission). The
 override is in-memory only — there is no new Postgres persistence surface,
-and a process restart re-reads `RUST_MCP_MODE` / `RUST_A2A_MODE`. `off` and
-`full` boot modes are intentionally not flippable (`off` lacks the Rust
-sidecar; `full` would require live session/event-store/resume migration).
+and a process restart re-reads `RUST_MCP_MODE` / `RUST_A2A_MODE`. Flips
+require `boot_mode=edge` so that the existing session-auth-reuse /
+delegate-enabled safety invariant is met; `off`, `shadow`, and `full` boot
+modes are intentionally not flippable (`off` has no sidecar; `shadow` did
+not opt into the safety flags; `full` would require live session/
+event-store/resume migration).
 
 When Redis is configured the override propagates cluster-wide via the
 `contextforge:runtime:mode` pub/sub channel with a per-runtime monotonic

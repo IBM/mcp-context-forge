@@ -50,12 +50,21 @@ logger = logging_service.get_logger(__name__)
 runtime_admin_router = APIRouter()
 
 # A deployment can be flipped between shadow and edge at runtime only when it
-# booted into one of those two modes. ``off`` has no Rust sidecar to swap to;
-# ``full`` keeps Rust as the owner of MCP session/event-store/resume/live-stream
-# cores, and flipping to shadow would orphan that Rust-held session state — the
-# issue (#4273) deliberately scopes runtime flips to shadow ↔ edge to avoid
-# live session-state migration.
-_FLIPPABLE_BOOT_MODES: frozenset[str] = frozenset({"shadow", "edge"})
+# booted with the safety-invariant flags enabled — i.e. boot_mode == "edge".
+#
+# - ``off``: no Rust sidecar to swap to.
+# - ``shadow``: Rust sidecar is running but the session-auth-reuse /
+#   delegate-enabled flag is OFF; flipping to "edge" cannot safely route
+#   public traffic to Rust because the repo's documented safety invariant
+#   (see ``_should_mount_public_rust_transport`` and
+#   ``_should_delegate_a2a_to_rust``) requires BOTH flags. Operators who
+#   want runtime flippability must boot with ``edge``.
+# - ``full``: keeps Rust as the owner of MCP session/event-store/resume/
+#   live-stream cores; flipping to shadow would orphan that Rust-held state.
+#
+# Issue #4273 deliberately scopes runtime flips to ``shadow ↔ edge`` and both
+# user stories assume a gateway booted with ``edge`` as the starting point.
+_FLIPPABLE_BOOT_MODES: frozenset[str] = frozenset({"edge"})
 
 # Headers commonly added by reverse proxies. When any are present we know the
 # gateway is fronted by an L7 proxy that won't follow runtime flips by itself
@@ -158,9 +167,12 @@ async def _apply_mode_change(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"{runtime.value.upper()} runtime cannot be flipped at runtime when boot_mode={boot_mode!r}. "
-                "Runtime flips are scoped to shadow ↔ edge only: 'off' has no Rust sidecar to swap to, "
-                "and 'full' would require live migration of Rust-owned session/event-store/resume cores. "
-                "Set RUST_MCP_MODE or RUST_A2A_MODE to 'shadow' or 'edge' to enable runtime flips."
+                "Runtime flips (shadow ↔ edge) are supported only from boot_mode='edge', which is the only "
+                "configuration where the session-auth-reuse / delegate-enabled safety invariant is met. "
+                "'off' has no Rust sidecar; 'shadow' did not opt into session-auth-reuse so an edge override "
+                "would not safely route public traffic to Rust; 'full' keeps Rust as the owner of session "
+                "state, which cannot be migrated live. Boot with RUST_MCP_MODE='edge' or RUST_A2A_MODE='edge' "
+                "to enable runtime flips."
             ),
         )
 

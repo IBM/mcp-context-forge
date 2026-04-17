@@ -276,6 +276,45 @@ def test_constants_match_kinds():
     assert SUPPORTED_OVERRIDE_MODES == frozenset({"shadow", "edge"})
 
 
+@pytest.mark.asyncio
+async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypatch: pytest.MonkeyPatch):
+    """Safety invariant: an admin override=edge on a deployment that didn't opt into
+    session-auth-reuse at boot must NOT cause public /mcp to route to Rust.
+
+    This is the belt in the belt-and-braces: the router rejects such PATCHes with
+    409, but even if the override somehow landed in state (e.g. cluster reconcile
+    from a hint written before we tightened the router), the read side must refuse
+    to break the documented safety invariant.
+    """
+    # Simulate boot=shadow: Rust runtime enabled, session-auth-reuse NOT enabled.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
+
+    # Force the override to "edge" directly on state (bypassing the router).
+    state = get_runtime_state()
+    await state.apply_local("mcp", "edge", initiator_user="replay", version=1)
+    assert state.override_mode("mcp") == "edge"
+
+    # The read side must still refuse to route to Rust.
+    from mcpgateway.version import should_mount_public_rust_transport
+
+    assert should_mount_public_rust_transport() is False
+
+
+@pytest.mark.asyncio
+async def test_override_edge_cannot_bypass_delegate_enabled_invariant(monkeypatch: pytest.MonkeyPatch):
+    """Same invariant for A2A: edge override cannot bypass the delegate_enabled requirement."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", False, raising=False)
+
+    state = get_runtime_state()
+    await state.apply_local("a2a", "edge", initiator_user="replay", version=1)
+
+    from mcpgateway.version import should_delegate_a2a_to_rust
+
+    assert should_delegate_a2a_to_rust() is False
+
+
 # ---------------------------------------------------------------------------
 # Block 1+2 follow-up coverage
 # ---------------------------------------------------------------------------

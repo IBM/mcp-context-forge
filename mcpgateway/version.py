@@ -205,15 +205,29 @@ def _should_mount_public_rust_transport() -> bool:
 
     Returns:
         ``True`` only when the Rust runtime is enabled and Rust can safely own
-        steady-state public MCP session traffic. Honors the runtime override
-        (``shadow`` forces Python, ``edge`` forces Rust) when one is active.
+        steady-state public MCP session traffic.
+
+    **Safety invariant (must remain invariant under runtime override):**
+    Rust public ingress requires BOTH ``experimental_rust_mcp_runtime_enabled``
+    AND ``experimental_rust_mcp_session_auth_reuse_enabled``. The
+    session-auth-reuse flag is what makes Rust's handling of public MCP
+    session traffic safe (dedicated isolation coverage lives in
+    ``crates/mcp_runtime/TESTING-DESIGN.md``). A runtime override can toggle
+    between the two modes the invariant permits (``shadow`` forces Python;
+    ``edge`` matches the default), but it cannot loosen the invariant — an
+    override to ``edge`` on a deployment that did not opt into
+    session-auth-reuse at boot stays on Python.
     """
+    rust_safe_for_public = bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
     override = _runtime_override_mode("mcp")
     if override == "shadow":
         return False
-    if override == "edge":
-        return bool(settings.experimental_rust_mcp_runtime_enabled)
-    return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+    # override == "edge" or override is None (default): both honor the
+    # safety invariant. This means a boot=shadow deployment with an
+    # admin-issued override=edge still returns False here (the router
+    # rejects such a PATCH with 409 at the API boundary — this is the
+    # belt to the router's braces).
+    return rust_safe_for_public
 
 
 def _should_use_rust_public_session_stack() -> bool:
@@ -402,18 +416,23 @@ def _boot_a2a_runtime_mode() -> str:
 def _should_delegate_a2a_to_rust() -> bool:
     """Return whether registered A2A invocations should be delegated to the Rust runtime.
 
-    Honors the runtime override (``shadow`` forces Python, ``edge`` forces Rust)
-    when one is active and the Rust A2A runtime is enabled at boot.
-
     Returns:
         ``True`` when the Rust A2A runtime should service invocations.
+
+    **Safety invariant (must remain invariant under runtime override):**
+    A2A delegation requires BOTH ``experimental_rust_a2a_runtime_enabled``
+    AND ``experimental_rust_a2a_runtime_delegate_enabled``. Mirroring the
+    MCP contract: a runtime override can toggle between the two modes the
+    invariant permits (``shadow`` forces Python; ``edge`` matches the
+    default), but cannot loosen the invariant — an override to ``edge`` on
+    a deployment that did not opt into delegate mode at boot stays on
+    Python. The router rejects such PATCHes at the API boundary.
     """
+    a2a_safe_for_delegate = bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
     override = _runtime_override_mode("a2a")
     if override == "shadow":
         return False
-    if override == "edge":
-        return bool(settings.experimental_rust_a2a_runtime_enabled)
-    return bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
+    return a2a_safe_for_delegate
 
 
 def _current_a2a_invoke_mode() -> str:
