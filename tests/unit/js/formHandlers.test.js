@@ -84,8 +84,9 @@ describe("handleSubmitWithConfirmation", () => {
 
     await handleSubmitWithConfirmation(event, "tools");
 
+    // Confirmation message should use singular display name "tool", not plural "tools"
     expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("permanently delete this tools")
+      expect.stringContaining("permanently delete this tool")
     );
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -147,8 +148,9 @@ describe("handleDeleteSubmit", () => {
 
     handleDeleteSubmit(event, "tools", "my-tool");
 
+    // Confirmation message should use singular display name "tool", not plural "tools"
     expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('tools "my-tool"')
+      expect.stringContaining('tool "my-tool"')
     );
   });
 

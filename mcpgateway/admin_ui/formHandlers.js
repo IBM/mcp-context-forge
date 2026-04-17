@@ -3,6 +3,23 @@ import { navigateAdmin } from "./navigation.js";
 import { getCookie, isInactiveChecked } from "./utils.js";
 
 // ===================================================================
+// ENTITY TYPE DISPLAY NAMES
+// ===================================================================
+// Maps entity type keys (plural/kebab-case) to singular display names for UI messages
+const ENTITY_DISPLAY_NAMES = {
+  tools: "tool",
+  resources: "resource",
+  prompts: "prompt",
+  gateways: "gateway",
+  catalog: "server",
+  "a2a-agents": "agent",
+  agent: "agent",
+  servers: "server",
+  teams: "team",
+  users: "user",
+};
+
+// ===================================================================
 // FORM SUBMISSION AND REFRESH HANDLING
 // ===================================================================
 // Handles form submission (toggle/delete operations) and refreshes the table
@@ -87,7 +104,8 @@ export const handleToggleSubmit = handleFormSubmitAndRefresh;
 export const handleSubmitWithConfirmation = function (event, type) {
   event.preventDefault();
 
-  const confirmationMessage = `Are you sure you want to permanently delete this ${type}? (Deactivation is reversible, deletion is permanent)`;
+  const displayName = ENTITY_DISPLAY_NAMES[type] || type;
+  const confirmationMessage = `Are you sure you want to permanently delete this ${displayName}? (Deactivation is reversible, deletion is permanent)`;
   const confirmation = confirm(confirmationMessage);
   if (!confirmation) {
     return false;
@@ -104,7 +122,8 @@ export const handleDeleteSubmit = function (
 ) {
   event.preventDefault();
 
-  const targetName = name ? `${type} "${name}"` : `this ${type}`;
+  const displayName = ENTITY_DISPLAY_NAMES[type] || type;
+  const targetName = name ? `${displayName} "${name}"` : `this ${displayName}`;
   const confirmationMessage = `Are you sure you want to permanently delete ${targetName}? (Deactivation is reversible, deletion is permanent)`;
   const confirmation = confirm(confirmationMessage);
   if (!confirmation) {
