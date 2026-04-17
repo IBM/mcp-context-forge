@@ -2,7 +2,7 @@
 """Add UAID field to a2a_agents
 
 Revision ID: d2b501bf4262
-Revises: d3e4f5a6b7c8
+Revises: ffe4494639d3
 Create Date: 2026-04-14 17:22:03.808082
 
 Adds HCS-14 Universal Agent ID (UAID) support to enable zero-config cross-gateway
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "d2b501bf4262"
-down_revision: Union[str, Sequence[str], None] = "d3e4f5a6b7c8"
+down_revision: Union[str, Sequence[str], None] = "ffe4494639d3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

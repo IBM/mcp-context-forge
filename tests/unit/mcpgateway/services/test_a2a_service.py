@@ -2985,7 +2985,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated):
-            _service.convert_agent_to_read(agent, db=mock_db)
+            service.convert_agent_to_read(agent, db=mock_db)
         service._get_team_name.assert_called_once()
 
     def test_with_metrics(self, service):
@@ -3002,7 +3002,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            _service.convert_agent_to_read(agent, include_metrics=True)
+            service.convert_agent_to_read(agent, include_metrics=True)
 
             # Verify model_validate was called with metrics included
             call_data = mock_mv.call_args[0][0]

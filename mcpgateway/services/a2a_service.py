@@ -491,11 +491,6 @@ class A2AAgentService(BaseService):
                 # Handle query_param auth - encrypt and prepare for storage
                 auth_query_params_encrypted: Optional[Dict[str, str]] = None
                 if auth_type == "query_param":
-                    # Standard
-                    from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-                    # First-Party
-                    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
                         raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
@@ -1290,11 +1285,6 @@ class A2AAgentService(BaseService):
             is_url_changing = agent_data.endpoint_url is not None and str(agent_data.endpoint_url) != original_endpoint_url
 
             if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
-                # Standard
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     # Grandfather clause: Allow updates to existing query_param agents
@@ -2029,7 +2019,6 @@ class A2AAgentService(BaseService):
             ValueError: If UAID parsing fails or endpoint not allowed
         """
         # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.uaid import extract_routing_info  # pylint: disable=import-outside-toplevel
 
         try:
