@@ -755,15 +755,67 @@ This starts a local MkDocs development server. Manually review:
 - No rendering issues in code blocks, tables, or admonitions
 - Release-specific pages (CHANGELOG, roadmap) reflect the current release
 
-### 11.3 Deploy documentation
+### 11.3 Deploy versioned documentation
 
-Once verified, deploy the documentation site:
+Deploy the documentation for the release version using mike. This creates a version-specific folder on the `gh-pages` branch:
 
 ```bash
-cd docs && make deploy
+cd docs
+
+# Deploy the version (e.g., 1.0.0) with 'latest' alias
+make mike-deploy VERSION=1.0.0
+
+# Set as default version (landing page)
+make mike-set-default
 ```
 
-This runs `mkdocs gh-deploy` to publish the site to GitHub Pages.
+**Versioning strategy:**
+
+- Documentation is maintained in `main` branch alongside code changes
+- When cutting a release tag (e.g., `v1.0.0`), deploy docs to that version
+- Each version gets its own folder on `gh-pages`: `1.0.0/`, `1.0.1/`, etc.
+- The `latest` alias points to the newest release
+- Old versions remain accessible but are not updated (frozen at release time)
+
+**Version deployment workflow:**
+
+```bash
+cd docs
+
+# For stable releases (deploys with 'latest' alias)
+make mike-deploy VERSION=1.0.0
+
+# For release candidates
+make mike-deploy VERSION=1.0.0-RC1
+
+# For development previews
+make mike-deploy VERSION=dev
+
+# Set default version (landing page)
+make mike-set-default
+
+# Delete a version
+make mike-delete VERSION=0.8.0
+```
+
+**Verify deployment:**
+
+```bash
+cd docs
+make mike-list  # Show all deployed versions
+```
+
+**Local preview:**
+
+```bash
+cd docs
+make mike-serve  # http://localhost:8000 with version selector
+```
+
+The version selector in the docs UI (top right) allows users to switch between versions.
+
+!!! note "Single source, multiple deployments"
+    This strategy maintains a single documentation source in `main` that evolves with the code. Each release tag triggers a versioned deployment, creating a snapshot of the docs at that point in time. No separate version branches are needed.
 
 ---
 

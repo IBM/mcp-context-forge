@@ -42,7 +42,7 @@ ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes
 MCP_CLI_TIMEOUT = int(os.getenv("MCP_CLI_TIMEOUT", "30"))  # seconds per command
 WRAPPER_PYTHON = os.getenv("MCP_CLI_PYTHON", sys.executable)
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureTestPass123!"  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------

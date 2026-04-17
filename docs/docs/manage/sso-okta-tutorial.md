@@ -408,6 +408,69 @@ curl https://[your-okta-domain].okta.com/.well-known/openid_configuration
 2. Check server clock synchronization
 3. Validate JWT signature verification
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure Okta's JWKS endpoint is accessible and properly configured
+
+The gateway cryptographically verifies ID token signatures using Okta's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://[your-okta-domain].okta.com/oauth2/v1/keys
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Issuer Mismatch**
+
+The ID token's `iss` claim must exactly match your Okta issuer:
+
+```bash
+# Check discovery endpoint for issuer
+curl https://[your-okta-domain].okta.com/.well-known/openid-configuration | jq '.issuer'
+
+# Ensure exact match in configuration
+SSO_OKTA_ISSUER=https://[your-okta-domain].okta.com
+```
+
+**3. Custom Authorization Server**
+
+If using a custom authorization server, the issuer format differs:
+
+```bash
+# Default authorization server: https://[domain].okta.com
+# Custom authorization server: https://[domain].okta.com/oauth2/[auth-server-id]
+
+# Verify in Okta Admin Console:
+# Security → API → Authorization Servers
+```
+
+**4. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and Okta servers have synchronized clocks:
+
+```bash
+# Check time on gateway server
+date -u  # Should match actual UTC time
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**5. Network/Proxy Issues**
+
+If the gateway is behind a corporate proxy or firewall:
+
+```bash
+# Ensure outbound HTTPS access to:
+# - https://[your-okta-domain].okta.com (issuer and JWKS)
+# - https://[your-okta-domain].okta.com/oauth2/v1/keys (JWKS endpoint)
+```
+
 ## Testing Checklist
 
 - [ ] Okta application integration created

@@ -21,7 +21,7 @@ theme:
     - announce.dismiss # Button to dismiss the current temporary announcement
     - content.action.edit
     - content.action.feedback
-    - content.action.view
+    - content.action.view # Version switcher
     - content.code.annotate # Attach arbitrary content to specific sections of code blocks by adding numeric markers
     - content.code.copy # Button to allow the user to copy a code block's contents to the clipboard
     # - content.tabs.link
@@ -51,7 +51,7 @@ markdown_extensions:
     permalink: true
     toc_depth: 3
 
-plugins: []
+plugins:
   # Built-in blog plugin - see https://squidfunk.github.io/mkdocs-material/setup/setting-up-a-blog/
   # blog:
   #     blog_dir: "blog"
@@ -62,41 +62,40 @@ plugins: []
   # tags:
   #     tags_file: tags.md
   # Configure the PDF export plugin - see https://github.com/zhaoterryy/mkdocs-pdf-export-plugin
-  # NOTE: PDF plugin disabled - requires system libs not available on all platforms
-  # with-pdf: # This creates a single PDF document for the whole site
-  #   author: Mihai Criveti
-  #   copyright: Copyright &copy; Apache 2.0
-  #   cover: true
-  #   back_cover: false
-  #   #
-  #   cover_title: ContextForge AI Gateway
-  #   cover_subtitle: A unified control plane for MCP, A2A, and REST/gRPC APIs
-  #   cover_logo: "theme/contextforge-icon_white.svg"
-  #   #custom_template_path: TEMPLATES PATH
-  #   #
-  #   toc_title: Contents
-  #   # heading_shift: false
-  #   toc_level: 2
-  #   #ordered_chapter_level: 2
-  #   #excludes_children:
-  #   #    - 'release-notes/:upgrading'
-  #   #    - 'release-notes/:changelog'
-  #   #
-  #   exclude_pages:
-  #     - "blog"
-  #   #convert_iframe:
-  #   #    - src: IFRAME SRC
-  #   #      img: POSTER IMAGE URL
-  #   #      text: ALTERNATE TEXT
-  #   #    - src: ...
-  #   #two_columns_level: 3
-  #   #
-  #   # render_js: true
-  #   #headless_chrome_path: headless-chromium
-  #   #
-  #   output_path: ./pdf/mcpgateway-docs.pdf
-  #   enabled_if_env: ENABLE_PDF_EXPORT
-  #   #
-  #   debug_html: true
-  #   #show_anchors: true
-  #   verbose: false
+  with-pdf: # This creates a single PDF document for the whole site
+    author: Mihai Criveti
+    copyright: Copyright &copy; Apache 2.0
+    cover: true
+    back_cover: false
+    #
+    cover_title: ContextForge AI Gateway
+    cover_subtitle: A unified control plane for MCP, A2A, and REST/gRPC APIs
+    cover_logo: "theme/contextforge-icon_white.svg"
+    #custom_template_path: TEMPLATES PATH
+    #
+    toc_title: Contents
+    # heading_shift: false
+    toc_level: 2
+    #ordered_chapter_level: 2
+    #excludes_children:
+    #    - 'release-notes/:upgrading'
+    #    - 'release-notes/:changelog'
+    #
+    exclude_pages:
+      - "blog"
+    #convert_iframe:
+    #    - src: IFRAME SRC
+    #      img: POSTER IMAGE URL
+    #      text: ALTERNATE TEXT
+    #    - src: ...
+    #two_columns_level: 3
+    #
+    # render_js: true
+    #headless_chrome_path: headless-chromium
+    #
+    output_path: ./pdf/mcpgateway-docs.pdf
+    enabled_if_env: ENABLE_PDF_EXPORT
+    #
+    debug_html: true
+    #show_anchors: true
+    verbose: false

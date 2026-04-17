@@ -630,6 +630,68 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
 # Verify email, name, and preferred_username fields exist
 ```
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure JWKS endpoint is accessible and properly configured
+
+The gateway cryptographically verifies ID token signatures using the provider's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://your-provider.com/.well-known/jwks.json
+
+# Or check discovery endpoint for jwks_uri
+curl https://your-provider.com/.well-known/openid-configuration | jq '.jwks_uri'
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Manual JWKS URI Configuration**
+
+If auto-discovery fails or returns incorrect JWKS URI, manually specify it:
+
+```bash
+# Add to your configuration
+SSO_GENERIC_JWKS_URI=https://your-provider.com/oauth/discovery/keys
+```
+
+**3. Issuer Mismatch**
+
+The ID token's `iss` claim must exactly match `SSO_GENERIC_ISSUER`:
+
+```bash
+# Check discovery endpoint for issuer
+curl https://your-provider.com/.well-known/openid-configuration | jq '.issuer'
+
+# Ensure exact match (including trailing slash if present)
+SSO_GENERIC_ISSUER=https://your-provider.com/
+```
+
+**4. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and provider servers have synchronized clocks:
+
+```bash
+# Check time on both servers
+date -u  # Should be within 5 minutes of each other
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**5. Algorithm Mismatch**
+
+Verify the provider uses supported signing algorithms (RS256, RS384, RS512, ES256, ES384, ES512):
+
+```bash
+# Check discovery endpoint for supported algorithms
+curl https://your-provider.com/.well-known/openid-configuration | jq '.id_token_signing_alg_values_supported'
+```
+
 ### Certificate/SSL Errors
 
 **Problem**: SSL certificate verification failing

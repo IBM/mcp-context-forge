@@ -10,6 +10,22 @@ ContextForge is under active development, and while we strive for backward compa
 
 ---
 
+## 📋 Version-Specific Upgrade Guides
+
+**⚠️ IMPORTANT:** Before upgrading, review the version-specific migration guide for your target version:
+
+- **[Upgrading to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md)** - Comprehensive guide covering 8 breaking changes with step-by-step migration instructions
+
+Each version-specific guide includes:
+- Detailed breaking change descriptions
+- Configuration update procedures
+- Data migration steps
+- Validation and testing instructions
+- Rollback procedures
+- Estimated migration time
+
+---
+
 ## 🛠 Upgrade Steps
 
 ### 1. Backup Current Configuration and Data

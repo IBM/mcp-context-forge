@@ -346,6 +346,50 @@ SSO_GOOGLE_CLIENT_ID=your-actual-client-id.apps.googleusercontent.com
 SSO_GOOGLE_CLIENT_SECRET=GOCSPX-your-actual-client-secret
 ```
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure Google's JWKS endpoint is accessible
+
+The gateway cryptographically verifies ID token signatures using Google's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test Google's JWKS endpoint accessibility
+curl https://www.googleapis.com/oauth2/v3/certs
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway server clock is synchronized:
+
+```bash
+# Check time
+date -u  # Should match actual UTC time
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**3. Issuer Verification**
+
+Google ID tokens use `https://accounts.google.com` as the issuer. This is automatically configured and should not require manual intervention.
+
+**4. Network/Proxy Issues**
+
+If the gateway is behind a corporate proxy or firewall:
+
+```bash
+# Ensure outbound HTTPS access to:
+# - https://accounts.google.com (issuer)
+# - https://www.googleapis.com/oauth2/v3/certs (JWKS)
+# - https://oauth2.googleapis.com/token (token endpoint)
+```
+
 ## Testing Checklist
 
 - [ ] Google Cloud project created
