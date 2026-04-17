@@ -102,7 +102,7 @@ jobs:
                       break
                     fi
                     echo "Waiting for port 4444 to open... (attempt $i)"
-                    sleep 1
+                    sleep 4
                   done
 
                   if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
@@ -138,13 +138,12 @@ jobs:
                   sleep 1
 
                   nohup mcp-servers/rust/fast-test-server/target/debug/fast-test-server \
-                    -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
                     > fast-test-server.log 2>&1 &
                   echo $! > fast-test-server.pid
 
                   echo "Waiting for fast-test-server..."
                   for i in {1..30}; do
-                    if curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                    if curl -s http://localhost:9080/health >/dev/null 2>&1; then
                       echo "fast-test-server is up!"
                       break
                     fi
@@ -152,7 +151,7 @@ jobs:
                     sleep 2
                   done
 
-                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-test-server failed to start"
                     cat fast-test-server.log
                     exit 1
@@ -163,7 +162,7 @@ jobs:
               run: |
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
 
-                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-test-server is not running"
                     cat fast-test-server.log
                     exit 1
@@ -176,7 +175,7 @@ jobs:
                     -H "Content-Type: application/json" \
                     -d '{
                       "name": "fast_time",
-                      "url": "http://localhost:8080/http",
+                      "url": "http://localhost:9080/mcp",
                       "transport": "STREAMABLEHTTP"
                     }')
                   echo "Gateway response: $GATEWAY_RESPONSE"
