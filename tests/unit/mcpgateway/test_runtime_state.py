@@ -354,6 +354,95 @@ async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_shadow_on_full_boot(monkeypatch: pytest.MonkeyPatch):
+    """A shadow hint must NOT be applied on boot=full — full mounts a plain RustMCPRuntimeProxy
+    with no dispatcher, so the override would strand in state (diagnostics say shadow; transport
+    always routes to Rust). The router also 409s for any PATCH on boot=full, so without this
+    guard the operator would have no path to clear the stale override.
+    """
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    # boot=full: all cores enabled.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", True, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 9, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.override_mode("mcp") is None
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_any_mode_on_off_boot(monkeypatch: pytest.MonkeyPatch):
+    """boot=off has no Rust sidecar at all — no hint can take effect. Must be discarded."""
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 3, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.override_mode("mcp") is None
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_a2a_hint_on_a2a_off_boot(monkeypatch: pytest.MonkeyPatch):
+    """A2A boot=off has runtime disabled — no hint can take effect."""
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "a2a", "mode": "shadow", "version": 11, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("a2a") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.override_mode("a2a") is None
+        assert state.boot_reconcile_status("a2a") == BootReconcileStatus.INCOMPATIBLE_HINT
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
 async def test_reconcile_from_hint_accepts_shadow_mode_on_shadow_boot(monkeypatch: pytest.MonkeyPatch):
     """A shadow hint is always compatible — shadow is the Python-default and every boot serves Python for shadow overrides."""
     monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)

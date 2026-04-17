@@ -76,10 +76,18 @@ Behavior:
     Rust sidecar, `full` mounts a plain Rust proxy with no dispatcher so
     an override can't take effect.
 - The coordinator's boot reconciliation discards persisted hints whose mode
-  cannot safely take effect on the current deployment (e.g. a hint written
-  by a former edge-boot pod replayed on a shadow-boot deploy). Discarded
-  hints surface via `/health` under `mcp_runtime.boot_reconcile_status` as
-  `incompatible_hint`.
+  cannot safely take effect on the current deployment. This covers three
+  cases:
+  - Edge hint replayed on a shadow-boot deploy (safety invariant unmet).
+  - Any hint replayed on an off-boot deploy (no Rust sidecar, no mechanism
+    to honor the override).
+  - Any hint replayed on a full-boot deploy (plain Rust proxy mounted with
+    no dispatcher; the override would strand in state with the transport
+    layer ignoring it, and the router 409s for any PATCH on full-boot so
+    operators would have no path to clear the stale override).
+
+  Discarded hints surface via `/health` under
+  `mcp_runtime.boot_reconcile_status` as `incompatible_hint`.
 - Each successful flip writes a `runtime_config` audit trail entry via the
   existing `SecurityLogger.log_data_access` pathway. Audit-write failures
   caused by transient DB issues do not roll back the flip — the response

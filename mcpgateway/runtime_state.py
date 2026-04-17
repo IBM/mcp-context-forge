@@ -141,28 +141,61 @@ class RuntimeStateError(Exception):
 def _deployment_allows_mode(runtime: RuntimeKind, mode: OverrideMode) -> bool:
     """Return whether ``mode`` can safely take effect for ``runtime`` on this deployment.
 
-    Mirrors the safety invariant in ``version._should_mount_public_rust_transport``
-    and ``version._should_delegate_a2a_to_rust``: edge requires BOTH the Rust
-    runtime enabled AND the session-auth-reuse (MCP) / delegate-enabled (A2A)
-    flag. shadow is always achievable (it is the Python-default state).
+    Matches the router's admit/reject logic so a reconciled hint only lands
+    in state when the router would have accepted the equivalent PATCH.
+    Two concerns compose:
+
+    1. **Is there a mechanism that could honor the override?** For MCP, an
+       override is observed only by the ``MCPStreamableHTTPModeDispatcher``,
+       which is mounted for ``boot=shadow`` and ``boot=edge`` only —
+       ``boot=off`` has no Rust sidecar and ``boot=full`` mounts a plain
+       Rust proxy with no dispatcher, so any override on those is stranded.
+       For A2A, overrides are observed per-invocation by
+       ``_should_delegate_a2a_to_rust``, which requires the A2A runtime to
+       be enabled at boot (i.e. not ``boot=off``).
+    2. **Does the target mode satisfy the safety invariant?** An ``edge``
+       override additionally requires the session-auth-reuse (MCP) or
+       delegate-enabled (A2A) flag; without it, routing public traffic to
+       Rust would be unsafe. See ``version._should_mount_public_rust_transport``
+       and ``version._should_delegate_a2a_to_rust``.
 
     Args:
         runtime: Runtime kind being evaluated.
         mode: Target override mode to check.
 
     Returns:
-        ``True`` when the deployment's boot-time flags allow ``mode`` to
-        actually change transport behavior; ``False`` otherwise.
+        ``True`` when the deployment's boot-time configuration can both
+        observe AND safely honor ``mode``; ``False`` otherwise.
     """
-    if mode == OverrideMode.SHADOW:
-        return True
     # First-Party: lazy to avoid import cycles with mcpgateway.config consumers.
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     if runtime == RuntimeKind.MCP:
-        return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+        if not settings.experimental_rust_mcp_runtime_enabled:
+            return False  # boot=off: no sidecar, no dispatcher, no mechanism
+        # boot=full: all Rust-owned cores enabled → no dispatcher is mounted,
+        # so an override (even shadow) would strand in state.
+        is_full_boot = bool(
+            settings.experimental_rust_mcp_session_auth_reuse_enabled
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+            and settings.experimental_rust_mcp_live_stream_core_enabled
+            and settings.experimental_rust_mcp_affinity_core_enabled
+        )
+        if is_full_boot:
+            return False
+        # boot=shadow or boot=edge: dispatcher is mounted, so shadow always works.
+        if mode == OverrideMode.SHADOW:
+            return True
+        # mode == OverrideMode.EDGE: safety invariant requires session-auth-reuse.
+        return bool(settings.experimental_rust_mcp_session_auth_reuse_enabled)
     if runtime == RuntimeKind.A2A:
-        return bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
+        if not settings.experimental_rust_a2a_runtime_enabled:
+            return False  # A2A boot=off: runtime disabled, override cannot apply
+        if mode == OverrideMode.SHADOW:
+            return True
+        return bool(settings.experimental_rust_a2a_runtime_delegate_enabled)
     return False
 
 
