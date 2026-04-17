@@ -1725,6 +1725,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
         logger.info("MCP session pool initialized")
 
+    # Initialize the upstream session registry (#4205). 1:1 binding between a
+    # downstream MCP session and its upstream session per gateway, replacing
+    # the old identity-keyed sharing semantics. Always on — no feature flag.
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import init_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+    init_upstream_session_registry()
+    logger.info("Upstream session registry initialized")
+
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -2071,6 +2080,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
             await close_mcp_session_pool()
+
+        # Drain upstream session registry (#4205): every (downstream_session_id,
+        # gateway_id) → upstream ClientSession owned by this worker is closed.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        await shutdown_upstream_session_registry()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()

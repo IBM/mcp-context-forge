@@ -1239,6 +1239,20 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error removing session {session_id}: {e}")
 
+        # #4205: close any upstream MCP sessions this downstream session owned.
+        # Wrapped because the registry may not be initialized in every context
+        # (unit tests instantiate SessionRegistry directly), and an eviction
+        # failure must not interfere with downstream session teardown.
+        try:
+            # First-Party
+            from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+            await get_upstream_session_registry().evict_session(session_id)
+        except RuntimeError:
+            pass  # Registry not initialized (tests, early shutdown) — nothing to do.
+        except Exception as exc:
+            logger.debug(f"Upstream session eviction for {session_id} failed: {exc}")
+
         logger.info(f"Removed session: {session_id}")
 
     async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
