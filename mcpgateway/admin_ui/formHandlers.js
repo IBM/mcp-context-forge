@@ -113,8 +113,9 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
       navigateAdmin(fragment, fallbackParams);
     }
   } catch (error) {
-    // Network error — still navigate so the user sees refreshed state.
+    // Network error or missing config — notify user and fallback to full reload
     console.error("Form submit error:", error);
+    alert("Failed to refresh table. Reloading page...");
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
     const params = new URLSearchParams();
     if (teamId) {

@@ -115,6 +115,17 @@ export const PANEL_SEARCH_CONFIG = {
     inactiveCheckboxId: "show-inactive-a2a-agents",
     defaultPerPage: 50,
   },
+  // Note: roots doesn't have a /partial endpoint yet, so it uses full page reload fallback
+  roots: {
+    tableName: "roots",
+    partialPath: "roots/partial",  // Route doesn't exist - will fallback to navigateAdmin
+    targetSelector: "#roots-table-wrapper",
+    indicatorSelector: null,
+    searchInputId: null,
+    tagInputId: null,
+    inactiveCheckboxId: null,
+    defaultPerPage: 50,
+  },
 };
 
 export const GLOBAL_SEARCH_ENTITY_CONFIG = {
