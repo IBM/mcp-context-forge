@@ -17,11 +17,12 @@ concurrency:
 
 env:
     CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: 1
 
 jobs:
-    sql-sanitizer-e2e:
+    wrapper-e2e:
         if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-        name: SQL Sanitizer E2E
+        name: Wrapper E2E
         runs-on: ubuntu-latest
         timeout-minutes: 30
 
@@ -49,13 +50,18 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Install Rust stable
+            - name: Install Rust stable 1
               run: |
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
                 echo "$HOME/.cargo/bin" >> $GITHUB_PATH
                 source $HOME/.cargo/env
                 rustc --version
 
+
+            - name: Install Rust stable 2
+              run: |
+                  rustup toolchain install stable
+                  rustup default stable
 
             - name: Cache Cargo
               uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
@@ -68,52 +74,9 @@ jobs:
                   restore-keys: |
                       ${{ runner.os }}-cargo-wrapper-
 
-            - name: Build fast-test-server
-              working-directory: mcp-servers/rust/fast-test-server
-              run: |
-                  cargo build --message-format=json
-
-            - name: Debug Binary Location
-              working-directory: mcp-servers/rust/fast-test-server
-              run: |
-                echo "Current directory: $(pwd)"
-                echo "Looking for executable in target/debug:"
-                # Проверяем конкретно папку debug
-                ls -lF target/debug/fast-test-server || echo "Binary not found in debug folder!"
-
-            - name: Start fast-test-server
-              working-directory: mcp-servers/rust/fast-test-server
-              run: |
-                  pkill -9 -f "fast-test-server" 2>/dev/null || true
-                  sleep 1
-
-                  # Start the Rust fast-test-server binary (pre-built)
-                  nohup ./target/debug/fast-test-server \
-                    > fast-test-server.log 2>&1 &
-                  echo $! > fast-test-server.pid
-
-                  echo "Waiting for fast-test-server..."
-                  for i in {1..30}; do
-                    if curl -s http://localhost:8880/health >/dev/null 2>&1; then
-                      echo "fast-test-server is up!"
-                      break
-                    fi
-                    echo "Waiting for fast-test-server... (attempt $i)"
-                    sleep 2
-                  done
-
-                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
-                    echo "ERROR: fast-test-server failed to start"
-                    cat fast-test-server.log
-                    exit 1
-                  fi
-                  echo "fast-test-server PID: $(cat fast-test-server.pid)"
-
-
             - name: Generate JWT secret
-              # remove single quotes after debug  
               run: |
-                  SECRET='$(openssl rand -base64 32)'
+                  SECRET=$(openssl rand -base64 32)
                   echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
 
             - name: Start gateway
@@ -164,140 +127,129 @@ jobs:
                     -H "Content-Type: application/json"
 
 
+            - name: Build fast-test-server
+              working-directory: mcp-servers/rust/fast-test-server
+              run: |
+                  cargo build
+
+            - name: Start fast-test-server
+              run: |
+                  pkill -9 -f "fast-test-server" 2>/dev/null || true
+                  sleep 1
+
+                  nohup mcp-servers/go/fast-test-server/fast-test-server \
+                    -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
+                    > fast-test-server.log 2>&1 &
+                  echo $! > fast-test-server.pid
+
+                  echo "Waiting for fast-test-server..."
+                  for i in {1..30}; do
+                    if curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                      echo "fast-test-server is up!"
+                      break
+                    fi
+                    echo "Waiting for fast-test-server... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                    echo "ERROR: fast-test-server failed to start"
+                    cat fast-test-server.log
+                    exit 1
+                  fi
+                  echo "fast-test-server PID: $(cat fast-test-server.pid)"
+
             - name: Register gateway and create virtual server
-              env:
-                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
               run: |
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
 
-                  if ! curl -s http://localhost:8880/health >/dev/null 2>&1; then
+                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-test-server is not running"
+                    cat fast-test-server.log
                     exit 1
                   fi
 
-                  # Register gateway and create virtual server using Python
-                  python3 -c "
-                  import urllib.error
-                  import urllib.request
-                  import json
-                  import os
-                  import time
+                  # Register gateway
+                  echo "Registering fast_time gateway..."
+                  GATEWAY_RESPONSE=$(curl -s -X POST http://localhost:4444/gateways \
+                    -H "Authorization: Bearer $TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d '{
+                      "name": "fast_time",
+                      "url": "http://localhost:8080/http",
+                      "transport": "STREAMABLEHTTP"
+                    }')
+                  echo "Gateway response: $GATEWAY_RESPONSE"
 
-                  token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '${TOKEN}')
-                  gateway_url = 'http://localhost:4444'
-
-                  def api_request(method, path, data=None):
-                      url = f'{gateway_url}{path}'
-                      req = urllib.request.Request(url, method=method)
-                      req.add_header('Authorization', f'Bearer {token}')
-                      req.add_header('Content-Type', 'application/json')
-                      if data:
-                          req.data = json.dumps(data).encode('utf-8')
-                      with urllib.request.urlopen(req) as response:
-                          return json.loads(response.read().decode('utf-8'))
-
-                  def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
-                      for attempt in range(1, retries + 1):
-                          try:
-                              return api_request(method, path, data)
-                          except urllib.error.HTTPError as exc:
-                              if exc.code in retry_statuses and attempt < retries:
-                                  print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
-                                  time.sleep(delay)
-                                  continue
-                              raise
-                          except Exception:
-                              if attempt < retries:
-                                  print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
-                                  time.sleep(delay)
-                                  continue
-                              raise
-
-                  VIRTUAL_SERVER_ID = 'b8e3f1a2-c4d5-e6f7-a1b2-c3d4e5f6a7b8'.replace('-','')
-
-                  # Delete existing gateway if present
-                  try:
-                      gateways = api_request_with_retry('GET', '/gateways')
-                      for gw in gateways:
-                          if gw.get('name') == 'fast_test':
-                              print(f'Deleting existing gateway {gw[\"id\"]}...')
-                              api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
-                  except Exception as e:
-                      print(f'Note: {e}')
-
-                  # Delete existing virtual server if present
-                  try:
-                      api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
-                      print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
-                  except Exception as e:
-                      print(f'Note: No existing virtual server to delete (or error: {e})')
-
-                  # Register the gateway
-                  print('Registering fast_test gateway...')
-                  result = api_request_with_retry('POST', '/gateways', {
-                      'name': 'fast_test',
-                      'url': 'http://localhost:8880/mcp',
-                      'transport': 'STREAMABLEHTTP'
-                  })
-                  gateway_id = result.get('id', '')
-                  print(f'✅ Registered fast-test-server (gateway_id: {gateway_id})')
+                  # Extract gateway ID (handle existing gateway)
+                  if echo "$GATEWAY_RESPONSE" | grep -q "already exists"; then
+                    echo "Gateway already exists, fetching existing ID..."
+                    GATEWAYS=$(curl -s http://localhost:4444/gateways \
+                      -H "Authorization: Bearer $TOKEN")
+                    GATEWAY_ID=$(echo "$GATEWAYS" | jq -r '.[] | select(.name=="fast_time") | .id')
+                  else
+                    GATEWAY_ID=$(echo "$GATEWAY_RESPONSE" | jq -r '.id')
+                  fi
+                  echo "Gateway ID: $GATEWAY_ID"
 
                   # Wait for tools to sync
-                  print('Waiting for tools to sync...')
-                  for i in range(30):
-                      time.sleep(1)
-                      try:
-                          tools = api_request_with_retry('GET', '/tools')
-                          fast_test_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
-                          if fast_test_tools:
-                              print(f'Found {len(fast_test_tools)} tools from fast_test gateway')
-                              break
-                      except Exception:
-                          pass
-                      print(f'Waiting for sync... ({i+1}/30)')
+                  echo "Waiting for tools to sync..."
+                  for i in {1..30}; do
+                    TOOLS=$(curl -s http://localhost:4444/tools \
+                      -H "Authorization: Bearer $TOKEN")
+                    TOOL_COUNT=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" '[.[] | select(.gatewayId==$gid)] | length')
+                    if [ "$TOOL_COUNT" -gt 0 ]; then
+                      echo "Found $TOOL_COUNT tools from fast_time gateway"
+                      echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" '[.[] | select(.gatewayId==$gid) | .name]'
+                      break
+                    fi
+                    echo "Waiting for tools to sync... (attempt $i)"
+                    sleep 2
+                  done
 
-                  # Collect tool IDs
-                  tool_ids = []
-                  try:
-                      tools = api_request_with_retry('GET', '/tools')
-                      tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
-                      print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
-                  except Exception as e:
-                      print(f'Failed to fetch tools: {e}')
+                  TOOLS=$(curl -s http://localhost:4444/tools \
+                    -H "Authorization: Bearer $TOKEN")
+                  TOOL_IDS=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" -c '[.[] | select(.gatewayId==$gid) | .id]')
+                  echo "Tool IDs: $TOOL_IDS"
 
-                  if not tool_ids:
-                      print('❌ No tools synced from gateway')
-                      exit(1)
+                  if [ "$TOOL_IDS" = "[]" ] || [ -z "$TOOL_IDS" ]; then
+                    echo "ERROR: no tools synced from gateway"
+                    exit 1
+                  fi
 
                   # Create virtual server
-                  print('Creating virtual server...')
-                  server_payload = {
-                      'server': {
-                          'id': VIRTUAL_SERVER_ID,
-                          'name': 'Fast Test Server',
-                          'description': 'Virtual server exposing Fast Test MCP tools (echo, time, stats)',
-                          'associated_tools': tool_ids,
-                          'associated_resources': [],
-                          'associated_prompts': []
+                  echo "Creating virtual server..."
+                  SERVER_RESPONSE=$(curl -s -X POST http://localhost:4444/servers \
+                    -H "Authorization: Bearer $TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{
+                      \"server\": {
+                        \"id\": \"9779b6698cbd4b4995ee04a4fab38737\",
+                        \"name\": \"Fast Time Server\",
+                        \"description\": \"Virtual server exposing Fast Time MCP tools\",
+                        \"associated_tools\": $TOOL_IDS,
+                        \"associated_resources\": [],
+                        \"associated_prompts\": []
                       }
-                  }
-                  result = api_request_with_retry('POST', '/servers', server_payload)
-                  print(f'✅ Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
-                  "
+                    }")
+                  echo "Server response: $SERVER_RESPONSE"
 
-            - name: Run SQL injection test with mcp-inspector
-              env:
-                  TOKEN: ${{ steps.generate_jwt.outputs.token }}
+            - name: Build and test wrapper
               run: |
-                  TOOL_URL="http://localhost:4444/servers/b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8/mcp"
+                  cd crates/wrapper
+                  cargo build --release --features integration-test
+                  cd -
 
-                  # mcp-inspector
-                  npx @modelcontextprotocol/inspector \
-                     --cli "$TOOL_URL" \
-                     --method tools/call \
-                     --tool-name fast-test-echo \
-                     --tool-arg "message='DROP table asdf'" \
-                     --header "Authorization: Bearer $TOKEN"
+                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
+                  SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
+                  URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
+                  AUTH="Bearer $TOKEN"
+                  WRAPPER_BIN="target/release/mcp_stdio_wrapper"
+
+                  URL="$URL" AUTH="$AUTH" WRAPPER_BIN="$WRAPPER_BIN" \
+                    ./target/release/wrapper_integration
+
+                  echo "All wrapper tests passed!"
 
             - name: Upload logs on failure
               if: failure()
