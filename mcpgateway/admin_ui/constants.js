@@ -34,6 +34,15 @@ export const DEFAULT_TEAMS_PER_PAGE = 10;
 
 /**
  * Clear search functionality for different entity types
+ *
+ * IMPORTANT: All entity types used with handleFormSubmitAndRefresh (formHandlers.js)
+ * must be registered here with their correct partialPath and targetSelector.
+ * Failure to register new entity types will cause UI refresh issues after
+ * delete/toggle operations (the entity will remain visible until manual page refresh).
+ *
+ * Each entity type must define:
+ * - partialPath: The backend route for fetching the partial HTML (e.g., "a2a/partial")
+ * - targetSelector: The DOM selector for the target element (e.g., "#agents-table")
  */
 export const PANEL_SEARCH_CONFIG = {
   catalog: {

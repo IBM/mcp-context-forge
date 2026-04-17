@@ -3,9 +3,11 @@ import { navigateAdmin } from "./navigation.js";
 import { getCookie, isInactiveChecked } from "./utils.js";
 
 // ===================================================================
-// INACTIVE ITEMS HANDLING
+// FORM SUBMISSION AND REFRESH HANDLING
 // ===================================================================
-export const handleToggleSubmit = async function (event, type) {
+// Handles form submission (toggle/delete operations) and refreshes the table
+// via HTMX. Used by both handleSubmitWithConfirmation and handleDeleteSubmit.
+export const handleFormSubmitAndRefresh = async function (event, type) {
   event.preventDefault();
 
   const isInactiveCheckedBool = isInactiveChecked(type);
@@ -47,8 +49,11 @@ export const handleToggleSubmit = async function (event, type) {
       params.set("team_id", teamId);
     }
 
-    // Trigger HTMX request to refresh the table
+    // Trigger HTMX request to refresh the table using PANEL_SEARCH_CONFIG
     const panelConfig = PANEL_SEARCH_CONFIG[type];
+    if (!panelConfig) {
+      console.warn(`No PANEL_SEARCH_CONFIG found for type: ${type}, using fallback pattern. Consider adding this type to PANEL_SEARCH_CONFIG in constants.js`);
+    }
     const partialPath = panelConfig?.partialPath || `${type}/partial`;
     const targetSelector = panelConfig?.targetSelector || `#${type}-table`;
     const partialUrl = `${window.ROOT_PATH}/admin/${partialPath}?${params.toString()}`;
@@ -64,7 +69,7 @@ export const handleToggleSubmit = async function (event, type) {
     }
   } catch (e) {
     // Network error — still navigate so the user sees refreshed state.
-    console.error("Toggle submit error:", e);
+    console.error("Form submit error:", e);
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
     const params = new URLSearchParams();
     if (teamId) {
@@ -73,6 +78,9 @@ export const handleToggleSubmit = async function (event, type) {
     navigateAdmin(fragment, params);
   }
 };
+
+// Legacy alias for backward compatibility
+export const handleToggleSubmit = handleFormSubmitAndRefresh;
 
 export const handleSubmitWithConfirmation = function (event, type) {
   event.preventDefault();
@@ -83,7 +91,7 @@ export const handleSubmitWithConfirmation = function (event, type) {
     return false;
   }
 
-  return handleToggleSubmit(event, type);
+  return handleFormSubmitAndRefresh(event, type);
 };
 
 export const handleDeleteSubmit = function (
@@ -114,5 +122,5 @@ export const handleDeleteSubmit = function (
   }
 
   const toggleType = inactiveType || type;
-  return handleToggleSubmit(event, toggleType);
+  return handleFormSubmitAndRefresh(event, toggleType);
 };

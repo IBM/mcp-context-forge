@@ -278,4 +278,82 @@ describe("handleDeleteSubmit", () => {
       })
     );
   });
+
+  test("uses PANEL_SEARCH_CONFIG for catalog/servers refresh", async () => {
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const tableDiv = document.createElement("div");
+    tableDiv.id = "servers-table";  // Correct ID per PANEL_SEARCH_CONFIG for catalog
+    document.body.appendChild(tableDiv);
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock;
+
+    // Mock HTMX
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "server", "test-server", "catalog");
+
+    // Verify HTMX was called with correct partial path (servers/partial) and target selector (#servers-table)
+    expect(htmxAjaxMock).toHaveBeenCalledWith(
+      'GET',
+      expect.stringContaining('/admin/servers/partial'),
+      expect.objectContaining({
+        target: '#servers-table',  // targetSelector from PANEL_SEARCH_CONFIG for catalog
+        swap: 'outerHTML'
+      })
+    );
+  });
+
+  test("warns when PANEL_SEARCH_CONFIG is missing for a type", async () => {
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock;
+
+    // Mock HTMX
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    // Mock console.warn
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
+
+    // Verify console.warn was called with appropriate message
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('No PANEL_SEARCH_CONFIG found for type: unknown-type')
+    );
+
+    // Should still use fallback pattern
+    expect(htmxAjaxMock).toHaveBeenCalledWith(
+      'GET',
+      expect.stringContaining('/admin/unknown-type/partial'),
+      expect.objectContaining({
+        target: '#unknown-type-table',
+        swap: 'outerHTML'
+      })
+    );
+  });
 });
