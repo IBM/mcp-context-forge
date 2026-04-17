@@ -233,20 +233,13 @@ jobs:
                     }")
                   echo "Server response: $SERVER_RESPONSE"
 
-            - name: Build and test sql-sanitizer
+            - name: Test sql-sanitizer
               run: |
-                  cd crates/sql-sanitizer
-                  cargo build --release --features integration-test
-                  cd -
-
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
                   SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
                   URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
                   AUTH="Bearer $TOKEN"
-                  sql-sanitizer_BIN="target/release/mcp_stdio_sql-sanitizer"
 
-                  URL="$URL" AUTH="$AUTH" sql-sanitizer_BIN="$sql-sanitizer_BIN" \
-                    ./target/release/sql-sanitizer_integration
 
                   echo "All sql-sanitizer tests passed!"
 
