@@ -320,7 +320,7 @@ impl EventStore {
             };
 
         let mut result = Vec::with_capacity(entries.len());
-        for ((event_id, score), payload) in entries.into_iter().zip(payloads.into_iter()) {
+        for ((event_id, score), payload) in entries.into_iter().zip(payloads) {
             result.push(StoredEvent {
                 event_id,
                 sequence: score as i64,

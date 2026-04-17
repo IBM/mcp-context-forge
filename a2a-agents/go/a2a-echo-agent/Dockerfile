@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/b
 # Use Debian slim so basic tooling exists without Alpine.
 FROM debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata wget && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --uid 1001 --create-home --shell /usr/sbin/nologin app
 COPY --from=builder /usr/local/bin/a2a-echo-agent /usr/local/bin/a2a-echo-agent

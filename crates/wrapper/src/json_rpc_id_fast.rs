@@ -29,15 +29,15 @@ pub fn parse_field_fast(json: &[u8], field_name: &str) -> Id {
                     break;
                 }
             }
-            JsonEvent::FieldName => {
-                if depth == 1 && parser.current_str().is_ok_and(|name| name == field_name) {
-                    // Get the very next event (the value)
-                    if let Ok(Some(val_event)) = parser.next_event() {
-                        match parser.current_str() {
-                            Ok(s) => return to_id(&val_event, s),
-                            Err(e) => {
-                                error!("Invalid string: {e}");
-                            }
+            JsonEvent::FieldName
+                if depth == 1 && parser.current_str().is_ok_and(|name| name == field_name) =>
+            {
+                // Get the very next event (the value)
+                if let Ok(Some(val_event)) = parser.next_event() {
+                    match parser.current_str() {
+                        Ok(s) => return to_id(&val_event, s),
+                        Err(e) => {
+                            error!("Invalid string: {e}");
                         }
                     }
                 }

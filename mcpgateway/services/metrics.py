@@ -131,6 +131,18 @@ oauth_verify_events_counter = Counter(
     ["outcome"],
 )
 
+# Streamable HTTP GET rejections (#4205). Clients that probe a passive SSE
+# stream before `initialize` (or against a stateless gateway) are 405'd with
+# `Allow: POST, DELETE`. Outcome labels mirror the Rust runtime's counter
+# split so ops can distinguish client-side from deployment-config causes:
+#   no_session_id           — client didn't present `Mcp-Session-Id`
+#   stateful_disabled       — this gateway runs with `use_stateful_sessions=False`
+transport_get_rejected_counter = Counter(
+    "transport_get_rejected_total",
+    "GET /mcp 405 rejections by reason (no session anchor available)",
+    ["outcome"],
+)
+
 
 def setup_metrics(app):
     """
