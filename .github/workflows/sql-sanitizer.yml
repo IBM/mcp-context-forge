@@ -1,4 +1,4 @@
-name: Wrapper E2E
+name: sql-sanitizer E2E
 
 on:
     push:
@@ -20,9 +20,9 @@ env:
     RUST_BACKTRACE: 1
 
 jobs:
-    wrapper-e2e:
+    sql-sanitizer-e2e:
         if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-        name: Wrapper E2E
+        name: sql-sanitizer E2E
         runs-on: ubuntu-latest
         timeout-minutes: 30
 
@@ -70,9 +70,9 @@ jobs:
                       ~/.cargo/registry
                       ~/.cargo/git
                       target
-                  key: ${{ runner.os }}-cargo-wrapper-${{ hashFiles('Cargo.lock', 'crates/wrapper/Cargo.toml') }}
+                  key: ${{ runner.os }}-cargo-sql-sanitizer-${{ hashFiles('Cargo.lock', 'crates/sql-sanitizer/Cargo.toml') }}
                   restore-keys: |
-                      ${{ runner.os }}-cargo-wrapper-
+                      ${{ runner.os }}-cargo-sql-sanitizer-
 
             - name: Generate JWT secret
               run: |
@@ -137,7 +137,7 @@ jobs:
                   pkill -9 -f "fast-test-server" 2>/dev/null || true
                   sleep 1
 
-                  nohup mcp-servers/go/fast-test-server/fast-test-server \
+                  nohup mcp-servers/rust/fast-test-server/target/debug/fast-test-server \
                     -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
                     > fast-test-server.log 2>&1 &
                   echo $! > fast-test-server.pid
@@ -234,9 +234,9 @@ jobs:
                     }")
                   echo "Server response: $SERVER_RESPONSE"
 
-            - name: Build and test wrapper
+            - name: Build and test sql-sanitizer
               run: |
-                  cd crates/wrapper
+                  cd crates/sql-sanitizer
                   cargo build --release --features integration-test
                   cd -
 
@@ -244,20 +244,20 @@ jobs:
                   SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
                   URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
                   AUTH="Bearer $TOKEN"
-                  WRAPPER_BIN="target/release/mcp_stdio_wrapper"
+                  sql-sanitizer_BIN="target/release/mcp_stdio_sql-sanitizer"
 
-                  URL="$URL" AUTH="$AUTH" WRAPPER_BIN="$WRAPPER_BIN" \
-                    ./target/release/wrapper_integration
+                  URL="$URL" AUTH="$AUTH" sql-sanitizer_BIN="$sql-sanitizer_BIN" \
+                    ./target/release/sql-sanitizer_integration
 
-                  echo "All wrapper tests passed!"
+                  echo "All sql-sanitizer tests passed!"
 
             - name: Upload logs on failure
               if: failure()
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
               with:
-                  name: wrapper-test-logs
+                  name: sql-sanitizer-test-logs
                   path: |
                       fast-test-server.log
-                      wrapper_output.json
-                      wrapper_test.log
+                      sql-sanitizer_output.json
+                      sql-sanitizer_test.log
                   retention-days: 7
