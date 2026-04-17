@@ -33,6 +33,146 @@ make testing-rebuild-rust
 make testing-rebuild-rust-full
 ```
 
+## Runtime Mode Override
+
+The boot env vars `RUST_MCP_MODE` and `RUST_A2A_MODE` still pick the initial
+mode. When the boot mode is `shadow` or `edge` an authorized admin can flip
+the public `/mcp` ingress (and the registered-A2A invocation path) between
+`shadow` and `edge` at runtime, without a restart.
+
+| Method | Path | Body | Permission |
+|---|---|---|---|
+| GET | `/admin/runtime/mcp-mode` | — | `admin.system_config` |
+| PATCH | `/admin/runtime/mcp-mode` | `{"mode": "shadow" \| "edge"}` | `admin.system_config` |
+| GET | `/admin/runtime/a2a-mode` | — | `admin.system_config` |
+| PATCH | `/admin/runtime/a2a-mode` | `{"mode": "shadow" \| "edge"}` | `admin.system_config` |
+
+Behavior:
+
+- The override lives in process memory. A restart re-reads `RUST_MCP_MODE` /
+  `RUST_A2A_MODE`; there is no new persistence surface in Postgres.
+- Drain semantics are natural: in-flight requests complete on their original
+  transport and only newly-accepted requests follow the flip.
+- Runtime flips are scoped to `shadow ↔ edge`. `off` and `full` boot modes
+  cannot be flipped at runtime; the endpoint returns `409 Conflict`:
+  - `off` has no Rust sidecar to swap to.
+  - `full` keeps Rust as the owner of MCP session/event-store/resume/
+    live-stream cores, and flipping to shadow would orphan that Rust-held
+    session state. Operators who want runtime flippability should boot the
+    deployment as `shadow` or `edge`.
+- Each successful flip writes a `runtime_config` audit trail entry via the
+  existing `SecurityLogger.log_data_access` pathway. Audit-write failures
+  caused by transient DB issues do not roll back the flip — the response
+  body reports `audit_persisted: false` so the caller knows the audit gap.
+- When Redis is attached but the version counter cannot be safely allocated
+  (`INCR` fails or returns a value not greater than the local floor), the
+  PATCH returns `503 Service Unavailable`. Falling back to a local version
+  could collide with a concurrent PATCH on a peer pod and silently lose one
+  of the two flips at peer dedup time.
+- The PATCH response includes:
+  - `publish_status: "propagated" | "local-only" | "failed" | "superseded"`
+    so the caller knows whether peers received the flip.
+  - `audit_persisted: bool`.
+- The currently effective mode and propagation status surface on `/health`
+  under `mcp_runtime` and `a2a_runtime` (`boot_mode`, `effective_mode`,
+  `override_active`, `cluster_propagation`, `last_change`).
+- `cluster_propagation` is one of:
+  - `"redis"` — coordinator is publishing/subscribing successfully.
+  - `"disabled"` — Redis is intentionally not configured for this deployment.
+  - `"degraded"` — Redis is configured but the coordinator failed to attach;
+    operators should treat this as alertable (e.g. fail readiness or page).
+
+### Reverse-proxy deployments — important caveat
+
+The override updates the Python gateway's in-process state (and propagates
+across pods via Redis), but the public `/mcp` ingress is sometimes terminated
+by an upstream reverse proxy (typically nginx) before reaching the Python
+gateway. In that topology a runtime flip is **observable but not
+behavior-changing** at the public ingress until the proxy is reconfigured.
+
+Two deployment shapes:
+
+1. **Single-process / no proxy** (FastAPI on `:4444` is the only public
+   ingress). Runtime flips are end-to-end functional **for boot modes
+   `shadow` and `edge`**. The `/mcp` mount is the per-request
+   `MCPStreamableHTTPModeDispatcher`, which reads the override on every
+   request. Boot modes `off` and `full` are not flippable — see the 409
+   contract above.
+
+2. **Reverse-proxy in front** (e.g. nginx routing public `GET/POST/DELETE
+   /mcp` either to `gateway:4444` for Python or directly to the Rust public
+   listener at `gateway:8787` for edge/full). The nginx config is decided
+   at deploy time from `RUST_MCP_MODE`. **The proxy is not aware of the
+   runtime override.** Symptoms:
+
+   - `edge` → `shadow` flip: the gateway's Python path is now ready to
+     serve `/mcp`, but nginx is still routing to `:8787`. Public traffic
+     continues to land on Rust until nginx is updated.
+   - `shadow` → `edge` flip: FastAPI on `:4444` is now configured to proxy
+     to Rust, but nginx is still routing all public `/mcp` to `:4444`.
+     Traffic does not reach the Rust public listener directly. (Note:
+     because the Python proxy still forwards to the Rust sidecar over the
+     internal UDS/loopback URL, requests still execute against Rust — but
+     the latency benefit of bypassing Python is not realized.)
+
+Until the proxy can follow the override, treat the API as a **single-pod
+control surface**: useful for CI / compliance harnesses that talk straight
+to FastAPI, and for incident-rollback scenarios where you also have a
+mechanism to update the proxy. For production reverse-proxy deployments,
+plan to either:
+
+- Update the proxy config alongside the API call (e.g. write the new mode
+  to a shared store the proxy consults, or run a configuration-management
+  step that rewrites nginx and reloads it), or
+- Use the API only for the single-pod / single-process scenarios above.
+
+Tracking issue for an nginx-side mechanism (e.g. an OpenResty lua module
+that consults the Redis hint key) is
+[#4278](https://github.com/IBM/mcp-context-forge/issues/4278).
+
+### Cluster-wide propagation
+
+When `REDIS_URL` is configured, every pod runs a `RuntimeStateCoordinator`
+that subscribes to the `contextforge:runtime:mode` pub/sub channel. A
+successful PATCH on any pod publishes a versioned message; every other pod
+applies it under monotonic versioning (last writer wins, ties impossible
+because the version is allocated via `INCR` on a per-runtime Redis counter).
+
+A short-lived hint key per runtime (`contextforge:runtime:mode_state:mcp` and
+`contextforge:runtime:mode_state:a2a`, TTL 24h) lets a freshly started pod
+reconcile to the cluster's current desired override on boot.
+
+When Redis is unavailable, the coordinator degrades to per-pod scope; the
+endpoint still works on the pod that received the PATCH and the response
+payload reports `cluster_propagation: "disabled"` so operators know to flip
+each pod individually.
+
+To revert the cluster to env-var defaults, delete the hint keys and restart
+the pods:
+
+```bash
+redis-cli DEL contextforge:runtime:mode_state:mcp contextforge:runtime:mode_state:a2a
+```
+
+### Quick-start examples
+
+```bash
+# Inspect current mode (any pod)
+curl -H "Authorization: Bearer $JWT" .../admin/runtime/mcp-mode
+
+# Flip the public /mcp ingress back to Python (incident rollback)
+curl -X PATCH -H "Authorization: Bearer $JWT" \
+     -H "Content-Type: application/json" \
+     -d '{"mode": "shadow"}' \
+     .../admin/runtime/mcp-mode
+
+# Flip A2A delegate back to Rust
+curl -X PATCH -H "Authorization: Bearer $JWT" \
+     -H "Content-Type: application/json" \
+     -d '{"mode": "edge"}' \
+     .../admin/runtime/a2a-mode
+```
+
 ## Request Flows
 
 ### `off` and `shadow`

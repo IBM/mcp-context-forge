@@ -22,6 +22,14 @@ Current meaning:
 - `full`: `edge` plus Rust session/event-store/resume/live-stream/affinity
   cores
 
+Boot modes `shadow` and `edge` additionally support an in-memory runtime
+override (`shadow ↔ edge`) via `PATCH /admin/runtime/mcp-mode` and
+`PATCH /admin/runtime/a2a-mode`. `off` and `full` are not flippable at
+runtime — `off` has no Rust sidecar to swap to, and `full` would require
+live migration of Rust-owned MCP session/event-store cores. When Redis is
+available the override propagates to the whole cluster; otherwise it stays
+local to the pod that received the PATCH.
+
 Python still remains the authority for:
 
 - authentication

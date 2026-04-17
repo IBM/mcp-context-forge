@@ -1884,6 +1884,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         cache_invalidation_subscriber = get_cache_invalidation_subscriber()
         await cache_invalidation_subscriber.start()
 
+        # Start runtime-mode coordinator for cluster-wide override propagation
+        # First-Party
+        from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+        runtime_state_coordinator = get_runtime_state_coordinator()
+        await runtime_state_coordinator.start()
+
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
@@ -1975,6 +1982,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
+        # Stop runtime-mode coordinator
+        try:
+            # First-Party
+            from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+            await get_runtime_state_coordinator().stop()
+        except Exception as e:
+            logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -11850,6 +11866,12 @@ if ADMIN_API_ENABLED:
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
+
+    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
@@ -11911,12 +11933,66 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
+class MCPStreamableHTTPModeDispatcher:
+    """Per-request dispatcher that flips between Python and Rust public ``/mcp`` ingress.
+
+    The dispatcher holds both streamable-HTTP transports and routes each
+    incoming request to whichever one matches the currently effective MCP
+    mode. This gives natural drain semantics: a runtime flip affects only new
+    requests because the target is selected before the inbound ``await``;
+    in-flight requests already past that point finish on their original
+    transport. Used only for boot modes ``shadow`` and ``edge`` where
+    runtime flipping is supported. Boot mode ``off`` has no Rust transport
+    to dispatch to; boot mode ``full`` mounts the plain Rust proxy directly
+    because flipping ``full`` would orphan Rust-held session/event-store
+    state — admin PATCHes against ``off``/``full`` boots return ``409``.
+    """
+
+    def __init__(self, *, python_transport, rust_transport) -> None:
+        """Initialize the dispatcher with both pre-built transport apps.
+
+        Args:
+            python_transport: Python-owned MCP streamable-HTTP transport app.
+            rust_transport: Rust-proxy MCP streamable-HTTP transport app.
+        """
+        self._python_transport = python_transport
+        self._rust_transport = rust_transport
+
+    async def handle_streamable_http(self, scope, receive, send):
+        """Dispatch the incoming MCP request to the transport selected by the current mode.
+
+        Args:
+            scope: Incoming ASGI scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        target = self._rust_transport if _should_mount_public_rust_transport() else self._python_transport
+        await target.handle_streamable_http(scope, receive, send)
+
+
 def _build_mcp_transport_app():
     """Choose the MCP transport app for the mounted /mcp path.
 
     Returns:
         Transport app object that should be mounted at the public ``/mcp`` path.
     """
+    boot_mode = version_module.boot_mcp_runtime_mode()
+    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+
+    if boot_mode in ("shadow", "edge"):
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+
+        rust_transport = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        logger.warning(
+            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches per-request between Python and Rust (uds=%s, url=%s). Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            _current_mcp_runtime_mode(),
+            boot_mode,
+            settings.experimental_rust_mcp_runtime_uds,
+            settings.experimental_rust_mcp_runtime_url,
+        )
+        return MCPStreamableHTTPModeDispatcher(python_transport=python_transport, rust_transport=rust_transport)
+
     if _should_mount_public_rust_transport():
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
@@ -11933,18 +12009,6 @@ def _build_mcp_transport_app():
 
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 
-    if settings.experimental_rust_mcp_runtime_enabled:
-        logger.warning(
-            "MCP runtime mode: %s. Rust sidecar remains enabled, but public /mcp stays on the Python transport because MCP session auth reuse is disabled. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            _current_mcp_runtime_mode(),
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
-
     if _rust_build_included():
         logger.warning(
             "MCP runtime mode: %s. Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp remains on the Python transport. Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust runtime with the simple env flow.",
@@ -11953,7 +12017,7 @@ def _build_mcp_transport_app():
     else:
         logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
 
-    return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+    return python_transport
 
 
 class InternalTrustedMCPTransportBridge:
