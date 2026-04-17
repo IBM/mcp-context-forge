@@ -4922,6 +4922,16 @@ class ToolService(BaseService):
                     # Supports application/x-www-form-urlencoded and multipart/form-data in addition to the default JSON.
                     _ct_base = next((v for k, v in headers.items() if k.lower() == "content-type"), "").lower().split(";")[0].strip()
 
+                    # For form-urlencoded and multipart POST without mappings, extract URL query
+                    # params so they are forwarded via params= (query string) rather than being
+                    # silently embedded in the URL or lost.  GET already handles this below; JSON
+                    # POST intentionally preserves query params in the URL for signed-URL support.
+                    if not has_query_mapping and not has_header_mapping and _ct_base in ("application/x-www-form-urlencoded", "multipart/form-data"):
+                        parsed = urlparse(final_url)
+                        if parsed.query:
+                            final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                            _qp = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
                     def _to_str(v: Any) -> str:
                         """Coerce a payload value to string for form/multipart encoding."""
                         if v is None:
