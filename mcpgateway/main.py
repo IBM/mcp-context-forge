@@ -3025,6 +3025,10 @@ class MCPPathRewriteMiddleware:
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
 
+        # Update modified_path to the app-relative path (without root_path prefix).
+        # This ensures streamablehttp_transport can extract server_id via regex (#4266).
+        scope["modified_path"] = app_path
+
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
