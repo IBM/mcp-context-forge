@@ -258,7 +258,7 @@ jobs:
                   echo "Running SQL Injection attack test..."
                   
                   # Execute the tool call via mcp-inspector
-                  RESPONSE=$(npx @modelcontextprotocol/inspector  \
+                  RESPONSE=$(npx @modelcontextprotocol/inspector@0.21.2  \
                     --cli "$URL" \
                     --method tools/call \
                     --tool-name fast-time-echo \
