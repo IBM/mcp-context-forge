@@ -297,7 +297,7 @@ class MCPRegistryPage(BasePage):
         # Trigger a single HTMX request and wait for the response to land.
         with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
             self.category_filter.select_option("")
-        
+
         # Wait for HTMX swap to complete and DOM to settle
         self.wait_for_registry_results_ready(timeout=10000)
 
@@ -331,7 +331,7 @@ class MCPRegistryPage(BasePage):
         """
         # Wait for grid to be stable before counting
         self.page.wait_for_selector("#server-grid", state="attached", timeout=10000)
-        
+
         # Wait for HTMX requests to complete (no .htmx-request class on body or forms)
         self.page.wait_for_function(
             """() => {
@@ -339,9 +339,9 @@ class MCPRegistryPage(BasePage):
                 const forms = document.querySelectorAll('form.htmx-request');
                 return !hasHtmxRequest && forms.length === 0;
             }""",
-            timeout=10000
+            timeout=10000,
         )
-        
+
         # Brief wait for DOM rendering after HTMX swap
         self.page.wait_for_timeout(300)
         return self.server_cards.count()

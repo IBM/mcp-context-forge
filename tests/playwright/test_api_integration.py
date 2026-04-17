@@ -150,7 +150,7 @@ class TestAPIIntegration:
         # Row actions live inside an Alpine overflow menu — open the ⋮ trigger first.
         tool_row.locator("button[aria-expanded]").click()
         tool_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
-        
+
         # HTMX may swap the tools-table-body, detaching the button during click.
         # Extract tool ID and call testTool() directly via page.evaluate() to avoid DOM detachment.
         tool_id = tool_row.evaluate("el => el.querySelector('button[data-test-tool-id]')?.getAttribute('data-test-tool-id')")
@@ -158,6 +158,7 @@ class TestAPIIntegration:
             # Call testTool directly to avoid HTMX DOM detachment race condition
             # Tool IDs are UUID strings, not integers - pass as quoted string
             import json
+
             page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
         else:
             # Fallback if data attribute is missing
