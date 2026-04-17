@@ -9,7 +9,6 @@
  *  - 401 responses clear the stored token and redirect to /app/login.
  */
 
-const TOKEN_KEY = "mcpgateway_token";
 const LOGIN_PATH = "/app/login";
 
 export class ApiError extends Error {
@@ -21,22 +20,6 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Token helpers — sessionStorage only
-// ---------------------------------------------------------------------------
-
-export function getToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string): void {
-  sessionStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-  sessionStorage.removeItem(TOKEN_KEY);
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +38,7 @@ interface RequestOptions {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, headers: extraHeaders = {}, unauthenticated = false } = options;
+  const { method = "GET", body, headers: extraHeaders = {} } = options;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -63,27 +46,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...extraHeaders,
   };
 
-  if (!unauthenticated) {
-    const token = getToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-  }
-
   const response = await fetch(path, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    // Credentials: omit — auth is via Bearer header, not cookies.
-    // This also means the browser will NOT auto-send cookies cross-origin,
-    // making CSRF attacks structurally impossible for these requests.
-    credentials: "omit",
+    credentials: "include", // pragma: allowlist secret
   });
 
   if (response.status === 401) {
-    clearToken();
-    // replace() rather than href= so the failed page is not added to history
-    // (the user can't hit Back into an unauthenticated state).
     window.location.replace(LOGIN_PATH);
     throw new ApiError(401, null, "Session expired — redirecting to login");
   }

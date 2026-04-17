@@ -79,6 +79,95 @@ Most API requests require JWT Bearer token authentication (public endpoints incl
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 ```
 
+### Login Endpoint
+
+Authenticate and obtain a session JWT token. Optionally set an httpOnly cookie for browser clients.
+
+**Endpoint:** `POST /auth/login`
+
+**Request Body:**
+```json
+{
+  "email": "admin@example.com",
+  "password": "ChangeMe_12345678$",
+  "set_cookie": false
+}
+```
+
+**Parameters:**
+- `email` (string, required): User email address
+- `password` (string, required): User password
+- `set_cookie` (boolean, optional, default: false): Set httpOnly cookie for browser clients
+
+**Response:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "user": {
+    "email": "admin@example.com",
+    "full_name": "Admin User",
+    "is_admin": true,
+    "is_active": true,
+    "auth_provider": "email",
+    "email_verified": true,
+    "password_change_required": false
+  }
+}
+```
+
+**Example (API client):**
+```bash
+# Get token in response body
+curl -X POST "$BASE_URL/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@example.com",
+    "password": "ChangeMe_12345678$"
+  }'
+```
+
+**Example (Browser client with cookie):**
+```bash
+# Set httpOnly cookie for cross-tab session sharing
+curl -X POST "$BASE_URL/auth/login" \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{
+    "email": "admin@example.com",
+    "password": "ChangeMe_12345678$",
+    "set_cookie": true
+  }'
+```
+
+!!! tip "Cookie vs Token"
+    - **API clients**: Use `set_cookie: false` (default) and store token from response body
+    - **Browser clients**: Use `set_cookie: true` for httpOnly cookie (XSS-immune, cross-tab session sharing)
+
+### Logout Endpoint
+
+Clear authentication cookie and end session.
+
+**Endpoint:** `POST /auth/logout`
+
+**Response:** `204 No Content`
+
+**Example:**
+```bash
+# Clear httpOnly cookie
+curl -X POST "$BASE_URL/auth/logout" \
+  -b cookies.txt \
+  -c cookies.txt
+```
+
+!!! note "Cookie-based Authentication"
+    When using `set_cookie: true` during login, the JWT is stored in an httpOnly cookie that:
+    - Cannot be accessed by JavaScript (XSS protection)
+    - Is automatically sent with requests (`credentials: "include"`)
+    - Persists across browser tabs (cross-tab session sharing)
+    - Expires after 1 hour (configurable via JWT expiration)
+
 ## Pagination
 
 !!! info "Default Pagination Behavior"

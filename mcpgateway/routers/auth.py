@@ -13,7 +13,7 @@ It serves as the primary entry point for authentication workflows.
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ from mcpgateway.routers.email_auth import create_access_token, get_client_ip, ge
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.security_cookies import set_auth_cookie, clear_auth_cookie
 
 # Initialize logging
 logging_service = LoggingService()
@@ -79,6 +80,7 @@ class LoginRequest(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None  # For compatibility
     password: str
+    set_cookie: bool = False
 
     def get_email(self) -> str:
         """Get email from either email or username field.
@@ -120,15 +122,16 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """Authenticate user and return session JWT token.
 
     This endpoint provides Tier 1 authentication for session-based access.
     The returned JWT token should be used for UI access and API key management.
 
     Args:
-        login_request: Login credentials (email/username + password)
+        login_request: Login credentials (email/username + password + optional set_cookie)
         request: FastAPI request object
+        response: FastAPI response object
         db: Database session
 
     Returns:
@@ -142,6 +145,13 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
             {
               "email": "admin@example.com",
               "password": "ChangeMe_12345678$"
+            }
+
+        With httpOnly cookie (for browser clients):
+            {
+              "email": "admin@example.com",
+              "password": "ChangeMe_12345678$",
+              "set_cookie": true
             }
 
         Username format (compatibility):
@@ -170,6 +180,11 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         # Create session JWT token (Tier 1 authentication)
         access_token, expires_in = await create_access_token(user)
 
+        # Optionally set httpOnly cookie for browser clients
+        if login_request.set_cookie:
+            set_auth_cookie(response, access_token, remember_me=False)
+            logger.debug(f"Set httpOnly cookie for user: {email}")
+
         logger.info(f"User {email} authenticated successfully")
 
         # Return session token for UI access and API key management
@@ -185,3 +200,9 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
     except Exception as e:
         logger.error(f"Login error for {login_request.email or login_request.username}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
+
+
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response):
+    """Clear authentication cookie and end session."""
+    clear_auth_cookie(response)

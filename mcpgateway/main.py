@@ -11425,7 +11425,7 @@ if UI_ENABLED:
             settings.static_dir,
             exc,
         )
-    
+
     # Mount React SPA router (requires static files to be available)
     app.include_router(app_spa_router)  # React SPA at /app/* (no prefix, no CSRF)
     logger.info("React SPA router mounted at /app/*")
