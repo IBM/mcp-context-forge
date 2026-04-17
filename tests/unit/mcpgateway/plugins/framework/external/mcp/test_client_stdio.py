@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Tests for external client on stdio.
 """
+
 # Standard
 from contextlib import AsyncExitStack
 import json
@@ -42,6 +43,7 @@ from mcpgateway.plugins.framework import (
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_client_load_stdio():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
@@ -65,6 +67,7 @@ async def test_client_load_stdio():
     del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
+
 @pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_client_load_stdio_overrides():
@@ -74,7 +77,7 @@ async def test_client_load_stdio_overrides():
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"text": "That was innovative!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "That was innovative!"})
     result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
@@ -91,6 +94,8 @@ async def test_client_load_stdio_overrides():
     del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
+
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_client_load_stdio_post_prompt():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
@@ -99,7 +104,7 @@ async def test_client_load_stdio_post_prompt():
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"user": "What a crapshow!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"user": "What a crapshow!"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
@@ -122,6 +127,8 @@ async def test_client_load_stdio_post_prompt():
     del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
+
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_client_get_plugin_configs():
     session: Optional[ClientSession] = None
@@ -175,6 +182,8 @@ async def test_client_get_plugin_configs():
     assert srconfig.words[0].replace == "crud"
     assert len(all_configs) == 2
 
+
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_hooks():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin_passthrough.yaml"
@@ -215,13 +224,13 @@ async def test_hooks():
     # Assert expected behaviors
     assert result.continue_processing
 
-    content = ResourceContent(type="resource", id="123", uri="file:///data.txt",
-           text="Hello World")
+    content = ResourceContent(type="resource", id="123", uri="file:///data.txt", text="Hello World")
     payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
     result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
     await plugin_manager.shutdown()
+
 
 @pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
