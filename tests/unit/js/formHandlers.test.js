@@ -82,10 +82,10 @@ describe("handleSubmitWithConfirmation", () => {
 
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await handleSubmitWithConfirmation(event, "tool");
+    await handleSubmitWithConfirmation(event, "tools");
 
     expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("permanently delete this tool")
+      expect.stringContaining("permanently delete this tools")
     );
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -101,7 +101,7 @@ describe("handleSubmitWithConfirmation", () => {
 
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    const result = handleSubmitWithConfirmation(event, "tool");
+    const result = handleSubmitWithConfirmation(event, "tools");
 
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true) // first confirm (delete)
       .mockReturnValueOnce(true); // second confirm (purge metrics)
 
-    await handleDeleteSubmit(event, "gateway", "test-gw");
+    await handleDeleteSubmit(event, "gateways", "test-gw");
 
     expect(window.confirm).toHaveBeenCalledTimes(2);
     const purgeField = form.querySelector('input[name="purge_metrics"]');
@@ -145,10 +145,10 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    handleDeleteSubmit(event, "tool", "my-tool");
+    handleDeleteSubmit(event, "tools", "my-tool");
 
     expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('tool "my-tool"')
+      expect.stringContaining('tools "my-tool"')
     );
   });
 
@@ -165,7 +165,7 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    await handleDeleteSubmit(event, "server");
+    await handleDeleteSubmit(event, "catalog");
 
     const purgeField = form.querySelector('input[name="purge_metrics"]');
     expect(purgeField).toBeNull();
@@ -181,7 +181,7 @@ describe("handleDeleteSubmit", () => {
 
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    const result = handleDeleteSubmit(event, "resource");
+    const result = handleDeleteSubmit(event, "resources");
 
     expect(result).toBe(false);
     expect(form.submit).not.toHaveBeenCalled();
@@ -204,7 +204,7 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    await handleDeleteSubmit(event, "tool", "t1");
+    await handleDeleteSubmit(event, "tools", "t1");
 
     expect(fetchMock).toHaveBeenCalled();
     const callArgs = fetchMock.mock.calls[0];
@@ -215,10 +215,10 @@ describe("handleDeleteSubmit", () => {
   });
 
   test("passes inactiveType to isInactiveChecked via hidden field value", async () => {
-    // Add checked checkbox for "custom-type" so isInactiveChecked("custom-type") returns true
+    // Add checked checkbox for "prompts" so isInactiveChecked("prompts") returns true
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.id = "show-inactive-custom-type";
+    cb.id = "show-inactive-prompts";
     cb.checked = true;
     document.body.appendChild(cb);
 
@@ -237,7 +237,7 @@ describe("handleDeleteSubmit", () => {
       return Promise.resolve({ ok: true });
     });
 
-    await handleDeleteSubmit(event, "tool", "t1", "custom-type");
+    await handleDeleteSubmit(event, "tools", "t1", "prompts");
 
     expect(capturedFormData.get("is_inactive_checked")).toBe("true");
   });
@@ -266,6 +266,8 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
+    // type="agent" for the confirmation message, but inactiveType="a2a-agents" is used
+    // for refresh lookup in PANEL_SEARCH_CONFIG (handleDeleteSubmit uses inactiveType || type)
     await handleDeleteSubmit(event, "agent", "test-agent", "a2a-agents");
 
     // Verify HTMX was called with correct partial path (a2a/partial) and target selector (#agents-table)
@@ -303,7 +305,7 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    await handleDeleteSubmit(event, "server", "test-server", "catalog");
+    await handleDeleteSubmit(event, "catalog", "test-server", "catalog");
 
     // Verify HTMX was called with correct partial path (servers/partial) and target selector (#servers-table)
     expect(htmxAjaxMock).toHaveBeenCalledWith(
@@ -316,7 +318,7 @@ describe("handleDeleteSubmit", () => {
     );
   });
 
-  test("warns when PANEL_SEARCH_CONFIG is missing for a type", async () => {
+  test("throws error when PANEL_SEARCH_CONFIG is missing for a type", async () => {
     const form = document.createElement("form");
     form.id = "test-form";
     form.action = "/test";
@@ -330,30 +332,18 @@ describe("handleDeleteSubmit", () => {
     global.window.htmx = { ajax: htmxAjaxMock };
     global.window.ROOT_PATH = "";
 
-    // Mock console.warn
-    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
     const event = { preventDefault: vi.fn(), target: form };
 
     vi.spyOn(window, "confirm")
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
+    // Should throw error for unregistered entity type
+    await expect(async () => {
+      await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
+    }).rejects.toThrow('No PANEL_SEARCH_CONFIG found for type: unknown-type');
 
-    // Verify console.warn was called with appropriate message
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('No PANEL_SEARCH_CONFIG found for type: unknown-type')
-    );
-
-    // Should still use fallback pattern
-    expect(htmxAjaxMock).toHaveBeenCalledWith(
-      'GET',
-      expect.stringContaining('/admin/unknown-type/partial'),
-      expect.objectContaining({
-        target: '#unknown-type-table',
-        swap: 'outerHTML'
-      })
-    );
+    // HTMX should NOT be called since error is thrown before refresh
+    expect(htmxAjaxMock).not.toHaveBeenCalled();
   });
 });

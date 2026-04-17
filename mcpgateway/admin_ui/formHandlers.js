@@ -10,6 +10,12 @@ import { getCookie, isInactiveChecked } from "./utils.js";
 export const handleFormSubmitAndRefresh = async function (event, type) {
   event.preventDefault();
 
+  // Validate PANEL_SEARCH_CONFIG registration before proceeding
+  const panelConfig = PANEL_SEARCH_CONFIG[type];
+  if (!panelConfig) {
+    throw new Error(`No PANEL_SEARCH_CONFIG found for type: ${type}. All entity types must be registered in PANEL_SEARCH_CONFIG (constants.js) with partialPath and targetSelector.`);
+  }
+
   const isInactiveCheckedBool = isInactiveChecked(type);
   const form = event.target;
   const teamId = new URL(window.location.href).searchParams.get("team_id");
@@ -50,12 +56,8 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
     }
 
     // Trigger HTMX request to refresh the table using PANEL_SEARCH_CONFIG
-    const panelConfig = PANEL_SEARCH_CONFIG[type];
-    if (!panelConfig) {
-      console.warn(`No PANEL_SEARCH_CONFIG found for type: ${type}, using fallback pattern. Consider adding this type to PANEL_SEARCH_CONFIG in constants.js`);
-    }
-    const partialPath = panelConfig?.partialPath || `${type}/partial`;
-    const targetSelector = panelConfig?.targetSelector || `#${type}-table`;
+    const partialPath = panelConfig.partialPath;
+    const targetSelector = panelConfig.targetSelector;
     const partialUrl = `${window.ROOT_PATH}/admin/${partialPath}?${params.toString()}`;
 
     if (window.htmx) {
@@ -67,9 +69,9 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
       // Fallback to full reload if HTMX not available
       navigateAdmin(fragment, params);
     }
-  } catch (e) {
+  } catch (error) {
     // Network error — still navigate so the user sees refreshed state.
-    console.error("Form submit error:", e);
+    console.error("Form submit error:", error);
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
     const params = new URLSearchParams();
     if (teamId) {
