@@ -56,7 +56,6 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-import anyio
 from filelock import FileLock, Timeout
 import httpx
 from mcp import ClientSession
@@ -102,7 +101,7 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, register_gateway_capabilities_for_notifications, TransportType
+from mcpgateway.services.mcp_session_pool import register_gateway_capabilities_for_notifications
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -3645,42 +3644,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
-                        # Use session pool if enabled for faster health checks
-                        use_pool = False
-                        pool = None
-                        if settings.mcp_session_pool_enabled:
-                            try:
-                                pool = get_mcp_session_pool()
-                                use_pool = True
-                            except RuntimeError:
-                                # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                pass
-
-                        if use_pool and pool is not None:
-                            # Health checks are system operations, not user-driven.
-                            # Use system identity to isolate from user sessions.
-                            async with pool.session(
-                                url=gateway_url,
-                                headers=headers,
-                                transport_type=TransportType.STREAMABLE_HTTP,
-                                httpx_client_factory=get_httpx_client_factory,
-                                user_identity="_system_health_check",
-                                gateway_id=gateway_id,
-                            ) as pooled:
-                                # Optional explicit RPC verification (off by default for performance).
-                                # Pool's internal staleness check handles health via _validate_session.
-                                if settings.mcp_session_pool_explicit_health_rpc:
-                                    with anyio.fail_after(settings.health_check_timeout):
-                                        await pooled.session.list_tools()
-                        else:
-                            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                                read_stream,
-                                write_stream,
-                                _get_session_id,
-                            ):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    # Initialize the session
-                                    response = await session.initialize()
+                        # Health checks are system operations with no downstream MCP session,
+                        # so they don't go through the UpstreamSessionRegistry (which requires
+                        # a downstream session id). A fresh per-call session suffices — the
+                        # probe is cheap and verifies that an initialize round-trip works.
+                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                            read_stream,
+                            write_stream,
+                            _get_session_id,
+                        ):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                response = await session.initialize()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:

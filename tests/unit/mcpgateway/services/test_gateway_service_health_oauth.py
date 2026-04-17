@@ -309,17 +309,21 @@ class TestCheckSingleGatewayHealthReal:
         return gw
 
     @pytest.mark.asyncio
-    async def test_streamablehttp_pool_not_initialized_falls_back_to_per_call_session(self):
+    async def test_streamablehttp_health_uses_per_call_session(self):
+        """#4205: gateway health checks always use per-call sessions (no registry, no pool).
+
+        Health checks are system operations with no downstream MCP session, so they
+        can't key the registry. A fresh per-call initialize() round-trip is the
+        whole probe — cheap enough that pooling isn't worth it.
+        """
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
         gateway = self._make_gateway(transport="streamablehttp")
 
-        # Non-pooled StreamableHTTP call path.
         session = AsyncMock()
         session.initialize = AsyncMock(return_value=None)
 
-        # Update last_seen path.
         update_db = MagicMock()
         db_gateway = MagicMock()
         update_db.execute.return_value.scalar_one_or_none.return_value = db_gateway
@@ -357,14 +361,11 @@ class TestCheckSingleGatewayHealthReal:
                     httpx_keepalive_expiry=30,
                     httpx_admin_read_timeout=1,
                     health_check_timeout=1,
-                    mcp_session_pool_enabled=True,
-                    mcp_session_pool_explicit_health_rpc=False,
                     auto_refresh_servers=False,
                 ),
             ),
             patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            patch("mcpgateway.services.gateway_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http,
             patch("mcpgateway.services.gateway_service.ClientSession") as MockCS,
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
@@ -376,79 +377,9 @@ class TestCheckSingleGatewayHealthReal:
 
             await service._check_single_gateway_health(gateway)
 
+        session.initialize.assert_awaited_once()
         service._handle_gateway_failure.assert_not_called()
         update_db.commit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_streamablehttp_pool_used_and_explicit_health_rpc_calls_list_tools(self):
-        service = GatewayService()
-        service._handle_gateway_failure = AsyncMock()
-
-        gateway = self._make_gateway(transport="streamablehttp")
-
-        pooled_session = MagicMock()
-        pooled_session.list_tools = AsyncMock(return_value=[])
-
-        class _PooledCM:
-            async def __aenter__(self):
-                return MagicMock(session=pooled_session)
-
-            async def __aexit__(self, *exc):
-                return False
-
-        pool = MagicMock()
-        pool.session = MagicMock(return_value=_PooledCM())
-
-        update_db = MagicMock()
-        update_db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
-        update_db.commit = MagicMock()
-
-        class _DBCM:
-            def __enter__(self):
-                return update_db
-
-            def __exit__(self, *exc):
-                return False
-
-        class _SpanCM:
-            def __enter__(self):
-                return MagicMock()
-
-            def __exit__(self, *exc):
-                return False
-
-        class _IsoClientCM:
-            async def __aenter__(self):
-                return MagicMock()
-
-            async def __aexit__(self, *exc):
-                return False
-
-        with (
-            patch(
-                "mcpgateway.services.gateway_service.settings",
-                MagicMock(
-                    enable_ed25519_signing=False,
-                    ed25519_public_key="pk",
-                    httpx_max_connections=10,
-                    httpx_max_keepalive_connections=5,
-                    httpx_keepalive_expiry=30,
-                    httpx_admin_read_timeout=1,
-                    health_check_timeout=1,
-                    mcp_session_pool_enabled=True,
-                    mcp_session_pool_explicit_health_rpc=True,
-                    auto_refresh_servers=False,
-                ),
-            ),
-            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
-            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            patch("mcpgateway.services.gateway_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
-        ):
-            await service._check_single_gateway_health(gateway)
-
-        pooled_session.list_tools.assert_awaited_once()
-        service._handle_gateway_failure.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_oauth_authorization_code_missing_user_email_marks_unhealthy_and_handles_failure(self):
