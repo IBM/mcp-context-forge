@@ -16,7 +16,7 @@ from __future__ import annotations
 # Standard
 from contextlib import suppress
 import os
-from typing import Generator
+from typing import Any, Generator
 import uuid
 
 # Third-Party
@@ -67,10 +67,10 @@ def owasp_admin_api(playwright: Playwright) -> Generator[APIRequestContext, None
 
 
 @pytest.fixture
-def owasp_user_a_api(owasp_admin_api: APIRequestContext, playwright: Playwright):
+def owasp_user_a_api(admin_api: APIRequestContext, playwright: Playwright):
     """Non-admin API context for User A, registered in the system. Cleans up after test."""
     email = f"owasp-a-{uuid.uuid4().hex[:8]}@example.com"
-    create_resp = owasp_admin_api.post(
+    create_resp = admin_api.post(
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "OWASP User A"},
     )
@@ -81,14 +81,14 @@ def owasp_user_a_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     yield {"ctx": ctx, "email": email}
     ctx.dispose()
     with suppress(Exception):
-        owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/auth/email/admin/users/{email}")
 
 
 @pytest.fixture
-def owasp_user_b_api(owasp_admin_api: APIRequestContext, playwright: Playwright):
+def owasp_user_b_api(admin_api: APIRequestContext, playwright: Playwright):
     """Non-admin API context for User B, registered in the system. Cleans up after test."""
     email = f"owasp-b-{uuid.uuid4().hex[:8]}@example.com"
-    create_resp = owasp_admin_api.post(
+    create_resp = admin_api.post(
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "OWASP User B"},
     )
@@ -99,11 +99,11 @@ def owasp_user_b_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     yield {"ctx": ctx, "email": email}
     ctx.dispose()
     with suppress(Exception):
-        owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/auth/email/admin/users/{email}")
 
 
 @pytest.fixture
-def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
+def two_teams_setup(admin_api: APIRequestContext, playwright: Playwright):
     """Create two distinct teams with separate scoped tokens. Cleans up after test."""
     suffix = uuid.uuid4().hex[:8]
     team_a_id: str | None = None
@@ -113,7 +113,7 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
     ctx_a = None
     ctx_b = None
     try:
-        helper = ApiTestHelper(owasp_admin_api)
+        helper = ApiTestHelper(admin_api)
 
         team_a_id = helper.create_team(
             f"owasp-team-a-{suffix}",
@@ -161,24 +161,24 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
             ctx_b.dispose()
         if server_a_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_a_id}")
+                admin_api.delete(f"/servers/{server_a_id}")
         if server_b_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_b_id}")
+                admin_api.delete(f"/servers/{server_b_id}")
         if team_a_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/teams/{team_a_id}")
+                admin_api.delete(f"/teams/{team_a_id}")
         if team_b_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/teams/{team_b_id}")
+                admin_api.delete(f"/teams/{team_b_id}")
 
 
 @pytest.fixture
-def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_user_a_api: dict):
+def private_server_owned_by_user_a(admin_api: APIRequestContext, owasp_user_a_api: dict[str, Any]):
     """Create a private server via admin on behalf of User A and return its ID. Cleans up after test."""
     server_id: str | None = None
     try:
-        resp = owasp_admin_api.post(
+        resp = admin_api.post(
             "/servers",
             data={
                 "server": {"name": f"owasp-priv-{uuid.uuid4().hex[:8]}", "description": "User A private server"},
@@ -193,4 +193,4 @@ def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_use
     finally:
         if server_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_id}")
+                admin_api.delete(f"/servers/{server_id}")
