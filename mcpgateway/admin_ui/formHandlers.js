@@ -1,6 +1,6 @@
 import { PANEL_SEARCH_CONFIG, TOGGLE_FRAGMENT_MAP } from "./constants.js";
 import { navigateAdmin } from "./navigation.js";
-import { getCookie, isInactiveChecked } from "./utils.js";
+import { buildTableUrl, getCookie, isInactiveChecked } from "./utils.js";
 
 // ===================================================================
 // ENTITY TYPE DISPLAY NAMES
@@ -64,18 +64,40 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
 
     // Use HTMX to refresh the table instead of full page reload
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
-    const params = new URLSearchParams();
-    if (isInactiveCheckedBool) {
-      params.set("include_inactive", "true");
+
+    // Build refresh params preserving search, tags, pagination, and filters
+    const refreshParams = {
+      include_inactive: isInactiveCheckedBool.toString(),
+    };
+
+    // Read current search query from DOM
+    const searchInput = document.getElementById(panelConfig.searchInputId);
+    if (searchInput?.value) {
+      refreshParams.q = searchInput.value;
     }
+
+    // Read current tag filter from DOM
+    const tagInput = document.getElementById(panelConfig.tagInputId);
+    if (tagInput?.value) {
+      refreshParams.tags = tagInput.value;
+    }
+
+    // Add team_id if present
     if (teamId) {
-      params.set("team_id", teamId);
+      refreshParams.team_id = teamId;
     }
 
     // Trigger HTMX request to refresh the table using PANEL_SEARCH_CONFIG
     const partialPath = panelConfig.partialPath;
     const targetSelector = panelConfig.targetSelector;
-    const partialUrl = `${window.ROOT_PATH}/admin/${partialPath}?${params.toString()}`;
+    const tableName = panelConfig.tableName;
+
+    // Use buildTableUrl to preserve pagination state
+    const partialUrl = buildTableUrl(
+      tableName,
+      `${window.ROOT_PATH}/admin/${partialPath}`,
+      refreshParams
+    );
 
     if (window.htmx) {
       window.htmx.ajax('GET', partialUrl, {
@@ -84,7 +106,11 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
       });
     } else {
       // Fallback to full reload if HTMX not available
-      navigateAdmin(fragment, params);
+      const fallbackParams = new URLSearchParams();
+      if (teamId) {
+        fallbackParams.set("team_id", teamId);
+      }
+      navigateAdmin(fragment, fallbackParams);
     }
   } catch (error) {
     // Network error — still navigate so the user sees refreshed state.

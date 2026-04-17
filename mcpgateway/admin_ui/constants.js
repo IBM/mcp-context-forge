@@ -55,6 +55,16 @@ export const PANEL_SEARCH_CONFIG = {
     inactiveCheckboxId: "show-inactive-servers",
     defaultPerPage: 50,
   },
+  servers: {
+    tableName: "servers",
+    partialPath: "servers/partial",
+    targetSelector: "#servers-table",
+    indicatorSelector: "#servers-loading",
+    searchInputId: "servers-search-input",
+    tagInputId: "servers-tag-filter",
+    inactiveCheckboxId: "show-inactive-servers",
+    defaultPerPage: 50,
+  },
   tools: {
     tableName: "tools",
     partialPath: "tools/partial",
