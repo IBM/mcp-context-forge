@@ -64,15 +64,22 @@ Behavior:
   `RUST_A2A_MODE`; there is no new persistence surface in Postgres.
 - Drain semantics are natural: in-flight requests complete on their original
   transport and only newly-accepted requests follow the flip.
-- Runtime flips are scoped to `shadow ↔ edge` **from `boot_mode=edge` only**.
-  `off`, `shadow`, and `full` boot modes all return `409 Conflict`:
-  - `off` has no Rust sidecar to swap to.
-  - `shadow` did not opt into session-auth-reuse / delegate-enabled at boot,
-    so an override to `edge` cannot safely route public traffic to Rust
-    (see the safety invariant above).
-  - `full` keeps Rust as the owner of MCP session/event-store/resume/
-    live-stream cores, and flipping to shadow would orphan that Rust-held
-    session state.
+- Runtime flip gating is per-target-mode:
+  - `mode=shadow` is accepted from any boot that has a dispatcher mounted
+    (`shadow` or `edge`). This is the **escape hatch** — it lets admins
+    clear a stale `override=edge` that landed via a Redis hint inherited
+    from a prior edge-boot deploy, without needing to flush Redis by hand.
+  - `mode=edge` is accepted only from `boot_mode=edge`, which is the only
+    configuration where the session-auth-reuse / delegate-enabled safety
+    invariant is met.
+  - `off` and `full` boot modes return `409` for every PATCH: `off` has no
+    Rust sidecar, `full` mounts a plain Rust proxy with no dispatcher so
+    an override can't take effect.
+- The coordinator's boot reconciliation discards persisted hints whose mode
+  cannot safely take effect on the current deployment (e.g. a hint written
+  by a former edge-boot pod replayed on a shadow-boot deploy). Discarded
+  hints surface via `/health` under `mcp_runtime.boot_reconcile_status` as
+  `incompatible_hint`.
 - Each successful flip writes a `runtime_config` audit trail entry via the
   existing `SecurityLogger.log_data_access` pathway. Audit-write failures
   caused by transient DB issues do not roll back the flip — the response
@@ -106,11 +113,12 @@ behavior-changing** at the public ingress until the proxy is reconfigured.
 Two deployment shapes:
 
 1. **Single-process / no proxy** (FastAPI on `:4444` is the only public
-   ingress). Runtime flips are end-to-end functional **only for
-   `boot_mode=edge`**. The `/mcp` mount is the per-request
+   ingress). Runtime flips are end-to-end functional **for `boot_mode=edge`**;
+   `boot_mode=shadow` accepts `mode=shadow` PATCHes as a clearance
+   escape hatch but cannot be promoted to `mode=edge` (see the 409
+   contract above). The `/mcp` mount is the per-request
    `MCPStreamableHTTPModeDispatcher`, which reads the override on every
-   request. Boot modes `off`, `shadow`, and `full` are not flippable — see
-   the 409 contract above.
+   request. Boot modes `off` and `full` are not flippable at all.
 
 2. **Reverse-proxy in front** (e.g. nginx routing public `GET/POST/DELETE
    /mcp` either to `gateway:4444` for Python or directly to the Rust public

@@ -49,22 +49,17 @@ logger = logging_service.get_logger(__name__)
 
 runtime_admin_router = APIRouter()
 
-# A deployment can be flipped between shadow and edge at runtime only when it
-# booted with the safety-invariant flags enabled — i.e. boot_mode == "edge".
-#
-# - ``off``: no Rust sidecar to swap to.
-# - ``shadow``: Rust sidecar is running but the session-auth-reuse /
-#   delegate-enabled flag is OFF; flipping to "edge" cannot safely route
-#   public traffic to Rust because the repo's documented safety invariant
-#   (see ``_should_mount_public_rust_transport`` and
-#   ``_should_delegate_a2a_to_rust``) requires BOTH flags. Operators who
-#   want runtime flippability must boot with ``edge``.
-# - ``full``: keeps Rust as the owner of MCP session/event-store/resume/
-#   live-stream cores; flipping to shadow would orphan that Rust-held state.
-#
-# Issue #4273 deliberately scopes runtime flips to ``shadow ↔ edge`` and both
-# user stories assume a gateway booted with ``edge`` as the starting point.
-_FLIPPABLE_BOOT_MODES: frozenset[str] = frozenset({"edge"})
+# Boot modes that have a dispatcher mounted at all (i.e. any PATCH could
+# conceivably take effect). ``off`` has no Rust sidecar; ``full`` mounts a
+# plain Rust proxy with no dispatcher, so an override could not be honored
+# by the transport layer.
+_DISPATCHER_BOOT_MODES: frozenset[str] = frozenset({"shadow", "edge"})
+
+# Boot modes where a runtime override to ``edge`` can safely take effect.
+# This is gated by the same session-auth-reuse / delegate-enabled safety
+# invariant that ``_should_mount_public_rust_transport`` and
+# ``_should_delegate_a2a_to_rust`` enforce — only ``edge`` boot satisfies it.
+_EDGE_OVERRIDE_BOOT_MODES: frozenset[str] = frozenset({"edge"})
 
 # Headers commonly added by reverse proxies. When any are present we know the
 # gateway is fronted by an L7 proxy that won't follow runtime flips by itself
@@ -162,17 +157,34 @@ async def _apply_mode_change(
             Redis-backed version cannot be allocated (would risk a silent
             collision with a concurrent PATCH on a peer pod).
     """
-    if boot_mode not in _FLIPPABLE_BOOT_MODES:
+    if boot_mode not in _DISPATCHER_BOOT_MODES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"{runtime.value.upper()} runtime cannot be flipped at runtime when boot_mode={boot_mode!r}. "
-                "Runtime flips (shadow ↔ edge) are supported only from boot_mode='edge', which is the only "
-                "configuration where the session-auth-reuse / delegate-enabled safety invariant is met. "
-                "'off' has no Rust sidecar; 'shadow' did not opt into session-auth-reuse so an edge override "
-                "would not safely route public traffic to Rust; 'full' keeps Rust as the owner of session "
-                "state, which cannot be migrated live. Boot with RUST_MCP_MODE='edge' or RUST_A2A_MODE='edge' "
-                "to enable runtime flips."
+                f"{runtime.value.upper()} runtime cannot accept overrides when boot_mode={boot_mode!r}. "
+                "'off' has no Rust sidecar to route to; 'full' mounts a plain Rust proxy with no dispatcher so "
+                "an override could not be honored. Boot with RUST_MCP_MODE='shadow' or 'edge' "
+                "(or RUST_A2A_MODE='shadow' or 'edge') to enable runtime overrides."
+            ),
+        )
+    if new_mode == OverrideMode.EDGE and boot_mode not in _EDGE_OVERRIDE_BOOT_MODES:
+        # Edge override requires the safety invariant (session-auth-reuse for
+        # MCP, delegate-enabled for A2A). Shadow-boot deployments did NOT opt
+        # into the invariant; accepting an edge override here would leave
+        # state claiming "edge" while the transport layer refuses to honor it
+        # — misleading diagnostics + no functional effect. 409 is cleaner.
+        # mode=shadow is always allowed as an escape hatch (see below): it
+        # clears any stale override and falls back to boot behavior, which
+        # shadow-boot deployments already serve on Python.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{runtime.value.upper()} runtime cannot be flipped to 'edge' when boot_mode={boot_mode!r}. "
+                "The edge override requires the session-auth-reuse / delegate-enabled safety invariant, "
+                "which only boot_mode='edge' deployments satisfy. "
+                "Boot with RUST_MCP_MODE='edge' or RUST_A2A_MODE='edge' to enable edge overrides. "
+                "(Note: 'mode=shadow' is always accepted as an escape hatch to clear a stale override, "
+                "including on this shadow-boot deployment.)"
             ),
         )
 

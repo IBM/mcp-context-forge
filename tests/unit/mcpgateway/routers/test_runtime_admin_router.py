@@ -253,6 +253,40 @@ async def test_patch_a2a_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot
     assert "shadow" in exc.value.detail
 
 
+@pytest.mark.asyncio
+async def test_patch_mcp_mode_shadow_clears_stale_override_on_shadow_boot(allow_admin, shadow_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
+    """Escape hatch: mode=shadow must be accepted on a shadow-boot deployment even when state
+    holds a stale override=edge inherited from a prior edge-boot via Redis hint. Without this,
+    the admin API cannot clear lingering state and the operator has to flush Redis manually.
+    """
+    # First-Party
+    from mcpgateway.runtime_state import OverrideMode, get_runtime_state
+
+    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
+
+    # Simulate a stale override=edge landing in state (e.g. via a hint written
+    # by a former edge-boot pod, replayed when this shadow-boot pod started).
+    state = get_runtime_state()
+    await state.apply_local("mcp", "edge", initiator_user="prior-edge-boot", version=7)
+    assert state.override_mode("mcp") == OverrideMode.EDGE
+
+    coordinator = MagicMock()
+    coordinator.next_version = AsyncMock(return_value=8)
+    coordinator.publish = AsyncMock(return_value=True)
+    coordinator.cluster_propagation_enabled = True
+    monkeypatch.setattr(router_module, "get_runtime_state_coordinator", lambda: coordinator)
+
+    body = router_module.RuntimeModeUpdate(mode="shadow")
+    payload = await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
+
+    # The flip succeeded: override is now shadow, publish was called.
+    assert state.override_mode("mcp") == OverrideMode.SHADOW
+    assert state.version("mcp") == 8
+    assert payload["override_active"] is True
+    assert payload["effective_mode"] == "shadow"
+    coordinator.publish.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # 403: non-admin without the required permission
 # ---------------------------------------------------------------------------

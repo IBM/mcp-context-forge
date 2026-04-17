@@ -238,6 +238,12 @@ async def test_coordinator_next_version_local_when_redis_missing(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_coordinator_reconciles_from_hint(monkeypatch: pytest.MonkeyPatch):
+    # Simulate an edge-boot deployment so the persisted hint's mode=edge is
+    # compatible with the safety invariant; otherwise _reconcile_from_hint
+    # would (correctly) discard the hint as INCOMPATIBLE_HINT.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+
     hint_payload = orjson.dumps(
         {
             "runtime": "mcp",
@@ -299,6 +305,80 @@ async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypa
     from mcpgateway.version import should_mount_public_rust_transport
 
     assert should_mount_public_rust_transport() is False
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytest.MonkeyPatch):
+    """A hint written by a former edge-boot pod must NOT be applied on a shadow-boot deployment.
+
+    Without this guard, a shadow-boot pod would reconcile to override=edge even though the
+    transport layer refuses to honor it — and the admin API would need the escape-hatch
+    PATCH to clear misleading diagnostics. The coordinator discards the hint and records
+    ``INCOMPATIBLE_HINT`` so operators can see what happened via /health.
+    """
+    # First-Party
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    # Shadow-boot: runtime enabled but session-auth-reuse NOT enabled.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps(
+        {
+            "runtime": "mcp",
+            "mode": "edge",
+            "version": 42,
+            "initiator_pod": "prior-edge-boot",
+            "initiator_user": "operator",
+            "timestamp": 1.0,
+        }
+    )
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        # The stale edge hint must NOT have been applied.
+        assert state.override_mode("mcp") is None
+        assert state.version("mcp") == 0
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_accepts_shadow_mode_on_shadow_boot(monkeypatch: pytest.MonkeyPatch):
+    """A shadow hint is always compatible — shadow is the Python-default and every boot serves Python for shadow overrides."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 5, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        from mcpgateway.runtime_state import BootReconcileStatus, OverrideMode
+
+        state = get_runtime_state()
+        assert state.override_mode("mcp") == OverrideMode.SHADOW
+        assert state.version("mcp") == 5
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.OK
+    finally:
+        await coord.stop()
 
 
 @pytest.mark.asyncio

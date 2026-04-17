@@ -199,6 +199,12 @@ async def test_two_coordinators_converge_through_pubsub(monkeypatch: pytest.Monk
 @pytest.mark.asyncio
 async def test_fresh_pod_reconciles_to_persisted_hint(monkeypatch: pytest.MonkeyPatch):
     """A pod that boots after a flip on another pod must reconcile to the persisted hint."""
+    # Simulate an edge-boot deployment for both pods so the a2a hint's
+    # mode=edge is compatible with the safety invariant; without this the
+    # coordinator (correctly) discards the hint as INCOMPATIBLE_HINT.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
+
     broker = FakeRedisBroker()
 
     state_a = RuntimeState()

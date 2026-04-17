@@ -107,6 +107,10 @@ class BootReconcileStatus(StrEnum):
     - ``OK``: hint either absent or applied successfully.
     - ``REDIS_UNAVAILABLE``: Redis read failed; pod boots with stale settings.
     - ``MALFORMED_HINT``: hint key existed but contained invalid JSON.
+    - ``INCOMPATIBLE_HINT``: hint key existed and was well-formed, but its
+      target mode cannot safely take effect on this deployment (e.g. a
+      hint written by an edge-boot pod was inherited by a later shadow-boot
+      deploy). The hint is discarded so diagnostics match reality.
     - ``PUBSUB_UNAVAILABLE``: pub/sub subscribe failed during start; this pod
       will not receive remote overrides until restart.
     - ``COORDINATOR_OFFLINE``: coordinator was never started (e.g. test mode
@@ -116,6 +120,7 @@ class BootReconcileStatus(StrEnum):
     OK = "ok"
     REDIS_UNAVAILABLE = "redis_unavailable"
     MALFORMED_HINT = "malformed_hint"
+    INCOMPATIBLE_HINT = "incompatible_hint"
     PUBSUB_UNAVAILABLE = "pubsub_unavailable"
     COORDINATOR_OFFLINE = "coordinator_offline"
 
@@ -131,6 +136,34 @@ PROPAGATION_DEGRADED: str = ClusterPropagation.DEGRADED.value
 
 class RuntimeStateError(Exception):
     """Raised when a runtime-mode change cannot be safely applied or propagated."""
+
+
+def _deployment_allows_mode(runtime: RuntimeKind, mode: OverrideMode) -> bool:
+    """Return whether ``mode`` can safely take effect for ``runtime`` on this deployment.
+
+    Mirrors the safety invariant in ``version._should_mount_public_rust_transport``
+    and ``version._should_delegate_a2a_to_rust``: edge requires BOTH the Rust
+    runtime enabled AND the session-auth-reuse (MCP) / delegate-enabled (A2A)
+    flag. shadow is always achievable (it is the Python-default state).
+
+    Args:
+        runtime: Runtime kind being evaluated.
+        mode: Target override mode to check.
+
+    Returns:
+        ``True`` when the deployment's boot-time flags allow ``mode`` to
+        actually change transport behavior; ``False`` otherwise.
+    """
+    if mode == OverrideMode.SHADOW:
+        return True
+    # First-Party: lazy to avoid import cycles with mcpgateway.config consumers.
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    if runtime == RuntimeKind.MCP:
+        return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+    if runtime == RuntimeKind.A2A:
+        return bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
+    return False
 
 
 def _coerce_runtime(value: Union[str, RuntimeKind]) -> RuntimeKind:
@@ -731,6 +764,29 @@ class RuntimeStateCoordinator:
         # Hints persisted before this code knew about per-runtime keys may
         # omit the "runtime" field — fill it in based on the key we read.
         payload.setdefault("runtime", kind.value)
+
+        # Discard hints whose target mode cannot safely take effect on this
+        # deployment. Without this guard, a hint written by a former
+        # edge-boot pod would linger in Redis and be applied on every
+        # shadow-boot pod that starts up — state would claim "edge" while
+        # the transport layer refuses to honor it, and the admin API would
+        # not be able to clear state on the new deployment's terms.
+        try:
+            hint_mode = _coerce_mode(payload.get("mode", ""))
+        except ValueError:
+            hint_mode = None
+        if hint_mode is not None and not _deployment_allows_mode(kind, hint_mode):
+            logger.warning(
+                "RuntimeStateCoordinator: discarding incompatible boot hint for %s (mode=%s) on pod %s; "
+                "this deployment's safety flags do not allow that mode to take effect, so the hint would "
+                "mislead diagnostics. A new PATCH is required to update cluster state.",
+                kind.value,
+                hint_mode.value,
+                state.pod_id,
+            )
+            state.set_boot_reconcile_status(kind, BootReconcileStatus.INCOMPATIBLE_HINT)
+            return
+
         applied = await state.apply_remote(payload)
         state.set_boot_reconcile_status(kind, BootReconcileStatus.OK)
         if applied is not None:
