@@ -17,9 +17,10 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
+import re
 import secrets
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 # Third-Party
 import httpx
@@ -236,6 +237,142 @@ class OAuthManager:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
         return credentials
 
+    # Keys whose values must never be echoed in error messages or logs.
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
+
+    # Cap on raw_response excerpts and any other string values surfaced via
+    # OAuthError / logs (defense-in-depth against unbounded provider bodies).
+    _MAX_RAW_RESPONSE_LEN = 256
+
+    # OAuth parameter names per RFC 6749 are token-shaped (alphanumerics plus
+    # a few separators). A parsed key outside this shape means parse_qsl picked
+    # garbage out of an HTML body (e.g. <meta charset="utf-8">).
+    _OAUTH_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+    # Scrub URL/form-style ``key=value`` leaks inside arbitrary strings so that
+    # secrets embedded in HTML error pages or stack traces don't survive the
+    # length cap (the value can fit entirely inside the truncation window).
+    _LEAKY_PARAM_RE = re.compile(
+        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key)=[^&\s\"'<>]+",
+    )
+
+    @staticmethod
+    def _safe_response_text(response: httpx.Response) -> str:
+        """Return ``response.text`` or a placeholder if the body is undecodable.
+
+        ``httpx.Response.text`` raises ``UnicodeDecodeError`` (or ``LookupError``
+        for an unknown charset) when the body bytes don't match the declared
+        encoding. The caller wants a string for diagnostics, not a crash.
+
+        Args:
+            response: HTTP response whose body we want as text.
+
+        Returns:
+            Decoded body, or a ``"<undecodable body, N bytes>"`` placeholder.
+        """
+        try:
+            return response.text
+        except (ValueError, LookupError):
+            return f"<undecodable body, {len(response.content)} bytes>"
+
+    @staticmethod
+    def _parse_token_response(response: httpx.Response) -> Dict[str, Any]:
+        """Parse an OAuth token response that may be JSON or form-encoded.
+
+        Per RFC 7231 §3.1.1.1, media type tokens are case-insensitive.
+        Form-encoded values are URL-decoded via ``urllib.parse.parse_qsl``.
+        Failures fall back to ``{"raw_response": <text>}`` so operators see
+        what the provider actually sent, in three cases: a JSON parse error
+        (``ValueError`` covering ``json.JSONDecodeError`` and
+        ``UnicodeDecodeError``), ``parse_qsl`` returning ``{}`` from a
+        non-empty body (e.g. an HTML error page served with a form-encoded
+        content-type), and ``response.text`` failing to decode the body
+        bytes.
+
+        Args:
+            response: HTTP response from the token endpoint.
+
+        Returns:
+            Parsed token payload, or ``{"raw_response": <text>}`` when the
+            body is neither valid JSON nor parseable as form-encoded.
+        """
+        raw_content_type = response.headers.get("content-type", "")
+        content_type = raw_content_type.lower()
+
+        if "application/x-www-form-urlencoded" in content_type:
+            text = OAuthManager._safe_response_text(response)
+            # parse_qsl drops malformed pairs (no "="); we deliberately do not
+            # set keep_blank_values=True so that garbage like an HTML error page
+            # parses to {} and falls through to the raw_response capture below.
+            parsed = dict(parse_qsl(text))
+            # An HTML body that happens to contain "=" (e.g. <meta charset="utf-8">)
+            # parses to a non-empty dict with garbage keys. Reject anything whose
+            # keys aren't OAuth parameter shaped so the leak is bounded by the
+            # raw_response truncation in _redact_token_response.
+            if parsed and not all(OAuthManager._OAUTH_KEY_RE.match(k) for k in parsed):
+                return {"raw_response": text}
+            if not parsed and text:
+                return {"raw_response": text}
+            return parsed
+
+        try:
+            return response.json()
+        except ValueError as exc:
+            # ValueError covers json.JSONDecodeError (malformed JSON) and
+            # UnicodeDecodeError (bad charset). Narrower than bare Exception,
+            # which would swallow httpx.ResponseNotRead, MemoryError, etc.
+            text = OAuthManager._safe_response_text(response)
+            logger.warning(
+                "Failed to parse OAuth token response as JSON: %s (status=%s, content-type=%r, body_bytes=%d)",
+                exc,
+                response.status_code,
+                raw_content_type,
+                len(response.content),
+                exc_info=True,
+            )
+            return {"raw_response": text}
+
+    @staticmethod
+    def _redact_token_response(token_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a log/error-safe copy of a token response.
+
+        Three layers of protection so that misbehaving providers, HTML error
+        pages, and verbose stack traces don't leak secrets via OAuthError or
+        log lines:
+
+        1. Replace values for known credential-bearing keys with
+           ``"[REDACTED]"``.
+        2. Scrub URL/form-style ``<key>=<secret>`` patterns inside any string
+           value (HTML hrefs, form actions, stack traces).
+        3. Cap any string value at ``_MAX_RAW_RESPONSE_LEN`` chars with a
+           ``... [truncated, N chars total]`` marker.
+
+        Args:
+            token_response: Parsed token payload (possibly containing tokens
+                or a captured raw body).
+
+        Returns:
+            New dict safe to interpolate into log lines and exception messages.
+        """
+        cap = OAuthManager._MAX_RAW_RESPONSE_LEN
+        redacted: Dict[str, Any] = {}
+        for key, value in token_response.items():
+            if key in OAuthManager._SENSITIVE_TOKEN_KEYS:
+                redacted[key] = "[REDACTED]"
+                continue
+            if isinstance(value, str):
+                # Scrub URL/form-style "<key>=<secret>" patterns first (HTML
+                # bodies often carry tokens in href / form action attributes
+                # that fit entirely inside the truncation window), then cap.
+                scrubbed = OAuthManager._LEAKY_PARAM_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", value)
+                if len(scrubbed) > cap:
+                    redacted[key] = f"{scrubbed[:cap]}... [truncated, {len(value)} chars total]"
+                else:
+                    redacted[key] = scrubbed
+            else:
+                redacted[key] = value
+        return redacted
+
     async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
         """Machine-to-machine authentication using client credentials.
 
@@ -271,28 +408,10 @@ class OAuthManager:
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
@@ -357,28 +476,10 @@ class OAuthManager:
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
-                # Handle both JSON and form-encoded responses
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("Successfully obtained access token via password grant")
                 return token_response["access_token"]
@@ -455,28 +556,10 @@ class OAuthManager:
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully exchanged authorization code for access token""")
                 return token_response["access_token"]
@@ -1232,28 +1315,10 @@ class OAuthManager:
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully exchanged authorization code for tokens""")
                 return token_response
@@ -1326,20 +1391,23 @@ class OAuthManager:
                 client = await self._get_client()
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 if response.status_code == 200:
-                    token_response = response.json()
+                    token_response = self._parse_token_response(response)
 
                     # Validate required fields
                     if "access_token" not in token_response:
-                        raise OAuthError("No access_token in refresh response")
+                        raise OAuthError(f"No access_token in refresh response: {self._redact_token_response(token_response)}")
 
                     logger.info("Successfully refreshed OAuth token")
                     return token_response
 
-                error_text = response.text
-                # If we get a 400/401, the refresh token is likely invalid
+                # Bound and redact the body before surfacing it. Some providers echo
+                # request parameters (including refresh_token / client_secret) in error
+                # responses, and HTML error pages can be unbounded — both leak via logs
+                # and OAuthError messages without this scrub.
+                error_payload = self._redact_token_response(self._parse_token_response(response))
                 if response.status_code in [400, 401]:
-                    raise OAuthError(f"Refresh token invalid or expired: {error_text}")
-                logger.warning(f"Token refresh failed with status {response.status_code}: {error_text}")
+                    raise OAuthError(f"Refresh token invalid or expired: {error_payload}")
+                logger.warning("Token refresh failed with status %s: %s", response.status_code, error_payload)
 
             except httpx.HTTPError as e:
                 logger.warning(f"Token refresh attempt {attempt + 1} failed: {str(e)}")
