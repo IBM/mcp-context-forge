@@ -30,13 +30,13 @@ from mcpgateway.db import Base, ToolPluginBinding
 from mcpgateway.schemas import (
     OutputLengthGuardConfig,
     PluginBindingMode,
-    PluginId,
     PluginPolicyItem,
     RateLimiterConfig,
     SecretsDetectionConfig,
     TeamPolicies,
     ToolPluginBindingRequest,
     ToolPluginBindingResponse,
+    _PLUGIN_CONFIG_REGISTRY,
 )
 from mcpgateway.services.tool_plugin_binding_service import (
     ToolPluginBindingNotFoundError,
@@ -97,7 +97,7 @@ def _make_binding(
     id_="binding-001",
     team_id="team-a",
     tool_name="tool_x",
-    plugin_id="OUTPUT_LENGTH_GUARD",
+    plugin_id="OutputLengthGuardPlugin",
     mode="enforce",
     priority=50,
     config=None,
@@ -160,7 +160,7 @@ def simple_request():
                 policies=[
                     PluginPolicyItem(
                         tool_names=["tool_x"],
-                        plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                        plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
                         config=dict(_OLG),
@@ -215,7 +215,7 @@ class TestUpsertBindings:
         r = results[0]
         assert r.team_id == "team-a"
         assert r.tool_name == "tool_x"
-        assert r.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert r.plugin_id == "OutputLengthGuardPlugin"
         assert r.mode == "enforce"
         assert r.priority == 50
         assert r.config == dict(_OLG)
@@ -238,7 +238,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=10,
                             config=cfg_v1,
@@ -256,7 +256,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
                             priority=50,
                             config=cfg_v2,
@@ -285,7 +285,7 @@ class TestUpsertBindings:
         r1 = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
-                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id=PluginId.RATE_LIMITER, config=cfg_v1)]
+                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=cfg_v1)]
                 )
             }
         )
@@ -294,7 +294,7 @@ class TestUpsertBindings:
         r2 = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
-                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id=PluginId.RATE_LIMITER, config=cfg_v2)]
+                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=cfg_v2)]
                 )
             }
         )
@@ -312,7 +312,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=20,
                             config=cfg,
@@ -331,14 +331,14 @@ class TestUpsertBindings:
 
         tool_a = by_tool["tool_a"]
         assert tool_a.team_id == "team-a"
-        assert tool_a.plugin_id == "RATE_LIMITER"
+        assert tool_a.plugin_id == "RateLimiterPlugin"
         assert tool_a.mode == "permissive"
         assert tool_a.priority == 20
         assert tool_a.config == cfg
 
         tool_b = by_tool["tool_b"]
         assert tool_b.team_id == "team-a"
-        assert tool_b.plugin_id == "RATE_LIMITER"
+        assert tool_b.plugin_id == "RateLimiterPlugin"
         assert tool_b.mode == "permissive"
         assert tool_b.priority == 20
         assert tool_b.config == cfg
@@ -349,10 +349,10 @@ class TestUpsertBindings:
         request = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
-                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id=PluginId.OUTPUT_LENGTH_GUARD, config=cfg_olg)]
+                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="OutputLengthGuardPlugin", config=cfg_olg)]
                 ),
                 "team-b": TeamPolicies(
-                    policies=[PluginPolicyItem(tool_names=["tool_y"], plugin_id=PluginId.SECRETS_DETECTION, config=dict(_SD))]
+                    policies=[PluginPolicyItem(tool_names=["tool_y"], plugin_id="SecretsDetection", config=dict(_SD))]
                 ),
             }
         )
@@ -366,12 +366,12 @@ class TestUpsertBindings:
 
         team_a = by_team["team-a"]
         assert team_a.tool_name == "tool_x"
-        assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert team_a.plugin_id == "OutputLengthGuardPlugin"
         assert team_a.config == cfg_olg
 
         team_b = by_team["team-b"]
         assert team_b.tool_name == "tool_y"
-        assert team_b.plugin_id == "SECRETS_DETECTION"
+        assert team_b.plugin_id == "SecretsDetection"
         assert team_b.config == dict(_SD)
 
     def test_caller_email_stored_in_audit_fields(self, service, db_session, simple_request):
@@ -389,7 +389,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="test-bind-001",
                         )
@@ -413,7 +413,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="test-bind-old",
                         )
@@ -429,7 +429,7 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="test-bind-new",
                         )
@@ -459,8 +459,8 @@ class TestListBindings:
         """Insert two bindings for different teams before each test."""
         request = ToolPluginBindingRequest(
             teams={
-                "team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id=PluginId.RATE_LIMITER, config=dict(_RL))]),
-                "team-b": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_y"], plugin_id=PluginId.SECRETS_DETECTION, config=dict(_SD))]),
+                "team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL))]),
+                "team-b": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_y"], plugin_id="SecretsDetection", config=dict(_SD))]),
             }
         )
         service.upsert_bindings(db_session, request, caller_email="seeder@example.com")
@@ -483,7 +483,7 @@ class TestListBindings:
         r = ToolPluginBindingRequest(
             teams={
                 "team-a": TeamPolicies(
-                    policies=[PluginPolicyItem(tool_names=["tool_z"], plugin_id=PluginId.OUTPUT_LENGTH_GUARD, priority=10, config={**_OLG, "max_chars": 500, "strategy": "block"})]
+                    policies=[PluginPolicyItem(tool_names=["tool_z"], plugin_id="OutputLengthGuardPlugin", priority=10, config={**_OLG, "max_chars": 500, "strategy": "block"})]
                 )
             }
         )
@@ -511,7 +511,7 @@ class TestDeleteBinding:
     def test_delete_success(self, service, db_session):
         """delete_binding returns the deleted record's details and removes it from the DB."""
         r = ToolPluginBindingRequest(
-            teams={"team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id=PluginId.RATE_LIMITER, config=dict(_RL))])}
+            teams={"team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL))])}
         )
         inserted = service.upsert_bindings(db_session, r, caller_email="admin@example.com")
         binding_id = inserted[0].id
@@ -521,7 +521,7 @@ class TestDeleteBinding:
         assert deleted.id == binding_id
         assert deleted.team_id == "team-a"
         assert deleted.tool_name == "tool_x"
-        assert deleted.plugin_id == "RATE_LIMITER"
+        assert deleted.plugin_id == "RateLimiterPlugin"
         assert deleted.config == dict(_RL)
         # Confirm the row is gone from the DB
         assert db_session.query(ToolPluginBinding).filter_by(id=binding_id).first() is None
@@ -625,11 +625,6 @@ class TestOutputLengthGuardConfig:
         """Strategy values other than 'truncate' or 'block' are rejected."""
         with pytest.raises(ValidationError, match=r"(?s)strategy.*'truncate' or 'block'"):
             OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="drop", ellipsis="...")
-
-    def test_ellipsis_too_long(self):
-        """ellipsis longer than 20 characters is rejected."""
-        with pytest.raises(ValidationError, match=r"(?s)ellipsis.*at most 20 characters"):
-            OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="truncate", ellipsis="x" * 21)
 
     def test_extra_fields_forbidden(self):
         """Unknown fields are rejected (extra='forbid')."""
@@ -774,90 +769,63 @@ class TestPluginPolicyItemValidation:
         """PluginPolicyItem defaults for mode and priority; RATE_LIMITER full config is accepted."""
         item = PluginPolicyItem(
             tool_names=["tool_x"],
-            plugin_id=PluginId.RATE_LIMITER,
+            plugin_id="RateLimiterPlugin",
             config=dict(_RL),
         )
         assert item.mode == PluginBindingMode.ENFORCE
         assert item.priority == 50
 
     def test_output_length_guard_valid_config(self):
-        """OUTPUT_LENGTH_GUARD with all fields passes cross-validation."""
+        """OUTPUT_LENGTH_GUARD with all fields is accepted by PluginPolicyItem."""
         item = PluginPolicyItem(
             tool_names=["tool_x"],
-            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+            plugin_id="OutputLengthGuardPlugin",
             config={**_OLG, "max_chars": 500, "strategy": "block"},
         )
-        assert item.plugin_id == PluginId.OUTPUT_LENGTH_GUARD
+        assert item.plugin_id == "OutputLengthGuardPlugin"
 
-    def test_output_length_guard_invalid_config_rejected(self):
-        """OUTPUT_LENGTH_GUARD with min >= max is caught by PluginPolicyItem validator."""
-        with pytest.raises(ValidationError, match="min_chars must be less than max_chars"):
-            PluginPolicyItem(
-                tool_names=["tool_x"],
-                plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                config={**_OLG, "min_chars": 5000, "max_chars": 3000},
-            )
-
-    def test_output_length_guard_rejects_empty_config(self):
-        """OUTPUT_LENGTH_GUARD with {} is rejected — all four fields are required."""
-        with pytest.raises(ValidationError, match="Missing config fields for OUTPUT_LENGTH_GUARD"):
-            PluginPolicyItem(
-                tool_names=["tool_x"],
-                plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                config={},
-            )
+    def test_output_length_guard_empty_config_accepted(self):
+        """OUTPUT_LENGTH_GUARD with {} is accepted — CF does not validate config fields."""
+        item = PluginPolicyItem(
+            tool_names=["tool_x"],
+            plugin_id="OutputLengthGuardPlugin",
+            config={},
+        )
+        assert item.plugin_id == "OutputLengthGuardPlugin"
 
     def test_rate_limiter_valid_config(self):
-        """RATE_LIMITER with full config passes cross-validation."""
+        """RATE_LIMITER with full config is accepted by PluginPolicyItem."""
         item = PluginPolicyItem(
             tool_names=["tool_y"],
-            plugin_id=PluginId.RATE_LIMITER,
+            plugin_id="RateLimiterPlugin",
             config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
         )
-        assert item.plugin_id == PluginId.RATE_LIMITER
-
-    def test_rate_limiter_invalid_config_rejected(self):
-        """RATE_LIMITER with invalid rate string format is caught by PluginPolicyItem validator."""
-        with pytest.raises(ValidationError, match=r"Rate string '60/h' is invalid"):
-            PluginPolicyItem(
-                tool_names=["tool_y"],
-                plugin_id=PluginId.RATE_LIMITER,
-                config={**_RL, "by_user": "60/h"},  # /h not allowed
-            )
+        assert item.plugin_id == "RateLimiterPlugin"
 
     def test_secrets_detection_valid_config(self):
-        """SECRETS_DETECTION with all required fields passes cross-validation."""
+        """SECRETS_DETECTION with all required fields is accepted by PluginPolicyItem."""
         item = PluginPolicyItem(
             tool_names=["tool_z"],
-            plugin_id=PluginId.SECRETS_DETECTION,
+            plugin_id="SecretsDetection",
             config={"enabled": {"aws_key": True}, "redact": True, "redaction_text": "[REDACTED]", "block_on_detection": True, "min_findings_to_block": 2},
         )
-        assert item.plugin_id == PluginId.SECRETS_DETECTION
+        assert item.plugin_id == "SecretsDetection"
 
-    def test_secrets_detection_invalid_config_rejected(self):
-        """SECRETS_DETECTION with min_findings_to_block=0 is caught by PluginPolicyItem validator."""
-        with pytest.raises(ValidationError, match=r"(?s)min_findings_to_block.*greater than or equal to 1"):
-            PluginPolicyItem(
-                tool_names=["tool_z"],
-                plugin_id=PluginId.SECRETS_DETECTION,
-                config={"enabled": {}, "redact": True, "redaction_text": "[REDACTED]", "block_on_detection": False, "min_findings_to_block": 0},
-            )
-
-    def test_secrets_detection_rejects_empty_config(self):
-        """SECRETS_DETECTION with {} is rejected — all five fields are required."""
-        with pytest.raises(ValidationError, match="Missing config fields for SECRETS_DETECTION"):
-            PluginPolicyItem(
-                tool_names=["tool_z"],
-                plugin_id=PluginId.SECRETS_DETECTION,
-                config={},
-            )
+    def test_secrets_detection_empty_config_accepted(self):
+        """SECRETS_DETECTION with {} is accepted — CF does not validate config fields."""
+        item = PluginPolicyItem(
+            tool_names=["tool_z"],
+            plugin_id="SecretsDetection",
+            config={},
+        )
+        assert item.plugin_id == "SecretsDetection"
 
     def test_empty_tool_names_rejected(self):
         """tool_names=[] is rejected (min_length=1)."""
         with pytest.raises(ValidationError, match=r"(?s)tool_names.*at least 1 item"):
             PluginPolicyItem(
                 tool_names=[],
-                plugin_id=PluginId.RATE_LIMITER,
+                plugin_id="RateLimiterPlugin",
                 config={"by_user": None, "by_tenant": None, "by_tool": None},
             )
 
@@ -866,7 +834,7 @@ class TestPluginPolicyItemValidation:
         with pytest.raises(ValidationError, match=r"(?s)priority.*greater than or equal to 1"):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id=PluginId.RATE_LIMITER,
+                plugin_id="RateLimiterPlugin",
                 priority=0,
                 config=dict(_RL),
             )
@@ -876,7 +844,7 @@ class TestPluginPolicyItemValidation:
         with pytest.raises(ValidationError, match=r"(?s)priority.*less than or equal to 1000"):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id=PluginId.RATE_LIMITER,
+                plugin_id="RateLimiterPlugin",
                 priority=1001,
                 config=dict(_RL),
             )
@@ -885,7 +853,7 @@ class TestPluginPolicyItemValidation:
         """binding_reference_id is optional and stored when provided."""
         item = PluginPolicyItem(
             tool_names=["tool_x"],
-            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+            plugin_id="OutputLengthGuardPlugin",
             config=dict(_OLG),
             binding_reference_id="test-bind-001",
         )
@@ -895,7 +863,7 @@ class TestPluginPolicyItemValidation:
         """binding_reference_id is None when not specified."""
         item = PluginPolicyItem(
             tool_names=["tool_x"],
-            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+            plugin_id="OutputLengthGuardPlugin",
             config=dict(_OLG),
         )
         assert item.binding_reference_id is None
@@ -905,17 +873,17 @@ class TestPluginPolicyItemValidation:
         with pytest.raises(ValidationError):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                plugin_id="OutputLengthGuardPlugin",
                 config=dict(_OLG),
                 binding_reference_id="a" * 256,
             )
 
-    def test_invalid_plugin_id_rejected(self):
-        """An unrecognised plugin_id string is rejected by the PluginId enum."""
-        with pytest.raises(ValidationError, match=r"(?s)plugin_id.*Input should be"):
+    def test_unknown_plugin_id_rejected(self):
+        """An unrecognised plugin_id is rejected — guards against typos at binding creation."""
+        with pytest.raises(ValidationError, match=r"Unknown plugin_id"):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id="UNKNOWN_PLUGIN",  # type: ignore[arg-type]
+                plugin_id="FuturePlugin",
                 config={},
             )
 
@@ -924,7 +892,7 @@ class TestPluginPolicyItemValidation:
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id=PluginId.RATE_LIMITER,
+                plugin_id="RateLimiterPlugin",
                 config={"by_user": None, "by_tenant": None, "by_tool": None},
                 unknown_key="bad",
             )
@@ -934,10 +902,9 @@ class TestPluginPolicyItemValidation:
         with pytest.raises(ValidationError, match=r"(?s)config.*Field required"):
             PluginPolicyItem(
                 tool_names=["tool_x"],
-                plugin_id=PluginId.RATE_LIMITER,
+                plugin_id="RateLimiterPlugin",
                 # config intentionally omitted
             )
-
 
 # ---------------------------------------------------------------------------
 # Schema validation tests — top-level request/enum invariants
@@ -957,61 +924,17 @@ class TestTopLevelSchemas:
         with pytest.raises(ValidationError, match=r"(?s)policies.*at least 1 item"):
             TeamPolicies(policies=[])
 
-    def test_plugin_id_enum_values(self):
-        """PluginId enum covers all expected plugin identifiers."""
-        assert PluginId.OUTPUT_LENGTH_GUARD == "OUTPUT_LENGTH_GUARD"
-        assert PluginId.RATE_LIMITER == "RATE_LIMITER"
-        assert PluginId.SECRETS_DETECTION == "SECRETS_DETECTION"
+    def test_plugin_config_registry_contains_expected_plugins(self):
+        """_PLUGIN_CONFIG_REGISTRY maps each plugin class name to its config schema."""
+        assert _PLUGIN_CONFIG_REGISTRY["OutputLengthGuardPlugin"] is OutputLengthGuardConfig
+        assert _PLUGIN_CONFIG_REGISTRY["RateLimiterPlugin"] is RateLimiterConfig
+        assert _PLUGIN_CONFIG_REGISTRY["SecretsDetection"] is SecretsDetectionConfig
 
     def test_plugin_binding_mode_enum_values(self):
         """PluginBindingMode enum covers all expected execution modes."""
         assert PluginBindingMode.ENFORCE == "enforce"
         assert PluginBindingMode.PERMISSIVE == "permissive"
         assert PluginBindingMode.DISABLED == "disabled"
-
-    def test_all_plugin_errors_collected_across_list(self):
-        """When multiple PluginPolicyItems are invalid, all their errors appear in one ValidationError.
-
-        Previously, a ValidationError escaping from the model_validator would short-circuit
-        list validation and hide errors from subsequent items. After the fix, each item's
-        errors are wrapped as ValueError so Pydantic can collect every item.
-
-        NOTE: items must be passed as raw dicts so that Pydantic constructs each
-        PluginPolicyItem internally — if you pre-construct them with PluginPolicyItem(...),
-        Python evaluates each call before TeamPolicies() is reached, raising immediately.
-        """
-        with pytest.raises(ValidationError) as exc_info:
-            ToolPluginBindingRequest.model_validate(
-                {
-                    "teams": {
-                        "team-a": {
-                            "policies": [
-                                # item 0: OLG with full config but invalid strategy value
-                                {
-                                    "tool_names": ["tool_x"],
-                                    "plugin_id": "OUTPUT_LENGTH_GUARD",
-                                    "config": {**_OLG, "strategy": "drop"},
-                                },
-                                # item 1: RATE_LIMITER with empty config — triggers "Missing config fields"
-                                {"tool_names": ["tool_y"], "plugin_id": "RATE_LIMITER", "config": {}},
-                            ]
-                        }
-                    }
-                }
-            )
-        errors = exc_info.value.errors()
-        assert len(errors) == 2, f"Expected 2 errors, got {len(errors)}: {errors}"
-
-        # Sort by the integer index in the loc tuple so assertions are deterministic regardless of collection order
-        errors_by_index = sorted(errors, key=lambda e: next(x for x in e["loc"] if isinstance(x, int)))
-
-        # item 0: OLG — strategy field rejected
-        assert errors_by_index[0]["loc"] == ("teams", "team-a", "policies", 0)
-        assert errors_by_index[0]["msg"] == "Value error, Invalid OUTPUT_LENGTH_GUARD config: [strategy: Input should be 'truncate' or 'block']"
-
-        # item 1: RATE_LIMITER — all 8 fields are missing (sorted alphabetically in the error)
-        assert errors_by_index[1]["loc"] == ("teams", "team-a", "policies", 1)
-        assert errors_by_index[1]["msg"] == "Value error, Missing config fields for RATE_LIMITER: ['algorithm', 'backend', 'by_tenant', 'by_tool', 'by_user', 'redis_fallback', 'redis_key_prefix', 'redis_url']"
 
 
 # ---------------------------------------------------------------------------
@@ -1035,7 +958,7 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
                             priority=50,
                             config=dict(_OLG),
@@ -1053,7 +976,7 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=10,
                             config={**_RL, "by_user": "100/m", "by_tenant": "1000/m"},
@@ -1068,13 +991,13 @@ class TestGetBindingsForTool:
         """get_bindings_for_tool returns both the exact tool_name match and the '*' wildcard."""
         results = get_bindings_for_tool(self._db, "team-a", "tool_x")
         plugin_ids = {b.plugin_id for b in results}
-        assert plugin_ids == {"OUTPUT_LENGTH_GUARD", "RATE_LIMITER"}
+        assert plugin_ids == {"OutputLengthGuardPlugin", "RateLimiterPlugin"}
 
     def test_returns_only_wildcard_for_unknown_tool(self):
         """A tool with no exact binding still gets the wildcard binding."""
         results = get_bindings_for_tool(self._db, "team-a", "other_tool")
         assert len(results) == 1
-        assert results[0].plugin_id == "RATE_LIMITER"
+        assert results[0].plugin_id == "RateLimiterPlugin"
 
     def test_returns_empty_for_unknown_team(self):
         """An unknown team has no bindings."""
@@ -1091,7 +1014,7 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=1,
                             config={**_OLG, "max_chars": 100},
@@ -1109,7 +1032,7 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_z"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
                             priority=99,
                             config={**_OLG, "max_chars": 9999},
@@ -1122,7 +1045,7 @@ class TestGetBindingsForTool:
 
         results = get_bindings_for_tool(db_session, "team-b", "tool_z")
         # Specificity wins: exact tool_name binding always beats the '*' wildcard
-        olg_results = [b for b in results if b.plugin_id == "OUTPUT_LENGTH_GUARD"]
+        olg_results = [b for b in results if b.plugin_id == "OutputLengthGuardPlugin"]
         assert len(olg_results) == 1
         # The exact binding (priority=99, max_chars=9999) wins — not the wildcard (priority=1, max_chars=100)
         assert olg_results[0].priority == 99
@@ -1155,7 +1078,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b", "tool_c"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-001",
                         )
@@ -1173,7 +1096,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-001",
                         )
@@ -1196,7 +1119,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-002",
                         )
@@ -1219,7 +1142,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             # intentionally no binding_reference_id
                         )
@@ -1236,7 +1159,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                         )
                     ]
@@ -1257,7 +1180,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-A",
                         )
@@ -1274,7 +1197,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_c"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             config=dict(_RL),
                             binding_reference_id="ref-B",
                         )
@@ -1293,7 +1216,7 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-A",
                         )
@@ -1318,13 +1241,13 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_1", "tool_2"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-X",
                         ),
                         PluginPolicyItem(
                             tool_names=["tool_3", "tool_4"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             config=dict(_RL),
                             binding_reference_id="ref-Y",
                         ),
@@ -1342,13 +1265,13 @@ class TestStalePruning:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_1"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-X",
                         ),
                         PluginPolicyItem(
                             tool_names=["tool_3"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             config=dict(_RL),
                             binding_reference_id="ref-Y",
                         ),
@@ -1379,7 +1302,7 @@ class TestListBindingsByReference:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-filter-001",
                         )
@@ -1389,7 +1312,7 @@ class TestListBindingsByReference:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_y"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             config=dict(_RL),
                             binding_reference_id="ref-filter-002",
                         )
@@ -1412,7 +1335,7 @@ class TestListBindingsByReference:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="unique-ref",
                         )
@@ -1439,4 +1362,70 @@ class TestListBindingsByReference:
     def test_filter_by_reference_id_no_match_returns_empty(self, service, db_session):
         """list_bindings with a non-existent binding_reference_id returns an empty list."""
         results = service.list_bindings(db_session, binding_reference_id="does-not-exist")
+        assert results == []
+
+
+class TestGetBindingsForToolUsesName:
+    """get_bindings_for_tool must match on tool name (team-scoped unique identifier),
+    not original_name (which is only unique per gateway).
+
+    Two gateways in the same team can each expose a tool with the same original_name
+    (e.g. "fetch_data"). The DB-level unique identifier for a tool is its `name` column,
+    enforced by constraint uq_team_owner_email_name_tool. Bindings must therefore be
+    keyed on `name` (e.g. "alpha-gw-fetch-data") to remain unambiguous.
+    """
+
+    def test_binding_stored_with_name_is_found_by_name(self, db_session):
+        """A binding stored with tool_name='alpha-gw-fetch-data' is retrieved when
+        queried with that exact name, and every stored field is returned intact."""
+        db_session.add(
+            ToolPluginBinding(
+                id="b-001",
+                team_id="team-abc",
+                tool_name="alpha-gw-fetch-data",
+                plugin_id="OutputLengthGuardPlugin",
+                mode="enforce",
+                priority=50,
+                config=dict(_OLG),
+                created_by="admin@example.com",
+                updated_by="admin@example.com",
+            )
+        )
+        db_session.commit()
+
+        results = get_bindings_for_tool(db_session, "team-abc", "alpha-gw-fetch-data")
+        assert len(results) == 1
+        row = results[0]
+        assert row.id == "b-001"
+        assert row.team_id == "team-abc"
+        assert row.tool_name == "alpha-gw-fetch-data"
+        assert row.plugin_id == "OutputLengthGuardPlugin"
+        assert row.mode == "enforce"
+        assert row.priority == 50
+        assert row.config == dict(_OLG)
+        assert row.created_by == "admin@example.com"
+        assert row.updated_by == "admin@example.com"
+
+    def test_binding_stored_with_name_is_not_found_by_original_name(self, db_session):
+        """A binding stored with tool_name='alpha-gw-fetch-data' is NOT returned when
+        queried with original_name='fetch_data'. The two are different keys; using
+        original_name as the lookup key would silently miss the binding."""
+        db_session.add(
+            ToolPluginBinding(
+                id="b-002",
+                team_id="team-abc",
+                tool_name="alpha-gw-fetch-data",
+                plugin_id="OutputLengthGuardPlugin",
+                mode="enforce",
+                priority=50,
+                config=dict(_OLG),
+                created_by="admin@example.com",
+                updated_by="admin@example.com",
+            )
+        )
+        db_session.commit()
+
+        # Querying by the bare original_name must return nothing — the team-scoped
+        # name ("alpha-gw-fetch-data") is the only valid binding key.
+        results = get_bindings_for_tool(db_session, "team-abc", "fetch_data")
         assert results == []

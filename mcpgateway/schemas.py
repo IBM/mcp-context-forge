@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
@@ -8216,21 +8216,28 @@ class PerformanceHistoryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PluginId(str, Enum):
-    """Supported plugin identifiers for tool plugin bindings."""
-
-    OUTPUT_LENGTH_GUARD = "OUTPUT_LENGTH_GUARD"
-    RATE_LIMITER = "RATE_LIMITER"
-    SECRETS_DETECTION = "SECRETS_DETECTION"
+# Registry mapping plugin names (stored in DB) to their config schema classes.
+# New plugins self-register by decorating their config class with
+# ``@register_plugin_config("PluginClassName")``.
+_PLUGIN_CONFIG_REGISTRY: dict[str, type[BaseModel]] = {}
 
 
-# Maps PluginId enum values (stored in DB) to plugin class names used by the
-# plugin framework's PluginConfigOverride.name field.
-PLUGIN_ID_TO_NAME: dict[str, str] = {
-    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
-    PluginId.RATE_LIMITER: "RateLimiterPlugin",
-    PluginId.SECRETS_DETECTION: "SecretsDetection",
-}
+def register_plugin_config(plugin_name: str) -> Callable[[type], type]:
+    """Class decorator — register *cls* as the config schema for *plugin_name*.
+
+    Args:
+        plugin_name: The plugin class name exactly as returned by the
+            plugin framework (e.g. ``"OutputLengthGuardPlugin"``).
+
+    Returns:
+        The unmodified config class, so the decorator is transparent.
+    """
+
+    def decorator(cls: type) -> type:
+        _PLUGIN_CONFIG_REGISTRY[plugin_name] = cls
+        return cls
+
+    return decorator
 
 
 class PluginBindingMode(str, Enum):
@@ -8244,6 +8251,7 @@ class PluginBindingMode(str, Enum):
 # --- Plugin-specific config schemas ---
 
 
+@register_plugin_config("OutputLengthGuardPlugin")
 class OutputLengthGuardConfig(BaseModel):
     """Config schema for OUTPUT_LENGTH_GUARD plugin.
 
@@ -8271,7 +8279,7 @@ class OutputLengthGuardConfig(BaseModel):
     chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation")
     limit_mode: Literal["character", "token"] = Field(default="character", description="Enforcement mode: 'character' or 'token'")
     strategy: Literal["truncate", "block"] = Field(default="truncate", description="Action when limit exceeded")
-    ellipsis: str = Field(default="\u2026", max_length=20, description="Suffix appended on truncation")
+    ellipsis: str = Field(default="\u2026", description="Suffix appended on truncation")
     word_boundary: bool = Field(default=False, description="Truncate at word boundaries to avoid mid-word cuts")
     max_text_length: int = Field(default=1_000_000, ge=1, description="Maximum text size to process; prevents memory exhaustion")
     max_structure_size: int = Field(default=10_000, ge=1, description="Maximum items in list/dict; prevents DoS")
@@ -8294,6 +8302,7 @@ class OutputLengthGuardConfig(BaseModel):
         return self
 
 
+@register_plugin_config("RateLimiterPlugin")
 class RateLimiterConfig(BaseModel):
     """Config schema for RATE_LIMITER plugin.
 
@@ -8364,6 +8373,7 @@ class RateLimiterConfig(BaseModel):
         return v
 
 
+@register_plugin_config("SecretsDetection")
 class SecretsDetectionConfig(BaseModel):
     """Config schema for SECRETS_DETECTION plugin.
 
@@ -8384,14 +8394,6 @@ class SecretsDetectionConfig(BaseModel):
     min_findings_to_block: int = Field(default=1, ge=1, description="Minimum number of findings required to block")
 
 
-# Map of plugin_id → config schema class for validation
-_PLUGIN_CONFIG_MAP: Dict[str, type] = {
-    PluginId.OUTPUT_LENGTH_GUARD: OutputLengthGuardConfig,
-    PluginId.RATE_LIMITER: RateLimiterConfig,
-    PluginId.SECRETS_DETECTION: SecretsDetectionConfig,
-}
-
-
 # --- Policy item (one plugin, one or more tools) ---
 
 
@@ -8409,7 +8411,7 @@ class PluginPolicyItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
-    plugin_id: PluginId = Field(..., description="Plugin to bind")
+    plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
     mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
@@ -8425,29 +8427,24 @@ class PluginPolicyItem(BaseModel):
 
     @model_validator(mode="after")
     def validate_config_for_plugin(self) -> "PluginPolicyItem":
-        """Validate config against the schema for the selected plugin_id.
+        """Reject plugin_id values that are not registered in the gateway.
+
+        Field-level config validation is intentionally left to the plugin itself
+        at execution time.  CF only guards against typos in the plugin name so
+        errors are caught at binding creation rather than first invocation.
 
         Returns:
             self after validation.
 
         Raises:
-            ValueError: If config is invalid for the chosen plugin.
+            ValueError: If plugin_id is not a known registered plugin name.
         """
-        config_cls = _PLUGIN_CONFIG_MAP.get(self.plugin_id)
-        if config_cls:
-            expected = set(config_cls.model_fields.keys())
-            provided = set(self.config.keys())
-            missing = expected - provided
-            if missing:
-                raise ValueError(f"Missing config fields for {self.plugin_id.value}: {sorted(missing)}")
-            try:
-                config_cls(**self.config)
-            except ValidationError as exc:
-                parts = []
-                for e in exc.errors():
-                    loc = ".".join(str(p) for p in e["loc"])
-                    parts.append(f"{loc}: {e['msg']}" if loc else e["msg"])
-                raise ValueError(f"Invalid {self.plugin_id.value} config: [{', '.join(parts)}]") from exc
+        known = set(_PLUGIN_CONFIG_REGISTRY.keys())
+        if known and self.plugin_id not in known:
+            raise ValueError(
+                f"Unknown plugin_id {self.plugin_id!r}. "
+                f"Known plugins: {sorted(known)}"
+            )
         return self
 
 

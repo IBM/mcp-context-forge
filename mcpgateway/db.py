@@ -6715,10 +6715,10 @@ class ToolPluginBinding(Base):
     UniqueConstraint).  A POST with an existing triple performs an upsert
     (updates the existing row's config/mode/priority).
 
-    Supported plugin_id values:
-        - ``OUTPUT_LENGTH_GUARD`` — truncate/block responses exceeding a char limit.
-        - ``RATE_LIMITER``        — per-user / per-tenant / per-tool rate gating.
-        - ``SECRETS_DETECTION``   — redact or block secret patterns in output.
+    Supported plugin_id values (plugin class names):
+        - ``OutputLengthGuardPlugin`` — truncate/block responses exceeding a char limit.
+        - ``RateLimiterPlugin``        — per-user / per-tenant / per-tool rate gating.
+        - ``SecretsDetection``         — redact or block secret patterns in output.
 
     Attributes:
         id (str): UUID primary key.
@@ -6738,14 +6738,14 @@ class ToolPluginBinding(Base):
         >>> binding = ToolPluginBinding(
         ...     team_id="abc123",
         ...     tool_name="*",
-        ...     plugin_id="OUTPUT_LENGTH_GUARD",
+        ...     plugin_id="OutputLengthGuardPlugin",
         ...     mode="enforce",
         ...     priority=10,
         ...     config={"max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
         ...     created_by="admin@example.com",
         ... )
         >>> binding.plugin_id
-        'OUTPUT_LENGTH_GUARD'
+        'OutputLengthGuardPlugin'
         >>> binding.mode
         'enforce'
     """

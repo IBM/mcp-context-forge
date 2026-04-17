@@ -3695,7 +3695,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
@@ -4457,10 +4461,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        # Use original_name (the MCP server's tool name, e.g. "echo_text") as the binding key,
-        # not the gateway-prefixed display name (e.g. "plugin-tools-echo_text").
-        # Users create bindings against the original name they see in the MCP server.
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         logger.debug("invoke_tool: plugin_context_id=%r plugin_manager=%r", plugin_context_id, plugin_manager)
