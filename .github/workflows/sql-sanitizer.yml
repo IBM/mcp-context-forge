@@ -57,11 +57,13 @@ jobs:
 
                 yq -i '
                   (.plugins[] | select(.name == "SQLSanitizer") | .mode) = "enforce" |
-                  (.plugins[] | select(.name == "SQLSanitizer") | .config.fields) = ["sql", "query", "statement", "message"]
+                  (.plugins[] | select(.name == "SQLSanitizer") | .config.fields) = ["sql", "query", "statement", "message"] |
+                  (.plugins[] | select(.name == "RetryWithBackoffPlugin") | .mode) = "disabled"
                 ' "$CONFIG_FILE"
 
                 echo "Config updated successfully:"
-                cat "$CONFIG_FILE" | grep -A 15 "SQLSanitizer"            
+                cat "$CONFIG_FILE" | grep -A 15 "SQLSanitizer"
+                cat "$CONFIG_FILE" | grep -A 15 "RetryWithBackoffPlugin"            
 
             - name: Cache uv virtual environment
               uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
