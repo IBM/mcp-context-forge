@@ -72,10 +72,14 @@ def _move_compat_to_409_detail(runtime: RuntimeKind, mode: OverrideMode, boot_mo
     """
     runtime_label = runtime.value.upper()
     if compat == MoveCompatibility.NO_DISPATCHER:
+        # Note: boot='full' is intentionally NOT recommended here — it returns
+        # BOOT_FULL_STRANDS for the same reason (no dispatcher mounted). Only
+        # 'shadow' and 'edge' boot deployments mount the dispatcher that
+        # observes overrides.
         return (
             f"{runtime_label} runtime cannot accept overrides when boot_mode={boot_mode!r}. "
             "The Rust sidecar is not enabled for this runtime, so there is no mechanism to honor an override. "
-            f"Boot with RUST_{runtime.value.upper()}_MODE='shadow' or 'edge' (or 'full' for MCP) to enable overrides."
+            f"Boot with RUST_{runtime.value.upper()}_MODE='shadow' or 'edge' to enable overrides."
         )
     if compat == MoveCompatibility.BOOT_FULL_STRANDS:
         return (

@@ -223,6 +223,10 @@ async def test_patch_mcp_mode_409_when_boot_mode_off(allow_admin, off_boot, admi
     with pytest.raises(HTTPException) as exc:
         await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
     assert exc.value.status_code == 409
+    # Recommendation must be 'shadow' or 'edge' — must NOT recommend 'full',
+    # which would just trade NO_DISPATCHER for BOOT_FULL_STRANDS.
+    assert "'shadow' or 'edge'" in exc.value.detail
+    assert "'full'" not in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -232,6 +236,9 @@ async def test_patch_a2a_mode_409_when_boot_mode_off(allow_admin, off_boot, admi
     with pytest.raises(HTTPException) as exc:
         await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
     assert exc.value.status_code == 409
+    # A2A has no 'full' mode at all — the recommendation must not mention it.
+    assert "'shadow' or 'edge'" in exc.value.detail
+    assert "'full'" not in exc.value.detail
 
 
 @pytest.mark.asyncio
