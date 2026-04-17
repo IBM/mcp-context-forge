@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.runtime_state import (
+    MoveCompatibility,
     OverrideMode,
     PublishStatus,
     RuntimeKind,
@@ -49,23 +50,49 @@ logger = logging_service.get_logger(__name__)
 
 runtime_admin_router = APIRouter()
 
-# Boot modes that have a dispatcher mounted at all (i.e. any PATCH could
-# conceivably take effect). ``off`` has no Rust sidecar; ``full`` mounts a
-# plain Rust proxy with no dispatcher, so an override could not be honored
-# by the transport layer.
-_DISPATCHER_BOOT_MODES: frozenset[str] = frozenset({"shadow", "edge"})
-
-# Boot modes where a runtime override to ``edge`` can safely take effect.
-# This is gated by the same session-auth-reuse / delegate-enabled safety
-# invariant that ``_should_mount_public_rust_transport`` and
-# ``_should_delegate_a2a_to_rust`` enforce — only ``edge`` boot satisfies it.
-_EDGE_OVERRIDE_BOOT_MODES: frozenset[str] = frozenset({"edge"})
-
 # Headers commonly added by reverse proxies. When any are present we know the
 # gateway is fronted by an L7 proxy that won't follow runtime flips by itself
 # (see issue #4278), and we emit a one-line WARN so operators don't expect the
 # override to change public traffic on that hop.
 _REVERSE_PROXY_HEADER_NAMES: frozenset[str] = frozenset({"x-forwarded-for", "forwarded", "x-forwarded-host", "x-forwarded-proto"})
+
+
+def _move_compat_to_409_detail(runtime: RuntimeKind, mode: OverrideMode, boot_mode: str, compat: MoveCompatibility) -> str:
+    """Translate a ``MoveCompatibility`` rejection into an operator-actionable 409 detail.
+
+    Args:
+        runtime: Runtime kind being changed.
+        mode: Requested target mode.
+        boot_mode: Boot-time mode label, included for operator context.
+        compat: The ``MoveCompatibility`` rejection reason.
+
+    Returns:
+        Detail string naming the exact env var or flag to flip, suitable for
+        an HTTPException 409 response body.
+    """
+    runtime_label = runtime.value.upper()
+    if compat == MoveCompatibility.NO_DISPATCHER:
+        return (
+            f"{runtime_label} runtime cannot accept overrides when boot_mode={boot_mode!r}. "
+            "The Rust sidecar is not enabled for this runtime, so there is no mechanism to honor an override. "
+            f"Boot with RUST_{runtime.value.upper()}_MODE='shadow' or 'edge' (or 'full' for MCP) to enable overrides."
+        )
+    if compat == MoveCompatibility.BOOT_FULL_STRANDS:
+        return (
+            f"{runtime_label} runtime cannot accept overrides when boot_mode={boot_mode!r}. "
+            "Full-boot mounts a plain Rust proxy with no dispatcher, so an override could not be honored. "
+            "Boot with RUST_MCP_MODE='edge' to enable overrides without giving up the Rust ingress."
+        )
+    if compat == MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG:
+        flag = "experimental_rust_mcp_session_auth_reuse_enabled" if runtime == RuntimeKind.MCP else "experimental_rust_a2a_runtime_delegate_enabled"
+        return (
+            f"{runtime_label} runtime cannot be flipped to 'edge' when boot_mode={boot_mode!r}. "
+            f"The edge override requires the {flag} safety flag, which only boot_mode='edge' deployments set. "
+            f"Boot with RUST_{runtime.value.upper()}_MODE='edge' to enable edge overrides. "
+            "(mode='shadow' is always accepted as an escape hatch to clear a stale override.)"
+        )
+    # OK shouldn't reach here; defensive default.
+    return f"{runtime_label} runtime cannot accept this override on boot_mode={boot_mode!r} (reason={compat.value})."
 
 
 class RuntimeModeUpdate(BaseModel):
@@ -157,35 +184,15 @@ async def _apply_mode_change(
             Redis-backed version cannot be allocated (would risk a silent
             collision with a concurrent PATCH on a peer pod).
     """
-    if boot_mode not in _DISPATCHER_BOOT_MODES:
+    # Single source of truth for "can this deployment honor the override?":
+    # the same helper the coordinator uses for hint reconciliation. Returning
+    # the structured ``MoveCompatibility`` reason lets us produce a 409 detail
+    # that names the exact env var the operator needs to flip.
+    compat = version_module.deployment_allows_override_mode(runtime, new_mode)
+    if compat != MoveCompatibility.OK:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"{runtime.value.upper()} runtime cannot accept overrides when boot_mode={boot_mode!r}. "
-                "'off' has no Rust sidecar to route to; 'full' mounts a plain Rust proxy with no dispatcher so "
-                "an override could not be honored. Boot with RUST_MCP_MODE='shadow' or 'edge' "
-                "(or RUST_A2A_MODE='shadow' or 'edge') to enable runtime overrides."
-            ),
-        )
-    if new_mode == OverrideMode.EDGE and boot_mode not in _EDGE_OVERRIDE_BOOT_MODES:
-        # Edge override requires the safety invariant (session-auth-reuse for
-        # MCP, delegate-enabled for A2A). Shadow-boot deployments did NOT opt
-        # into the invariant; accepting an edge override here would leave
-        # state claiming "edge" while the transport layer refuses to honor it
-        # — misleading diagnostics + no functional effect. 409 is cleaner.
-        # mode=shadow is always allowed as an escape hatch (see below): it
-        # clears any stale override and falls back to boot behavior, which
-        # shadow-boot deployments already serve on Python.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"{runtime.value.upper()} runtime cannot be flipped to 'edge' when boot_mode={boot_mode!r}. "
-                "The edge override requires the session-auth-reuse / delegate-enabled safety invariant, "
-                "which only boot_mode='edge' deployments satisfy. "
-                "Boot with RUST_MCP_MODE='edge' or RUST_A2A_MODE='edge' to enable edge overrides. "
-                "(Note: 'mode=shadow' is always accepted as an escape hatch to clear a stale override, "
-                "including on this shadow-boot deployment.)"
-            ),
+            detail=_move_compat_to_409_detail(runtime, new_mode, boot_mode, compat),
         )
 
     if request is not None:

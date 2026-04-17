@@ -75,19 +75,26 @@ Behavior:
   - `off` and `full` boot modes return `409` for every PATCH: `off` has no
     Rust sidecar, `full` mounts a plain Rust proxy with no dispatcher so
     an override can't take effect.
-- The coordinator's boot reconciliation discards persisted hints whose mode
-  cannot safely take effect on the current deployment. This covers three
-  cases:
-  - Edge hint replayed on a shadow-boot deploy (safety invariant unmet).
-  - Any hint replayed on an off-boot deploy (no Rust sidecar, no mechanism
-    to honor the override).
-  - Any hint replayed on a full-boot deploy (plain Rust proxy mounted with
-    no dispatcher; the override would strand in state with the transport
-    layer ignoring it, and the router 409s for any PATCH on full-boot so
-    operators would have no path to clear the stale override).
+- The coordinator's boot reconciliation (and the live pub/sub listener)
+  discards messages whose mode cannot safely take effect on the current
+  deployment. The reason surfaces via `/health` under
+  `mcp_runtime.boot_reconcile_status` as one of:
+  - `incompatible_no_dispatcher`: any hint on a `boot=off` deploy (no Rust
+    sidecar, no mechanism to honor the override).
+  - `incompatible_boot_full`: any hint on a `boot=full` deploy (plain Rust
+    proxy mounted with no dispatcher; the override would strand).
+  - `incompatible_safety_flag`: an `edge` hint on a `boot=shadow` deploy
+    (the session-auth-reuse / delegate-enabled safety invariant is unmet).
 
-  Discarded hints surface via `/health` under
-  `mcp_runtime.boot_reconcile_status` as `incompatible_hint`.
+  The Redis hint key is intentionally NOT deleted on discard — a future
+  compatible-boot pod must still be able to read it, and stale hints
+  expire on their own via the 24h TTL set at publish time. An operator
+  who wants to clear immediately can `DEL contextforge:runtime:mode_state:{runtime}`.
+
+  The same compatibility check runs on every live pub/sub message: a
+  remote pod's flip that the local deployment can't safely honor is
+  discarded with a WARN log (no INCOMPATIBLE_* state is recorded for live
+  discards because they don't represent boot state — only a log line).
 - Each successful flip writes a `runtime_config` audit trail entry via the
   existing `SecurityLogger.log_data_access` pathway. Audit-write failures
   caused by transient DB issues do not roll back the flip — the response

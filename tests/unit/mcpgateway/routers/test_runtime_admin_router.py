@@ -90,45 +90,60 @@ def deny_all(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyAll)
 
 
+def _set_mcp_settings(monkeypatch: pytest.MonkeyPatch, *, runtime: bool, session_auth: bool = False, all_cores: bool = False) -> None:
+    """Apply the MCP-side settings combination that the boot-mode helpers derive labels from."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", runtime, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", session_auth, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", all_cores, raising=False)
+
+
+def _set_a2a_settings(monkeypatch: pytest.MonkeyPatch, *, runtime: bool, delegate: bool = False) -> None:
+    """Apply the A2A-side settings combination."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", runtime, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", delegate, raising=False)
+
+
 @pytest.fixture
 def edge_boot(monkeypatch: pytest.MonkeyPatch):
-    """Make the boot mode look like ``edge`` for both runtimes."""
-    monkeypatch.setattr(router_module.version_module, "boot_mcp_runtime_mode", lambda: "edge")
-    monkeypatch.setattr(router_module.version_module, "boot_a2a_runtime_mode", lambda: "edge")
+    """Make both runtimes look like ``edge`` boot (runtime + safety flag, no extra cores)."""
+    _set_mcp_settings(monkeypatch, runtime=True, session_auth=True, all_cores=False)
+    _set_a2a_settings(monkeypatch, runtime=True, delegate=True)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "rust")
     monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: True)
 
 
 @pytest.fixture
 def off_boot(monkeypatch: pytest.MonkeyPatch):
-    """Make the boot mode look like ``off`` for both runtimes."""
-    monkeypatch.setattr(router_module.version_module, "boot_mcp_runtime_mode", lambda: "off")
-    monkeypatch.setattr(router_module.version_module, "boot_a2a_runtime_mode", lambda: "off")
+    """Make both runtimes look like ``off`` boot (no Rust runtime enabled)."""
+    _set_mcp_settings(monkeypatch, runtime=False)
+    _set_a2a_settings(monkeypatch, runtime=False)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "python")
     monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: False)
 
 
 @pytest.fixture
 def full_boot(monkeypatch: pytest.MonkeyPatch):
-    """Make the boot mode look like ``full`` for the MCP runtime."""
-    monkeypatch.setattr(router_module.version_module, "boot_mcp_runtime_mode", lambda: "full")
-    monkeypatch.setattr(router_module.version_module, "boot_a2a_runtime_mode", lambda: "edge")
+    """Make the MCP runtime look like ``full`` boot (runtime + safety flag + all cores). A2A stays edge."""
+    _set_mcp_settings(monkeypatch, runtime=True, session_auth=True, all_cores=True)
+    _set_a2a_settings(monkeypatch, runtime=True, delegate=True)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "rust")
     monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: True)
 
 
 @pytest.fixture
 def shadow_boot(monkeypatch: pytest.MonkeyPatch):
-    """Make the boot mode look like ``shadow`` for both runtimes.
+    """Make both runtimes look like ``shadow`` boot (runtime enabled, safety flag NOT set).
 
-    A shadow-boot deployment has the Rust sidecar present but
-    ``session_auth_reuse_enabled`` / ``delegate_enabled`` are False — so the
-    safety invariant for routing public traffic to Rust is NOT met. The
-    router must reject PATCH attempts with 409 rather than apply an override
-    that would silently fail to take effect at the transport layer.
+    The router must accept ``mode=shadow`` (escape hatch) but reject
+    ``mode=edge`` because the safety invariant requires the
+    session-auth-reuse / delegate-enabled flag.
     """
-    monkeypatch.setattr(router_module.version_module, "boot_mcp_runtime_mode", lambda: "shadow")
-    monkeypatch.setattr(router_module.version_module, "boot_a2a_runtime_mode", lambda: "shadow")
+    _set_mcp_settings(monkeypatch, runtime=True, session_auth=False, all_cores=False)
+    _set_a2a_settings(monkeypatch, runtime=True, delegate=False)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "python")
     monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: False)
 
@@ -227,7 +242,19 @@ async def test_patch_mcp_mode_409_when_boot_mode_full(allow_admin, full_boot, ad
     with pytest.raises(HTTPException) as exc:
         await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
     assert exc.value.status_code == 409
-    assert "full" in exc.value.detail
+    assert "Full-boot" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_patch_mcp_mode_edge_409_when_boot_mode_full(allow_admin, full_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
+    """Symmetric: mode=edge on boot=full also 409s. The dispatcher check beats the edge-safety check today,
+    but a refactor that reorders the gates could regress silently — pin both target modes against full-boot.
+    """
+    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
+    body = router_module.RuntimeModeUpdate(mode="edge")
+    with pytest.raises(HTTPException) as exc:
+        await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -239,7 +266,7 @@ async def test_patch_mcp_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot
         await router_module.patch_mcp_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
     assert exc.value.status_code == 409
     assert "shadow" in exc.value.detail
-    assert "session-auth-reuse" in exc.value.detail
+    assert "experimental_rust_mcp_session_auth_reuse_enabled" in exc.value.detail
 
 
 @pytest.mark.asyncio

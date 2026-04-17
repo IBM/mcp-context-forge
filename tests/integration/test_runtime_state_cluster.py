@@ -126,6 +126,12 @@ def _reset_singletons():
 @pytest.mark.asyncio
 async def test_two_coordinators_converge_through_pubsub(monkeypatch: pytest.MonkeyPatch):
     """A flip on coordinator A must converge to the local state owned by coordinator B."""
+    # Both coordinators must look like edge-boot so the published shadow flip
+    # is compatible on the receiver (per the new _deployment_allows_override_mode
+    # check in the listen-loop).
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+
     broker = FakeRedisBroker()
 
     # Each coordinator gets its own RuntimeState (simulating two pods) and its

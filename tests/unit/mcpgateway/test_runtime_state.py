@@ -282,6 +282,82 @@ def test_constants_match_kinds():
     assert SUPPORTED_OVERRIDE_MODES == frozenset({"shadow", "edge"})
 
 
+# ---------------------------------------------------------------------------
+# I5: table-driven _deployment_allows_override_mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("runtime_enabled", "session_auth", "all_cores", "mode", "expected_label"),
+    [
+        # boot=off (runtime disabled): every mode rejected as NO_DISPATCHER
+        (False, False, False, "shadow", "no_dispatcher"),
+        (False, False, False, "edge", "no_dispatcher"),
+        # boot=shadow (runtime, no safety flag, no cores): shadow OK; edge needs safety flag
+        (True, False, False, "shadow", "ok"),
+        (True, False, False, "edge", "edge_needs_safety_flag"),
+        # boot=edge (runtime + safety flag, no cores): both modes OK
+        (True, True, False, "shadow", "ok"),
+        (True, True, False, "edge", "ok"),
+        # boot=full (all six flags): both modes rejected as BOOT_FULL_STRANDS
+        (True, True, True, "shadow", "boot_full_strands"),
+        (True, True, True, "edge", "boot_full_strands"),
+    ],
+    ids=[
+        "off-shadow",
+        "off-edge",
+        "shadow-shadow",
+        "shadow-edge",
+        "edge-shadow",
+        "edge-edge",
+        "full-shadow",
+        "full-edge",
+    ],
+)
+def test_deployment_allows_override_mode_mcp_table(monkeypatch: pytest.MonkeyPatch, runtime_enabled, session_auth, all_cores, mode, expected_label):
+    """Pin every (boot config × target mode) → MoveCompatibility outcome for MCP."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", runtime_enabled, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", session_auth, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", all_cores, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", all_cores, raising=False)
+
+    from mcpgateway.runtime_state import MoveCompatibility
+    from mcpgateway.version import deployment_allows_override_mode
+
+    result = deployment_allows_override_mode("mcp", mode)
+    assert result == MoveCompatibility(expected_label)
+
+
+@pytest.mark.parametrize(
+    ("runtime_enabled", "delegate_enabled", "mode", "expected_label"),
+    [
+        # boot=off (runtime disabled): every mode NO_DISPATCHER
+        (False, False, "shadow", "no_dispatcher"),
+        (False, False, "edge", "no_dispatcher"),
+        # boot=shadow (runtime, no delegate): shadow OK; edge needs delegate
+        (True, False, "shadow", "ok"),
+        (True, False, "edge", "edge_needs_safety_flag"),
+        # boot=edge (runtime + delegate): both modes OK
+        (True, True, "shadow", "ok"),
+        (True, True, "edge", "ok"),
+    ],
+    ids=["off-shadow", "off-edge", "shadow-shadow", "shadow-edge", "edge-shadow", "edge-edge"],
+)
+def test_deployment_allows_override_mode_a2a_table(monkeypatch: pytest.MonkeyPatch, runtime_enabled, delegate_enabled, mode, expected_label):
+    """Pin every (boot config × target mode) → MoveCompatibility outcome for A2A."""
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", runtime_enabled, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", delegate_enabled, raising=False)
+
+    from mcpgateway.runtime_state import MoveCompatibility
+    from mcpgateway.version import deployment_allows_override_mode
+
+    result = deployment_allows_override_mode("a2a", mode)
+    assert result == MoveCompatibility(expected_label)
+
+
 @pytest.mark.asyncio
 async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypatch: pytest.MonkeyPatch):
     """Safety invariant: an admin override=edge on a deployment that didn't opt into
@@ -348,7 +424,7 @@ async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytes
         # The stale edge hint must NOT have been applied.
         assert state.override_mode("mcp") is None
         assert state.version("mcp") == 0
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
     finally:
         await coord.stop()
 
@@ -385,7 +461,7 @@ async def test_reconcile_from_hint_discards_shadow_on_full_boot(monkeypatch: pyt
     try:
         state = get_runtime_state()
         assert state.override_mode("mcp") is None
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
     finally:
         await coord.stop()
 
@@ -411,7 +487,7 @@ async def test_reconcile_from_hint_discards_any_mode_on_off_boot(monkeypatch: py
     try:
         state = get_runtime_state()
         assert state.override_mode("mcp") is None
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_HINT
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
     finally:
         await coord.stop()
 
@@ -437,7 +513,98 @@ async def test_reconcile_from_hint_discards_a2a_hint_on_a2a_off_boot(monkeypatch
     try:
         state = get_runtime_state()
         assert state.override_mode("a2a") is None
-        assert state.boot_reconcile_status("a2a") == BootReconcileStatus.INCOMPATIBLE_HINT
+        assert state.boot_reconcile_status("a2a") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_edge_on_full_boot(monkeypatch: pytest.MonkeyPatch):
+    """Symmetric to shadow-on-full: an edge hint on boot=full also strands."""
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", True, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 9, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.override_mode("mcp") is None
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_discards_edge_on_off_boot(monkeypatch: pytest.MonkeyPatch):
+    """Symmetric to shadow-on-off: an edge hint on boot=off also discards."""
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 5, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.override_mode("mcp") is None
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
+    finally:
+        await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_incompatible_hint_does_not_delete_redis_key_or_downgrade_propagation(monkeypatch: pytest.MonkeyPatch):
+    """Discarded hint must leave the Redis key alone (a future compatible-boot pod must still see it)
+    and must NOT downgrade cluster_propagation (the discard is internal — pubsub is healthy).
+    """
+    from mcpgateway.runtime_state import BootReconcileStatus
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
+
+    hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 7, "initiator_pod": "other", "timestamp": 1.0})
+
+    async def fake_get(key):
+        return hint_payload if key == _hint_key("mcp") else None
+
+    redis = _make_redis_mock()
+    redis.get = AsyncMock(side_effect=fake_get)
+    redis.delete = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
+
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        state = get_runtime_state()
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
+        # S1: hint key must NOT be deleted from Redis.
+        redis.delete.assert_not_awaited()
+        # S2: an internal discard must not falsely degrade pubsub propagation.
+        assert state.cluster_propagation == PROPAGATION_REDIS
     finally:
         await coord.stop()
 
@@ -650,6 +817,11 @@ async def test_reconcile_from_hint_does_not_clobber_higher_local_version(monkeyp
 @pytest.mark.asyncio
 async def test_listen_loop_applies_remote_pubsub_message(monkeypatch: pytest.MonkeyPatch):
     """End-to-end pub/sub message should round-trip through the listen loop into RuntimeState."""
+    # Make the deployment compatible with the incoming a2a/shadow payload —
+    # otherwise _listen_loop will (correctly) discard the message.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
+
     redis = _make_redis_mock()
     pubsub = redis.pubsub.return_value
     payload = orjson.dumps({"runtime": "a2a", "mode": "shadow", "version": 11, "initiator_pod": "remote-pod", "initiator_user": "carol", "timestamp": 1.0})
@@ -723,21 +895,36 @@ async def test_listen_loop_downgrades_after_consecutive_failures(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_listen_loop_repromotes_after_recovery(monkeypatch: pytest.MonkeyPatch):
-    """A successful receive after degraded must promote cluster_propagation back to redis."""
+    """A successful receive of a real message after degraded must promote cluster_propagation back to redis.
+
+    Per the I2 fix, a non-exception return of ``None`` (no message) is NOT
+    counted as recovery — only a real message is. This prevents a pubsub
+    that's "broken in a way that returns None reliably" from falsely clearing
+    the failure counter.
+    """
     import asyncio as _asyncio
 
     from mcpgateway.runtime_state import LISTEN_LOOP_DEGRADE_THRESHOLD
 
+    # Make the deployment compatible with the recovery message we'll deliver.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
+
     redis = _make_redis_mock()
     pubsub = redis.pubsub.return_value
     fail_count = {"n": 0}
+    real_message_payload = orjson.dumps({"runtime": "a2a", "mode": "shadow", "version": 1, "initiator_pod": "remote-pod", "timestamp": 1.0})
 
     async def flaky_get_message(*args, **kwargs):
         if fail_count["n"] < LISTEN_LOOP_DEGRADE_THRESHOLD:
             fail_count["n"] += 1
             raise RuntimeError("pubsub down")
-        # Recovery: behave like an idle pubsub (None message).
+        # Recovery: deliver one real message, then idle.
+        if fail_count["n"] == LISTEN_LOOP_DEGRADE_THRESHOLD:
+            fail_count["n"] += 1
+            return {"type": "message", "channel": RUNTIME_STATE_CHANNEL.encode(), "data": real_message_payload}
         await _asyncio.sleep(0.02)
+        return None
 
     pubsub.get_message = AsyncMock(side_effect=flaky_get_message)
     monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
@@ -746,7 +933,7 @@ async def test_listen_loop_repromotes_after_recovery(monkeypatch: pytest.MonkeyP
     await coord.start()
     try:
         for _ in range(80):
-            if get_runtime_state().cluster_propagation == PROPAGATION_REDIS and fail_count["n"] >= LISTEN_LOOP_DEGRADE_THRESHOLD:
+            if get_runtime_state().cluster_propagation == PROPAGATION_REDIS and fail_count["n"] > LISTEN_LOOP_DEGRADE_THRESHOLD:
                 break
             await _asyncio.sleep(0.05)
         assert get_runtime_state().cluster_propagation == PROPAGATION_REDIS

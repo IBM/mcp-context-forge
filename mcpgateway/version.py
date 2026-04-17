@@ -435,6 +435,93 @@ def _should_delegate_a2a_to_rust() -> bool:
     return a2a_safe_for_delegate
 
 
+def _deployment_allows_override_mode(runtime, mode):
+    """Return a ``MoveCompatibility`` for whether ``mode`` can take effect on this deployment.
+
+    Single source of truth shared by the admin router (which translates the
+    rejection reason into a 409 detail string) and the coordinator (which
+    surfaces the rejection reason via ``BootReconcileStatus``). Two concerns
+    compose:
+
+    1. **Is there a mechanism that could honor the override?** For MCP, an
+       override is observed only by the ``MCPStreamableHTTPModeDispatcher``,
+       which is mounted for ``boot=shadow`` and ``boot=edge`` only. ``boot=off``
+       has no Rust sidecar (``NO_DISPATCHER``); ``boot=full`` mounts a plain
+       Rust proxy with no dispatcher (``BOOT_FULL_STRANDS``). For A2A,
+       overrides are observed per-invocation, requiring the A2A runtime to be
+       enabled at boot — ``boot=off`` returns ``NO_DISPATCHER``.
+    2. **Does the target mode satisfy the safety invariant?** An ``edge``
+       override additionally requires the session-auth-reuse (MCP) or
+       delegate-enabled (A2A) flag; without it, routing public traffic to
+       Rust would be unsafe. Failure surfaces as ``EDGE_NEEDS_SAFETY_FLAG``.
+
+    Args:
+        runtime: ``RuntimeKind`` (or its string value) being evaluated.
+        mode: ``OverrideMode`` (or its string value) being requested.
+
+    Returns:
+        A ``MoveCompatibility`` member; ``OK`` when the override can both
+        be observed and safely honored, otherwise the structured rejection
+        reason.
+    """
+    # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+    from mcpgateway.runtime_state import (  # pylint: disable=import-outside-toplevel
+        MoveCompatibility,
+        OverrideMode,
+        RuntimeKind,
+        _coerce_mode,
+        _coerce_runtime,
+    )
+
+    kind = _coerce_runtime(runtime)
+    target = _coerce_mode(mode)
+
+    if kind == RuntimeKind.MCP:
+        if not settings.experimental_rust_mcp_runtime_enabled:
+            return MoveCompatibility.NO_DISPATCHER
+        is_full_boot = bool(
+            settings.experimental_rust_mcp_session_auth_reuse_enabled
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+            and settings.experimental_rust_mcp_live_stream_core_enabled
+            and settings.experimental_rust_mcp_affinity_core_enabled
+        )
+        if is_full_boot:
+            return MoveCompatibility.BOOT_FULL_STRANDS
+        if target == OverrideMode.SHADOW:
+            return MoveCompatibility.OK
+        # target == OverrideMode.EDGE
+        if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
+            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
+        return MoveCompatibility.OK
+
+    if kind == RuntimeKind.A2A:
+        if not settings.experimental_rust_a2a_runtime_enabled:
+            return MoveCompatibility.NO_DISPATCHER
+        if target == OverrideMode.SHADOW:
+            return MoveCompatibility.OK
+        # target == OverrideMode.EDGE
+        if not settings.experimental_rust_a2a_runtime_delegate_enabled:
+            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
+        return MoveCompatibility.OK
+
+    return MoveCompatibility.NO_DISPATCHER
+
+
+def deployment_allows_override_mode(runtime, mode):
+    """Public wrapper for ``_deployment_allows_override_mode``.
+
+    Args:
+        runtime: ``RuntimeKind`` or string runtime kind.
+        mode: ``OverrideMode`` or string target mode.
+
+    Returns:
+        A ``MoveCompatibility`` member.
+    """
+    return _deployment_allows_override_mode(runtime, mode)
+
+
 def _current_a2a_invoke_mode() -> str:
     """Return which runtime currently owns registered A2A agent invocation.
 
