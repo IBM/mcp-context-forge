@@ -31,6 +31,16 @@ jobs:
               with:
                 persist-credentials: false
 
+            - name: Install yq
+              run: |
+                sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                sudo chmod +x /usr/local/bin/yq              
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                node-version: '22' 
+
             - name: Setup Python
               uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
               with:
@@ -41,10 +51,6 @@ jobs:
               with:
                   enable-cache: true
 
-            - name: Install yq
-              run: |
-                sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
-                sudo chmod +x /usr/local/bin/yq              
             - name: Update Gateway Config for SQL Sanitizer
               run: |
                 CONFIG_FILE="plugins/config.yaml"
@@ -131,7 +137,7 @@ jobs:
               env:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
               run: |
-                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY" --admin --full-name "Admin")
                   echo "::add-mask::$TOKEN"
                   echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
                   echo "JWT token generated successfully"
@@ -141,6 +147,12 @@ jobs:
                   curl -sf -X GET http://localhost:4444/version \
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json"
+
+            - name: Verify plugins is responding
+              run: |
+                  curl -sf -X GET http://localhost:4444/admin/plugins/stats \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -H "Content-Type: application/json" | yq
 
 
             - name: Build fast-test-server
