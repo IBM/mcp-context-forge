@@ -586,3 +586,24 @@ async def shutdown_upstream_session_registry() -> None:
     if _registry is not None:
         await _registry.close_all()
         _registry = None
+
+
+def downstream_session_id_from_request_context() -> Optional[str]:
+    """Return the downstream Mcp-Session-Id for the current request, or None.
+
+    Reads from the streamable-HTTP transport's per-request ContextVar
+    (``request_headers_var``). Service-layer callers (tool_service,
+    prompt_service, resource_service) use this to key the registry so that
+    an upstream session is bound 1:1 to the downstream MCP session that
+    initiated the call.
+
+    The import of ``request_headers_var`` is deferred to avoid a circular
+    dependency between ``mcpgateway.services`` and
+    ``mcpgateway.transports.streamablehttp_transport``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var  # pylint: disable=import-outside-toplevel
+
+    headers = request_headers_var.get() or {}
+    lowered = {k.lower(): v for k, v in headers.items()}
+    return lowered.get("x-mcp-session-id") or lowered.get("mcp-session-id") or None

@@ -4300,10 +4300,11 @@ class TestInvokeResourceCoverage:
         assert result == "http-ok"
 
     @pytest.mark.asyncio
-    async def test_sse_session_pool_used_and_signature_validated(self, resource_service):
-        """Cover session pool path (SSE) and certificate signature validation branch."""
+    async def test_sse_registry_used_and_signature_validated(self, resource_service):
+        """Cover registry path (SSE) and certificate signature validation branch (#4205)."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import TransportType
+        from mcpgateway.services.upstream_session_registry import TransportType
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         resource = self._make_resource()
         gateway = self._make_gateway(transport="sse", auth_type=None)
@@ -4313,58 +4314,63 @@ class TestInvokeResourceCoverage:
         db = MagicMock()
         db.close = MagicMock()
 
-        captured_pool_kwargs: dict[str, object] = {}
+        captured_acquire_kwargs: dict[str, object] = {}
 
-        pooled_session = AsyncMock()
-        pooled_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="pooled-ok", blob=None)]))
+        upstream_session = AsyncMock()
+        upstream_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="registry-ok", blob=None)]))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return MagicMock(session=pooled_session)
+                return MagicMock(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        def pool_session(**kwargs):
-            captured_pool_kwargs.update(kwargs)
-            return _PooledCM()
+        def fake_acquire(**kwargs):
+            captured_acquire_kwargs.update(kwargs)
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = pool_session
+        registry = MagicMock()
+        registry.acquire = fake_acquire
 
         span = MagicMock()
 
-        # Avoid real SSL context creation; we're only covering validation branch.
+        # Avoid real SSL context creation; we're only covering the validation branch.
         resource_service.create_ssl_context = MagicMock(return_value=MagicMock())
 
-        with (
-            patch(
-                "mcpgateway.services.resource_service.settings",
-                MagicMock(
-                    enable_ed25519_signing=True,
-                    ed25519_public_key="pk",
-                    platform_admin_email="admin@test.com",
-                    httpx_max_connections=10,
-                    httpx_max_keepalive_connections=5,
-                    httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
-                    health_check_timeout=1,
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-res"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=True,
+                        ed25519_public_key="pk",
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
                 ),
-            ),
-            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
-            patch(
-                "mcpgateway.services.resource_service.create_span",
-                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
-            ),
-            patch("mcpgateway.services.resource_service.validate_signature", return_value=True),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-        ):
-            mock_trace.get = MagicMock(return_value=None)
-            mock_metrics_buffer.return_value = MagicMock()
-            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
-        assert result == "pooled-ok"
-        assert captured_pool_kwargs.get("transport_type") == TransportType.SSE
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch(
+                    "mcpgateway.services.resource_service.create_span",
+                    MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+                ),
+                patch("mcpgateway.services.resource_service.validate_signature", return_value=True),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                mock_metrics_buffer.return_value = MagicMock()
+                result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result == "registry-ok"
+        assert captured_acquire_kwargs.get("transport_type") == TransportType.SSE
+        assert captured_acquire_kwargs.get("downstream_session_id") == "downstream-res"
 
 
 # ============================================================================
@@ -6621,13 +6627,13 @@ class TestInvokeResourceCoverageEdges:
                     httpx_max_connections=10,
                     httpx_max_keepalive_connections=5,
                     httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
                     health_check_timeout=1,
                 ),
             ),
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # Registry not initialized → registry path short-circuits, fallback taken.
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
@@ -6642,11 +6648,12 @@ class TestInvokeResourceCoverageEdges:
         assert out == "ok"
 
     @pytest.mark.asyncio
-    async def test_invoke_resource_streamablehttp_uses_session_pool_when_available(self):
-        """Cover StreamableHTTP pooled path (1870-1875, 1878-1888)."""
+    async def test_invoke_resource_streamablehttp_uses_registry_when_available(self):
+        """Cover StreamableHTTP registry path (#4205)."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import TransportType
+        from mcpgateway.services.upstream_session_registry import TransportType
         from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         svc = ResourceService()
         db = MagicMock()
@@ -6667,47 +6674,52 @@ class TestInvokeResourceCoverageEdges:
             auth_query_params=None,
         )
 
-        pooled_session = AsyncMock()
-        pooled_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="pooled-ok")]))
+        upstream_session = AsyncMock()
+        upstream_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="registry-ok")]))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return MagicMock(session=pooled_session)
+                return MagicMock(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
         captured_kwargs: dict[str, object] = {}
 
-        def _pool_session(**kwargs):
+        def _fake_acquire(**kwargs):
             captured_kwargs.update(kwargs)
-            return _PooledCM()
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = _pool_session
+        registry = MagicMock()
+        registry.acquire = _fake_acquire
 
-        with (
-            patch(
-                "mcpgateway.services.resource_service.settings",
-                MagicMock(
-                    enable_ed25519_signing=False,
-                    platform_admin_email="admin@test.com",
-                    httpx_max_connections=10,
-                    httpx_max_keepalive_connections=5,
-                    httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
-                    health_check_timeout=1,
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-r"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=False,
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
                 ),
-            ),
-            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-        ):
-            mock_trace.get = MagicMock(return_value=None)
-            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
-        assert out == "pooled-ok"
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert out == "registry-ok"
         assert captured_kwargs.get("transport_type") == TransportType.STREAMABLE_HTTP
+        assert captured_kwargs.get("downstream_session_id") == "downstream-r"
 
     @pytest.mark.asyncio
     async def test_invoke_resource_transport_none_raises_and_hits_outer_exception_block(self):
@@ -6846,13 +6858,13 @@ class TestInvokeResourceCoverageEdges:
                     httpx_max_connections=10,
                     httpx_max_keepalive_connections=5,
                     httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
                     health_check_timeout=1,
                 ),
             ),
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # Registry not initialized → registry path short-circuits, fallback taken.
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,

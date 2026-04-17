@@ -78,7 +78,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, TransportType
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -124,22 +124,9 @@ def _get_registry_cache():
     return _REGISTRY_CACHE
 
 
-def _downstream_session_id_from_request() -> Optional[str]:
-    """Return the downstream Mcp-Session-Id for the current request, or None.
-
-    Reads from the transport's per-request ContextVar. Lazy-imported to avoid a
-    circular dependency between tool_service and streamablehttp_transport.
-
-    Callers use this to key the UpstreamSessionRegistry (#4205) so upstream
-    sessions are bound 1:1 to the downstream MCP session instead of being
-    shared across downstream clients of the same identity.
-    """
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import request_headers_var  # pylint: disable=import-outside-toplevel
-
-    headers = request_headers_var.get() or {}
-    lowered = {k.lower(): v for k, v in headers.items()}
-    return lowered.get("x-mcp-session-id") or lowered.get("mcp-session-id") or None
+# NOTE: downstream session-id extraction lives in upstream_session_registry so
+# tool_service, prompt_service, and resource_service share one implementation.
+_downstream_session_id_from_request = downstream_session_id_from_request_context
 
 
 def _get_tool_lookup_cache():
