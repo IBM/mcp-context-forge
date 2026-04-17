@@ -1,4 +1,4 @@
-import { TOGGLE_FRAGMENT_MAP } from "./constants.js";
+import { PANEL_SEARCH_CONFIG, TOGGLE_FRAGMENT_MAP } from "./constants.js";
 import { navigateAdmin } from "./navigation.js";
 import { getCookie, isInactiveChecked } from "./utils.js";
 
@@ -48,12 +48,14 @@ export const handleToggleSubmit = async function (event, type) {
     }
 
     // Trigger HTMX request to refresh the table
-    const tableId = `${type}-table`;
-    const partialUrl = `${window.ROOT_PATH}/admin/${type}/partial?${params.toString()}`;
+    const panelConfig = PANEL_SEARCH_CONFIG[type];
+    const partialPath = panelConfig?.partialPath || `${type}/partial`;
+    const targetSelector = panelConfig?.targetSelector || `#${type}-table`;
+    const partialUrl = `${window.ROOT_PATH}/admin/${partialPath}?${params.toString()}`;
 
     if (window.htmx) {
       window.htmx.ajax('GET', partialUrl, {
-        target: `#${tableId}`,
+        target: targetSelector,
         swap: 'outerHTML'
       });
     } else {

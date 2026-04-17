@@ -241,4 +241,41 @@ describe("handleDeleteSubmit", () => {
 
     expect(capturedFormData.get("is_inactive_checked")).toBe("true");
   });
+
+  test("uses PANEL_SEARCH_CONFIG for A2A agents refresh (partialPath and targetSelector)", async () => {
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const tableDiv = document.createElement("div");
+    tableDiv.id = "agents-table";  // Correct ID per PANEL_SEARCH_CONFIG
+    document.body.appendChild(tableDiv);
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock;
+
+    // Mock HTMX
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "agent", "test-agent", "a2a-agents");
+
+    // Verify HTMX was called with correct partial path (a2a/partial) and target selector (#agents-table)
+    expect(htmxAjaxMock).toHaveBeenCalledWith(
+      'GET',
+      expect.stringContaining('/admin/a2a/partial'),
+      expect.objectContaining({
+        target: '#agents-table',  // targetSelector from PANEL_SEARCH_CONFIG, not #a2a-agents-table
+        swap: 'outerHTML'
+      })
+    );
+  });
 });
