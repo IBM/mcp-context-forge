@@ -7530,6 +7530,7 @@ class PluginDetail(PluginSummary):
 class PluginListResponse(BaseModel):
     """Response for plugin list endpoint."""
 
+    plugins_globally_enabled: bool = Field(True, description="Whether the plugin subsystem is globally enabled at runtime")
     plugins: List[PluginSummary] = Field(..., description="List of plugins")
     total: int = Field(..., description="Total number of plugins")
     enabled_count: int = Field(0, description="Number of enabled plugins")

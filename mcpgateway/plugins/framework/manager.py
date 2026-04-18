@@ -32,6 +32,7 @@ import asyncio
 import copy
 import logging
 import threading
+import time
 from typing import Any, Optional, Union
 
 # Third-Party
@@ -1042,12 +1043,16 @@ class TenantPluginManagerFactory:
     organization, or any other identifier requiring isolated plugin configuration.
     """
 
+    # Default TTL for cached managers (seconds). Set to 0 to disable TTL.
+    DEFAULT_CACHE_TTL = 30
+
     def __init__(
         self,
         yaml_path: str,
         timeout: int = DEFAULT_PLUGIN_TIMEOUT,
         observability: Optional[ObservabilityProvider] = None,
         hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
+        cache_ttl: Optional[int] = None,
     ):
         """Initialize the TenantPluginManagerFactory.
 
@@ -1056,14 +1061,17 @@ class TenantPluginManagerFactory:
             timeout: Per-plugin call timeout in seconds.
             observability: Optional observability provider.
             hook_policies: Optional hook payload policy map.
+            cache_ttl: TTL in seconds for cached managers. Defaults to DEFAULT_CACHE_TTL.
+                Set to 0 to disable TTL (cache forever until explicit eviction).
         """
         self._base_config = ConfigLoader.load_config(yaml_path)
         self._timeout = timeout
         self._observability = observability
         self._hook_policies = hook_policies
-        self._managers: dict[str, TenantPluginManager] = {}
+        self._managers: dict[str, tuple[TenantPluginManager, float]] = {}  # (manager, created_at)
         self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
         self._lock = asyncio.Lock()
+        self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
 
     @property
     def observability(self) -> Optional[ObservabilityProvider]:
@@ -1086,6 +1094,10 @@ class TenantPluginManagerFactory:
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context.
 
+        If the cached manager is older than ``cache_ttl`` seconds, it is
+        evicted and rebuilt from the DB so that configuration changes
+        propagate across all workers and pods without explicit invalidation.
+
         Args:
             context_id: Context identifier (server, tenant, etc.). Defaults to __global__.
 
@@ -1095,9 +1107,15 @@ class TenantPluginManagerFactory:
         context_id = context_id or _DEFAULT_CONTEXT_ID
 
         async with self._lock:
-            existing = self._managers.get(context_id)
-            if existing is not None:
-                return existing
+            entry = self._managers.get(context_id)
+            if entry is not None:
+                manager, created_at = entry
+                # Check TTL — evict if expired
+                if self._cache_ttl > 0 and (time.monotonic() - created_at) > self._cache_ttl:
+                    self._managers.pop(context_id, None)
+                    logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
+                else:
+                    return manager
 
             inflight = self._inflight.get(context_id)
             if inflight is None:
@@ -1112,7 +1130,8 @@ class TenantPluginManagerFactory:
             # Returning a shut-down manager (the pre-eviction one) would be
             # incorrect, so always prefer whatever is currently in the cache.
             async with self._lock:
-                return self._managers.get(context_id, manager)
+                entry = self._managers.get(context_id)
+                return entry[0] if entry is not None else manager
 
         finally:
             # Cleanup only - no return to avoid suppressing exceptions
@@ -1141,6 +1160,7 @@ class TenantPluginManagerFactory:
         try:
             new_config = await self.get_config_from_db(context_id)
             config = self._merge_tenant_config(new_config)
+            config = await self._apply_redis_mode_overrides(config)
 
             manager = TenantPluginManager(
                 config=config,
@@ -1151,9 +1171,10 @@ class TenantPluginManagerFactory:
             await manager.initialize()
 
             async with self._lock:
-                old = self._managers.get(context_id)
-                self._managers[context_id] = manager
+                old_entry = self._managers.get(context_id)
+                self._managers[context_id] = (manager, time.monotonic())
 
+            old = old_entry[0] if old_entry is not None else None
             if old is not None and old is not manager:
                 try:
                     await old.shutdown()
@@ -1176,6 +1197,53 @@ class TenantPluginManagerFactory:
                 except Exception:
                     logger.warning("Failed to shutdown manager after error for context_id=%s", context_id)
             raise
+
+    async def _apply_redis_mode_overrides(self, config: Config) -> Config:
+        """Apply per-plugin mode overrides from Redis to the merged config.
+
+        Uses a single MGET call to fetch all plugin mode overrides at once,
+        then applies any that exist. This allows runtime mode changes via
+        the ``PUT /admin/plugins/{name}`` API to take effect on manager rebuild.
+
+        Args:
+            config: The merged config (base YAML + DB overrides).
+
+        Returns:
+            Config with Redis mode overrides applied.
+        """
+        try:
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            if not config.plugins:
+                return config
+
+            client = await get_redis_client()
+            if not client:
+                return config
+
+            # Single MGET for all plugins instead of N individual GETs
+            keys = [f"plugin:{p.name}:mode" for p in config.plugins]
+            values = await client.mget(keys)
+
+            modified = False
+            updated_plugins = []
+            for plugin, override_mode in zip(config.plugins, values):
+                if override_mode is not None:
+                    from mcpgateway.plugins.framework.models import PluginMode  # pylint: disable=import-outside-toplevel
+
+                    mode_str = override_mode.decode() if isinstance(override_mode, bytes) else str(override_mode)
+                    updated_plugins.append(
+                        plugin.model_copy(update={"mode": PluginMode(mode_str)})
+                    )
+                    modified = True
+                else:
+                    updated_plugins.append(plugin)
+
+            if modified:
+                return config.model_copy(update={"plugins": updated_plugins}, deep=True)
+        except Exception:
+            logger.debug("Failed to apply Redis mode overrides, using config as-is")
+        return config
 
     def _merge_tenant_config(self, tenant_cfg_override: Optional[list[PluginConfigOverride]]) -> Config:
         """Merge context-specific plugin configuration overrides with base configuration.
@@ -1223,7 +1291,7 @@ class TenantPluginManagerFactory:
             TenantPluginManager: Rebuilt manager for ``context_id``.
         """
         async with self._lock:
-            old = self._managers.pop(context_id, None)
+            old_entry = self._managers.pop(context_id, None)
 
             # Cancel any existing inflight task to force fresh DB fetch
             inflight = self._inflight.get(context_id)
@@ -1234,6 +1302,7 @@ class TenantPluginManagerFactory:
             inflight = asyncio.create_task(self._build_manager(context_id))
             self._inflight[context_id] = inflight
 
+        old = old_entry[0] if old_entry is not None else None
         if old is not None:
             try:
                 await old.shutdown()
@@ -1261,7 +1330,8 @@ class TenantPluginManagerFactory:
         if inflight:
             await asyncio.gather(*inflight, return_exceptions=True)
 
-        for manager in managers:
+        for entry in managers:
+            manager = entry[0] if isinstance(entry, tuple) else entry
             try:
                 await manager.shutdown()
             except Exception:

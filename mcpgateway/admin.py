@@ -16656,12 +16656,59 @@ async def list_plugins(
             },
         )
 
-        return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
+        from mcpgateway.plugins.framework import are_plugins_enabled_shared  # pylint: disable=import-outside-toplevel
+
+        return PluginListResponse(plugins_globally_enabled=await are_plugins_enabled_shared(), plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
         structured_logger.error("Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def toggle_plugins_global(
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+) -> dict:
+    """Enable or disable the plugin subsystem globally.
+
+    Expects JSON body: {"enabled": true} or {"enabled": false}.
+    Writes to Redis so all workers and pods pick up the change.
+    Falls back to in-memory toggle if Redis is unavailable.
+
+    Args:
+        request: FastAPI request object containing JSON body.
+        user: Authenticated admin user.
+
+    Returns:
+        dict with current plugins_enabled state.
+    """
+    from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins_shared  # pylint: disable=import-outside-toplevel
+
+    body = await request.json()
+    enabled = body.get("enabled")
+    if enabled is None:
+        raise HTTPException(status_code=400, detail="Missing 'enabled' field in request body")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="'enabled' must be a boolean")
+
+    await enable_plugins_shared(enabled)
+    LOGGER.info(f"Plugins globally {'enabled' if enabled else 'disabled'} by {get_user_email(user)}")
+    structured_logger = get_structured_logger()
+    structured_logger.info(
+        f"Plugin subsystem globally {'enabled' if enabled else 'disabled'}",
+        user_id=get_user_id(user),
+        user_email=get_user_email(user),
+        component="plugin_runtime",
+        category="security",
+        resource_type="plugin_global_toggle",
+        resource_action="update",
+        custom_fields={"enabled": enabled},
+    )
+
+    return {"plugins_enabled": await are_plugins_enabled_shared()}
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
@@ -16804,6 +16851,81 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins/{name}")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def update_plugin_mode(
+    name: str,
+    request: Request,
+    db: Session = Depends(get_db),  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),
+) -> dict:
+    """Change a plugin's mode at runtime (enforce/permissive/disabled).
+
+    Stores the mode override in Redis so all workers and pods pick up the
+    change. The override takes precedence over the YAML config until the
+    gateway is restarted or the override is removed.
+
+    Args:
+        name: Plugin name (e.g. "RateLimiterPlugin").
+        request: FastAPI request object containing JSON body with "mode" field.
+        db: Database session.
+        user: Authenticated admin user.
+
+    Returns:
+        dict with plugin name and new mode.
+    """
+    body = await request.json()
+    mode = body.get("mode")
+    valid_modes = ("enforce", "permissive", "disabled")
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"'mode' must be one of: {', '.join(valid_modes)}")
+
+    # Verify plugin exists by checking the plugin list
+    plugin_service = get_plugin_service()
+    plugin_manager = getattr(request.app.state, "plugin_manager", None)
+    if plugin_manager:
+        plugin_service.set_plugin_manager(plugin_manager)
+    all_plugins = plugin_service.get_all_plugins()
+    plugin_names = [p["name"] for p in all_plugins]
+    if name not in plugin_names:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found. Available: {', '.join(plugin_names[:10])}")
+
+    # Store mode override in Redis and invalidate cached managers
+    try:
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework import invalidate_all_plugin_managers  # pylint: disable=import-outside-toplevel
+
+        client = await get_redis_client()
+        redis_persisted = False
+        if client:
+            await client.set(f"plugin:{name}:mode", mode, ex=86400)  # 24h TTL — stale overrides expire
+            redis_persisted = True
+            LOGGER.info(f"Plugin '{name}' mode changed to '{mode}' by {get_user_email(user)} (stored in Redis, 24h TTL)")
+        else:
+            LOGGER.warning(f"Redis unavailable — plugin '{name}' mode change to '{mode}' is local only")
+
+        # Invalidate all cached managers so they rebuild with the new mode
+        await invalidate_all_plugin_managers()
+
+        structured_logger = get_structured_logger()
+        structured_logger.info(
+            f"Plugin '{name}' mode changed to '{mode}'",
+            user_id=get_user_id(user),
+            user_email=get_user_email(user),
+            component="plugin_runtime",
+            category="security",
+            resource_type="plugin_mode",
+            resource_id=name,
+            resource_action="update",
+            custom_fields={"plugin_name": name, "new_mode": mode},
+        )
+    except Exception as exc:
+        LOGGER.warning(f"Failed to write plugin mode to Redis: {exc}")
+        redis_persisted = False
+
+    return {"plugin": name, "mode": mode, "redis_persisted": redis_persisted}
 
 
 ##################################################

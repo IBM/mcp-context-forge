@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.plugins.framework import reload_plugin_context
-from mcpgateway.plugins.gateway_plugin_manager import make_context_id
+from mcpgateway.plugins.gateway_plugin_manager import CONTEXT_ID_SEPARATOR, make_context_id
 from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError, ToolPluginBindingService
@@ -92,8 +92,23 @@ async def upsert_tool_plugin_bindings(
         # Commit before invalidating cache so the new session opened by reload
         # reads committed data. The get_db() cleanup commit is then a safe no-op.
         db.commit()
+
+        # Invalidate affected contexts. For wildcard bindings (tool_name="*"),
+        # evict ALL cached contexts for the team since they all inherit the wildcard.
+        wildcard_teams = {b.team_id for b in bindings if b.tool_name == "*"}
         for ctx_id in {make_context_id(b.team_id, b.tool_name) for b in bindings}:
             await reload_plugin_context(ctx_id)
+        # Evict all cached contexts matching wildcard teams
+        if wildcard_teams:
+            from mcpgateway.plugins.framework import _plugin_manager_factory  # pylint: disable=import-outside-toplevel
+
+            if _plugin_manager_factory is not None:
+                async with _plugin_manager_factory._lock:
+                    all_contexts = list(_plugin_manager_factory._managers.keys())
+                for ctx in all_contexts:
+                    team_part = ctx.split(CONTEXT_ID_SEPARATOR)[0] if CONTEXT_ID_SEPARATOR in ctx else None
+                    if team_part in wildcard_teams:
+                        await reload_plugin_context(ctx)
         return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
     except ValueError as exc:
         logger.error("Failed to upsert tool plugin bindings: %s", exc)

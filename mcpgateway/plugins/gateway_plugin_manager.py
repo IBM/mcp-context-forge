@@ -78,13 +78,21 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
         team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
-        db: Session = self._db_factory()
         try:
-            bindings = get_bindings_for_tool(db, team_id, tool_name)
-        finally:
-            db.close()
+            db: Session = self._db_factory()
+            try:
+                bindings = get_bindings_for_tool(db, team_id, tool_name)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning(
+                "get_config_from_db: DB error for context_id=%s (%s), falling back to base config",
+                context_id, exc,
+            )
+            return None
 
         if not bindings:
+            logger.debug("get_config_from_db: no bindings found for context_id=%s", context_id)
             return None
 
         overrides: list[PluginConfigOverride] = []
