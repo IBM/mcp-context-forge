@@ -35,7 +35,7 @@ ARG ENABLE_PROFILING=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS rust-builder-base
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1776145136 AS rust-builder
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
@@ -58,6 +58,8 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         exit 0; \
     fi
 
+# Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
+# hadolint ignore=DL3041
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         dnf upgrade -y && \
         dnf install -y \
@@ -72,11 +74,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             findutils \
             curl && \
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-        dnf clean all; \
-    fi
-
-# Install Rust toolchain (only if ENABLE_RUST=true)
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        dnf clean all && \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
     fi
 ENV PATH="/root/.cargo/bin:$PATH"
@@ -88,6 +86,7 @@ COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
 
 # Build local native extensions from maturin crates under crates/
+# hadolint ignore=DL3013
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/native-extension-wheels && \
         python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
@@ -120,6 +119,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "⏭️  Skipping local native extension build"; \
     fi
 
+# Build MCP + A2A runtime binaries (MCP + A2A in the same RUN share /build/target)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
@@ -127,36 +127,27 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime; \
         fi && \
         cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
-        echo "✅ Rust MCP runtime built successfully"; \
-    else \
-        echo "⏭️  Skipping Rust MCP runtime build"; \
-    fi
-
-# Build the experimental Rust A2A runtime binary (only if ENABLE_RUST=true)
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
         cargo build --release -p contextforge_a2a_runtime && \
-        echo "✅ Rust A2A runtime built successfully"; \
+        echo "✅ Rust MCP + A2A runtimes built successfully"; \
     else \
-        echo "⏭️  Skipping Rust A2A runtime build"; \
+        echo "⏭️  Skipping Rust MCP + A2A runtime builds"; \
     fi
-
-FROM rust-builder-base AS rust-builder
 
 ###########################
 # Frontend builder stage
 ###########################
-FROM node:lts AS frontend-builder
-WORKDIR /app
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1776196021 AS frontend-builder
+WORKDIR /opt/app-root/src
 
 # Copy package.json and package-lock.json
-COPY package.json package-lock.json ./
+COPY --chown=1001:0 package.json package-lock.json ./
 
 # Install frontend dependencies
-RUN npm install --frozen-lockfile
+RUN npm ci
 
 # Copy frontend source files
-COPY mcpgateway/admin_ui/ mcpgateway/admin_ui/
-COPY vite.config.js ./
+COPY --chown=1001:0 mcpgateway/admin_ui/ mcpgateway/admin_ui/
+COPY --chown=1001:0 vite.config.js ./
 
 # Run Vite build
 RUN npm run vite:build
@@ -200,28 +191,20 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
-    fi
-RUN chmod 644 /etc/profile.d/use-openssl.sh
+    fi \
+    && chmod 644 /etc/profile.d/use-openssl.sh
 
 # ----------------------------------------------------------------------------
-# Copy only the files needed for dependency installation first
-# This maximizes Docker layer caching - dependencies change less often
+# Copy only the files needed for dependency installation first.
+# Order is top-to-bottom from least-frequently-changing to most:
+#   1. pyproject.toml (dependency manifest — plugins come from the [plugins]
+#      extra, resolved from PyPI)
+#   2. Native extension wheels from rust-builder (consumed by venv install)
+# Everything else (rust binaries, frontend static, app code) is copied AFTER
+# the heavy venv install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
-COPY plugins/requirements.txt /app/plugins/requirements.txt
-
-# ----------------------------------------------------------------------------
-# Copy Rust MCP runtime and local native extensions from rust-builder stage
-# ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
-COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
-COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
-
-# ----------------------------------------------------------------------------
-# Copy frontend build artifacts from frontend-builder stage
-# ----------------------------------------------------------------------------
-COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
-
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -273,46 +256,43 @@ RUN set -euo pipefail \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
 # ----------------------------------------------------------------------------
-# Now copy only the application files needed for runtime
-# This ensures code changes don't invalidate the dependency layer
+# Copy Rust runtime binaries and frontend static output from their builder
+# stages AFTER the venv install so those changes don't invalidate the heavy
+# dependency layer above.
 # ----------------------------------------------------------------------------
-COPY run-gunicorn.sh run-granian.sh docker-entrypoint.sh /app/
-COPY mcpgateway/ /app/mcpgateway/
-COPY gunicorn.config.py /app/
-COPY plugins/ /app/plugins/
-COPY mcp-catalog.yml /app/
-
-# Optional: Copy run.sh if it's needed in production
-COPY run.sh /app/
+COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
+COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
 
 # ----------------------------------------------------------------------------
-# Download CDN assets for airgapped deployment
-# This downloads external CSS/JS dependencies during build
+# Download CDN assets for airgapped deployment (writes into /app/mcpgateway/static/vendor/).
+# Placed here so app code changes below don't invalidate this network-bound step.
+# --chmod=0755 lets us skip a follow-up chmod layer.
 # ----------------------------------------------------------------------------
-COPY scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
-RUN chmod +x /tmp/download-cdn-assets.sh \
-    && /tmp/download-cdn-assets.sh \
+COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
+RUN /tmp/download-cdn-assets.sh \
     && rm /tmp/download-cdn-assets.sh
 
 # ----------------------------------------------------------------------------
-# Ensure executable permissions for scripts
+# Application files, ordered from least- to most-frequently-changing so that
+# the more volatile COPYs at the bottom don't invalidate the stable ones above.
+#   - Run/entrypoint scripts (rarely change)           [--chmod=0755 keeps +x]
+#   - gunicorn config + mcp catalog (rare/occasional)
+#   - mcpgateway/ + plugins/ (change most often)
 # ----------------------------------------------------------------------------
-RUN chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/run.sh
+COPY --chmod=0755 run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
+COPY gunicorn.config.py mcp-catalog.yml /app/
+COPY mcpgateway/ /app/mcpgateway/
+COPY plugins/ /app/plugins/
 
 # ----------------------------------------------------------------------------
-# Pre-compile Python bytecode with -OO optimization
-#  - Strips docstrings and assertions
-#  - Improves startup performance
-#  - Remove __pycache__ directories after compilation
+# Final pass: compile bytecode with -OO, strip caches, fix OpenShift-compatible
+# ownership. Merged into one layer — all of these are cheap and all get
+# invalidated whenever any app code changes above.
 # ----------------------------------------------------------------------------
 RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
-    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
-# ----------------------------------------------------------------------------
-# Set ownership for non-root user (1001)
-# - OpenShift compatible (accepts any UID in group 0)
-# ----------------------------------------------------------------------------
-RUN chown -R 1001:0 /app \
+    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && chown -R 1001:0 /app \
     && chmod -R g=u /app
 
 ###########################
@@ -344,39 +324,24 @@ LABEL maintainer="Mihai Criveti" \
 # - shadow-utils for useradd command
 # - gdb for memray attach (only when ENABLE_PROFILING=true)
 # ----------------------------------------------------------------------------
+# Install runtime deps, conditionally add gdb for profiling, create the python3
+# symlink and non-root user — all merged into a single layer since these are
+# stable setup steps that rarely change.
 # hadolint ignore=DL3041
 RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
     && microdnf install -y --nodocs --setopt=install_weak_deps=0 \
-    python${PYTHON_VERSION} \
-    ca-certificates \
-    procps-ng \
-    shadow-utils \
-    libpq \
+        python${PYTHON_VERSION} \
+        ca-certificates \
+        procps-ng \
+        shadow-utils \
+        libpq \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb; \
+    fi \
     && microdnf clean all \
-    && rm -rf /var/cache/yum
-
-# ----------------------------------------------------------------------------
-# Install profiling dependencies (only when ENABLE_PROFILING=true)
-# - gdb: Required for memray attach to running processes
-# ----------------------------------------------------------------------------
-# hadolint ignore=DL3041
-RUN if [ "$ENABLE_PROFILING" = "true" ]; then \
-        echo "📊 Installing profiling dependencies (gdb)..."; \
-        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb && \
-        microdnf clean all && \
-        rm -rf /var/cache/yum && \
-        echo "✓ gdb installed for memray attach support"; \
-    fi
-
-# ----------------------------------------------------------------------------
-# Create python3 symlink
-# ----------------------------------------------------------------------------
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
-
-# ----------------------------------------------------------------------------
-# Create non-root user
-# ----------------------------------------------------------------------------
-RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+    && rm -rf /var/cache/yum \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
 
 # ----------------------------------------------------------------------------
 # Copy the application from the builder stage

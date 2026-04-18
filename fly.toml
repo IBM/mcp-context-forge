@@ -7,7 +7,7 @@ app = 'mcpgateway'
 primary_region = 'yyz'
 
 [build]
-  dockerfile = 'Containerfile'
+  dockerfile = 'Containerfile.lite'
 
 [env]
   HOST = '0.0.0.0'

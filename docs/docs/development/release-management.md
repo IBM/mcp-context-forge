@@ -43,7 +43,6 @@ This updates the version string in the four canonical locations defined in `.bum
 |------|-------|
 | `mcpgateway/__init__.py` | `__version__` |
 | `pyproject.toml` | `version` |
-| `Containerfile` | `version` label |
 | `Containerfile.lite` | `version` label |
 
 !!! note "bump2version does not commit or tag"
@@ -98,7 +97,7 @@ gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.sta
 
 ### 1.6 Update container base images
 
-Update the `FROM` lines in `Containerfile` and `Containerfile.lite` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
+Update the `FROM` lines in `Containerfile.lite` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
 
 Check current base images:
 
@@ -108,18 +107,16 @@ grep '^FROM' Containerfile.lite
 
 | Stage | Current image | What to check |
 |-------|---------------|---------------|
-| Rust builder | `quay.io/pypa/manylinux2014:<tag>` | [quay.io tags](https://quay.io/repository/pypa/manylinux2014?tab=tags) |
+| Rust builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
+| Frontend builder | `registry.access.redhat.com/ubi10/nodejs-24:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/nodejs-24) |
 | Builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
 | Runtime | `registry.access.redhat.com/ubi10/ubi-minimal:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi-minimal) |
 
-Update both `Containerfile` and `Containerfile.lite` with the latest tags, then verify the images build:
+Update `Containerfile.lite` with the latest tags, then verify the image builds:
 
 ```bash
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 ```
-
-!!! warning "Keep Containerfile and Containerfile.lite in sync"
-    Both files share the same base images. When updating one, update the other to match.
 
 ### 1.7 Close the GitHub milestone
 
@@ -502,7 +499,7 @@ make hadolint dockle security-scan
 
 | Target | What it checks |
 |--------|----------------|
-| `hadolint` | Dockerfile best practices and shell linting for `Containerfile`, `Containerfile.lite`, and any `Dockerfile.*` |
+| `hadolint` | Dockerfile best practices and shell linting for `Containerfile.*` and any `Dockerfile.*` |
 | `dockle` | CIS Docker Benchmark compliance and image best practices (runs against the built image via tarball) |
 | `security-scan` | Show current local container review guidance |
 
@@ -1314,7 +1311,7 @@ Copy-paste checklist for running all gates in sequence:
 # 0. Security advisories & base images
 gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'
 # ... resolve all open Dependabot, code scanning, secret scanning alerts ...
-# ... update FROM tags in Containerfile + Containerfile.lite ...
+# ... update FROM tags in Containerfile.lite ...
 grep '^FROM' Containerfile.lite
 
 # 1. Python dependency updates
