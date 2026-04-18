@@ -1683,46 +1683,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, "update_http_pool_metrics"):
         app.state.update_http_pool_metrics()
 
-    # Initialize MCP session pool (for session reuse across tool invocations)
-    # Also initialize if session affinity is enabled (needs the ownership registry)
-    if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+    # Initialize the session-affinity service (Redis-backed worker mapping,
+    # heartbeat, session-owner forwarding). Only needed when affinity is on.
+    # The upstream-session pooling concept that used to live here has moved
+    # to UpstreamSessionRegistry (see issue #4205).
+    if settings.mcpgateway_session_affinity_enabled:
         # First-Party
         from mcpgateway.services.session_affinity import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
-        # Auto-align pool health check interval to min of pool and gateway settings
-        effective_health_check_interval = min(
-            settings.health_check_interval,
-            settings.mcp_session_pool_health_check_interval,
-        )
-
-        max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
-
-        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
-        identity_extractor = None
-        if settings.mcp_session_pool_jwt_identity_extraction:
-            identity_extractor = _create_jwt_identity_extractor()
-            logger.info("JWT identity extraction enabled for session pool")
-
-        init_mcp_session_pool(
-            max_sessions_per_key=max_sessions_per_key,
-            session_ttl_seconds=settings.mcp_session_pool_ttl,
-            health_check_interval_seconds=effective_health_check_interval,
-            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
-            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
-            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
-            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
-            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
-            identity_extractor=identity_extractor,
-            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-            # Use dedicated transport timeout (default 30s to match MCP SDK default).
-            # This is separate from health_check_timeout to allow long-running tool calls.
-            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
-            # Configurable health check chain - ordered list of methods to try.
-            health_check_methods=settings.mcp_session_pool_health_check_methods,
-            health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
-            max_total_keys=settings.mcp_session_pool_max_total_keys,
-            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
-        )
+        init_mcp_session_pool()
         logger.info("MCP session pool initialized")
 
     # Initialize the upstream session registry (#4205). 1:1 binding between a
@@ -1800,21 +1769,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
-        # Start notification service for event-driven refresh (after gateway_service is ready)
-        if settings.mcp_session_pool_enabled:
-            # First-Party
-            from mcpgateway.services.session_affinity import start_pool_notification_service  # pylint: disable=import-outside-toplevel
-
-            await start_pool_notification_service(gateway_service)
-
-        # Start heartbeat and RPC listener for multi-worker session affinity.
-        # This must be outside the mcp_session_pool_enabled guard because
-        # affinity-only deployments (pool disabled, affinity enabled) still
-        # need heartbeat and RPC forwarding.
+        # Start heartbeat, RPC listener, and notification service for multi-worker
+        # session affinity. The upstream-session-pool that used to live under
+        # this guard is gone (#4205); only the affinity layer remains here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+                get_mcp_session_pool,
+                start_pool_notification_service,
+            )
 
+            await start_pool_notification_service(gateway_service)
             pool = get_mcp_session_pool()
             pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
@@ -2073,9 +2038,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await shutdown_services(services_to_shutdown)
 
-        # Shutdown MCP session pool (before shared HTTP client)
-        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
-        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+        # Shutdown session-affinity service (before shared HTTP client).
+        if settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.session_affinity import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
