@@ -141,3 +141,51 @@ async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_er
     # Must not raise — gateway delete/update must still proceed.
     assert await _evict_upstream_sessions_for_gateway("gw-target") == 0
     reg.evict_gateway.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Connect-field change detection contract
+# ---------------------------------------------------------------------------
+
+
+_CONNECT_FIELD_NAMES = (
+    "url",
+    "auth_type",
+    "auth_value",
+    "auth_query_params",
+    "oauth_config",
+    "ca_certificate",
+    "ca_certificate_sig",
+    "signing_algorithm",
+    "client_cert",
+    "client_key",
+)
+
+
+def test_connect_field_inventory_matches_gateway_model():
+    """Every mutable Gateway field that changes the upstream HTTP/TLS envelope
+    must be in the eviction check in GatewayService.update_gateway.
+
+    Adding a new TLS / auth / URL field on the Gateway ORM without updating
+    the eviction check would leave upstream sessions pinned to stale state
+    across that field's changes. This test fails noisily if someone adds a
+    connect-relevant column and forgets to wire it through.
+
+    If you add a legitimately-non-connect field (description, tags, etc.),
+    extend _GATEWAY_MODEL_NON_CONNECT_FIELDS below.
+    """
+    # First-Party
+    from mcpgateway.db import Gateway as DbGateway
+    from mcpgateway.services import gateway_service
+
+    # Grep the source of update_gateway for each name. Coarse but sticky:
+    # rename a variable and this test still catches the intent.
+    src = open(gateway_service.__file__, encoding="utf-8").read()
+    for field in _CONNECT_FIELD_NAMES:
+        assert f"original_{field}" in src, f"update_gateway must capture original_{field} for #4205 eviction"
+        assert field in src, f"update_gateway must compare gateway.{field} to the original"
+
+    # Sanity: every _CONNECT_FIELD_NAME is an actual column on the ORM model.
+    columns = {c.key for c in DbGateway.__table__.columns}
+    for field in _CONNECT_FIELD_NAMES:
+        assert field in columns, f"_CONNECT_FIELD_NAMES out of sync: {field} no longer on Gateway model"
