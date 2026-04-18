@@ -21,7 +21,7 @@ The first end-to-end implementation is already in place:
 Current compose-backed validation on this branch:
 
 - `make test-mcp-session-isolation` -> `10 passed`
-- `make test-mcp-cli` -> `23 passed`
+- `make test-mcp-protocol-e2e` -> `23 passed`
 - `make test-mcp-rbac` -> `40 passed`
 - `cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml`
   -> `48 passed`
