@@ -2142,6 +2142,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # gateway. "Connect-affecting" means anything that changes the
                 # HTTP/TLS envelope or credentials the upstream ClientSession
                 # would use — URL, auth, or any of the TLS/mTLS material.
+                original_transport = gateway.transport
                 original_auth_value = gateway.auth_value
                 original_auth_query_params = gateway.auth_query_params
                 original_oauth_config = gateway.oauth_config
@@ -2534,18 +2535,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # (name, description, tags, passthrough_headers, visibility, etc.)
                 # leave sessions alone to preserve the 1:1 downstream-session
                 # connection-reuse benefit.
-                if (
-                    gateway.url != original_url
-                    or gateway.auth_type != original_auth_type
-                    or gateway.auth_value != original_auth_value
-                    or gateway.auth_query_params != original_auth_query_params
-                    or gateway.oauth_config != original_oauth_config
-                    or gateway.ca_certificate != original_ca_certificate
-                    or gateway.ca_certificate_sig != original_ca_certificate_sig
-                    or gateway.signing_algorithm != original_signing_algorithm
-                    or getattr(gateway, "client_cert", None) != original_client_cert
-                    or getattr(gateway, "client_key", None) != original_client_key
-                ):
+                _connect_field_changes = (
+                    (gateway.url, original_url),
+                    (gateway.transport, original_transport),
+                    (gateway.auth_type, original_auth_type),
+                    (gateway.auth_value, original_auth_value),
+                    (gateway.auth_query_params, original_auth_query_params),
+                    (gateway.oauth_config, original_oauth_config),
+                    (gateway.ca_certificate, original_ca_certificate),
+                    (gateway.ca_certificate_sig, original_ca_certificate_sig),
+                    (gateway.signing_algorithm, original_signing_algorithm),
+                    (getattr(gateway, "client_cert", None), original_client_cert),
+                    (getattr(gateway, "client_key", None), original_client_key),
+                )
+                if any(new_value != old_value for new_value, old_value in _connect_field_changes):
                     await _evict_upstream_sessions_for_gateway(str(gateway.id))
 
                 # Invalidate cache after successful update

@@ -150,6 +150,7 @@ async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_er
 
 _CONNECT_FIELD_NAMES = (
     "url",
+    "transport",  # SSE ↔ STREAMABLE_HTTP change re-pins the upstream client class
     "auth_type",
     "auth_value",
     "auth_query_params",
