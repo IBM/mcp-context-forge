@@ -597,7 +597,11 @@ class TestAgentResolveTrusted:
         "mcpgateway.main._build_internal_mcp_forwarded_user",
         return_value={"email": "intruder@example.com", "teams": ["team-b"], "is_admin": False},
     )
-    def test_private_agent_outside_scope_returns_404(self, _mock_user, _mock_trust, client):
+    def test_private_agent_outside_scope_returns_403(self, _mock_user, _mock_trust, client):
+        # The trusted sidecar receives 403 (visibility-denied) distinct
+        # from 404 (does-not-exist) so it can avoid falling through to
+        # UAID cross-gateway dispatch for agents the caller cannot see.
+        # Sidecar is expected to translate 403 → 404 for the end user.
         mock_agent = MagicMock()
         mock_agent.id = "agent-id-2"
         mock_agent.name = "private-agent"
@@ -619,7 +623,115 @@ class TestAgentResolveTrusted:
 
             resp = client.post("/_internal/a2a/agents/private-agent/resolve", json={})
 
-        assert resp.status_code == 404
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize(
+        "identifier,expected_column_substring,forbidden_column_substring,case_description",
+        [
+            # UAID-shaped → uaid column
+            (
+                "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=agent.example.com",
+                "uaid",
+                None,
+                "uaid-column",
+            ),
+            # 32-hex-char UUID → id column (must NOT hit the uaid column)
+            (
+                "ab" * 16,
+                ".id",
+                "uaid",
+                "id-column",
+            ),
+        ],
+        ids=["uaid", "uuid_hex"],
+    )
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    def test_resolve_dispatches_to_correct_column(
+        self,
+        _mock_scope,
+        _mock_trust,
+        client,
+        identifier,
+        expected_column_substring,
+        forbidden_column_substring,
+        case_description,
+    ):
+        """Regression guard for the earlier ``or_(name, id, uaid)`` approach.
+
+        A single filter() call against the expected column proves the
+        handler dispatched on identifier kind rather than cross-selecting
+        across three columns.  Collapsed from two near-identical tests;
+        `case_description` makes the parametrize id show up in test
+        failure output.
+        """
+        mock_agent = MagicMock()
+        mock_agent.id = identifier if case_description == "id-column" else "cd" * 16
+        mock_agent.name = f"agent-for-{case_description}"
+        mock_agent.endpoint_url = "https://agent.example.com"
+        mock_agent.agent_type = "generic"
+        mock_agent.protocol_version = "1.0"
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.visibility = "public"
+        mock_agent.owner_email = None
+        mock_agent.team_id = None
+        mock_agent.enabled = True
+
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+            mock_session_local.return_value = mock_db
+
+            resp = client.post(f"/_internal/a2a/agents/{identifier}/resolve", json={})
+
+        assert resp.status_code == 200
+        # A hit on first lookup means the name fallback never runs.
+        assert mock_db.query.return_value.filter.call_count == 1
+        clause = str(mock_db.query.return_value.filter.call_args_list[0].args[0]).lower()
+        assert expected_column_substring in clause, f"expected {expected_column_substring!r} in {clause!r}"
+        if forbidden_column_substring is not None:
+            assert forbidden_column_substring not in clause, f"forbidden column {forbidden_column_substring!r} in {clause!r}"
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    def test_resolve_uaid_falls_back_to_name_on_uaid_miss(self, _mock_scope, _mock_trust, client):
+        """A UAID-shaped string that isn't in the ``uaid`` column falls back to name lookup.
+
+        Preserves backward compatibility: a legacy agent whose name
+        happens to be UAID-shaped is still resolvable.
+        """
+        mock_agent = MagicMock()
+        mock_agent.id = "ef" * 16
+        mock_agent.name = "legacy-agent"
+        mock_agent.endpoint_url = "https://agent.example.com"
+        mock_agent.agent_type = "generic"
+        mock_agent.protocol_version = "1.0"
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.visibility = "public"
+        mock_agent.owner_email = None
+        mock_agent.team_id = None
+        mock_agent.enabled = True
+
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            # First lookup (uaid column) returns None; second (name) returns agent.
+            mock_db.query.return_value.filter.return_value.first.side_effect = [None, mock_agent]
+            mock_session_local.return_value = mock_db
+
+            uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=agent.example.com"
+            resp = client.post(f"/_internal/a2a/agents/{uaid}/resolve", json={})
+
+        assert resp.status_code == 200
+        # Exactly two filter() calls: UAID column miss, then name column hit.
+        assert mock_db.query.return_value.filter.call_count == 2
+        first_clause = str(mock_db.query.return_value.filter.call_args_list[0].args[0]).lower()
+        second_clause = str(mock_db.query.return_value.filter.call_args_list[1].args[0]).lower()
+        assert "uaid" in first_clause
+        assert "name" in second_clause
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
@@ -663,6 +775,40 @@ class TestAgentResolveTrusted:
         assert resp.status_code == 200
         assert resp.json()["auth_value_encrypted"] == "enc-auth"
         assert resp.json()["auth_query_params_encrypted"] == {"k": "enc-param"}
+
+    @pytest.mark.parametrize(
+        "wrapped",
+        [
+            # Raw spaces get URL-encoded to %20 by the client, reaching
+            # the handler as a leading/trailing space — exactly the
+            # attack vector the strip() gate defends against.
+            " my-agent",
+            "my-agent ",
+            # NBSP survives URL encoding as %C2%A0 and is recognised by
+            # Python's str.strip() → also rejected.
+            "\u00a0my-agent",
+        ],
+    )
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    def test_resolve_rejects_surrounding_whitespace(self, _mock_scope, _mock_trust, client, wrapped):
+        """A leading or trailing whitespace identifier must be rejected with 400.
+
+        Without this gate a caller could wrap a UAID or a 32-hex UUID in
+        whitespace to bypass the kind-dispatch in `handle_internal_a2a_agent_resolve`
+        and silently land on the name column, probing for a differently
+        scoped agent.  The handler short-circuits on `strip()` mismatch
+        so no DB lookup must occur.
+        """
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_session_local.return_value = mock_db
+
+            resp = client.post(f"/_internal/a2a/agents/{wrapped}/resolve", json={})
+
+        assert resp.status_code == 400
+        # No DB lookup must occur — the strip gate is before any query.
+        mock_db.query.assert_not_called()
 
 
 class TestAgentCardTrusted:
@@ -918,13 +1064,14 @@ class TestInternalA2ADenyPaths:
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
     @patch("mcpgateway.main.SessionLocal")
-    def test_agent_resolve_wrong_team_returns_404(self, mock_session_local, _mock_scope, _mock_trust, client):
-        """Wrong team on /agents/{name}/resolve must return 404 (not 403).
+    def test_agent_resolve_wrong_team_returns_403(self, mock_session_local, _mock_scope, _mock_trust, client):
+        """Wrong team on /agents/{name}/resolve returns 403 (visibility-denied).
 
-        The scope context narrows visibility via ``_check_agent_access``.
-        When that check returns False the endpoint responds 404 — same shape
-        as "agent not found" — so callers cannot enumerate agents they
-        cannot see.
+        The internal resolve endpoint is inside the trust boundary (sidecar
+        only). It surfaces 403 for a found-but-access-denied agent so the
+        sidecar can refuse to fall through to UAID cross-gateway dispatch.
+        The sidecar translates 403 back to 404 for the end user to avoid
+        leaking existence of private agents.
         """
         mock_db = MagicMock()
         mock_agent = MagicMock()
@@ -936,7 +1083,7 @@ class TestInternalA2ADenyPaths:
             with patch("mcpgateway.services.a2a_server_service.A2AServerService.resolve_server_agent", return_value=None):
                 resp = client.post("/_internal/a2a/agents/team-a-agent/resolve", json={})
 
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))

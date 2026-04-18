@@ -577,6 +577,41 @@ class Settings(BaseSettings):
         ),
     )
 
+    # UAID Cross-Gateway Routing Security
+    uaid_allowed_domains: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain allowlist for UAID cross-gateway routing. When not empty, only UAIDs with endpoints "
+            "ending in these domains will be allowed for cross-gateway routing. Empty list = allow all domains."
+        ),
+    )
+
+    uaid_max_length: int = Field(
+        default=2048,
+        ge=512,  # Minimum: accommodate shortest valid UAID
+        le=2048,  # Maximum: MUST match database column length (a2a_agents.uaid String(2048))
+        description=(
+            "Maximum allowed length for UAID strings. Used to prevent DoS attacks via "
+            "excessively long UAID parsing. Must not exceed database column limit (2048). "
+            "Default 2048 matches database capacity. Operators can reduce for stricter DoS "
+            "protection but cannot exceed database schema limit."
+        ),
+    )
+
+    uaid_max_federation_hops: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum UAID cross-gateway federation hops. Each outbound hop stamps "
+            "`X-Contextforge-UAID-Hop: N+1`; inbound calls at hop >= this limit are "
+            "rejected with 404 to break recursion. Covers both A→B→A loops and "
+            "self-referential `endpoint_url` loops. Default 5 accommodates "
+            "multi-tenant partner chains (Prod → Partner1 → Partner2 → Partner3) "
+            "while still terminating loops quickly (a ping-pong trips in 4 hops)."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")

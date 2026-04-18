@@ -20,6 +20,7 @@ pub mod server;
 pub mod session;
 pub mod stream;
 pub mod trust;
+pub mod uaid;
 
 use config::{ListenTarget, RuntimeConfig};
 use reqwest::Client;
@@ -72,6 +73,22 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     config
         .validate_cross_field()
         .map_err(RuntimeError::Config)?;
+
+    // Report the UAID allowlist posture loudly at startup — the per-request
+    // warning in the handler is rate-limited, so operators reading the boot
+    // log need to see this once regardless of traffic.
+    let uaid_allowlist = config.uaid_allowed_domains_list();
+    if uaid_allowlist.is_empty() {
+        tracing::warn!(
+            "A2A_RUST_UAID_ALLOWED_DOMAINS is empty — UAID cross-gateway routing \
+             will permit ANY host. Set this to a trusted-host allowlist in production."
+        );
+    } else {
+        tracing::info!(
+            allowed_domains = ?uaid_allowlist,
+            "UAID cross-gateway allowlist configured"
+        );
+    }
 
     let client = build_http_client(&config)?;
     let config_arc = Arc::new(config.clone());
@@ -347,6 +364,10 @@ mod tests {
             event_store_ttl_secs: 1,
             event_flush_interval_ms: 1,
             event_flush_batch_size: 1,
+            uaid_allowed_domains: String::new(),
+            uaid_allowed_domains_cache: Default::default(),
+            uaid_max_length: 2048,
+            uaid_max_federation_hops: 3,
             log_filter: "info".to_string(),
             exit_after_startup_ms: Some(5),
         }

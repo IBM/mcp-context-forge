@@ -4761,6 +4761,13 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # UAID (Universal Agent ID) fields for HCS-14 support
+    uaid: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True, comment="Full UAID string for UAID-based agents (max 2048 chars)")
+    uaid_registry: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="Registry name extracted from UAID")
+    uaid_proto: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, comment="Protocol from UAID (a2a, mcp, rest, grpc)")
+    uaid_native_id: Mapped[Optional[str]] = mapped_column(String(767), nullable=True, comment="Native endpoint URL for cross-gateway routing")
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)

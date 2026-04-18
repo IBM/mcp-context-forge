@@ -59,11 +59,12 @@ Admin.logRestrictedContext = logRestrictedContext;
 // TIER 2: Feature modules (fully converted to ES modules)
 // ===================================================================
 
-import { editA2AAgent, testA2AAgent, viewA2AAgent } from "./a2aAgents.js";
+import { editA2AAgent, testA2AAgent, viewA2AAgent, toggleUAIDFields } from "./a2aAgents.js";
 
 Admin.editA2AAgent = editA2AAgent;
 Admin.testA2AAgent = testA2AAgent;
 Admin.viewA2AAgent = viewA2AAgent;
+Admin.toggleUAIDFields = toggleUAIDFields;
 
 // Auth
 import {

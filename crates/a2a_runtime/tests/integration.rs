@@ -96,6 +96,10 @@ fn default_test_config() -> RuntimeConfig {
         event_store_ttl_secs: 3600,
         event_flush_interval_ms: 1000,
         event_flush_batch_size: 100,
+        uaid_allowed_domains: String::new(),
+        uaid_allowed_domains_cache: Default::default(),
+        uaid_max_length: 2048,
+        uaid_max_federation_hops: 3,
         log_filter: "warn".to_string(),
         exit_after_startup_ms: None,
     }
@@ -335,6 +339,185 @@ async fn test_metrics_endpoint_returns_json() {
     assert_eq!(body["total_calls"], 0);
     assert_eq!(body["successful_calls"], 0);
     assert_eq!(body["failed_calls"], 0);
+}
+
+/// Drive the shared `/invoke` hop-guard test body: boot a mock agent
+/// (which must not receive any requests), post with the given JSON
+/// `headers` sub-object, and assert a 404.
+///
+/// Folded from two near-identical tests to keep the RFC 7230 coalesced
+/// case and the HashMap multi-variant smuggling case side-by-side: both
+/// defend the same hop counter invariant ("fail closed to the MAX of
+/// all observed values"), and folding them makes it obvious when one
+/// path regresses while the other still passes.
+async fn run_invoke_hop_guard_rejects(headers_payload: Value, reason: &'static str) {
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0) // must not be reached — hop guard fires first
+        .mount(&remote_agent)
+        .await;
+
+    let mut config = default_test_config();
+    config.uaid_max_federation_hops = 3;
+    let app = test_app(config);
+
+    let (status, _) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": remote_agent.uri(),
+            "headers": headers_payload,
+            "json_body": {"jsonrpc": "2.0", "id": 1}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{reason}");
+    remote_agent.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_hop_guard_rejects_coalesced_header() {
+    // RFC 7230 §3.2.2 allows a proxy to coalesce two `X-Hop: N` headers
+    // into a single comma-joined value.  `"0, 3"` at limit=3 must still
+    // be rejected — parser must split, trim OWS, and fail to the max.
+    run_invoke_hop_guard_rejects(
+        json!({"X-Contextforge-UAID-Hop": "0, 3"}),
+        "coalesced '0, 3' must be parsed as max=3 and trip the guard",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_invoke_hop_guard_rejects_multi_variant_smuggling() {
+    // Attacker sends a low value under one case and a high value under
+    // another, hoping HashMap iteration order picks the low one and
+    // bypasses the guard.  Scan all case-insensitive matches, take max.
+    run_invoke_hop_guard_rejects(
+        json!({
+            "X-Contextforge-UAID-Hop": "3",
+            "x-contextforge-uaid-hop": "0",
+        }),
+        "multi-variant smuggling must not reset the counter; expected 404",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_a2a_invoke_hop_guard_rejects_duplicate_http_headers() {
+    // Same attack vector on the `/a2a/*` path: two HTTP headers with
+    // the same name (one value low, one high) are both kept by axum's
+    // HeaderMap.  Collapsing into a HashMap would drop one
+    // unpredictably; `read_hop_from_header_map` reads `get_all` and
+    // picks the max, so the high value trips the guard.
+    ensure_queue_initialized();
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.uaid_max_federation_hops = 3;
+    let app = test_app(config);
+
+    let body = send_message_json(1, "hello");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/a2a/plain-agent/invoke")
+        .header("content-type", "application/json")
+        // Two hop headers.  axum's HeaderMap keeps both; the handler
+        // must take max=3.
+        .header("x-contextforge-uaid-hop", "0")
+        .header("x-contextforge-uaid-hop", "3")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    backend.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_hop_guard_reads_title_case_header() {
+    // Regression guard: the JSON `headers` field on `POST /invoke`
+    // preserves whatever key case the caller sent.  Python's
+    // `_invoke_remote_agent` stamps `X-Contextforge-UAID-Hop`
+    // (title case) while this module normalizes to lowercase.  A
+    // case-sensitive lookup on the Rust side would silently treat
+    // every Python-stamped request as hop 0 and reopen the loop.
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0) // must not be reached — hop guard fires first
+        .mount(&remote_agent)
+        .await;
+
+    let mut config = default_test_config();
+    config.uaid_max_federation_hops = 3;
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": remote_agent.uri(),
+            "headers": {"X-Contextforge-UAID-Hop": "3"},  // title-case
+            "json_body": {"jsonrpc": "2.0", "id": 1}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "title-case hop header at limit must reject, got {status} body={body}"
+    );
+    remote_agent.verify().await;
+}
+
+#[tokio::test]
+async fn test_invoke_outbound_normalizes_hop_header_case() {
+    // The outbound request to the downstream agent must carry exactly
+    // one `x-contextforge-uaid-hop` header, regardless of what case the
+    // upstream caller used.  A duplicate (title-case alongside
+    // lowercase) would let one downstream lookup see "0" and another
+    // see "N+1".
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(header("x-contextforge-uaid-hop", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&remote_agent)
+        .await;
+
+    let config = default_test_config();
+    let app = test_app(config);
+
+    // Inbound hop=1 (title case).  Outbound must be exactly "2".
+    let (status, _body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": remote_agent.uri(),
+            "headers": {"X-Contextforge-UAID-Hop": "1"},
+            "json_body": {"jsonrpc": "2.0", "id": 1}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    remote_agent.verify().await;
 }
 
 #[tokio::test]
@@ -4219,4 +4402,994 @@ async fn test_streaming_method_replays_from_store_when_last_event_id_present() {
     );
 
     mock_server.verify().await;
+}
+
+// ---------------------------------------------------------------------------
+// UAID cross-gateway (A2A 1.0-compliant) dispatch
+// ---------------------------------------------------------------------------
+
+/// Percent-encode `/` within a UAID so it survives routing as a single
+/// path segment.  Callers of `/a2a/{uaid}/invoke` in production must do
+/// the same when embedding a UAID with a full-URL `nativeId`.
+fn encode_uaid_for_path(uaid: &str) -> String {
+    uaid.replace('/', "%2F")
+}
+
+/// When the path-segment is a UAID and Python returns 404 on resolve, the
+/// runtime should forward the original JSON-RPC body to the agent URL
+/// embedded in the UAID's `nativeId`.  This is the A2A-1.0 path, not the
+/// Python gateway's CF-federation path.
+#[tokio::test]
+async fn test_uaid_cross_gateway_forwards_jsonrpc_to_native_endpoint() {
+    ensure_queue_initialized();
+
+    // Mock the remote A2A agent at a known URL.  UAID nativeId will point
+    // at the full wiremock URL so the runtime resolves routing to this
+    // mock directly (no HTTPS in tests).
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_json(json!({
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": 7,
+            "params": {"message": "hello"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {"status": "completed", "message": "remote-reply"}
+        })))
+        .expect(1)
+        .mount(&remote_agent)
+        .await;
+
+    // Mock the Python backend: authn 200, authz 204, resolve 404.
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    // UAID carries the remote agent's URL as nativeId.  The parser
+    // accepts full http:// URLs so the test can target wiremock; we
+    // percent-encode `/` so the UAID is a single path segment.
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "message/send",
+        "id": 7,
+        "params": {"message": "hello"}
+    });
+
+    let (status, resp) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp}");
+    assert_eq!(resp["status_code"], 200);
+    assert_eq!(resp["success"], true);
+    assert_eq!(resp["json"]["result"]["message"], "remote-reply");
+
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// When the allowlist is configured and the UAID's host is not in it, the
+/// runtime must reject with 403 before touching the remote agent.
+#[tokio::test]
+async fn test_uaid_cross_gateway_rejected_when_host_not_in_allowlist() {
+    ensure_queue_initialized();
+
+    let remote_agent = MockServer::start().await;
+    // Expect zero calls — the allowlist must block before reaching here.
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.uaid_allowed_domains = "trusted.example.com".to_string();
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let (status, resp) = post_json(app, &uri, json!({"jsonrpc": "2.0", "id": 1})).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {resp}");
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// When the UAID protocol is not `a2a`, the A2A runtime returns 501 rather
+/// than trying to speak a non-A2A protocol.  MCP cross-gateway belongs in
+/// the Python CF-federation path.
+#[tokio::test]
+async fn test_uaid_cross_gateway_rejects_non_a2a_protocol() {
+    ensure_queue_initialized();
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=mcp;nativeId=mcp.example.com";
+    let uri = format!("/a2a/{}/invoke", uaid);
+    let (status, _) = post_json(app, &uri, json!({"jsonrpc": "2.0", "id": 1})).await;
+
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    backend.verify().await;
+}
+
+/// Local UAID hit: when the Python resolver returns 200 the runtime must
+/// NOT fall through to cross-gateway — it must invoke the locally
+/// registered agent at the resolver-supplied endpoint_url.
+#[tokio::test]
+async fn test_uaid_local_hit_invokes_local_agent_not_cross_gateway() {
+    ensure_queue_initialized();
+
+    // The registered local agent listens here.
+    let local_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/local-agent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"origin": "local"}
+        })))
+        .expect(1)
+        .mount(&local_agent)
+        .await;
+
+    // A UAID whose nativeId points at a DIFFERENT host — if the
+    // runtime accidentally falls through to cross-gateway instead of
+    // honouring the local resolve, the local_agent mock's `.expect(1)`
+    // will fail.
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=unreachable.example.invalid";
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    let local_endpoint = format!("{}/local-agent", local_agent.uri());
+    setup_resolve_mock(&backend, uaid, &local_endpoint, 1).await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(uaid));
+    let body = send_message_json(1, "hello");
+
+    let (status, resp) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp}");
+    assert_eq!(resp["status_code"], 200);
+    assert_eq!(resp["json"]["result"]["origin"], "local");
+
+    local_agent.verify().await;
+    backend.verify().await;
+}
+
+/// SendStreamingMessage against a local-hit UAID must reuse the pre-resolved
+/// agent record rather than calling `/resolve` a second time.  A concurrent
+/// cache eviction between the two calls would otherwise turn a valid
+/// streaming invoke into a spurious 404.  This test mocks `resolve` with
+/// `.expect(1)` — a regression that re-resolves inside `handle_streaming_method`
+/// fails the count assertion.
+#[tokio::test]
+async fn test_uaid_local_hit_streaming_reuses_preresolved_agent() {
+    ensure_queue_initialized();
+
+    // Local A2A agent that returns an SSE stream on POST /.
+    // Use `set_body_raw` to set both body and content-type; wiremock
+    // overrides the content-type if `set_body_string` is used alongside
+    // `append_header`.
+    let local_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/stream-endpoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "id: 1\nevent: status\ndata: {\"status\":\"ok\"}\n\n",
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&local_agent)
+        .await;
+
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=streaming.example.invalid";
+
+    // Backend: authn + authz + resolve MUST be called exactly once each —
+    // `.expect(1)` on resolve is the TOCTOU regression guard.
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    let local_endpoint = format!("{}/stream-endpoint", local_agent.uri());
+    setup_resolve_mock(&backend, uaid, &local_endpoint, 1).await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(uaid));
+    let body = streaming_message_json(1, "hello", "user");
+    let request = Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // Streaming content-type proves the runtime took the SSE proxy
+    // branch, not the JSON fallback — a secondary guard on top of the
+    // `.expect(1)` resolve mock below.
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    local_agent.verify().await;
+    backend.verify().await;
+}
+
+/// UAID local hit + `tasks/get` must reuse `preresolved_agent` rather than
+/// re-resolving inside the task branch.  `setup_resolve_mock(.., expect=1)`
+/// is the regression guard: a double-resolve causes wiremock's `verify()`
+/// to panic with an expectation mismatch.
+#[tokio::test]
+async fn test_uaid_local_hit_task_branch_reuses_preresolved_agent() {
+    ensure_queue_initialized();
+
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=tasks.example.invalid";
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    // authz endpoint is keyed by action (`get` for `tasks/get`), not
+    // `invoke` — use a broader regex than `setup_authz_mock` provides.
+    Mock::given(method("POST"))
+        .and(path_regex(r".*authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&backend)
+        .await;
+    // Expect EXACTLY one resolve call — the UAID pre-resolve; the task
+    // branch must reuse its result.
+    setup_resolve_mock(&backend, uaid, "https://agent.example.invalid", 1).await;
+
+    // The task-get proxy endpoint Python serves.
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/tasks/get"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "task-42",
+            "status": {"state": "completed"}
+        })))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "tasks/get",
+        "id": 1,
+        "params": {"id": "task-42"}
+    });
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(uaid));
+    let (status, _) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    backend.verify().await;
+}
+
+/// Same TOCTOU guard as above, for the push-notification-config branch.
+#[tokio::test]
+async fn test_uaid_local_hit_push_branch_reuses_preresolved_agent() {
+    ensure_queue_initialized();
+
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=push.example.invalid";
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    // `tasks/pushNotificationConfig/set` maps to authz action "invoke",
+    // so `setup_authz_mock`'s `.*invoke/authz$` regex matches.
+    setup_authz_mock(&backend, 1).await;
+    setup_resolve_mock(&backend, uaid, "https://agent.example.invalid", 1).await;
+
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/push/create"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "tasks/pushNotificationConfig/set",
+        "id": 2,
+        "params": {"task_id": "task-1", "url": "https://callback.example.invalid"}
+    });
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(uaid));
+    let (status, _) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    backend.verify().await;
+}
+
+/// A remote UAID + SendStreamingMessage must be proxied end-to-end as
+/// SSE, not buffered through `execute_invoke`.  Buffering collapses the
+/// stream into a single JSON blob and defeats streaming entirely.  We
+/// assert the response Content-Type is `text/event-stream` and that
+/// individual SSE frames are present in the response body.
+#[tokio::test]
+async fn test_uaid_cross_gateway_streaming_forwards_sse() {
+    ensure_queue_initialized();
+
+    // Remote agent returns SSE frames on POST /.
+    // `set_body_raw(body, content_type)` is the canonical way to set
+    // both in wiremock; `set_body_string` + `append_header("content-type", …)`
+    // is silently overridden and was the reason the streaming-local-hit
+    // test had to drop a similar assertion.
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "id: 1\nevent: status\ndata: {\"status\":\"queued\"}\n\n\
+             id: 2\nevent: status\ndata: {\"status\":\"working\"}\n\n",
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&remote_agent)
+        .await;
+
+    // Backend: resolve returns 404 so Rust takes the cross-gateway path.
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let body = streaming_message_json(7, "hello", "user");
+
+    let request = Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // Key assertion: the sidecar proxied SSE, did NOT buffer into JSON.
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream"),
+        "remote UAID + SendStreamingMessage must proxy SSE, not buffer to JSON"
+    );
+
+    let body_bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    assert!(
+        body_str.contains("data: {\"status\":\"queued\"}"),
+        "expected first SSE frame, body: {body_str}"
+    );
+    assert!(
+        body_str.contains("data: {\"status\":\"working\"}"),
+        "expected second SSE frame, body: {body_str}"
+    );
+
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// When a remote UAID streaming invocation lands on an agent that does
+/// not actually produce SSE, the runtime falls back to a buffered JSON
+/// reply.  That fallback must still honour `max_response_body_bytes` so
+/// a hostile remote cannot flood the sidecar with an unbounded body.
+#[tokio::test]
+async fn test_uaid_cross_gateway_streaming_fallback_enforces_body_size_limit() {
+    ensure_queue_initialized();
+
+    // Remote advertises a non-SSE content-type and returns a body
+    // larger than the configured cap.  Using a JSON body (not SSE) so
+    // the runtime takes the buffered fallback branch.
+    let oversized = vec![b'x'; 4096];
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(oversized, "application/json"))
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.max_response_body_bytes = 1024; // well below 4096
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let body = streaming_message_json(9, "hello", "user");
+
+    let (status, resp) = post_json(app, &uri, body).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_GATEWAY,
+        "oversized remote response must be rejected, got body: {resp}"
+    );
+    let err_text = resp["error"].as_str().unwrap_or_default();
+    assert!(
+        err_text.contains("max_response_body_bytes"),
+        "error should cite the body-size limit, got: {err_text}"
+    );
+}
+
+/// A chunked-transfer remote that advertises no `Content-Length` must
+/// still be bounded by `max_response_body_bytes`: the runtime reads the
+/// body in bounded chunks and rejects as soon as the running total
+/// crosses the cap.  Without this guard, a hostile remote could stream
+/// unbounded data and only be stopped after the whole body was buffered.
+///
+/// Uses a raw `TcpListener` rather than a `wiremock::MockServer` because
+/// wiremock's `set_body_raw` stamps a `Content-Length` header internally
+/// — the fast-reject in `handle_uaid_cross_gateway_streaming` would then
+/// fire on the header value alone and the body-size-during-read branch
+/// of `read_bounded_body` would never execute.  Emitting a real
+/// `Transfer-Encoding: chunked` response with no `Content-Length`
+/// forces the test to exercise the running-total check.
+#[tokio::test]
+async fn test_uaid_cross_gateway_streaming_fallback_caps_chunked_body() {
+    ensure_queue_initialized();
+
+    // Build the chunked HTTP/1.1 response bytes manually: 8 KiB payload
+    // in a single chunk, no Content-Length header.
+    let payload = vec![b'y'; 8192];
+    let mut response_bytes = Vec::new();
+    response_bytes.extend_from_slice(
+        b"HTTP/1.1 200 OK\r\n\
+          Content-Type: application/json\r\n\
+          Transfer-Encoding: chunked\r\n\
+          \r\n",
+    );
+    response_bytes.extend_from_slice(format!("{:x}\r\n", payload.len()).as_bytes());
+    response_bytes.extend_from_slice(&payload);
+    response_bytes.extend_from_slice(b"\r\n0\r\n\r\n");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind remote-agent listener");
+    let agent_addr = listener.local_addr().expect("local_addr");
+    tokio::spawn(async move {
+        // One-shot accept-and-reply: the test makes exactly one request.
+        if let Ok((mut stream, _)) = listener.accept().await {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            // Drain the request so the client sees a clean response.
+            let mut buf = [0u8; 8192];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream.write_all(&response_bytes).await;
+            let _ = stream.shutdown().await;
+        }
+    });
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.max_response_body_bytes = 1024;
+    let app = test_app(config);
+
+    let uaid = format!("uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=http://{agent_addr}");
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let body = streaming_message_json(11, "hello", "user");
+    let (status, resp) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "body: {resp}");
+    assert!(
+        resp["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("max_response_body_bytes"),
+        "error should cite the body-size limit"
+    );
+}
+
+/// UAID local hit + GetExtendedAgentCard must key the Python card
+/// endpoint by the resolver-supplied canonical name, not the raw UAID.
+/// Python's `/_internal/a2a/agents/{name}/card` route matches on `name`
+/// only, so a UAID embedded in the URL would 404 outright.  The counter
+/// mock at `/agents/<uaid>/card` asserts zero hits — a regression that
+/// reverted `preresolved_agent.as_ref()` threading on `proxy_agent_card`
+/// would trip it and fail the test.
+#[tokio::test]
+async fn test_uaid_local_hit_card_uses_canonical_name_not_uaid() {
+    ensure_queue_initialized();
+
+    let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=card.example.invalid";
+    let canonical_name = "uaid-backed-card-agent";
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    // `agent/getExtendedCard` authz action is "get".
+    Mock::given(method("POST"))
+        .and(path_regex(r".*authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&backend)
+        .await;
+    // Resolve returns an agent whose canonical name differs from the
+    // UAID path segment — this is exactly the case where the naive
+    // (pre-fix) code would 404 downstream.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "agent_id": "agent-card-001",
+            "name": canonical_name,
+            "endpoint_url": "https://card.example.invalid",
+            "agent_type": "a2a",
+            "protocol_version": "1.0",
+            "auth_type": null,
+            "auth_value_encrypted": null,
+            "auth_query_params_encrypted": null
+        })))
+        .expect(1)
+        .mount(&backend)
+        .await;
+    // Card endpoint keyed by canonical name returns a card.
+    Mock::given(method("POST"))
+        .and(path(format!("/_internal/a2a/agents/{canonical_name}/card")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": canonical_name,
+            "description": "card body"
+        })))
+        .expect(1)
+        .mount(&backend)
+        .await;
+    // Counter mock: if the sidecar ever keys the card endpoint by the
+    // UAID path segment, this mock catches it. `.expect(0)` turns such
+    // a regression into a loud failure rather than a silent 404.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/uaid:aid:[^/]+/card/?$"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("must not be called"))
+        .expect(0)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "GetExtendedAgentCard",
+        "id": 1,
+        "params": {}
+    });
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(uaid));
+    let (status, resp) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp}");
+    assert_eq!(resp["status_code"], 200);
+
+    backend.verify().await;
+}
+
+/// Federation-hop guard covers NON-UAID invocations too: a plain
+/// agent-name call whose `endpoint_url` happens to loop back through
+/// this same handler (misconfigured or malicious registration) must
+/// also be rejected once the hop counter reaches the configured
+/// maximum.  A previous iteration of the fix only stamped/read the
+/// counter on the UAID branch, leaving local-agent invokes unbounded.
+#[tokio::test]
+async fn test_hop_limit_rejects_non_uaid_inbound_at_max() {
+    ensure_queue_initialized();
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    // Resolve must not be called — the hop guard is evaluated BEFORE
+    // resolve for every invocation, not just UAIDs.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.uaid_max_federation_hops = 3;
+    let app = test_app(config);
+
+    let body = send_message_json(1, "hello");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/a2a/plain-agent-name/invoke")
+        .header("content-type", "application/json")
+        .header("x-contextforge-uaid-hop", "3")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    backend.verify().await;
+}
+
+/// Local-agent invoke must STAMP the outbound hop header even when the
+/// identifier is not a UAID — regression guard against the earlier
+/// implementation that only stamped on the UAID cross-gateway path.
+#[tokio::test]
+async fn test_local_agent_invoke_stamps_outbound_hop_header() {
+    ensure_queue_initialized();
+
+    // Remote agent expects the hop header on the incoming request.
+    let local_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/agent-endpoint"))
+        .and(header("x-contextforge-uaid-hop", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"status": "ok"}
+        })))
+        .expect(1)
+        .mount(&local_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    setup_resolve_mock(
+        &backend,
+        "plain-agent",
+        &format!("{}/agent-endpoint", local_agent.uri()),
+        1,
+    )
+    .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    // No inbound hop header ⇒ hop_count=0 ⇒ outbound must be "1".
+    let body = send_message_json(1, "hello");
+    let (status, _) = post_json(app, "/a2a/plain-agent/invoke", body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    local_agent.verify().await;
+    backend.verify().await;
+}
+
+/// Visibility-denial on a NAMED-agent (non-UAID) request must surface
+/// as 404 to the caller, not 403.  Python's `/_internal/.../resolve`
+/// uses 403 so the sidecar can tell "exists-but-hidden" apart from
+/// "not-found" (e.g., for UAID cross-gateway dispatch decisions), but
+/// that signal must never leak to the external client — otherwise an
+/// attacker probing for private agents can enumerate them by the
+/// status-code difference.
+///
+/// The UAID branch was fixed earlier; this test locks in the fix for
+/// the named-agent path where `take_or_resolve` surfaces 403.
+#[tokio::test]
+async fn test_named_agent_resolve_403_returns_404_to_client() {
+    ensure_queue_initialized();
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    // Python resolver returns 403 (visibility-denied).
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "access denied"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    // Plain agent name — NOT a UAID.  The UAID branch is bypassed; the
+    // 403 surfaces through `take_or_resolve` + `map_agent_resolve_err`.
+    let body = send_message_json(1, "hello");
+    let (status, resp) = post_json(app, "/a2a/private-agent/invoke", body).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "403 from resolver must be translated to 404 for the client; body={resp}"
+    );
+    // Error message must not contain "denied" or "forbidden" — those
+    // words would also leak the existence signal to anyone grepping
+    // the error text.
+    let err_text = resp
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    assert!(
+        !err_text.contains("denied") && !err_text.contains("forbidden"),
+        "translated 404 must not echo the 403 signal in the error text: {err_text}"
+    );
+    backend.verify().await;
+}
+
+/// Federation-hop guard: an inbound UAID request carrying
+/// `X-Contextforge-UAID-Hop: N` where N >= `uaid_max_federation_hops`
+/// must be rejected with 404 and MUST NOT issue any outbound call —
+/// otherwise a misconfigured/self-referential UAID loops through the
+/// Rust sidecar the same way it would through Python.
+#[tokio::test]
+async fn test_uaid_hop_limit_rejects_inbound_at_max() {
+    ensure_queue_initialized();
+
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    // Resolve must also not be called — the hop guard fires before resolve.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.uaid_max_federation_hops = 3;
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let body = send_message_json(1, "hello");
+    let request = Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("content-type", "application/json")
+        .header("x-contextforge-uaid-hop", "3")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// Federation-hop stamp: a cross-gateway dispatch MUST include
+/// `X-Contextforge-UAID-Hop: N+1` on the outbound POST so the next
+/// gateway in the chain can count hops.  A regression that silently
+/// drops the header reopens the loop.
+#[tokio::test]
+async fn test_uaid_cross_gateway_stamps_outbound_hop_header() {
+    ensure_queue_initialized();
+
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(header("x-contextforge-uaid-hop", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"status": "ok"}
+        })))
+        .expect(1)
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    // No inbound hop header ⇒ hop_count = 0 ⇒ outbound should be 1.
+    let body = send_message_json(1, "hello");
+    let (status, _) = post_json(app, &uri, body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// 403 from the Python resolver means "found but caller can't see it".
+/// The sidecar must translate this to 404 for the end user (don't leak
+/// existence) and must NOT fall through to cross-gateway.
+#[tokio::test]
+async fn test_uaid_resolve_403_returns_404_and_skips_cross_gateway() {
+    ensure_queue_initialized();
+
+    let remote_agent = MockServer::start().await;
+    // Zero expected calls — a 403 must short-circuit before any outbound.
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "access denied"})))
+        .expect(1)
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let (status, _) = post_json(app, &uri, json!({"jsonrpc": "2.0", "id": 1})).await;
+
+    // End-user-facing status must be 404 (existence hidden), not 403.
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    remote_agent.verify().await;
+    backend.verify().await;
+}
+
+/// Non-404, non-403 resolver error (e.g., 500 → BAD_GATEWAY) must
+/// surface to the caller rather than being silently converted into
+/// cross-gateway dispatch.
+#[tokio::test]
+async fn test_uaid_resolve_5xx_surfaces_as_bad_gateway() {
+    ensure_queue_initialized();
+
+    let remote_agent = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0) // must not be called
+        .mount(&remote_agent)
+        .await;
+
+    let backend = MockServer::start().await;
+    setup_auth_mock(&backend, 1).await;
+    setup_authz_mock(&backend, 1).await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/_internal/a2a/agents/[^/]+/resolve/?$"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("backend exploded"))
+        .mount(&backend)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = backend.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let uaid = format!(
+        "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId={}",
+        remote_agent.uri()
+    );
+    let uri = format!("/a2a/{}/invoke", encode_uaid_for_path(&uaid));
+    let (status, _) = post_json(app, &uri, json!({"jsonrpc": "2.0", "id": 1})).await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    remote_agent.verify().await;
 }

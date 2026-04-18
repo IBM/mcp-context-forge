@@ -54,6 +54,7 @@ dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
     "brotli==1.2.0", # Transitive pin (starlette-compress)
+    "base58>=2.1.1",
     "cryptography>=46.0.7",
     "fastapi>=0.135.3",
     "filelock>=3.25.2",

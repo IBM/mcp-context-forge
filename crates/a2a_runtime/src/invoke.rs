@@ -207,7 +207,21 @@ pub async fn execute_invoke(
         }
 
         let json = serde_json::from_slice::<Value>(&bytes).ok();
-        let text = String::from_utf8_lossy(&bytes).to_string();
+        // `from_utf8_lossy` substitutes U+FFFD for invalid byte
+        // sequences — warn so a remote returning binary or
+        // mis-charsetted data is visible in logs rather than silently
+        // corrupted in operator diagnostics.
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    byte_len = bytes.len(),
+                    "agent response body was not valid UTF-8; substituting replacement characters for diagnostics"
+                );
+                String::from_utf8_lossy(&bytes).to_string()
+            }
+        };
 
         let is_success = (200..300).contains(&status_code);
         let elapsed = invoke_start.elapsed();

@@ -177,6 +177,7 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
     user_context_var,
 )
+from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -1875,6 +1876,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about unsafe UAID configuration if A2A is enabled
+        if settings.mcpgateway_a2a_enabled:
+            uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if not uaid_allowed_domains:
+                logger.warning(
+                    "⚠️  SECURITY: UAID_ALLOWED_DOMAINS is empty - cross-gateway routing is unrestricted. "
+                    "This allows UAID-based routing to ANY domain, including internal networks. "
+                    "Production deployments MUST configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted.example.com","gateway.example.org"]'
+                )
+
         _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
@@ -2145,6 +2157,23 @@ def validate_security_configuration():
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     log_critical_issues(critical_issues)
+
+    # UAID Cross-Gateway Routing Security Check
+    if not settings.uaid_allowed_domains:
+        if not settings.auth_required:
+            logger.error(
+                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+            )
+        else:
+            logger.warning(
+                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                "Any UAID-based agent can route to any remote gateway endpoint. "
+                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+            )
 
     # Warn about ephemeral storage without strict user-in-DB mode
     if not getattr(settings, "require_user_in_db", False):
@@ -4993,6 +5022,14 @@ async def invoke_a2a_agent(
         else:
             user_id = str(user)
 
+        # Read the federation hop counter from the request header using
+        # the shared parser so Python and Rust behave identically: strict
+        # ASCII-digit decoding with saturation on overflow, warn on
+        # malformed input.  `invoke_agent` rejects at `uaid_max_federation_hops`
+        # before any UAID or agent dispatch, breaking both A→B→A loops
+        # and self-referential `endpoint_url` loops.
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -5001,6 +5038,7 @@ async def invoke_a2a_agent(
             user_id=user_id,
             user_email=user_email,
             token_teams=token_teams,
+            hop_count=hop_count,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -8991,6 +9029,13 @@ async def handle_internal_a2a_get_authz(request: Request):
     return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/get")
 
 
+# DbA2AAgent.id is `uuid.uuid4().hex` — 32 lower-case hex chars, no dashes.
+# Used to detect when a resolve identifier is a primary-key reference vs a
+# plain name; kept here (not in uaid module) because it's specific to the
+# internal resolve endpoint's lookup dispatch.
+_UUID_HEX_RE = re.compile(r"[0-9a-f]{32}")
+
+
 @utility_router.post("/_internal/a2a/agents/{agent_name}/resolve/")
 @utility_router.post("/_internal/a2a/agents/{agent_name}/resolve")
 async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
@@ -9006,7 +9051,27 @@ async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
     try:
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
-        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        # Reject leading/trailing whitespace outright rather than silently
+        # falling through to the name branch — a malicious caller could
+        # otherwise wrap a UAID or UUID in spaces to bypass the kind
+        # dispatch (e.g., ` <32-hex>` probes the name column instead of
+        # id). Names in the DB never carry flanking whitespace either, so
+        # this can't false-positive on legitimate input.
+        if agent_name != agent_name.strip():
+            logger.warning("A2A agent resolve rejected: identifier has surrounding whitespace (%r)", agent_name)
+            return ORJSONResponse(status_code=400, content={"error": "agent identifier must not contain leading or trailing whitespace"})
+
+        # Dispatch lookup on identifier kind so a collision across the
+        # name / id / uaid columns can't silently cross-select the wrong
+        # agent. UAID prefix and 32-hex UUIDs are distinctive; everything
+        # else falls through to name.
+        agent = None
+        if uaid_utils.is_uaid(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.uaid == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        elif _UUID_HEX_RE.fullmatch(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        if agent is None:
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         if not agent:
             a2a_server_service = A2AServerService()
             server_agent = a2a_server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
@@ -9014,8 +9079,15 @@ async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
                 return ORJSONResponse(status_code=200, content=server_agent)
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
         if not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+            # Surface visibility-denial as 403 to the trusted sidecar
+            # caller (inside _is_trusted_internal_mcp_runtime_request
+            # above) so it can avoid falling through to UAID
+            # cross-gateway dispatch for agents that exist locally but
+            # the requester cannot see. The sidecar is expected to
+            # translate this back to 404 when responding to the end
+            # user so existence of private agents is not leaked.
             logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on resolve", agent_name, user_email, token_teams)
-            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+            return ORJSONResponse(status_code=403, content={"error": f"access denied to agent '{agent_name}'"})
 
         result = {
             "agent_id": agent.id,

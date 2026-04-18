@@ -10,19 +10,225 @@ use crate::invoke;
 use crate::metrics::MetricsCollector;
 use crate::queue;
 use crate::trust;
+use crate::uaid;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
+use url::Url;
+
+/// Rate-limit cadence for the "empty allowlist → cross-gateway permitted
+/// to any host" warning.  Once-per-process goes silent after the first
+/// call; warning on every request spams the hot path.  60 s is a
+/// compromise: an operator watching `journalctl -f` sees the warning
+/// within a minute of any cross-gateway activity, without filling the
+/// log during traffic bursts.
+const UAID_EMPTY_ALLOWLIST_WARN_INTERVAL_SECS: u64 = 60;
+
+/// Process-start anchor for monotonic rate-limit timestamps.  Initialised
+/// on the first cross-gateway call.  Using `Instant` instead of
+/// `SystemTime` means a wall-clock skew (NTP step, leap-second bug,
+/// pre-1970 `unwrap_or(0)` fallback) cannot cause the guard to either
+/// spam or go silent.
+static UAID_EMPTY_ALLOWLIST_WARN_ANCHOR: OnceLock<Instant> = OnceLock::new();
+
+/// Seconds elapsed (from the anchor) at the last emitted warning.
+/// `u64::MAX` is the "never logged" sentinel so the first call always
+/// falls through to the warn arm.
+static UAID_EMPTY_ALLOWLIST_WARN_LAST: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Logged exactly once per process on the first cross-gateway UAID
+/// call — symmetric with the Python `_invoke_remote_agent` warning.
+/// Cross-gateway requests do not forward caller credentials; the
+/// remote agent must enforce its own authentication.
+static UAID_AUTH_GAP_WARNING: OnceLock<()> = OnceLock::new();
+
+/// HTTP header used by the federation hop counter.  Must match
+/// `HOP_HEADER` in `mcpgateway/utils/uaid.py` exactly.
+const HOP_HEADER: &str = "x-contextforge-uaid-hop";
+
+/// Ceiling at which a parsed hop value saturates.  Matches the Python
+/// `_HOP_MAX` (`2**31 - 1`) so both runtimes agree on the on-wire range.
+const HOP_MAX: u32 = i32::MAX as u32;
+
+/// Parse a single hop token — strict ASCII digits, saturating, with
+/// a warn on malformed input.  Extracted so the coalesced-header
+/// branch of `parse_hop_count` can apply the same strict rules to
+/// each comma-separated element.
+fn parse_single_hop_token(token: &str) -> u32 {
+    if token.is_empty() || !token.bytes().all(|b| b.is_ascii_digit()) {
+        if !token.is_empty() {
+            warn!(
+                header = HOP_HEADER,
+                value = %token,
+                "rejecting malformed hop token; treating as 0"
+            );
+        }
+        return 0;
+    }
+    match token.parse::<u64>() {
+        Ok(v) => u32::try_from(v.min(HOP_MAX as u64)).unwrap_or(HOP_MAX),
+        Err(_) => HOP_MAX,
+    }
+}
+
+/// Parse a `HOP_HEADER` value into a non-negative hop count using the
+/// same strict rules as `mcpgateway.utils.uaid.parse_hop_count`:
+///
+/// - Missing or empty value → 0.
+/// - Single value: pure ASCII digits (`[0-9]+`) — no leading sign,
+///   no whitespace, no hex, no decimal point, no Unicode digits.
+/// - Coalesced form (RFC 7230 §3.2.2): a proxy allowed to combine
+///   duplicate `X-Hop: 0` + `X-Hop: 10` lines into `X-Hop: 0, 10`.
+///   Split on `,`, trim OWS (space/tab) per RFC 7230 §3.2.6, parse
+///   each token strictly, return the MAX across valid tokens.
+/// - Malformed tokens inside a coalesced value are skipped (warn
+///   still fires) rather than tainting the whole header — otherwise
+///   an attacker could pair a valid high hop with garbage to drop
+///   the effective value to 0.
+/// - Values exceeding `HOP_MAX` saturate rather than wrap.
+fn parse_hop_count(raw: Option<&String>) -> u32 {
+    let Some(value) = raw else {
+        return 0;
+    };
+    if !value.contains(',') {
+        // Fast path: single value, strict — no OWS trim here; OWS
+        // is only legal around comma separators in RFC 7230.
+        return parse_single_hop_token(value);
+    }
+    let mut max_hop: u32 = 0;
+    for token in value.split(',') {
+        let stripped = token.trim_matches(|c: char| c == ' ' || c == '\t');
+        let parsed = parse_single_hop_token(stripped);
+        if parsed > max_hop {
+            max_hop = parsed;
+        }
+    }
+    max_hop
+}
+
+/// Return the next hop value to stamp on an outbound request,
+/// saturating at `HOP_MAX` so degenerate input at the ceiling cannot
+/// wrap through u32::MAX.  Mirrors the saturation in
+/// `mcpgateway.utils.uaid.stamp_hop`.
+fn next_hop(hop_count: u32) -> u32 {
+    hop_count.saturating_add(1).min(HOP_MAX)
+}
+
+/// Read the hop counter from a JSON-deserialized `HashMap<String, String>`
+/// (the `POST /invoke` body's `headers` field).
+///
+/// A naive case-insensitive lookup is vulnerable to header smuggling:
+/// an attacker who sends both `{"X-Contextforge-UAID-Hop": "10",
+/// "x-contextforge-uaid-hop": "0"}` exploits `HashMap`'s unpredictable
+/// iteration order to pick whichever value happens to win.  Defend by
+/// scanning **all** case-insensitive matches and taking the MAX — an
+/// attacker can't lower the effective hop by adding a lower-cased
+/// duplicate with value "0", and the highest value correctly trips
+/// the guard.  A warn is emitted when more than one variant is seen
+/// because that's an attack signal.
+fn read_hop_from_dto_headers(headers: &HashMap<String, String>) -> u32 {
+    let mut max_hop: u32 = 0;
+    let mut variant_count: usize = 0;
+    for (k, v) in headers.iter() {
+        if k.eq_ignore_ascii_case(HOP_HEADER) {
+            variant_count += 1;
+            let parsed = parse_hop_count(Some(v));
+            if parsed > max_hop {
+                max_hop = parsed;
+            }
+        }
+    }
+    if variant_count > 1 {
+        warn!(
+            header = HOP_HEADER,
+            variant_count,
+            max_hop,
+            "multiple case variants of hop header present; failing closed to max to block smuggling"
+        );
+    }
+    max_hop
+}
+
+/// Read the hop counter from axum's `HeaderMap` — the entry path for
+/// `/a2a/*` handlers.  `HeaderMap` is a multi-map (duplicate header
+/// names keep all values), so a client sending two `X-Contextforge-UAID-Hop`
+/// headers on the wire can push both through.  Same defense as
+/// `read_hop_from_dto_headers`: take the max of every value returned
+/// by `get_all`.  HeaderName is already case-normalized so case
+/// variance isn't a concern here; duplication is.
+fn read_hop_from_header_map(headers: &HeaderMap) -> u32 {
+    let mut max_hop: u32 = 0;
+    let mut variant_count: usize = 0;
+    for value in headers.get_all(HOP_HEADER) {
+        variant_count += 1;
+        let Ok(text) = value.to_str() else {
+            // Fail closed: a non-ASCII hop value is either malformed or
+            // a smuggling attempt.  Skipping it silently would let an
+            // attacker submit `X-Contextforge-UAID-Hop: ９` and have the
+            // loop read hop=0.  Promote to HOP_MAX so the guard trips
+            // regardless of the configured `uaid_max_federation_hops`.
+            warn!(
+                header = HOP_HEADER,
+                "hop header value is not valid ASCII/Latin-1; failing closed to HOP_MAX (federation-loop protection)"
+            );
+            max_hop = HOP_MAX;
+            continue;
+        };
+        let parsed = parse_hop_count(Some(&text.to_string()));
+        if parsed > max_hop {
+            max_hop = parsed;
+        }
+    }
+    if variant_count > 1 {
+        warn!(
+            header = HOP_HEADER,
+            variant_count,
+            max_hop,
+            "multiple hop header values present on inbound request; failing closed to max"
+        );
+    }
+    max_hop
+}
+
+/// Emit the "empty allowlist" warning iff at least
+/// `UAID_EMPTY_ALLOWLIST_WARN_INTERVAL_SECS` have passed since the last
+/// one.  `compare_exchange` guarantees only one thread wins each
+/// interval even under concurrent cross-gateway calls.
+fn maybe_warn_empty_uaid_allowlist() {
+    let anchor = *UAID_EMPTY_ALLOWLIST_WARN_ANCHOR.get_or_init(Instant::now);
+    let now = anchor.elapsed().as_secs();
+    let last = UAID_EMPTY_ALLOWLIST_WARN_LAST.load(Ordering::Relaxed);
+    // `last == u64::MAX` is the first-call sentinel — fall through to warn.
+    if last != u64::MAX && now.saturating_sub(last) < UAID_EMPTY_ALLOWLIST_WARN_INTERVAL_SECS {
+        return;
+    }
+    if UAID_EMPTY_ALLOWLIST_WARN_LAST
+        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        // Another thread won the race; its log covers this request.
+        return;
+    }
+    warn!(
+        "cross-gateway UAID invocation with empty A2A_RUST_UAID_ALLOWED_DOMAINS — \
+         this runtime will route to any host. Set the allowlist in production \
+         to restrict cross-gateway routing to trusted domains"
+    );
+}
 
 const RUNTIME_NAME: &str = "contextforge-a2a-runtime";
 const CONTENT_TYPE_SSE: &str = "text/event-stream";
@@ -143,19 +349,52 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 /// blobs are decrypted and merged into the upstream headers/URL — without
 /// this step, agents using stored basic/bearer/api-key/query-param auth
 /// would receive an unauthenticated request and return 401/403.
+///
+/// Enforces the same federation-hop guard as `handle_a2a_invoke`: if the
+/// caller-supplied `headers` contain `X-Contextforge-UAID-Hop: N` at or
+/// above `uaid_max_federation_hops`, reject with 404.  On pass-through,
+/// stamp `N+1` on the outbound headers so the downstream agent (which
+/// may itself be a CF gateway) can continue counting.  The route is
+/// publicly mounted on the same listener as `/a2a/*` — if Nginx
+/// misroutes or a plugin reaches it directly, we must not become a
+/// loop vector.
 async fn handle_invoke(
     State(state): State<AppState>,
     Json(request): Json<InvokeRequest>,
 ) -> Result<Json<InvokeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let hop_count = read_hop_from_dto_headers(&request.headers);
+    if hop_count >= state.config.uaid_max_federation_hops {
+        warn!(
+            hop_count,
+            max = state.config.uaid_max_federation_hops,
+            "POST /invoke hop limit reached; rejecting to break federation loop"
+        );
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "hop limit reached".to_string(),
+            }),
+        ));
+    }
+
     let timeout = request
         .timeout_seconds
         .map(Duration::from_secs)
         .unwrap_or_else(|| Duration::from_millis(state.config.request_timeout_ms));
 
+    // Stamp outbound hop before building the DTO so `execute_invoke`
+    // carries the incremented counter to whatever host `endpoint_url`
+    // points at.  Remove any pre-existing hop key (regardless of case)
+    // first — a lingering upstream-cased entry would ride alongside
+    // our lowercase one and produce two hop headers on the wire.
+    let mut outbound_headers = request.headers.clone();
+    outbound_headers.retain(|k, _| !k.eq_ignore_ascii_case(HOP_HEADER));
+    outbound_headers.insert(HOP_HEADER.to_string(), next_hop(hop_count).to_string());
+
     let dto = crate::http::InvokeRequestDto {
         id: 0,
         endpoint_url: request.endpoint_url.clone(),
-        headers: request.headers.clone(),
+        headers: outbound_headers,
         json_body: request.json_body.clone(),
         timeout_seconds: request.timeout_seconds,
         auth_headers_encrypted: request.auth_headers_encrypted.clone(),
@@ -218,14 +457,39 @@ async fn handle_metrics(State(state): State<AppState>) -> Json<crate::metrics::A
 }
 
 /// Convert Axum `HeaderMap` into a plain `HashMap<String, String>`.
+///
+/// Non-ASCII/non-Latin-1 values are dropped (axum's `HeaderValue::to_str`
+/// rejects bytes >= 0x80 plus controls).  A benign client shouldn't send
+/// non-UTF-8 headers, but a malformed or malicious one might — log the
+/// drop so operators can see it happened rather than having the value
+/// silently disappear.
+///
+/// Security exception: the federation hop header (`HOP_HEADER`) is not
+/// droppable on malformed input.  Silently removing it would let an
+/// attacker bypass the hop guard by sending a non-ASCII value (e.g.,
+/// `X-Contextforge-UAID-Hop: ９`) — the handler would see no header
+/// and read hop=0.  Substitute `HOP_MAX` instead so `parse_hop_count`
+/// trips the guard no matter how `uaid_max_federation_hops` is set.
 fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|v| (name.as_str().to_string(), v.to_string()))
+        .filter_map(|(name, value)| match value.to_str() {
+            Ok(v) => Some((name.as_str().to_string(), v.to_string())),
+            Err(_) => {
+                if name.as_str().eq_ignore_ascii_case(HOP_HEADER) {
+                    warn!(
+                        header = name.as_str(),
+                        "non-ASCII value on hop header — failing closed to HOP_MAX (federation-loop protection)"
+                    );
+                    Some((name.as_str().to_string(), HOP_MAX.to_string()))
+                } else {
+                    warn!(
+                        header = name.as_str(),
+                        "dropping header with non-ASCII value from extract_headers"
+                    );
+                    None
+                }
+            }
         })
         .collect()
 }
@@ -291,6 +555,76 @@ fn normalize_task_proxy_params(action: &str, body: &Value, resolved_agent_id: &s
     params
 }
 
+/// Safely append path segments to the configured backend base URL.
+///
+/// Necessary because `agent_name` can be a UAID whose `nativeId` is a
+/// full URL (e.g. `http://agent.example.com/send`) — interpolating that
+/// into a `format!()` path would smuggle `/` characters and fragment
+/// the request into multiple segments, producing a 404 on the Python
+/// backend. `Url::path_segments_mut().push()` percent-encodes `/`, `?`,
+/// and `#` while leaving `:` and `;` untouched (both are legal in a
+/// path segment per RFC 3986).
+fn internal_backend_url(base: &str, segments: &[&str]) -> Result<Url, String> {
+    let mut url = Url::parse(base.trim_end_matches('/'))
+        .map_err(|e| format!("invalid backend_base_url {base:?}: {e}"))?;
+    url.path_segments_mut()
+        .map_err(|_| format!("backend_base_url {base:?} cannot have path segments appended"))?
+        .pop_if_empty()
+        .extend(segments);
+    Ok(url)
+}
+
+/// Reuse a previously resolved agent if one was captured by the UAID
+/// pre-resolve step in `handle_a2a_invoke`, otherwise call `resolve_agent`.
+///
+/// Threading the pre-resolved value through the downstream task/push/
+/// invoke branches avoids calling the resolver twice for a UAID hit —
+/// the second call can observe a concurrent cache eviction and return
+/// 404 even though the first call succeeded.  `.take()` moves the value
+/// out so the helper can only short-circuit once per request.
+async fn take_or_resolve(
+    preresolved: &mut Option<ResolvedAgent>,
+    state: &AppState,
+    agent_name: &str,
+    auth_context: &Value,
+) -> Result<ResolvedAgent, (StatusCode, String)> {
+    if let Some(agent) = preresolved.take() {
+        return Ok(agent);
+    }
+    resolve_agent(state, agent_name, auth_context).await
+}
+
+/// Convert a `resolve_agent` / `take_or_resolve` error tuple into the
+/// `(StatusCode, Json<ErrorResponse>)` shape the axum handlers return,
+/// translating `403 FORBIDDEN` into `404 NOT_FOUND` to hide the
+/// existence of private agents from unauthorized callers.
+///
+/// The Python `/_internal/.../resolve` endpoint deliberately returns
+/// 403 when an agent exists but the caller lacks visibility — that
+/// signal lets the sidecar distinguish "doesn't exist" from "exists
+/// but hidden", e.g. so a UAID local-miss doesn't then fall through
+/// to cross-gateway dispatch.  But 403 must NOT leak to the end user:
+/// an external caller probing for private agents by name or UAID
+/// would otherwise see 403-vs-404 and enumerate the private fleet.
+///
+/// Every axum-edge call site that surfaces a resolve error must go
+/// through this helper.
+fn map_agent_resolve_err(
+    agent_name: &str,
+    err: (StatusCode, String),
+) -> (StatusCode, Json<ErrorResponse>) {
+    let (status, msg) = err;
+    if status == StatusCode::FORBIDDEN {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("agent '{agent_name}' not found"),
+            }),
+        );
+    }
+    (status, Json(ErrorResponse { error: msg }))
+}
+
 /// Resolve an agent by name, using the tiered cache when possible.
 ///
 /// On cache miss the Python `/_internal/a2a/agents/{name}/resolve` endpoint
@@ -307,11 +641,11 @@ async fn resolve_agent(
 
     // L1+L2 miss — call Python resolve endpoint (L3).
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
-    let url = format!(
-        "{}/_internal/a2a/agents/{}/resolve",
-        state.config.backend_base_url.trim_end_matches('/'),
-        agent_name,
-    );
+    let url = internal_backend_url(
+        &state.config.backend_base_url,
+        &["_internal", "a2a", "agents", agent_name, "resolve"],
+    )
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     let mut trust_headers = trust::build_trust_headers(auth_secret);
     trust_headers.insert(
         "x-contextforge-auth-context".to_string(),
@@ -319,7 +653,7 @@ async fn resolve_agent(
     );
     let response = state
         .client
-        .post(&url)
+        .post(url)
         .headers(trust::reqwest_headers(&trust_headers))
         .send()
         .await
@@ -331,12 +665,32 @@ async fn resolve_agent(
             format!("agent '{agent_name}' not found"),
         ));
     }
+    if response.status().as_u16() == 403 {
+        // Python surfaces 403 for visibility-denied (found-but-hidden),
+        // distinct from 404 (does-not-exist). Propagate the distinction
+        // so UAID dispatch can refuse to fall through to cross-gateway
+        // for agents that exist locally but the caller cannot see.
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("access denied to agent '{agent_name}'"),
+        ));
+    }
     if response.status().as_u16() != 200 {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
+        // Detail may contain a Python traceback, SQL error, or internal
+        // hostname — log it server-side for diagnosis but surface only
+        // the status to the (potentially untrusted) caller so we don't
+        // reflect backend internals into the client response.
+        warn!(
+            agent = ?agent_name,
+            http_status = %status,
+            detail = ?detail,
+            "Python resolve returned non-2xx"
+        );
         return Err((
             StatusCode::BAD_GATEWAY,
-            format!("resolve failed: HTTP {status}: {detail}"),
+            format!("resolve failed: HTTP {status}"),
         ));
     }
 
@@ -562,18 +916,26 @@ async fn proxy_push_method(
 /// Calls `/_internal/a2a/agents/{agent_name}/card` and wraps the result
 /// in a JSON-RPC response envelope.  This serves GetExtendedAgentCard,
 /// agent/getExtendedCard, and agent/getAuthenticatedExtendedCard methods.
+///
+/// `preresolved` is passed when the UAID pre-resolve step in
+/// `handle_a2a_invoke` already located the agent — we then key the card
+/// endpoint by the resolved canonical name instead of the UAID.  Python's
+/// `/_internal/a2a/agents/{name}/card` matches by `name` only, so a UAID
+/// would otherwise 404 here even though the agent exists locally.
 async fn proxy_agent_card(
     state: &AppState,
     agent_name: &str,
     body: &Value,
     auth_context: &Value,
+    preresolved: Option<&ResolvedAgent>,
 ) -> Result<Json<InvokeResultDto>, (StatusCode, Json<ErrorResponse>)> {
+    let lookup_name = preresolved.map(|a| a.name.as_str()).unwrap_or(agent_name);
     let auth_secret = state.config.auth_secret.as_deref().unwrap_or("");
-    let url = format!(
-        "{}/_internal/a2a/agents/{}/card",
-        state.config.backend_base_url.trim_end_matches('/'),
-        agent_name,
-    );
+    let url = internal_backend_url(
+        &state.config.backend_base_url,
+        &["_internal", "a2a", "agents", lookup_name, "card"],
+    )
+    .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e })))?;
 
     let mut headers = trust::build_trust_headers(auth_secret);
     headers.insert(
@@ -584,7 +946,7 @@ async fn proxy_agent_card(
 
     let response = state
         .client
-        .post(&url)
+        .post(url)
         .headers(trust::reqwest_headers(&headers))
         .send()
         .await
@@ -732,7 +1094,7 @@ async fn handle_a2a_invoke(
                     // Log before invalidating so operators can correlate.
                     warn!(
                         session_id = %sid,
-                        agent_name = %agent_name,
+                        agent_name = ?agent_name,
                         "session fingerprint mismatch; invalidating and re-authenticating"
                     );
                     mgr.invalidate(sid).await;
@@ -778,7 +1140,91 @@ async fn handle_a2a_invoke(
         ),
     })?;
 
-    // --- 2b. Method-based routing for task operations ---------------------
+    // --- 2a. Federation hop guard (applies to every invocation) ---------
+    // Read the hop counter before any other dispatch — applies equally
+    // to UAID and named-agent invocations because a self-referential
+    // `endpoint_url` (agent whose URL points back at this gateway)
+    // loops through `handle_a2a_invoke` on every hop regardless of
+    // whether the original identifier was a UAID.  Outbound paths
+    // (cross-gateway below AND the regular invoke DTO) stamp
+    // `X-Contextforge-UAID-Hop: N+1` so the next hop can count.
+    //
+    // Read from the raw `HeaderMap` rather than the collapsed
+    // `request_headers` HashMap: a client sending two hop headers on
+    // the wire has both values in the HeaderMap, but `.collect()`ing
+    // into HashMap keeps only the last-inserted value (arbitrary
+    // order).  `read_hop_from_header_map` scans `get_all` and takes
+    // the max so smuggling a low value alongside a high one doesn't
+    // reset the counter.
+    let hop_count = read_hop_from_header_map(&headers);
+    if hop_count >= state.config.uaid_max_federation_hops {
+        warn!(
+            agent = ?agent_name,
+            hop_count,
+            max = state.config.uaid_max_federation_hops,
+            "A2A invoke hop limit reached; rejecting to break loop"
+        );
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("agent '{agent_name}' not found"),
+            }),
+        ));
+    }
+
+    // --- 2b. UAID cross-gateway routing -----------------------------------
+    // HCS-14 UAIDs embed the target agent's endpoint in the identifier
+    // itself. If the path segment is a UAID, ask the resolver whether
+    // the agent is registered locally first — the resolver must match
+    // on any identifier kind (name/uuid/uaid) the caller supplies.
+    //
+    // Status semantics from the Python resolver:
+    //   200 → local hit; fall through to normal method dispatch.
+    //   403 → found, but the caller cannot see it. Refuse to fall
+    //         through to cross-gateway (that would let a caller invoke
+    //         a private local agent by its UAID) and return 404 to the
+    //         end user so existence is not leaked.
+    //   404 → truly not local; forward the JSON-RPC body to the agent
+    //         URL encoded in the UAID (A2A 1.0-compliant cross-gateway).
+    //   5xx → backend problem; surface as-is.
+    //
+    // The resolved agent is captured into `preresolved_agent` so the
+    // method-dispatch branches below can reuse it rather than calling
+    // `resolve_agent` a second time — a race between the two calls can
+    // otherwise let a concurrent cache eviction turn a valid invoke
+    // into a spurious 404.
+    let mut preresolved_agent: Option<ResolvedAgent> = None;
+    if uaid::is_uaid(&agent_name) {
+        match resolve_agent(&state, &agent_name, &auth_context).await {
+            Ok(agent) => {
+                preresolved_agent = Some(agent);
+            }
+            Err((StatusCode::NOT_FOUND, _)) => {
+                return handle_uaid_cross_gateway(
+                    &state,
+                    &agent_name,
+                    &body,
+                    &request_headers,
+                    session_id.clone(),
+                    hop_count,
+                )
+                .await;
+            }
+            Err((StatusCode::FORBIDDEN, _)) => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: format!("agent '{agent_name}' not found"),
+                    }),
+                ));
+            }
+            Err((status, msg)) => {
+                return Err((status, Json(ErrorResponse { error: msg })));
+            }
+        }
+    }
+
+    // --- 2c. Method-based routing for task operations ---------------------
     // If the JSON-RPC method is a task read operation, proxy to the
     // Python task endpoints instead of invoking the agent directly.
     //
@@ -800,9 +1246,10 @@ async fn handle_a2a_invoke(
             // task row still exists.  This is intentional — surfacing
             // tasks via the URL of a non-existent agent would let a caller
             // probe for stale rows by name.
-            let resolved = resolve_agent(&state, &agent_name, &auth_context)
-                .await
-                .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
+            let resolved =
+                take_or_resolve(&mut preresolved_agent, &state, &agent_name, &auth_context)
+                    .await
+                    .map_err(|e| map_agent_resolve_err(&agent_name, e))?;
             return proxy_task_method(&state, action, &body, &auth_context, &resolved.agent_id)
                 .await
                 .map(IntoResponse::into_response);
@@ -819,9 +1266,10 @@ async fn handle_a2a_invoke(
             _ => None,
         };
         if let Some(action) = push_action {
-            let resolved = resolve_agent(&state, &agent_name, &auth_context)
-                .await
-                .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
+            let resolved =
+                take_or_resolve(&mut preresolved_agent, &state, &agent_name, &auth_context)
+                    .await
+                    .map_err(|e| map_agent_resolve_err(&agent_name, e))?;
             return proxy_push_method(&state, action, &body, &auth_context, &resolved.agent_id)
                 .await
                 .map(IntoResponse::into_response);
@@ -830,9 +1278,15 @@ async fn handle_a2a_invoke(
             "GetExtendedAgentCard"
             | "agent/getExtendedCard"
             | "agent/getAuthenticatedExtendedCard" => {
-                return proxy_agent_card(&state, &agent_name, &body, &auth_context)
-                    .await
-                    .map(IntoResponse::into_response);
+                return proxy_agent_card(
+                    &state,
+                    &agent_name,
+                    &body,
+                    &auth_context,
+                    preresolved_agent.as_ref(),
+                )
+                .await
+                .map(IntoResponse::into_response);
             }
             "SendStreamingMessage" | "message/stream" => {
                 return handle_streaming_method(
@@ -841,6 +1295,8 @@ async fn handle_a2a_invoke(
                     &body,
                     &request_headers,
                     &auth_context,
+                    preresolved_agent.take(),
+                    hop_count,
                 )
                 .await;
             }
@@ -849,16 +1305,30 @@ async fn handle_a2a_invoke(
     }
 
     // --- 3. Resolve agent (with cache) -----------------------------------
-    let resolved = resolve_agent(&state, &agent_name, &auth_context)
+    let resolved = take_or_resolve(&mut preresolved_agent, &state, &agent_name, &auth_context)
         .await
-        .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
+        .map_err(|e| map_agent_resolve_err(&agent_name, e))?;
 
     // --- 4. Build DTO and invoke -----------------------------------------
+    // Stamp the outbound hop counter UNCONDITIONALLY.  An earlier
+    // revision gated on `uaid_allowed_domains` to avoid leaking the
+    // header to third-party backends, but that reopens the self-loop
+    // for any gateway reached through a host alias missing from the
+    // allowlist (internal LB, split-horizon DNS, misconfigured partner
+    // peer).  A ContextForge-internal header is safe to send to third
+    // parties — they don't recognise it and ignore it; silently
+    // skipping loop protection is not.  Mirrors Python's
+    // `_execute_agent_request`.
+    let mut outbound_headers = HashMap::new();
+    outbound_headers.insert(
+        "x-contextforge-uaid-hop".to_string(),
+        next_hop(hop_count).to_string(),
+    );
     let dto = InvokeRequestDto {
         id: 0,
         endpoint_url: resolved.endpoint_url.clone(),
         json_body: body,
-        headers: HashMap::new(),
+        headers: outbound_headers,
         timeout_seconds: None,
         auth_headers_encrypted: resolved.auth_value_encrypted.clone(),
         auth_query_params_encrypted: resolved.auth_query_params_encrypted.clone(),
@@ -950,6 +1420,523 @@ async fn handle_a2a_invoke(
 }
 
 // ---------------------------------------------------------------------------
+// UAID cross-gateway routing (A2A 1.0-compliant)
+// ---------------------------------------------------------------------------
+
+/// Forward an authenticated+authorized JSON-RPC 2.0 request to the agent
+/// URL encoded in a UAID's `nativeId` parameter.
+///
+/// This is the A2A-1.0-compliant counterpart to the Python
+/// `_invoke_remote_agent` path: instead of hopping through another
+/// ContextForge gateway's invoke endpoint with a custom body shape, we
+/// treat the `nativeId` as the target A2A agent URL and POST the
+/// original JSON-RPC body there unchanged.
+///
+/// Security posture:
+/// - SSRF: `uaid::resolve_routing` rejects user-info and path-injection
+///   attempts, enforces http/https scheme, and applies the configured
+///   domain allowlist.
+/// - Auth: outbound requests are unauthenticated (matches the Python // pragma: allowlist secret
+///   behaviour and the PR's documented tradeoff) — the remote agent is
+///   expected to enforce its own authentication.  Inbound auth has
+///   already been enforced by `full_authenticate` + `trust::authorize`
+///   before we reach this function.
+/// - Circuit breaker + metrics: reuse the runtime's shared
+///   `CircuitBreaker` and `MetricsCollector` via `invoke::execute_invoke`
+///   so cross-gateway failures trip the same breakers as direct invokes.
+async fn handle_uaid_cross_gateway(
+    state: &AppState,
+    uaid_str: &str,
+    body: &Value,
+    request_headers: &HashMap<String, String>,
+    session_id: Option<String>,
+    hop_count: u32,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    // One-time process-level warning about the auth-forwarding gap.
+    // Cross-gateway calls do not forward caller credentials — the
+    // remote agent is responsible for its own authentication.  Fires
+    // once regardless of traffic volume (compare_exchange via OnceLock).
+    // Symmetric with Python `_invoke_remote_agent`'s SECURITY warning
+    // so operators see the same signal regardless of which runtime
+    // handled the request.
+    if UAID_AUTH_GAP_WARNING.set(()).is_ok() {
+        warn!(
+            "⚠️  SECURITY: first cross-gateway UAID invocation detected. \
+             Outbound cross-gateway requests are UNAUTHENTICATED; the \
+             remote agent must enforce its own authentication. Configure \
+             A2A_RUST_UAID_ALLOWED_DOMAINS to restrict routing to trusted \
+             hosts, and verify remote agents require credentials."
+        );
+    }
+
+    let components = uaid::parse_uaid(uaid_str, state.config.uaid_max_length).map_err(|e| {
+        // `parse_uaid` rejection is almost always caller input error —
+        // log the variant code so `native_id_user_info` (an SSRF attack
+        // signature) doesn't vanish into a plain 400 response with no
+        // server-side trace.
+        warn!(
+            uaid = ?uaid_str,
+            code = e.code(),
+            error = %e,
+            "UAID parse rejected"
+        );
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("invalid UAID: {e}"),
+            }),
+        )
+    })?;
+
+    let allowlist = state.config.uaid_allowed_domains_list();
+    if allowlist.is_empty() {
+        maybe_warn_empty_uaid_allowlist();
+    }
+
+    let target = uaid::resolve_routing(&components, allowlist).map_err(|e| {
+        // Log before mapping so operators can tell an SSRF attempt
+        // (`native_id_user_info`, `native_id_bad_host`,
+        // `unsupported_scheme`) from a benign mis-configured UAID.
+        warn!(
+            uaid = ?uaid_str,
+            code = e.code(),
+            error = %e,
+            "UAID routing rejected"
+        );
+        // Status mapping:
+        //   allowlist deny → 403 (policy)
+        //   unsupported proto → 400 (caller input, not a server capability gap —
+        //     the separate Proto::Mcp branch below is 501 because that protocol
+        //     is recognised but this runtime won't speak it)
+        //   everything else → 400 (malformed input)
+        let status = match e {
+            uaid::UaidError::DomainNotAllowed(_) => StatusCode::FORBIDDEN,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    // This runtime only speaks A2A 1.0 outbound. MCP-UAIDs are
+    // deliberately rejected here and must be handled by a different
+    // sidecar or via the Python CF-federation path.  Log the rejection
+    // — sibling parse/routing failures above emit `warn!`, and a
+    // silent 501 here would hide "MCP UAID hit the A2A sidecar"
+    // misrouting events from operators.
+    if target.protocol() != uaid::Proto::A2a {
+        let proto = target.protocol().as_str();
+        warn!(
+            uaid = ?uaid_str,
+            proto,
+            "UAID protocol not handled by A2A runtime"
+        );
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(ErrorResponse {
+                error: format!(
+                    "UAID protocol '{proto}' is not supported by the A2A runtime; \
+                     only 'a2a' is routed directly"
+                ),
+            }),
+        ));
+    }
+
+    // Streaming methods must be proxied end-to-end as SSE rather than
+    // buffered through `execute_invoke` — buffering defeats streaming
+    // entirely and, for long-lived task streams, would hold the full
+    // response in memory until the remote completes.
+    let method = body.get("method").and_then(|v| v.as_str());
+    if matches!(method, Some("SendStreamingMessage" | "message/stream")) {
+        return handle_uaid_cross_gateway_streaming(
+            state,
+            uaid_str,
+            body,
+            request_headers,
+            target.url(),
+            session_id,
+            hop_count,
+        )
+        .await;
+    }
+
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    // Stamp outbound hop counter so the receiving gateway (Python or
+    // Rust sidecar) can enforce `uaid_max_federation_hops`.  Matches
+    // Python `_invoke_remote_agent`'s header exactly so a mixed-runtime
+    // federation chain counts hops consistently.
+    headers.insert(
+        "x-contextforge-uaid-hop".to_string(),
+        next_hop(hop_count).to_string(),
+    );
+
+    let timeout = Duration::from_millis(state.config.request_timeout_ms);
+    let ctx = invoke::InvokeContext {
+        circuit: &state.circuit,
+        metrics: &state.metrics,
+        scope_id: "uaid-cross-gateway",
+        agent_key: uaid_str,
+    };
+
+    let started = Instant::now();
+    let result = invoke::execute_invoke(
+        &state.client,
+        &state.config,
+        target.url().as_str(),
+        &headers,
+        body,
+        timeout,
+        Some(&ctx),
+    )
+    .await;
+    let duration = started.elapsed();
+
+    let dto = match result {
+        Ok(inv) => {
+            let success = (200..300).contains(&inv.status_code);
+            info!(
+                status_code = inv.status_code,
+                uaid = ?uaid_str,
+                // `resolve_routing` guarantees a host; "<missing>" would
+                // indicate an upstream invariant broke and is worth
+                // seeing in the log rather than silently logging "".
+                host = target.url().host_str().unwrap_or("<missing>"),
+                "UAID cross-gateway invocation completed"
+            );
+            InvokeResultDto {
+                id: 0,
+                status_code: inv.status_code,
+                json: inv.json,
+                text: inv.text,
+                headers: inv.headers,
+                success,
+                error: None,
+                code: None,
+                duration_secs: duration.as_secs_f64(),
+                agent_name: None,
+                session_id,
+            }
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                uaid = ?uaid_str,
+                "UAID cross-gateway invocation failed"
+            );
+            InvokeResultDto {
+                id: 0,
+                status_code: err.http_status().as_u16(),
+                json: None,
+                text: String::new(),
+                headers: HashMap::new(),
+                success: false,
+                error: Some(err.to_string()),
+                code: Some(err.error_code().to_string()),
+                duration_secs: duration.as_secs_f64(),
+                agent_name: None,
+                session_id,
+            }
+        }
+    };
+
+    Ok(Json(dto).into_response())
+}
+
+/// SSE-capable counterpart to `handle_uaid_cross_gateway`'s buffered path.
+///
+/// A2A 1.0 `SendStreamingMessage` / `message/stream` invocations against a
+/// remote UAID must proxy `text/event-stream` end-to-end; buffering
+/// through `execute_invoke` would collapse the stream into a single JSON
+/// blob and defeat the point of streaming.  Also handles Last-Event-ID
+/// replay from the shared event store so a reconnected client resumes
+/// where it disconnected — mirrors `handle_streaming_method`'s behavior
+/// for local agents.
+async fn handle_uaid_cross_gateway_streaming(
+    state: &AppState,
+    uaid_str: &str,
+    body: &Value,
+    request_headers: &HashMap<String, String>,
+    target_url: &url::Url,
+    session_id: Option<String>,
+    hop_count: u32,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    // Last-Event-ID replay: if the client is reconnecting and the
+    // event store has events for the requested task, replay from there
+    // instead of opening a new stream to the remote. If the store has
+    // nothing buffered (fast disconnect before the first event was
+    // flushed, store TTL elapsed), fall through to a fresh upstream
+    // connect — returning an empty SSE stream would make EventSource
+    // clients see EOF, retry, and loop forever.
+    if let Some(last_event_id) = request_headers.get("last-event-id") {
+        if let Some(ref store) = state.event_store {
+            match parse_last_event_id(last_event_id, body) {
+                Some((task_id, after_seq)) => {
+                    let buffered = store.replay_after(&task_id, after_seq).await;
+                    if !buffered.is_empty() {
+                        info!(
+                            uaid = ?uaid_str,
+                            task_id = ?task_id,
+                            after_seq,
+                            event_count = buffered.len(),
+                            "replaying SSE events for UAID cross-gateway reconnect"
+                        );
+                        let sse =
+                            crate::stream::replay_from_store(Arc::clone(store), task_id, after_seq);
+                        return Ok(sse.into_response());
+                    }
+                    info!(
+                        uaid = ?uaid_str,
+                        task_id = ?task_id,
+                        after_seq,
+                        "Last-Event-ID replay yielded no buffered events; opening fresh upstream stream"
+                    );
+                }
+                None => {
+                    warn!(
+                        uaid = ?uaid_str,
+                        last_event_id = ?last_event_id,
+                        "unparseable Last-Event-ID on UAID cross-gateway stream; opening fresh stream"
+                    );
+                }
+            }
+        }
+    }
+
+    let timeout = Duration::from_millis(state.config.request_timeout_ms);
+    let agent_response = state
+        .client
+        .post(target_url.as_str())
+        .header("content-type", "application/json")
+        // Stamp outbound hop counter (parity with non-streaming path)
+        // so the remote can enforce `uaid_max_federation_hops`.
+        .header("x-contextforge-uaid-hop", next_hop(hop_count).to_string())
+        .json(body)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| {
+            warn!(
+                uaid = ?uaid_str,
+                error = %e,
+                "UAID cross-gateway streaming request failed"
+            );
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: format!("cross-gateway streaming request failed: {e}"),
+                }),
+            )
+        })?;
+
+    let content_type = agent_response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if content_type.contains(CONTENT_TYPE_SSE) {
+        let task_id = extract_task_id(body);
+        info!(
+            uaid = ?uaid_str,
+            task_id = ?task_id,
+            host = target_url.host_str().unwrap_or("<missing>"),
+            "forwarding UAID cross-gateway SSE stream"
+        );
+        let sse =
+            crate::stream::forward_agent_sse(agent_response, state.event_store.clone(), task_id);
+        Ok(sse.into_response())
+    } else {
+        // Remote doesn't support streaming — buffer the JSON response so
+        // the client sees the remote's error or completion.  This path
+        // bypasses `execute_invoke`, so the runtime's response-size cap
+        // (`max_response_body_bytes`) must be enforced explicitly here:
+        // a hostile remote could otherwise flood the sidecar with an
+        // unbounded body and exhaust memory.
+        let max_body = state.config.max_response_body_bytes;
+        let status_code = agent_response.status().as_u16();
+
+        // Fast reject on advertised Content-Length. Absent or lying
+        // headers fall through to the streaming check below.
+        if let Some(len) = agent_response.content_length() {
+            if len > max_body {
+                warn!(
+                    uaid = ?uaid_str,
+                    content_length = len,
+                    limit = max_body,
+                    "UAID cross-gateway non-SSE response advertised oversized body"
+                );
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "remote response exceeds max_response_body_bytes limit of {max_body}"
+                        ),
+                    }),
+                ));
+            }
+        }
+
+        // Read the body as a stream with a running-total check so a
+        // chunked/transfer-encoded response with no Content-Length can't
+        // buffer unbounded data before the cap is enforced.  Using
+        // `.bytes().await` would eagerly drain the whole stream first.
+        let body_bytes = read_bounded_body(agent_response, max_body).await.map_err(|reason| {
+            match reason {
+                BoundedBodyError::Oversized => {
+                    warn!(
+                        uaid = ?uaid_str,
+                        limit = max_body,
+                        "UAID cross-gateway non-SSE response body exceeded limit during streaming read"
+                    );
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Json(ErrorResponse {
+                            error: format!(
+                                "remote response exceeds max_response_body_bytes limit of {max_body}"
+                            ),
+                        }),
+                    )
+                }
+                BoundedBodyError::Transport(e) => {
+                    // Preserve the structured failure signals reqwest
+                    // gives us — timeout vs connect vs body vs other.
+                    // Without this log, a mid-stream timeout looks
+                    // identical to a TLS failure in operator logs.
+                    warn!(
+                        uaid = ?uaid_str,
+                        is_timeout = e.is_timeout(),
+                        is_connect = e.is_connect(),
+                        is_body = e.is_body(),
+                        status = ?e.status(),
+                        source = ?e.source(),
+                        error = %e,
+                        "UAID cross-gateway streaming transport error"
+                    );
+                    // Upgrade timeout to 504 so clients can distinguish
+                    // "upstream slow" from "upstream broken".
+                    let status = if e.is_timeout() {
+                        StatusCode::GATEWAY_TIMEOUT
+                    } else {
+                        StatusCode::BAD_GATEWAY
+                    };
+                    (
+                        status,
+                        Json(ErrorResponse {
+                            error: format!("failed to read remote response body: {e}"),
+                        }),
+                    )
+                }
+            }
+        })?;
+
+        // Preserve the remote's actual body — the previous `text:
+        // String::new()` threw away the payload operators would use to
+        // debug why the remote returned this shape.  Body is already
+        // bounded by `max_body` so the copy is safe.  `from_utf8_lossy`
+        // substitutes U+FFFD for invalid sequences; emit a warn so a
+        // remote that sends binary/binary-mimed-as-text data is visible
+        // in logs rather than silently corrupted in operator diagnostics.
+        let text = match std::str::from_utf8(&body_bytes) {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    byte_len = body_bytes.len(),
+                    "remote non-SSE body was not valid UTF-8; substituting replacement characters for diagnostics"
+                );
+                String::from_utf8_lossy(&body_bytes).into_owned()
+            }
+        };
+        let response_json: Option<Value> = serde_json::from_slice(&body_bytes).ok();
+        let success = (200..300).contains(&status_code);
+        let result_dto = InvokeResultDto {
+            id: 0,
+            status_code,
+            json: response_json,
+            text,
+            headers: HashMap::new(),
+            success,
+            // Tailor the error message to the status class: a 5xx is
+            // an upstream failure, a 4xx is a client/content-type
+            // negotiation failure.  A single hardcoded string would
+            // mislabel legitimate 4xx/5xx responses from the remote.
+            error: if success {
+                None
+            } else if (500..600).contains(&status_code) {
+                Some(format!("remote agent returned HTTP {status_code}"))
+            } else {
+                Some(format!(
+                    "remote agent returned HTTP {status_code} (non-streaming response)"
+                ))
+            },
+            code: None,
+            duration_secs: 0.0,
+            agent_name: None,
+            session_id,
+        };
+        Ok(Json(result_dto).into_response())
+    }
+}
+
+/// Error variants for [`read_bounded_body`].
+#[derive(Debug)]
+enum BoundedBodyError {
+    /// The running byte total crossed `max_body` — reject without
+    /// draining the remainder of the stream.
+    Oversized,
+    /// Transport-level failure from `bytes_stream`.
+    Transport(reqwest::Error),
+}
+
+/// Drain a `reqwest::Response` body into a `Vec<u8>`, checking the
+/// accumulating size against `max_body` after each chunk so a
+/// chunked/transfer-encoded response without a `Content-Length` header
+/// cannot force the runtime to buffer unbounded data.  Returns `Oversized`
+/// as soon as the cap is crossed; the remaining unread chunks are
+/// abandoned when the stream is dropped, which in turn closes the
+/// underlying hyper connection (preventing continued read of the body).
+///
+/// Caveat: hyper allocates each incoming frame before yielding it to
+/// `bytes_stream()`, so this function cannot prevent a single oversized
+/// frame from being allocated in memory ahead of our check — reqwest
+/// does not expose a per-frame cap.  The per-chunk guard below drops
+/// such a frame immediately on detection rather than merging it into
+/// `buf`, so the *persistent* buffer is strictly bounded by `max_body`
+/// and peak transient memory is bounded by `max_body + one_frame`.
+async fn read_bounded_body(
+    response: reqwest::Response,
+    max_body: u64,
+) -> Result<Vec<u8>, BoundedBodyError> {
+    // Start empty — we deliberately don't pre-allocate based on a hint
+    // because a hostile `Content-Length` or chunked stream could lie.
+    // The Vec grows naturally and is strictly bounded by the cap below.
+    let mut buf: Vec<u8> = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(BoundedBodyError::Transport)?;
+        // Per-chunk fast-reject: a single frame already larger than the
+        // cap short-circuits immediately.  Kept separate from the
+        // cumulative check for clarity — if/when reqwest exposes a
+        // per-frame limit, this is the place that check would migrate to.
+        if chunk.len() as u64 > max_body {
+            drop(chunk);
+            return Err(BoundedBodyError::Oversized);
+        }
+        if (buf.len() as u64).saturating_add(chunk.len() as u64) > max_body {
+            drop(chunk);
+            return Err(BoundedBodyError::Oversized);
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+// ---------------------------------------------------------------------------
 // Streaming support
 // ---------------------------------------------------------------------------
 
@@ -969,6 +1956,8 @@ async fn handle_streaming_method(
     body: &Value,
     request_headers: &HashMap<String, String>,
     auth_context: &Value,
+    mut preresolved_agent: Option<ResolvedAgent>,
+    hop_count: u32,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     // --- Last-Event-ID reconnect -----------------------------------------
     if let Some(last_event_id) = request_headers.get("last-event-id") {
@@ -978,7 +1967,7 @@ async fn handle_streaming_method(
             match parse_last_event_id(last_event_id, body) {
                 Some((task_id, after_seq)) => {
                     info!(
-                        task_id = %task_id,
+                        task_id = ?task_id,
                         after_seq,
                         "replaying SSE events from store (Last-Event-ID reconnect)"
                     );
@@ -990,7 +1979,7 @@ async fn handle_streaming_method(
                     // Header present but unparseable — the client expects
                     // replay and will otherwise miss events silently.
                     warn!(
-                        last_event_id = %last_event_id,
+                        last_event_id = ?last_event_id,
                         "unparseable Last-Event-ID header; falling through to live agent request (client may miss replayed events)"
                     );
                 }
@@ -999,16 +1988,31 @@ async fn handle_streaming_method(
     }
 
     // --- Resolve agent ---------------------------------------------------
-    let resolved = resolve_agent(state, agent_name, auth_context)
+    // Reuse the agent record already resolved by the UAID pre-resolve
+    // step when present; resolving again here would race a concurrent
+    // cache eviction and spuriously return 404 on a valid streaming
+    // invoke.  Delegates to `take_or_resolve` so the preresolved-agent
+    // handling stays in one place (matches `handle_a2a_invoke`).
+    let resolved = take_or_resolve(&mut preresolved_agent, state, agent_name, auth_context)
         .await
-        .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
+        .map_err(|e| map_agent_resolve_err(agent_name, e))?;
 
     // --- Decrypt auth and build agent request ----------------------------
+    // Stamp the outbound hop counter UNCONDITIONALLY — parity with the
+    // non-streaming path in `handle_a2a_invoke` (see that site for the
+    // rationale).  Gating on the UAID allowlist would silently disable
+    // loop protection for any gateway reached via a host alias that
+    // isn't in the allowlist.
+    let mut outbound_headers = HashMap::new();
+    outbound_headers.insert(
+        "x-contextforge-uaid-hop".to_string(),
+        next_hop(hop_count).to_string(),
+    );
     let dto = InvokeRequestDto {
         id: 0,
         endpoint_url: resolved.endpoint_url.clone(),
         json_body: body.clone(),
-        headers: HashMap::new(),
+        headers: outbound_headers,
         timeout_seconds: None,
         auth_headers_encrypted: resolved.auth_value_encrypted.clone(),
         auth_query_params_encrypted: resolved.auth_query_params_encrypted.clone(),
@@ -1091,7 +2095,7 @@ async fn handle_streaming_method(
         let task_id = extract_task_id(body);
         info!(
             agent = agent_name,
-            task_id = %task_id,
+            task_id = ?task_id,
             "forwarding agent SSE stream"
         );
         let sse =
@@ -1342,6 +2346,10 @@ mod tests {
             event_store_ttl_secs: 60,
             event_flush_interval_ms: 100,
             event_flush_batch_size: 8,
+            uaid_allowed_domains: String::new(),
+            uaid_allowed_domains_cache: Default::default(),
+            uaid_max_length: 2048,
+            uaid_max_federation_hops: 3,
             log_filter: "warn".to_string(),
             exit_after_startup_ms: None,
         });
@@ -1372,6 +2380,138 @@ mod tests {
             session_manager: None,
             event_store: None,
         }
+    }
+
+    /// Serve a hand-crafted HTTP response once and return the listen
+    /// address.  Necessary because wiremock's `set_body_raw` stamps a
+    /// `Content-Length` header, which would trip the fast-reject in
+    /// `handle_uaid_cross_gateway_streaming` *before* `read_bounded_body`
+    /// is exercised.  This helper sends a chunked-transfer response
+    /// with no `Content-Length`, which is exactly the shape the
+    /// cumulative-cap branch of `read_bounded_body` is meant to catch.
+    async fn serve_raw_once(response_bytes: Vec<u8>) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                // Drain the request so reqwest doesn't see a half-open
+                // socket before the response arrives.
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(&response_bytes).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn read_bounded_body_caps_chunked_stream_without_content_length() {
+        // One chunk larger than the cap, sent with Transfer-Encoding:
+        // chunked and no Content-Length.  `reqwest::Response::content_length()`
+        // returns None, so the fast-reject in
+        // `handle_uaid_cross_gateway_streaming` is bypassed and we must
+        // land in the streaming-read path.
+        let payload = vec![b'x'; 8192];
+        let mut response_bytes = Vec::new();
+        response_bytes.extend_from_slice(
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: application/json\r\n\
+              Transfer-Encoding: chunked\r\n\
+              \r\n",
+        );
+        response_bytes.extend_from_slice(format!("{:x}\r\n", payload.len()).as_bytes());
+        response_bytes.extend_from_slice(&payload);
+        response_bytes.extend_from_slice(b"\r\n0\r\n\r\n");
+
+        let addr = serve_raw_once(response_bytes).await;
+        let response = reqwest::Client::new()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("send");
+        assert!(
+            response.content_length().is_none(),
+            "test precondition: chunked response must not expose Content-Length"
+        );
+
+        let err = read_bounded_body(response, 1024)
+            .await
+            .expect_err("oversized body must be rejected");
+        assert!(matches!(err, BoundedBodyError::Oversized));
+    }
+
+    #[tokio::test]
+    async fn read_bounded_body_accepts_body_within_limit() {
+        // Positive control: a chunked response under the cap should
+        // round-trip the bytes without error.
+        let payload: &[u8] = b"{\"ok\":true}";
+        let mut response_bytes = Vec::new();
+        response_bytes.extend_from_slice(
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: application/json\r\n\
+              Transfer-Encoding: chunked\r\n\
+              \r\n",
+        );
+        response_bytes.extend_from_slice(format!("{:x}\r\n", payload.len()).as_bytes());
+        response_bytes.extend_from_slice(payload);
+        response_bytes.extend_from_slice(b"\r\n0\r\n\r\n");
+
+        let addr = serve_raw_once(response_bytes).await;
+        let response = reqwest::Client::new()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("send");
+        let body = read_bounded_body(response, 1024).await.expect("under cap");
+        assert_eq!(body.as_slice(), payload);
+    }
+
+    #[test]
+    fn internal_backend_url_percent_encodes_slashes_in_segments() {
+        // Regression guard against re-introducing `format!()` for path
+        // interpolation.  A UAID whose nativeId is a full URL contains
+        // `/` and `?` characters; when embedded as a single segment the
+        // output must percent-encode them so the receiving Python
+        // router sees one `{agent_name}` segment, not several.
+        let uaid = "uaid:aid:HASH;uid=0;registry=cf;proto=a2a;nativeId=https://agent.example.com/a2a/send?k=v";
+        let url = internal_backend_url(
+            "http://127.0.0.1:4444",
+            &["_internal", "a2a", "agents", uaid, "resolve"],
+        )
+        .expect("valid URL");
+        let path = url.path();
+        // The encoded UAID is one path segment: exactly two `/` between
+        // `agents` and the segment, one `/` to `resolve`, no extras.
+        assert_eq!(
+            path.matches('/').count(),
+            5,
+            "expected 5 slashes (4 delimiters + leading), got path: {path}"
+        );
+        assert!(
+            path.contains("%2F"),
+            "expected `/` inside the UAID segment to be percent-encoded, got: {path}"
+        );
+        assert!(
+            path.contains("%3F"),
+            "expected `?` inside the UAID segment to be percent-encoded, got: {path}"
+        );
+        // `Url::path_segments` yields the raw (still-encoded) segments
+        // without decoding; the count is what matters here — exactly 5
+        // segments proves `/` inside the UAID did not fragment the path.
+        let segments: Vec<_> = url.path_segments().expect("hierarchical URL").collect();
+        assert_eq!(
+            segments.len(),
+            5,
+            "UAID segment must not fragment into multiple segments: {segments:?}"
+        );
+        assert_eq!(segments[0], "_internal");
+        assert_eq!(segments[1], "a2a");
+        assert_eq!(segments[2], "agents");
+        assert_eq!(segments[4], "resolve");
     }
 
     #[test]
@@ -1610,9 +2750,15 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_GATEWAY);
 
-        let err = proxy_agent_card(&state, "agent", &json!({"id": 1}), &json!({"sub": "user"}))
-            .await
-            .unwrap_err();
+        let err = proxy_agent_card(
+            &state,
+            "agent",
+            &json!({"id": 1}),
+            &json!({"sub": "user"}),
+            None,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_GATEWAY);
     }
 
@@ -1626,9 +2772,15 @@ mod tests {
             .await;
 
         let state = test_state(server.uri());
-        let card = proxy_agent_card(&state, "agent", &json!({"id": 7}), &json!({"sub": "user"}))
-            .await
-            .unwrap();
+        let card = proxy_agent_card(
+            &state,
+            "agent",
+            &json!({"id": 7}),
+            &json!({"sub": "user"}),
+            None,
+        )
+        .await
+        .unwrap();
         let card_json = card.0.json.unwrap();
         assert_eq!(card.0.status_code, 404);
         assert_eq!(card_json["error"]["message"], "no card");
@@ -1741,6 +2893,8 @@ mod tests {
             &json!({"params": {"id": "task-123"}}),
             &HashMap::from([("last-event-id".to_string(), "task-123:0".to_string())]),
             &json!({"sub": "user"}),
+            None,
+            0,
         )
         .await
         .unwrap();

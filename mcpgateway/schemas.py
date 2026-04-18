@@ -4565,6 +4565,13 @@ class A2AAgentCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
+    # UAID (Universal Agent ID) generation fields
+    generate_uaid: bool = Field(default=False, description="Generate UAID (Universal Agent ID) instead of UUID for zero-config cross-gateway routing")
+    uaid_registry: Optional[str] = Field(default="context-forge", description="Registry name for UAID generation (e.g., 'context-forge')")
+    uaid_protocol: Optional[str] = Field(default="a2a", description="Protocol for UAID (a2a, mcp, rest, grpc)")
+    uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
+    version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -4881,6 +4888,12 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+
+    # UAID (Universal Agent ID) generation fields - allow adding UAID to agents that don't have one
+    generate_uaid: Optional[bool] = Field(default=False, description="Generate UAID if agent doesn't already have one (UAID is immutable once set)")
+    uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
+    uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
+    version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
 
     @field_validator("tags")
     @classmethod
@@ -5232,6 +5245,12 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # UAID (Universal Agent ID) fields
+    uaid: Optional[str] = Field(None, description="Full UAID string (if UAID-based agent)")
+    uaid_registry: Optional[str] = Field(None, description="Registry name from UAID")
+    uaid_proto: Optional[str] = Field(None, description="Protocol from UAID (a2a, mcp, rest, grpc)")
+    uaid_native_id: Optional[str] = Field(None, description="Native endpoint from UAID for cross-gateway routing")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 

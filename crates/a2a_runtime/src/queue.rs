@@ -526,6 +526,10 @@ mod tests {
             event_store_ttl_secs: 1,
             event_flush_interval_ms: 1,
             event_flush_batch_size: 1,
+            uaid_allowed_domains: String::new(),
+            uaid_allowed_domains_cache: Default::default(),
+            uaid_max_length: 2048,
+            uaid_max_federation_hops: 3,
             log_filter: "info".to_string(),
             exit_after_startup_ms: None,
         })
