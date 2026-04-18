@@ -24,6 +24,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -698,20 +699,34 @@ class UpstreamSessionRegistry:
         return False
 
     async def _close_session(self, upstream: UpstreamSession) -> None:
-        """Signal the owner task to shut down and wait, with a timeout fallback."""
+        """Signal the owner task to shut down and wait, with a timeout fallback.
+
+        Uses ``asyncio.wait`` rather than ``await task`` so a rogue owner
+        that catches CancelledError without re-raising cannot hang shutdown.
+        The caller's cancellation cannot be used to interrupt ``await task``
+        in that case: asyncio chains the cancel into the awaited task, but
+        if the awaited task refuses to die, the ``await`` is stuck waiting
+        for it to complete. ``asyncio.wait`` returns once its own timer
+        fires, regardless of the awaited task's state.
+        """
         if upstream._closed:
             return
         upstream._closed = True
         if upstream._shutdown_event is not None:
             upstream._shutdown_event.set()
-        if upstream._owner_task is not None and not upstream._owner_task.done():
-            with anyio.move_on_after(self._shutdown_timeout_seconds) as scope:
-                try:
-                    await upstream._owner_task
-                except asyncio.CancelledError:
-                    # Expected when the owner task is awaiting a stream that got cancelled on shutdown.
-                    pass
-                except Exception as exc:  # noqa: BLE001 — cleanup swallow with breadcrumb
+        if upstream._owner_task is None or upstream._owner_task.done():
+            return
+
+        owner_task = upstream._owner_task
+        # Give the task its graceful window — it should notice shutdown_event
+        # and exit cleanly.
+        done, _pending = await asyncio.wait({owner_task}, timeout=self._shutdown_timeout_seconds)
+        if owner_task in done:
+            # Task finished cleanly; consume any exception so asyncio doesn't
+            # warn "Task exception was never retrieved".
+            if not owner_task.cancelled():
+                exc = owner_task.exception()
+                if exc is not None:
                     logger.debug(
                         "Owner task for %s (gateway=%s) exited during _close_session with %s: %s",
                         sanitize_url_for_logging(upstream.url),
@@ -719,36 +734,29 @@ class UpstreamSessionRegistry:
                         type(exc).__name__,
                         exc,
                     )
-            # anyio quirk: `scope.cancelled_caught` only becomes True if the
-            # CancelledError propagated OUT of the scope. Since we catch it
-            # inside (to silently swallow expected cancellations on graceful
-            # shutdown), we rely on `scope.cancel_called` instead — it flips
-            # to True when the deadline fires, regardless of what the body
-            # did with the exception. Also note: `await task` inside a
-            # cancelled scope propagates the cancel into the awaited task on
-            # asyncio, so the task is usually already done by the time we
-            # get here — the force-cancel below is then a no-op but the
-            # WARNING is still worth emitting because the timeout fired.
-            if scope.cancel_called:
-                logger.warning(
-                    "Upstream session owner cleanup timed out for session=%s gateway=%s url=%s; force-cancelling",
-                    upstream.downstream_session_id,
-                    upstream.gateway_id,
-                    sanitize_url_for_logging(upstream.url),
-                )
-                upstream._owner_task.cancel()
-                try:
-                    await upstream._owner_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:  # noqa: BLE001 — final force-cancel unwind
-                    logger.debug(
-                        "Force-cancel of owner task for %s (gateway=%s) raised %s: %s",
-                        sanitize_url_for_logging(upstream.url),
-                        upstream.gateway_id,
-                        type(exc).__name__,
-                        exc,
-                    )
+            return
+
+        # Grace period elapsed — force-cancel and give one more bounded wait.
+        logger.warning(
+            "Upstream session owner cleanup timed out for session=%s gateway=%s url=%s; force-cancelling",
+            upstream.downstream_session_id,
+            upstream.gateway_id,
+            sanitize_url_for_logging(upstream.url),
+        )
+        owner_task.cancel()
+        done, _pending = await asyncio.wait({owner_task}, timeout=self._shutdown_timeout_seconds)
+        if owner_task not in done:
+            logger.warning(
+                "Force-cancel of owner task did not complete within %.1fs for session=%s gateway=%s — task is orphaned but shutdown is proceeding",
+                self._shutdown_timeout_seconds,
+                upstream.downstream_session_id,
+                upstream.gateway_id,
+            )
+            return
+        # Consume any final exception.
+        if not owner_task.cancelled():
+            with contextlib.suppress(Exception):  # noqa: BLE001 — final retrieval
+                owner_task.result()
 
 
 class _AcquireDecision(Enum):

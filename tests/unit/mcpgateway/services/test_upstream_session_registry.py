@@ -1494,6 +1494,65 @@ async def test_close_session_short_circuits_when_already_closed(registry, factor
 
 
 @pytest.mark.asyncio
+async def test_close_session_bails_out_when_force_cancel_itself_wedges(caplog):
+    """If the owner task ignores cancellation, _close_session must still bail out — never hang shutdown.
+
+    A rogue owner that catches CancelledError without re-raising would keep
+    ``await upstream._owner_task`` blocked indefinitely (asyncio propagates
+    the caller's cancellation into the awaited task, but the awaited task
+    can refuse). Production uses ``asyncio.wait(..., timeout=...)`` instead
+    of a bare ``await`` so the total close time is bounded even when the
+    task refuses to die.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    factory, _ = _make_fake_factory()
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=0.1)
+
+    # Release gate so we can let the rogue task finish after the test asserts.
+    release = asyncio.Event()
+
+    async def cancel_ignoring_owner():
+        while not release.is_set():
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                # Intentionally swallow cancellation — simulate a misbehaving
+                # transport SDK that has `except Exception: pass` around its
+                # stream reads.
+                pass
+
+    stuck_task = asyncio.create_task(cancel_ignoring_owner(), name="cancel-ignorer")
+    upstream = UpstreamSession(
+        downstream_session_id="s-wedged",
+        gateway_id="g-wedged",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+        _owner_task=stuck_task,
+        _shutdown_event=asyncio.Event(),
+    )
+
+    with caplog.at_level("WARNING", logger=usr.logger.name):
+        # Total budget: ~2 * shutdown_timeout_seconds (0.1) + overhead. 1.0s is plenty.
+        await asyncio.wait_for(reg._close_session(upstream), timeout=1.0)  # pylint: disable=protected-access
+
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING"]
+    assert any("force-cancelling" in m for m in warnings)
+    assert any("did not complete" in m and "orphaned" in m for m in warnings)
+
+    # Release the rogue task so pytest-asyncio can tear down cleanly.
+    release.set()
+    # Give the rogue task one sleep-cycle to notice the release flag, then await.
+    done, _pending = await asyncio.wait({stuck_task}, timeout=0.5)
+    if stuck_task not in done:
+        # Test framework will still exit; just make sure pytest-asyncio doesn't hang.
+        stuck_task.cancel()
+
+
+@pytest.mark.asyncio
 async def test_close_session_force_cancels_stuck_owner_task(caplog):
     """A stuck owner task triggers the shutdown-timeout WARNING + force-cancel branch.
 
