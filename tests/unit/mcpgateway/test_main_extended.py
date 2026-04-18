@@ -232,7 +232,7 @@ class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
-        """When boot mode is edge, the dispatcher's effective transport is the Rust proxy."""
+        """When boot mode is edge, the ingress mount selects rust-internal by default."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -242,13 +242,31 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "MCPStreamableHTTPModeDispatcher"
-        # In edge boot mode with no override, public /mcp routes to the Rust proxy.
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # In edge boot mode with no override, public /mcp routes through the
+        # registered Rust ingress (default shape: rust-internal).
         assert module._should_mount_public_rust_transport() is True
-        assert module.mcp_transport_app._rust_transport.__class__.__name__ == "RustMCPRuntimeProxy"
+        assert module._select_mcp_ingress({}) == "rust-internal"
+        assert "rust-internal" in module.mcp_transport_app.names()
+        assert "rust-public" in module.mcp_transport_app.names()  # registered for boot=edge
+        assert "python" in module.mcp_transport_app.names()
+
+    def test_import_selects_rust_public_ingress_when_settings_say_so(self, monkeypatch):
+        """When boot is edge AND settings.mcp_rust_ingress=public, the selector picks rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": True,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        assert module._select_mcp_ingress({}) == "rust-public"
 
     def test_import_keeps_python_transport_when_rust_runtime_lacks_session_auth_reuse(self, monkeypatch):
-        """When boot mode is shadow, the dispatcher's effective transport is Python."""
+        """When boot mode is shadow, the ingress mount selects the Python transport."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -258,10 +276,14 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "MCPStreamableHTTPModeDispatcher"
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
         # In shadow boot mode with no override, public /mcp stays on Python.
         assert module._should_mount_public_rust_transport() is False
-        assert module.mcp_transport_app._python_transport.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+        assert module._select_mcp_ingress({}) == "python"
+        # rust-public is NOT registered on shadow boot — public listener
+        # isn't bound and the safety invariant isn't met.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert "rust-internal" in module.mcp_transport_app.names()
 
     def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
         """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
@@ -293,15 +315,16 @@ class TestConditionalPaths:
 
 
 @pytest.mark.asyncio
-async def test_mcp_dispatcher_routes_per_request_after_runtime_override(monkeypatch):
-    """An admin override flip must change which transport receives the *next* request."""
+async def test_mcp_ingress_mount_routes_per_request_after_runtime_override(monkeypatch):
+    """An admin override flip must change which ingress receives the *next* request."""
     # First-Party
-    from mcpgateway.main import MCPStreamableHTTPModeDispatcher
+    from mcpgateway.main import _select_mcp_ingress
     from mcpgateway.runtime_state import (
         get_runtime_state,
         reset_runtime_state_coordinator_for_tests,
         reset_runtime_state_for_tests,
     )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
 
     reset_runtime_state_for_tests()
     reset_runtime_state_coordinator_for_tests()
@@ -309,21 +332,20 @@ async def test_mcp_dispatcher_routes_per_request_after_runtime_override(monkeypa
     # Boot settings: edge (rust would normally win).
     monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
     monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
 
     python_calls = []
     rust_calls = []
 
-    class FakeTransport:
-        def __init__(self, sink):
-            self._sink = sink
+    async def python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
 
-        async def handle_streamable_http(self, scope, receive, send):
-            self._sink.append(scope.get("path", "/"))
+    async def rust_app(scope, _receive, _send):
+        rust_calls.append(scope.get("path", "/"))
 
-    dispatcher = MCPStreamableHTTPModeDispatcher(
-        python_transport=FakeTransport(python_calls),
-        rust_transport=FakeTransport(rust_calls),
-    )
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_app)
+    mount.register("python", python_app)
+    mount.register("rust-internal", rust_app)
 
     async def _no_send(_msg):
         pass
@@ -331,14 +353,14 @@ async def test_mcp_dispatcher_routes_per_request_after_runtime_override(monkeypa
     async def _no_receive():
         return {"type": "http.request"}
 
-    # Boot mode is edge → no override → routes to Rust.
-    await dispatcher.handle_streamable_http({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    # Boot mode is edge → no override → routes to rust-internal.
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
     # Apply admin override → shadow → next request routes to Python.
     await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
-    await dispatcher.handle_streamable_http({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
     # Flip back to edge → routes to Rust again.
     await get_runtime_state().apply_local("mcp", "edge", initiator_user="admin", version=2)
-    await dispatcher.handle_streamable_http({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
 
     assert rust_calls == ["/mcp", "/mcp"]
     assert python_calls == ["/mcp"]
@@ -348,17 +370,18 @@ async def test_mcp_dispatcher_routes_per_request_after_runtime_override(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_mcp_dispatcher_in_flight_request_finishes_on_original_transport(monkeypatch):
+async def test_mcp_ingress_mount_in_flight_request_finishes_on_original_ingress(monkeypatch):
     """Drain semantics: a flip mid-request must not redirect an already-dispatched call."""
     import asyncio as _asyncio
 
     # First-Party
-    from mcpgateway.main import MCPStreamableHTTPModeDispatcher
+    from mcpgateway.main import _select_mcp_ingress
     from mcpgateway.runtime_state import (
         get_runtime_state,
         reset_runtime_state_coordinator_for_tests,
         reset_runtime_state_for_tests,
     )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
 
     reset_runtime_state_for_tests()
     reset_runtime_state_coordinator_for_tests()
@@ -366,26 +389,24 @@ async def test_mcp_dispatcher_in_flight_request_finishes_on_original_transport(m
     # Boot edge → no override → first request routes to Rust.
     monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
     monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
 
     rust_started = _asyncio.Event()
     rust_release = _asyncio.Event()
     rust_completed = _asyncio.Event()
     python_calls = []
 
-    class GatedRustTransport:
-        async def handle_streamable_http(self, scope, receive, send):
-            rust_started.set()
-            await rust_release.wait()
-            rust_completed.set()
+    async def gated_rust_app(_scope, _receive, _send):
+        rust_started.set()
+        await rust_release.wait()
+        rust_completed.set()
 
-    class TrackingPythonTransport:
-        async def handle_streamable_http(self, scope, receive, send):
-            python_calls.append(scope.get("path", "/"))
+    async def tracking_python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
 
-    dispatcher = MCPStreamableHTTPModeDispatcher(
-        python_transport=TrackingPythonTransport(),
-        rust_transport=GatedRustTransport(),
-    )
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=tracking_python_app)
+    mount.register("python", tracking_python_app)
+    mount.register("rust-internal", gated_rust_app)
 
     async def _no_send(_msg):
         pass
@@ -394,14 +415,14 @@ async def test_mcp_dispatcher_in_flight_request_finishes_on_original_transport(m
         return {"type": "http.request"}
 
     # Kick off the in-flight request — boot mode is edge so it lands on Rust.
-    in_flight = _asyncio.create_task(dispatcher.handle_streamable_http({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send))
-    # Wait until the Rust transport is mid-execution.
+    in_flight = _asyncio.create_task(mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send))
+    # Wait until the Rust ingress is mid-execution.
     await _asyncio.wait_for(rust_started.wait(), timeout=1.0)
     # Now flip the runtime override to shadow; the in-flight request was already
     # dispatched to Rust and must finish there.
     await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
     # New request after the flip should land on Python.
-    await dispatcher.handle_streamable_http({"type": "http", "method": "POST", "path": "/mcp/post-flip"}, _no_receive, _no_send)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp/post-flip"}, _no_receive, _no_send)
     assert python_calls == ["/mcp/post-flip"]
     assert not rust_completed.is_set()
     # Release the gated request and verify it completed on Rust.
@@ -3074,12 +3095,7 @@ class TestMCPPathRewriteMiddleware:
         """Regression test for #4266: modified_path should be app-relative for server_id extraction."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/abc123/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/abc123/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -3097,11 +3113,7 @@ class TestMCPPathRewriteMiddleware:
         """When no root_path, modified_path equals original path."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/servers/xyz789/mcp",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/servers/xyz789/mcp", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):

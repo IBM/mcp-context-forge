@@ -11933,49 +11933,51 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
-class MCPStreamableHTTPModeDispatcher:
-    """Per-request dispatcher that flips between Python and Rust public ``/mcp`` ingress.
+def _select_mcp_ingress(_scope: dict) -> str:
+    """Pick the registered MCPIngressMount ingress to serve a request.
 
-    The dispatcher holds both streamable-HTTP transports and routes each
-    incoming request to whichever one matches the currently effective MCP
-    mode. This gives natural drain semantics: a runtime flip affects only new
-    requests because the target is selected before the inbound ``await``;
-    in-flight requests already past that point finish on their original
-    transport. Used only for boot modes ``shadow`` and ``edge`` where
-    runtime flipping is supported. Boot mode ``off`` has no Rust transport
-    to dispatch to; boot mode ``full`` mounts the plain Rust proxy directly
-    because flipping ``full`` would orphan Rust-held session/event-store
-    state — admin PATCHes against ``off``/``full`` boots return ``409``.
+    Single source of truth for the dispatch policy:
+
+    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
+      the Python transport or the plain Rust proxy is mounted directly
+      from ``_build_mcp_transport_app``.
+    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
+      that satisfies the safety invariant: route to the Rust ingress
+      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
+      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
+    - Override forces ``shadow``, OR safety invariant is unmet: route to
+      the Python transport (the always-safe fallback).
+
+    Args:
+        _scope: ASGI scope (unused today; reserved so future selectors
+            can route by method/path/headers without changing the
+            mount's API).
+
+    Returns:
+        The ingress name to look up in the mount's registry.
     """
-
-    def __init__(self, *, python_transport, rust_transport) -> None:
-        """Initialize the dispatcher with both pre-built transport apps.
-
-        Args:
-            python_transport: Python-owned MCP streamable-HTTP transport app.
-            rust_transport: Rust-proxy MCP streamable-HTTP transport app.
-        """
-        self._python_transport = python_transport
-        self._rust_transport = rust_transport
-
-    async def handle_streamable_http(self, scope, receive, send):
-        """Dispatch the incoming MCP request to the transport selected by the current mode.
-
-        Args:
-            scope: Incoming ASGI scope.
-            receive: ASGI receive callable.
-            send: ASGI send callable.
-        """
-        target = self._rust_transport if _should_mount_public_rust_transport() else self._python_transport
-        await target.handle_streamable_http(scope, receive, send)
+    if _should_mount_public_rust_transport():
+        return "rust-public" if settings.mcp_rust_ingress == "public" else "rust-internal"
+    return "python"
 
 
 def _build_mcp_transport_app():
-    """Choose the MCP transport app for the mounted /mcp path.
+    """Build the ASGI app to mount at public ``/mcp``.
 
     Returns:
-        Transport app object that should be mounted at the public ``/mcp`` path.
+        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
+        with the Python transport, the trusted-internal Rust proxy, and
+        (when supported) the nginx-style Rust public proxy registered.
+        For boot ``full``: the plain trusted-internal Rust proxy mounted
+        directly (no dispatcher — flipping ``full`` would orphan
+        Rust-held session/event-store state). For boot ``off``: the
+        Python transport. The ``/mcp`` mount calls
+        ``returned_app.handle_streamable_http`` (legacy interface kept
+        for backward compatibility with the existing mount line).
     """
+    # First-Party
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
+
     boot_mode = version_module.boot_mcp_runtime_mode()
     python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
 
@@ -11983,15 +11985,33 @@ def _build_mcp_transport_app():
         # First-Party
         from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
 
-        rust_transport = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
+        ingress.register("python", python_transport.handle_streamable_http)
+        ingress.register("rust-internal", rust_internal.handle_streamable_http)
+
+        # Public-listener proxy is only meaningful when the safety invariant
+        # is met (i.e. boot=edge); shadow boot doesn't bind the public
+        # listener. Register it on edge so an operator can flip
+        # `settings.mcp_rust_ingress = "public"` without a restart.
+        if boot_mode == "edge":
+            # First-Party
+            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
+
+            ingress.register("rust-public", build_rust_public_proxy_app())
+
         logger.warning(
-            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches per-request between Python and Rust (uds=%s, url=%s). Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
             _current_mcp_runtime_mode(),
             boot_mode,
-            settings.experimental_rust_mcp_runtime_uds,
-            settings.experimental_rust_mcp_runtime_url,
+            ingress.names(),
+            _select_mcp_ingress({}),
         )
-        return MCPStreamableHTTPModeDispatcher(python_transport=python_transport, rust_transport=rust_transport)
+        # The legacy mount line calls .handle_streamable_http on the returned
+        # app; expose that name on a tiny shim so the mount line can stay
+        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
+        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
+        return ingress
 
     if _should_mount_public_rust_transport():
         logger.warning(

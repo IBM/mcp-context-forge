@@ -53,5 +53,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0048  | Extract Rust-Backed Plugins First and Preserve Python Examples Separately | Accepted | Architecture | 2026-04-10 |
 | 0049  | Multi-Protocol Virtual Servers                       | Accepted | Architecture | 2026-04-16 |
 | 0050  | Defer Generic Cluster-Wide Settings Propagation Framework | Accepted | Architecture | 2026-04-18 |
+| 0051  | Swappable MCP Ingress Mount                          | Accepted | Architecture | 2026-04-18 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
