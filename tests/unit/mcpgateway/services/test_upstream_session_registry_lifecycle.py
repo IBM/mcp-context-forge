@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 # Standard
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -190,3 +190,149 @@ def test_connect_field_inventory_matches_gateway_model():
     columns = {c.key for c in DbGateway.__table__.columns}
     for field in _CONNECT_FIELD_NAMES:
         assert field in columns, f"_CONNECT_FIELD_NAMES out of sync: {field} no longer on Gateway model"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end proof that GatewayService.{delete,update}_gateway CALL eviction
+# ---------------------------------------------------------------------------
+#
+# The 3 helper tests above only prove the helper itself forwards; the contract
+# test above only greps the source for field names. Neither catches a
+# regression that REMOVES the `await _evict_upstream_sessions_for_gateway(...)`
+# call line. These two tests drive the real GatewayService methods against
+# mocked DB + mocked registry and assert registry.evict_gateway fires.
+
+
+@pytest.mark.asyncio
+async def test_delete_gateway_calls_registry_evict_gateway():
+    """GatewayService.delete_gateway must call registry.evict_gateway after commit (#4205)."""
+    # First-Party
+    from mcpgateway.services.gateway_service import GatewayService
+
+    reg = registry_module.init_upstream_session_registry()
+    reg.evict_gateway = AsyncMock(return_value=0)  # type: ignore[method-assign]
+
+    service = GatewayService()
+    gateway = MagicMock(id="gw-to-delete", name="gw", tools=[], resources=[], prompts=[], team_id=None, url="http://u")
+    test_db = MagicMock()
+    test_db.execute.return_value.scalar_one_or_none.return_value = gateway
+    # rowcount=1 makes the DELETE succeed and control flow to the eviction site.
+    delete_result = MagicMock()
+    delete_result.rowcount = 1
+    test_db.execute.return_value = delete_result
+
+    def execute_side_effect(*_args, **_kwargs):
+        # First .execute() returns the scalar_one_or_none gateway; later calls
+        # return the DELETE result. A single MagicMock with scalar_one_or_none
+        # set once + rowcount=1 covers both paths because the attributes don't
+        # collide.
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = gateway
+        r.rowcount = 1
+        return r
+
+    test_db.execute = Mock(side_effect=execute_side_effect)
+    test_db.commit = Mock()
+    service._notify_gateway_deleted = AsyncMock()
+    service._active_gateways = set()
+
+    with (
+        patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_registry_cache,
+        patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_lookup_cache,
+        patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_stats_cache,
+        patch("mcpgateway.utils.passthrough_headers.invalidate_passthrough_header_caches"),
+        patch("mcpgateway.services.gateway_service.audit_trail"),
+    ):
+        mock_registry_cache.return_value.invalidate_gateways = AsyncMock()
+        mock_lookup_cache.return_value.invalidate_gateway = AsyncMock()
+        mock_stats_cache.invalidate_tags = AsyncMock()
+
+        await service.delete_gateway(test_db, "gw-to-delete")
+
+    reg.evict_gateway.assert_awaited_once_with("gw-to-delete")
+
+
+@pytest.mark.asyncio
+async def test_update_gateway_with_url_change_calls_registry_evict_gateway():
+    """GatewayService.update_gateway must call registry.evict_gateway when url changes (#4205)."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    # First-Party
+    from mcpgateway.schemas import GatewayUpdate
+    from mcpgateway.services.gateway_service import GatewayService
+
+    reg = registry_module.init_upstream_session_registry()
+    reg.evict_gateway = AsyncMock(return_value=0)  # type: ignore[method-assign]
+
+    service = GatewayService()
+    gateway = MagicMock()
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.url = "http://old.example"
+    gateway.transport = "streamablehttp"
+    gateway.auth_type = None
+    gateway.auth_value = None
+    gateway.auth_query_params = None
+    gateway.oauth_config = None
+    gateway.ca_certificate = None
+    gateway.ca_certificate_sig = None
+    gateway.signing_algorithm = None
+    gateway.client_cert = None
+    gateway.client_key = None
+    gateway.team_id = None
+    gateway.visibility = "private"
+    gateway.tags = []
+    gateway.version = 1
+
+    test_db = MagicMock()
+    test_db.execute.return_value.scalar_one_or_none.return_value = gateway
+    # Second .execute() is the name-conflict check → None (no conflict).
+    test_db.execute = Mock(
+        side_effect=[
+            _mk(scalar=gateway),  # initial SELECT with selectinload
+            _mk(scalar=None),  # name conflict check
+            _mk(scalar=None),  # any follow-up
+        ]
+    )
+    test_db.commit = Mock()
+    test_db.refresh = Mock()
+
+    service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], []))
+    service._notify_gateway_updated = AsyncMock()
+    service._active_gateways = set()
+    service._classification_service = None
+    service._check_gateway_uniqueness = Mock(return_value=None)
+    service.normalize_url = lambda u: u
+
+    with (
+        patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_registry_cache,
+        patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_lookup_cache,
+        patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_stats_cache,
+        patch("mcpgateway.services.gateway_service.GatewayRead.model_validate") as mock_validate,
+        patch("mcpgateway.utils.passthrough_headers.invalidate_passthrough_header_caches"),
+        patch("mcpgateway.services.gateway_service.audit_trail"),
+    ):
+        mock_registry_cache.return_value.invalidate_gateways = AsyncMock()
+        mock_lookup_cache.return_value.invalidate_gateway = AsyncMock()
+        mock_stats_cache.invalidate_tags = AsyncMock()
+        mock_validate.return_value.masked.return_value = MagicMock()
+
+        update = GatewayUpdate(url="http://new.example")
+        await service.update_gateway(test_db, "gw-1", update)
+
+    reg.evict_gateway.assert_awaited_once_with("gw-1")
+
+
+def _mk(*, scalar=None):
+    """Build a MagicMock that mimics a SQLAlchemy Result for the mocked test_db.execute."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = scalar
+    scalars_proxy = MagicMock()
+    scalars_proxy.all.return_value = []
+    r.scalars.return_value = scalars_proxy
+    r.rowcount = 1
+    return r
