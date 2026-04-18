@@ -17,12 +17,12 @@ OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opini
 
 ### Option A - Use Make
 
-| Target             | Builds                  | Dockerfile             | Notes                    |
-| ------------------ | ----------------------- | ---------------------- | ------------------------ |
-| `make podman`      | `mcpgateway-dev:latest` | **Containerfile**      | Rootless Podman build    |
-| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | UBI 9-micro, multi-stage |
-| `make docker`      | `mcpgateway-dev:latest` | **Containerfile**      | Docker Desktop           |
-| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same slim image          |
+| Target             | Builds                  | Dockerfile             | Notes                                  |
+| ------------------ | ----------------------- | ---------------------- | -------------------------------------- |
+| `make podman`      | `mcpgateway:latest`     | **Containerfile.lite** | Rootless Podman, multi-stage UBI build |
+| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, for production                   |
+| `make docker`      | `mcpgateway:latest`     | **Containerfile.lite** | Docker Desktop / CI                    |
+| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, with Docker Content Trust        |
 
 Push afterwards, for example:
 
@@ -31,16 +31,19 @@ podman tag mcpgateway:latest quay.io/YOUR_NS/mcpgateway:latest
 podman push quay.io/YOUR_NS/mcpgateway:latest
 ```
 
-> **Apple-silicon note** - `Containerfile.lite` uses `ubi9-micro` (x86\_64). Buildx/QEMU works, but the image will run under emulation on macOS. If you need native arm64 choose the dev image or add `--platform linux/arm64`.
+> **Apple-silicon note** - `Containerfile.lite` targets `ubi10-minimal`, which
+> has native builds for amd64, arm64, s390x, and ppc64le. On M-series Macs,
+> build a native arm64 image with `--platform=linux/arm64`.
 
 ### Option B - Raw CLI equivalents
 
 ```bash
-# Dev (Containerfile)
-podman build -t mcpgateway-dev:latest -f Containerfile .
-
-# Prod (UBI micro, AMD64, squashed layers)
+# AMD64, squashed layers
 docker build --platform=linux/amd64 --squash \
+  -t mcpgateway:latest -f Containerfile.lite .
+
+# Native arm64
+docker build --platform=linux/arm64 \
   -t mcpgateway:latest -f Containerfile.lite .
 ```
 
@@ -203,8 +206,8 @@ The Postgres template already generates a PVC; you can create extra PVCs manuall
 
 | Action                  | Command                                                   |
 | ----------------------- | --------------------------------------------------------- |
-| Build dev image (local) | `podman build -t mcpgateway-dev -f Containerfile .`       |
-| Build prod (UBI lite)   | `docker build -t mcpgateway -f Containerfile.lite .`      |
+| Build image (local)     | `podman build -t mcpgateway -f Containerfile.lite .`      |
+| Build image (Docker)    | `docker build -t mcpgateway -f Containerfile.lite .`      |
 | Push to Quay            | `podman push mcpgateway quay.io/NS/mcpgateway`            |
 | Create project          | `oc new-project mcp-demo`                                 |
 | Load .env               | `oc create configmap mcpgateway-env --from-env-file=.env` |

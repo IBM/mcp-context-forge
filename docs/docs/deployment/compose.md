@@ -92,35 +92,34 @@ docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 ### Using Make (preferred)
 
-| Target             | Image                   | Dockerfile             | Notes                         |
-| ------------------ | ----------------------- | ---------------------- | ----------------------------- |
-| `make podman`      | `mcpgateway:latest`     | **Containerfile**      | Rootless Podman, dev-oriented |
-| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Ultra-slim UBI 9-micro build  |
-| `make docker`      | `mcpgateway:latest`     | **Containerfile**      | Docker Desktop / CI runners   |
-| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same multi-stage "lite" build |
+| Target             | Image                   | Dockerfile             | Notes                                       |
+| ------------------ | ----------------------- | ---------------------- | ------------------------------------------- |
+| `make podman`      | `mcpgateway:latest`     | **Containerfile.lite** | Rootless Podman, multi-stage UBI build      |
+| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same build, used for production             |
+| `make docker`      | `mcpgateway:latest`     | **Containerfile.lite** | Docker Desktop / CI runners                 |
+| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, with Docker Content Trust when pushed |
 
 Remember to tag the image or configure the correct image in `docker-compose.yml`
 
 ### Manual equivalents
 
 ```bash
-# Podman (dev image)
-podman build -t mcpgateway-dev:latest -f Containerfile .
+# Podman
+podman build -t mcpgateway:latest -f Containerfile.lite .
 
-# Podman (prod image, AMD64, squash layers)
+# Podman (AMD64, squash layers)
 podman build --platform=linux/amd64 --squash \
   -t mcpgateway:latest -f Containerfile.lite .
 
-# Docker (dev image)
-docker build -t mcpgateway-dev:latest -f Containerfile .
-
-# Docker (prod image)
+# Docker
 docker build -t mcpgateway:latest -f Containerfile.lite .
 ```
 
-> **Apple Silicon caveat**
-> `Containerfile.lite` derives from **ubi9-micro**. Running it via QEMU emulation on M-series Macs often fails with a `glibc x86-64-v2` error.
-> Use the *regular* image or build a native `linux/arm64` variant on Mac.
+> **Apple Silicon note**
+> `Containerfile.lite` runtime base is `ubi10-minimal` which supports
+> `linux/amd64`, `linux/arm64`, `linux/s390x`, and `linux/ppc64le`. On M-series
+> Macs, build native arm64 with `--platform=linux/arm64` — QEMU emulation is
+> unnecessary.
 
 ---
 

@@ -44,7 +44,6 @@ def test_docker_scan_triggers_on_changed_container_files():
     pr_paths = workflow["on"]["pull_request"]["paths"]
 
     for expected in [
-        "Containerfile",
         "Containerfile.lite",
         "a2a-agents/go/a2a-echo-agent/**",
         "mcp-servers/python/python_sandbox_server/docker/**",
@@ -61,12 +60,6 @@ def test_docker_scan_builds_changed_dockerfiles():
     matrix = workflow["jobs"]["container-smoke"]["strategy"]["matrix"]["include"]
 
     assert matrix == [
-        {
-            "name": "main",
-            "context": ".",
-            "file": "Containerfile",
-            "tag": "mcp-context-forge-main-smoke:scan",
-        },
         {
             "name": "a2a-echo-agent",
             "context": "a2a-agents/go/a2a-echo-agent",

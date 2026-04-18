@@ -8,9 +8,7 @@ include README.md
 include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
-include Containerfile
 include Containerfile.lite
-include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
@@ -120,8 +118,6 @@ recursive-include crates *.pyi
 recursive-include crates *.sh
 recursive-include crates Makefile
 recursive-include crates pyproject.toml
-recursive-include crates Containerfile
-recursive-include crates Dockerfile
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs

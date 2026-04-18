@@ -62,7 +62,7 @@ make podman
 ### Using Docker (manual alternative)
 
 ```bash
-docker build -t mcpgateway:latest -f Containerfile .
+docker build -t mcpgateway:latest -f Containerfile.lite .
 ```
 
 > The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.

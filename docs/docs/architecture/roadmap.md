@@ -619,7 +619,7 @@
     - ⏳ [**#2381**](https://github.com/IBM/mcp-context-forge/issues/2381) - [CLEANUP][SONAR][LOW]: Identical if/elif branches in catalog_service.py auth handling
     - ⏳ [**#2505**](https://github.com/IBM/mcp-context-forge/issues/2505) - [CHORE]: Standardize user context parameter naming (_user vs current_user_ctx)
     - ⏳ [**#2577**](https://github.com/IBM/mcp-context-forge/issues/2577) - [REFACTOR][API]: Standardize error response formatting with ErrorFormatter
-    - ⏳ [**#2613**](https://github.com/IBM/mcp-context-forge/issues/2613) - [CHORE][BUILD]: Consolidate Container Images - Single Containerfile
+    - ✅ [**#2613**](https://github.com/IBM/mcp-context-forge/issues/2613) - [CHORE][BUILD]: Consolidate Container Images - Single Containerfile
     - ⏳ [**#2872**](https://github.com/IBM/mcp-context-forge/issues/2872) - [TASK][PLUGINS]: Add unit tests for secrets detection plugins
     - ⏳ [**#2969**](https://github.com/IBM/mcp-context-forge/issues/2969) - [CHORE][RUST]: enforce code coverage to 90% for rust plugins
     - ✅ [**#3027**](https://github.com/IBM/mcp-context-forge/issues/3027) - [CHORE]: setup rust mcpgateway for internal components
