@@ -17,7 +17,7 @@ Fly.io is a global app platform for running containers close to your users, with
 | Fly.io account | [Sign up](https://fly.io) |
 | Fly CLI | Install via Homebrew: `brew install flyctl` or see Fly docs |
 | Docker **or** Podman | For local image builds (optional) |
-| Containerfile | The included Containerfile with psycopg3 (psycopg[binary]) support |
+| Containerfile.lite | The included multi-stage image; `[postgres]` extra bundles `psycopg[c,binary]>=3.3.3` |
 
 ---
 
@@ -60,17 +60,18 @@ fly deploy
 
 ## 3 - Containerfile Requirements
 
-Ensure your Containerfile explicitly installs PostgreSQL dependencies:
+`Containerfile.lite` already installs PostgreSQL support via the `[postgres]`
+extra in `pyproject.toml`, which pins `psycopg[c,binary]>=3.3.3`. No extra
+dockerfile edits are needed to run against Postgres.
+
+If you're building a custom image, ensure your install command includes the
+`[postgres]` extra so psycopg3 is bundled:
 
 ```dockerfile
-# Create virtual environment, upgrade pip and install dependencies
 RUN python3 -m venv /app/.venv && \
-/app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-/app/.venv/bin/python3 -m pip install 'psycopg[binary]' && \
-/app/.venv/bin/python3 -m uv pip install ".[redis]"
+    /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
+    /app/.venv/bin/uv pip install ".[redis,postgres]"
 ```
-
-The explicit `psycopg[binary]` (psycopg3) installation is required because uv may not properly install optional dependencies.
 
 ---
 
@@ -83,7 +84,7 @@ app = "your-app-name"
 primary_region = "yyz"
 
 [build]
-dockerfile = "Containerfile"
+dockerfile = "Containerfile.lite"
 
 [env]
 HOST = "0.0.0.0"
@@ -150,7 +151,7 @@ sqlalchemy.exc.NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgre
 
 **Solutions:**
 
-1. Ensure `psycopg[binary]` is explicitly installed in Containerfile
+1. Ensure the install command in your dockerfile includes the `[postgres]` extra (the default `Containerfile.lite` does this already)
 2. Use `postgresql+psycopg://` (not `postgresql://` or `postgres://`) in DATABASE_URL
 3. Rebuild with `fly deploy --no-cache`
 
