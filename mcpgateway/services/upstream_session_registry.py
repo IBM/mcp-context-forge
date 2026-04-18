@@ -43,6 +43,7 @@ from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 
 # First-Party
+from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)
@@ -182,8 +183,9 @@ _MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS = ">=1.27.0,<2.0.0"
 # One-shot guard for the SDK-drift log: WARNING on first occurrence per process
 # (so operators can't miss "the SDK shape just changed under us") then DEBUG on
 # every subsequent call (so a sustained mismatch doesn't flood logs — this probe
-# runs on every acquire()).
-_sdk_drift_warning_emitted = False
+# runs on every acquire()). Mutable module state, not a constant — pylint's
+# all-caps convention doesn't fit.
+_sdk_drift_warning_emitted = False  # pylint: disable=invalid-name
 
 
 def _mcp_transport_is_broken(session: ClientSession) -> bool:
@@ -712,7 +714,16 @@ class UpstreamSessionRegistry:
         if the awaited task refuses to die, the ``await`` is stuck waiting
         for it to complete. ``asyncio.wait`` returns once its own timer
         fires, regardless of the awaited task's state.
+
+        The leading-underscore fields on ``UpstreamSession`` are private to
+        this module — the registry owns the session lifecycle and is the
+        only legitimate mutator of ``_closed`` / ``_shutdown_event`` /
+        ``_owner_task``. Pylint's ``protected-access`` rule is disabled
+        inline for each access because the alternative (a public setter
+        per field) would leak lifecycle mechanics to any caller that
+        happened to import ``UpstreamSession``.
         """
+        # pylint: disable=protected-access
         if upstream._closed:
             return
         upstream._closed = True
@@ -817,19 +828,12 @@ async def shutdown_upstream_session_registry() -> None:
 def downstream_session_id_from_request_context() -> Optional[str]:
     """Return the downstream Mcp-Session-Id for the current request, or None.
 
-    Reads from the streamable-HTTP transport's per-request ContextVar
-    (``request_headers_var``). Service-layer callers (tool_service,
+    Reads from the neutral ``mcpgateway.transports.context`` module's
+    per-request ContextVar. Service-layer callers (tool_service,
     prompt_service, resource_service) use this to key the registry so that
     an upstream session is bound 1:1 to the downstream MCP session that
     initiated the call.
-
-    The import of ``request_headers_var`` is deferred to avoid a circular
-    dependency between ``mcpgateway.services`` and
-    ``mcpgateway.transports.streamablehttp_transport``.
     """
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import request_headers_var  # pylint: disable=import-outside-toplevel
-
     headers = request_headers_var.get() or {}
     lowered = {k.lower(): v for k, v in headers.items()}
     return lowered.get("x-mcp-session-id") or lowered.get("mcp-session-id") or None

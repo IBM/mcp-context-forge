@@ -353,13 +353,12 @@ class PromptService(BaseService):
         """
         return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
 
-    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
         Args:
             prompt: Gateway-backed prompt record from the catalog.
             arguments: Optional prompt-rendering arguments.
-            user_identity: Effective requester email for session-pool isolation.
             meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
 
         Returns:
@@ -2005,7 +2004,7 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user, meta_data=_meta_data)
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data)
                 elif not arguments:
                     result = PromptResult(
                         messages=[

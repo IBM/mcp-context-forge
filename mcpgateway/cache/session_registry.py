@@ -1249,8 +1249,8 @@ class SessionRegistry(SessionBackend):
         # session whose presence is otherwise invisible to ops.
         # First-Party
         from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
-            RegistryNotInitializedError,
             get_upstream_session_registry,
+            RegistryNotInitializedError,
         )
 
         try:
@@ -1259,7 +1259,7 @@ class SessionRegistry(SessionBackend):
             pass  # Nothing to evict — tests or very-early bootstrap.
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Upstream session eviction for downstream session %s failed (%s: %s); " "an orphaned upstream session may persist until its owner task exits",
+                "Upstream session eviction for downstream session %s failed (%s: %s); an orphaned upstream session may persist until its owner task exits",
                 session_id,
                 type(exc).__name__,
                 exc,

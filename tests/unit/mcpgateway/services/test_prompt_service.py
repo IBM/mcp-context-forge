@@ -520,7 +520,6 @@ class TestPromptService:
         prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
-            "user@test.com",
             meta_data=None,
         )
         test_db.commit.assert_called_once()
@@ -3496,7 +3495,7 @@ class TestGetPromptMetaDataValidationIntegration:
         oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
 
         with pytest.raises(ValueError, match="maximum key count"):
-            await service._fetch_gateway_prompt_result(prompt, {}, "user@example.com", meta_data=oversized)
+            await service._fetch_gateway_prompt_result(prompt, {}, meta_data=oversized)
 
 
 class TestFetchGatewayPromptRegistryPath:
@@ -3550,7 +3549,7 @@ class TestFetchGatewayPromptRegistryPath:
             patch("mcpgateway.services.prompt_service.get_upstream_session_registry", return_value=fake_registry),
             patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
         ):
-            result = await service._fetch_gateway_prompt_result(prompt, {"a": "b"}, "user@example.com", meta_data=None)
+            result = await service._fetch_gateway_prompt_result(prompt, {"a": "b"}, meta_data=None)
 
         fake_registry.acquire.assert_called_once()
         assert result.description == "from registry"
@@ -3593,6 +3592,6 @@ class TestFetchGatewayPromptRegistryPath:
             patch("mcpgateway.services.prompt_service.ClientSession", return_value=_FakeClientSessionCtx()),
             patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
         ):
-            result = await service._fetch_gateway_prompt_result(prompt, None, "user@example.com", meta_data=None)
+            result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
 
         assert result.description == "from fallback"

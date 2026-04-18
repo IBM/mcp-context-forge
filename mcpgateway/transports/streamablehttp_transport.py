@@ -227,8 +227,15 @@ completion_service: CompletionService = CompletionService()
 mcp_app: Server[Any] = Server("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
-request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
-user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+# First-Party
+# request_headers_var + user_context_var live in `mcpgateway.transports.context`
+# so service-layer code can read them without importing this module (which
+# would create an import cycle via prompt/tool/resource services). Imported
+# here for backwards-compat: external callers that already do
+# `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
+# keep working.
+from mcpgateway.transports.context import request_headers_var, user_context_var  # noqa: E402  # pylint: disable=wrong-import-position
+
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 

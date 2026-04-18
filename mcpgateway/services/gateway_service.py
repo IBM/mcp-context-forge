@@ -101,8 +101,8 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
@@ -448,8 +448,8 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
     """
     # First-Party
     from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
-        RegistryNotInitializedError,
         get_upstream_session_registry,
+        RegistryNotInitializedError,
     )
 
     try:
@@ -461,7 +461,7 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
         # fires POST-commit: auth / URL / TLS change is already persisted, so a silent eviction
         # failure leaves in-flight downstream sessions talking to the stale gateway state.
         logger.warning(
-            "Upstream session eviction for gateway %s failed (%s: %s); stale sessions may " "persist until their downstream session ends",
+            "Upstream session eviction for gateway %s failed (%s: %s); stale sessions may persist until their downstream session ends",
             gateway_id,
             type(exc).__name__,
             exc,
