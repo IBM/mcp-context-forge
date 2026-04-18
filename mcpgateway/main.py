@@ -1884,6 +1884,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         cache_invalidation_subscriber = get_cache_invalidation_subscriber()
         await cache_invalidation_subscriber.start()
 
+        # Start runtime-mode coordinator for cluster-wide override propagation
+        # First-Party
+        from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+        runtime_state_coordinator = get_runtime_state_coordinator()
+        await runtime_state_coordinator.start()
+
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
@@ -1975,6 +1982,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
+        # Stop runtime-mode coordinator
+        try:
+            # First-Party
+            from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+            await get_runtime_state_coordinator().stop()
+        except Exception as e:
+            logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -11850,6 +11866,12 @@ if ADMIN_API_ENABLED:
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
+
+    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
@@ -11911,12 +11933,107 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
-def _build_mcp_transport_app():
-    """Choose the MCP transport app for the mounted /mcp path.
+def _select_mcp_ingress(_scope: dict) -> str:
+    """Pick the registered MCPIngressMount ingress to serve a request.
+
+    Single source of truth for the dispatch policy:
+
+    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
+      the Python transport or the plain Rust proxy is mounted directly
+      from ``_build_mcp_transport_app``.
+    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
+      that satisfies the safety invariant: route to the Rust ingress
+      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
+      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
+    - Override forces ``shadow``, OR safety invariant is unmet: route to
+      the Python transport (the always-safe fallback).
+
+    The ``"rust-public"`` ingress is only registered on ``boot=edge``
+    (the public listener isn't bound on shadow boot per the entrypoint
+    flow). On any other boot mode the selector transparently downgrades
+    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
+    routing to an unregistered name; the misconfig itself is surfaced
+    as a boot-time error in ``_build_mcp_transport_app``.
+
+    Args:
+        _scope: ASGI scope (unused today; reserved so future selectors
+            can route by method/path/headers without changing the
+            mount's API).
 
     Returns:
-        Transport app object that should be mounted at the public ``/mcp`` path.
+        The ingress name to look up in the mount's registry.
     """
+    if not _should_mount_public_rust_transport():
+        return "python"
+    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
+        return "rust-public"
+    return "rust-internal"
+
+
+def _build_mcp_transport_app():
+    """Build the ASGI app to mount at public ``/mcp``.
+
+    Returns:
+        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
+        with the Python transport, the trusted-internal Rust proxy, and
+        (when supported) the nginx-style Rust public proxy registered.
+        For boot ``full``: the plain trusted-internal Rust proxy mounted
+        directly (no dispatcher — flipping ``full`` would orphan
+        Rust-held session/event-store state). For boot ``off``: the
+        Python transport. The ``/mcp`` mount calls
+        ``returned_app.handle_streamable_http`` (legacy interface kept
+        for backward compatibility with the existing mount line).
+    """
+    # First-Party
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
+
+    boot_mode = version_module.boot_mcp_runtime_mode()
+    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+
+    if boot_mode in ("shadow", "edge"):
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+
+        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
+        ingress.register("python", python_transport.handle_streamable_http)
+        ingress.register("rust-internal", rust_internal.handle_streamable_http)
+
+        # Public-listener proxy is only meaningful when the safety invariant
+        # is met (i.e. boot=edge); shadow boot doesn't bind the public
+        # listener. Register it on edge so an operator can flip
+        # `settings.mcp_rust_ingress = "public"` without a restart.
+        if boot_mode == "edge":
+            # First-Party
+            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
+
+            ingress.register("rust-public", build_rust_public_proxy_app())
+        elif settings.mcp_rust_ingress == "public":
+            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
+            # Rust public listener isn't bound on shadow boot, so the
+            # selector deliberately downgrades to "rust-internal". Logged
+            # at error severity so it survives the default LOG_LEVEL=ERROR
+            # — a warning here would be invisible in most production
+            # deployments and the operator would never know their setting
+            # is being silently overridden.
+            logger.error(
+                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
+                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
+            )
+
+        logger.warning(
+            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            _current_mcp_runtime_mode(),
+            boot_mode,
+            ingress.names(),
+            _select_mcp_ingress({}),
+        )
+        # The legacy mount line calls .handle_streamable_http on the returned
+        # app; expose that name on a tiny shim so the mount line can stay
+        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
+        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
+        return ingress
+
     if _should_mount_public_rust_transport():
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
@@ -11933,18 +12050,6 @@ def _build_mcp_transport_app():
 
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 
-    if settings.experimental_rust_mcp_runtime_enabled:
-        logger.warning(
-            "MCP runtime mode: %s. Rust sidecar remains enabled, but public /mcp stays on the Python transport because MCP session auth reuse is disabled. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            _current_mcp_runtime_mode(),
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
-
     if _rust_build_included():
         logger.warning(
             "MCP runtime mode: %s. Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp remains on the Python transport. Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust runtime with the simple env flow.",
@@ -11953,7 +12058,7 @@ def _build_mcp_transport_app():
     else:
         logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
 
-    return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+    return python_transport
 
 
 class InternalTrustedMCPTransportBridge:

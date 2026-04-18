@@ -160,6 +160,16 @@ services:
       #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
       #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
       #   RUST_MCP_MODE=full   -> edge + Rust session/event-store/resume/live-stream/affinity cores
+      # When the boot mode is edge an authorized admin can flip the public
+      # /mcp ingress between shadow and edge at runtime via
+      # PATCH /admin/runtime/mcp-mode (and /admin/runtime/a2a-mode for A2A).
+      # (off, shadow, and full boot modes are NOT flippable at runtime —
+      # off has no Rust sidecar; shadow did not opt into session-auth-reuse
+      # so an edge override cannot safely route public traffic; full would
+      # require live migration of Rust-owned cores.)
+      # The override is in-memory only; restarts re-read RUST_MCP_MODE/RUST_A2A_MODE.
+      # If REDIS_URL is set the override propagates to all pods; otherwise it is
+      # local to the pod that received the PATCH.
       # Advanced EXPERIMENTAL_/MCP_RUST_* env vars below still work as explicit overrides.
       - RUST_MCP_MODE=${RUST_MCP_MODE:-off}
       - RUST_MCP_LOG=${RUST_MCP_LOG:-warn}

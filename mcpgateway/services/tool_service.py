@@ -5470,7 +5470,10 @@ class ToolService(BaseService):
                         logger.info(f"Calling A2A agent '{a2a_agent_name}' at {prepared.sanitized_endpoint_url}")
                         a2a_start_time = time.time()
                         try:
-                            if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
+                            # First-Party
+                            from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+                            if should_delegate_a2a_to_rust():
                                 runtime_response = await get_rust_a2a_runtime_client().invoke(prepared, timeout_seconds=int(max(1, effective_timeout)))
                                 status_code = int(runtime_response.get("status_code", 200))
                                 response_data = runtime_response.get("json")
@@ -6651,7 +6654,10 @@ class ToolService(BaseService):
         )
         logger.info(f"invoke tool request_data prepared: {prepared.request_data}")
 
-        if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
+        # First-Party
+        from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+        if should_delegate_a2a_to_rust():
             runtime_response = await get_rust_a2a_runtime_client().invoke(
                 prepared,
                 timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),

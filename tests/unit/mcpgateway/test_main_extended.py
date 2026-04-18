@@ -232,7 +232,7 @@ class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
-        """Module import should swap the mounted /mcp app to the Rust proxy when enabled."""
+        """When boot mode is edge, the ingress mount selects rust-internal by default."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -242,10 +242,31 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # In edge boot mode with no override, public /mcp routes through the
+        # registered Rust ingress (default shape: rust-internal).
+        assert module._should_mount_public_rust_transport() is True
+        assert module._select_mcp_ingress({}) == "rust-internal"
+        assert "rust-internal" in module.mcp_transport_app.names()
+        assert "rust-public" in module.mcp_transport_app.names()  # registered for boot=edge
+        assert "python" in module.mcp_transport_app.names()
+
+    def test_import_selects_rust_public_ingress_when_settings_say_so(self, monkeypatch):
+        """When boot is edge AND settings.mcp_rust_ingress=public, the selector picks rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": True,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        assert module._select_mcp_ingress({}) == "rust-public"
 
     def test_import_keeps_python_transport_when_rust_runtime_lacks_session_auth_reuse(self, monkeypatch):
-        """Module import should keep public /mcp on Python when Rust session auth reuse is disabled."""
+        """When boot mode is shadow, the ingress mount selects the Python transport."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -255,7 +276,56 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # In shadow boot mode with no override, public /mcp stays on Python.
+        assert module._should_mount_public_rust_transport() is False
+        assert module._select_mcp_ingress({}) == "python"
+        # rust-public is NOT registered on shadow boot — public listener
+        # isn't bound and the safety invariant isn't met.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert "rust-internal" in module.mcp_transport_app.names()
+
+    def test_import_logs_error_when_public_ingress_misconfigured_on_shadow_boot(self, monkeypatch, caplog):
+        """shadow boot + mcp_rust_ingress=public is a misconfig: boot must log at error so it survives the default LOG_LEVEL=ERROR."""
+        caplog.set_level("ERROR")
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                # session-auth-reuse OFF → boot mode is shadow, the public
+                # listener is not bound, and `mcp_rust_ingress=public` is
+                # the operator misconfig we want to surface loudly.
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # rust-public is never registered on shadow boot — the public
+        # listener isn't bound there. Without the error log, an operator
+        # would never know their setting is being silently overridden.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert any("mcp_rust_ingress=public is set on boot=shadow" in rec.message and rec.levelname == "ERROR" for rec in caplog.records)
+
+    def test_select_mcp_ingress_downgrades_public_to_internal_on_shadow_boot(self, monkeypatch):
+        """Even when an active edge override would otherwise route to Rust, shadow boot must NEVER select rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        # Force the safety predicate True (as a runtime edge override
+        # would) and assert the selector still refuses to return
+        # "rust-public" on shadow boot. This is the regression guard:
+        # dropping the `boot_mcp_runtime_mode() == "edge"` clause would
+        # silently route auth-sensitive traffic to an unregistered name,
+        # whose only fallback is the python transport.
+        with patch.object(module, "_should_mount_public_rust_transport", return_value=True):
+            assert module._select_mcp_ingress({}) == "rust-internal"
 
     def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
         """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
@@ -284,6 +354,164 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_mcp_ingress_mount_routes_per_request_after_runtime_override(monkeypatch):
+    """An admin override flip must change which ingress receives the *next* request."""
+    # First-Party
+    from mcpgateway.main import _select_mcp_ingress
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
+
+    # Boot settings: edge (rust would normally win).
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
+
+    python_calls = []
+    rust_calls = []
+
+    async def python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
+
+    async def rust_app(scope, _receive, _send):
+        rust_calls.append(scope.get("path", "/"))
+
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_app)
+    mount.register("python", python_app)
+    mount.register("rust-internal", rust_app)
+
+    async def _no_send(_msg):
+        pass
+
+    async def _no_receive():
+        return {"type": "http.request"}
+
+    # Boot mode is edge → no override → routes to rust-internal.
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    # Apply admin override → shadow → next request routes to Python.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    # Flip back to edge → routes to Rust again.
+    await get_runtime_state().apply_local("mcp", "edge", initiator_user="admin", version=2)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+
+    assert rust_calls == ["/mcp", "/mcp"]
+    assert python_calls == ["/mcp"]
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_mcp_ingress_mount_in_flight_request_finishes_on_original_ingress(monkeypatch):
+    """Drain semantics: a flip mid-request must not redirect an already-dispatched call."""
+    import asyncio as _asyncio
+
+    # First-Party
+    from mcpgateway.main import _select_mcp_ingress
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
+
+    # Boot edge → no override → first request routes to Rust.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
+
+    rust_started = _asyncio.Event()
+    rust_release = _asyncio.Event()
+    rust_completed = _asyncio.Event()
+    python_calls = []
+
+    async def gated_rust_app(_scope, _receive, _send):
+        rust_started.set()
+        await rust_release.wait()
+        rust_completed.set()
+
+    async def tracking_python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
+
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=tracking_python_app)
+    mount.register("python", tracking_python_app)
+    mount.register("rust-internal", gated_rust_app)
+
+    async def _no_send(_msg):
+        pass
+
+    async def _no_receive():
+        return {"type": "http.request"}
+
+    # Kick off the in-flight request — boot mode is edge so it lands on Rust.
+    in_flight = _asyncio.create_task(mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send))
+    # Wait until the Rust ingress is mid-execution.
+    await _asyncio.wait_for(rust_started.wait(), timeout=1.0)
+    # Now flip the runtime override to shadow; the in-flight request was already
+    # dispatched to Rust and must finish there.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    # New request after the flip should land on Python.
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp/post-flip"}, _no_receive, _no_send)
+    assert python_calls == ["/mcp/post-flip"]
+    assert not rust_completed.is_set()
+    # Release the gated request and verify it completed on Rust.
+    rust_release.set()
+    await _asyncio.wait_for(in_flight, timeout=1.0)
+    assert rust_completed.is_set()
+    # The post-flip request was the only Python landing; the in-flight request
+    # never re-routed.
+    assert python_calls == ["/mcp/post-flip"]
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_apply_runtime_mode_headers_reflects_override(monkeypatch):
+    """After a runtime override, _apply_runtime_mode_headers must surface the new mount."""
+    # Third-Party
+    from fastapi import Response
+
+    # First-Party
+    from mcpgateway.main import _apply_runtime_mode_headers
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
+
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+
+    # Boot edge → header reports rust.
+    response = Response()
+    _apply_runtime_mode_headers(response)
+    assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
+
+    # Flip to shadow → header reports python on the *next* response.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    response = Response()
+    _apply_runtime_mode_headers(response)
+    assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
+
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
 
 class TestJwtIdentityExtractor:
@@ -2838,12 +3066,7 @@ class TestMCPPathRewriteMiddleware:
         """Documented pattern works when root_path is set in scope."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/123/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/123/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2857,12 +3080,7 @@ class TestMCPPathRewriteMiddleware:
         """Handle complex multi-level prefixes."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/dev/mcp-gateway/service/gateway/servers/123/mcp",
-            "root_path": "/dev/mcp-gateway/service/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/dev/mcp-gateway/service/gateway/servers/123/mcp", "root_path": "/dev/mcp-gateway/service/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2876,15 +3094,10 @@ class TestMCPPathRewriteMiddleware:
         """Handle prefix in path when scope['root_path'] is empty but APP_ROOT_PATH is set."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/123/mcp",
-            "root_path": "",  # Not set in scope
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/123/mcp", "root_path": "", "headers": []}  # Not set in scope
         receive, send = AsyncMock(), AsyncMock()
 
-        with patch('mcpgateway.config.settings.app_root_path', '/gateway'):
+        with patch("mcpgateway.config.settings.app_root_path", "/gateway"):
             with patch("mcpgateway.main.streamable_http_auth", return_value=True):
                 await middleware._call_streamable_http(scope, receive, send)
 
@@ -2910,12 +3123,7 @@ class TestMCPPathRewriteMiddleware:
         """Workaround /mcp/servers/{id} with prefix passes through."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/mcp/servers/123",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/mcp/servers/123", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2929,12 +3137,7 @@ class TestMCPPathRewriteMiddleware:
         """Regression test for #4266: modified_path should be app-relative for server_id extraction."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/abc123/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/abc123/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2952,11 +3155,7 @@ class TestMCPPathRewriteMiddleware:
         """When no root_path, modified_path equals original path."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/servers/xyz789/mcp",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/servers/xyz789/mcp", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2972,12 +3171,7 @@ class TestMCPPathRewriteMiddleware:
         """PR #3892 security: Arbitrary paths ending with /mcp are NOT rewritten."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/arbitrary/prefix/mcp",
-            "root_path": "",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/arbitrary/prefix/mcp", "root_path": "", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2992,12 +3186,7 @@ class TestMCPPathRewriteMiddleware:
         """Security: Arbitrary paths rejected even with root_path."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/arbitrary/prefix/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/arbitrary/prefix/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -3013,12 +3202,7 @@ class TestMCPPathRewriteMiddleware:
         """Security: Empty server ID with prefix is rejected."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers//mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers//mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
         sent = []
 
@@ -10106,6 +10290,7 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
+
     async def test_healthcheck_redis_removed(self, monkeypatch):
         """Test that /health endpoint no longer checks Redis."""
         # First-Party
@@ -10136,7 +10321,6 @@ class TestRemainingCoverageGaps:
         # Verify no status_items in response (simple dict format)
         assert "status_items" not in result
         assert "mcp_runtime" in result
-
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         # First-Party
@@ -10286,6 +10470,7 @@ class TestRemainingCoverageGaps:
         assert result["status"] == "unhealthy"
         assert "error" in result
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
+
     async def test_readiness_check_redis_exception_handling(self, monkeypatch):
         """Test that /ready endpoint checks Redis and handles exceptions."""
         # First-Party
@@ -10306,6 +10491,7 @@ class TestRemainingCoverageGaps:
         # Mock Redis availability check to raise an exception
         async def mock_is_redis_available_exception():
             raise RuntimeError("Redis connection timeout")
+
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available_exception)
 
         # Configure Redis to be enabled for this test
@@ -10350,9 +10536,11 @@ class TestRemainingCoverageGaps:
                 return None
 
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
         # Mock Redis availability check to return True (healthy)
         async def mock_is_redis_available():
             return True
+
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
         # Configure Redis to be enabled for this test
         monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
@@ -10375,7 +10563,6 @@ class TestRemainingCoverageGaps:
         assert redis_status is not None
         assert redis_status.status_code == 200
         assert redis_status.message == "Cache Connection Successful"
-
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         # First-Party

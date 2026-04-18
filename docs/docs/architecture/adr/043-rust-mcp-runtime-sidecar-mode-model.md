@@ -190,6 +190,32 @@ the documented operator model is the high-level mode switch above.
 | Expose only low-level `EXPERIMENTAL_RUST_MCP_*` flags | Too hard for operators to reason about safely |
 | Keep public `/mcp` permanently on Python and use Rust only behind Python | Leaves the Python ingress hop in the hot path and limits the performance gain |
 
+## Addendum (2026-04): Runtime mode override
+
+We additionally allow an authenticated admin to flip the public `/mcp` ingress
+(and the registered-A2A invocation path) between `shadow` and `edge` at
+runtime via `PATCH /admin/runtime/mcp-mode` and
+`PATCH /admin/runtime/a2a-mode` (`admin.system_config` permission). The
+override is in-memory only — there is no new Postgres persistence surface,
+and a process restart re-reads `RUST_MCP_MODE` / `RUST_A2A_MODE`. Flips
+require `boot_mode=edge` so that the existing session-auth-reuse /
+delegate-enabled safety invariant is met; `off`, `shadow`, and `full` boot
+modes are intentionally not flippable (`off` has no sidecar; `shadow` did
+not opt into the safety flags; `full` would require live session/
+event-store/resume migration).
+
+When Redis is configured the override propagates cluster-wide via the
+`contextforge:runtime:mode` pub/sub channel with a per-runtime monotonic
+version (allocated via `INCR`); each pod also persists a short-lived hint
+key (`contextforge:runtime:mode_state:{runtime}`, TTL 24h) so a freshly
+started pod reconciles to the cluster's current desired override on boot.
+Without Redis the override is per-pod and operators see
+`cluster_propagation: "disabled"` on `/health` and the admin response.
+
+This is a deliberate operability tradeoff: the override survives pod-level
+churn (via Redis) but not full cluster restarts (no DB persistence), keeping
+the env-var contract authoritative for "what does this deployment boot as."
+
 ## References
 
 - [Rust MCP Runtime Architecture](../rust-mcp-runtime.md)
