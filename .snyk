@@ -130,7 +130,6 @@ iac:
     - "docker-compose.yaml"
     - "docker-compose.*.yml"
     - "docker-compose.*.yaml"
-    - "Containerfile"
     - "Containerfile.lite"
     - "Containerfile.*"
     - "charts/mcp-stack/**/*.yaml"

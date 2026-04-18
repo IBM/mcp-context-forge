@@ -4981,7 +4981,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -5019,9 +5019,8 @@ hadolint:
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
 # help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
-# help: containerfile-update - Update base image in Containerfile to latest tag
 
-.PHONY: deps-update containerfile-update
+.PHONY: deps-update
 
 deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
@@ -5029,12 +5028,6 @@ deps-update:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
-
-containerfile-update:
-	@echo "⬆️  Updating base image in Containerfile to :latest tag..."
-	@test -f Containerfile || { echo "❌ Containerfile not found."; exit 1; }
-	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
-	@echo "✅ Base image updated to latest."
 
 
 # =============================================================================
@@ -5192,8 +5185,8 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden)
-#CONTAINER_FILE ?= Containerfile
+# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# multi-stage production build); falls back to Dockerfile if absent.
 CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
@@ -5263,7 +5256,7 @@ container-build-rust:
 
 container-build-rust-lite:
 	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
+	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
@@ -5660,13 +5653,13 @@ container-wait-healthy:
 	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-prod:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman
@@ -5747,19 +5740,19 @@ podman-top:
 	docker-top docker-shell
 
 docker-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
 
 docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -5770,7 +5763,7 @@ docker-prod-rust-no-cache:
 #   memray flamegraph /tmp/profile.bin -o flamegraph.html
 docker-prod-profiling:
 	@echo "📊 Building production image WITH profiling tools..."
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -7956,9 +7949,9 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
-		snyk iac test $(CONTAINERFILE) \
+		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-docker-results.json || true; \

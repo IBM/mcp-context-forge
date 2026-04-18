@@ -575,7 +575,7 @@ repos:
         entry: python3 scripts/pre-commit/check_rust_workspace.py
         language: system
         pass_filenames: false
-        files: (Cargo\.toml|Makefile|Containerfile|\.dockerignore|deny\.toml)$
+        files: (Cargo\.toml|Makefile|Containerfile\.lite|\.dockerignore|deny\.toml)$
 
       - id: check-ci-workflows
         name: 🔐 Check CI Workflows
