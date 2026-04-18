@@ -1100,7 +1100,7 @@ class TestServerService:
 
         # Standard UUID format (with dashes)
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
+        expected_hyphenated_uuid = str(uuid_module.UUID(standard_uuid))
 
         # No existing server with the same name
         mock_scalar = Mock()
@@ -1123,7 +1123,7 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=expected_hex_uuid,
+                id=expected_hyphenated_uuid,
                 name="UUID Normalization Test",
                 description="Test UUID normalization",
                 icon=None,
@@ -1151,12 +1151,12 @@ class TestServerService:
         # Call the service method
         result = await server_service.register_server(test_db, server_create)
 
-        # Verify UUID was normalized to hex format
+        # Verify UUID was normalized to hyphenated format
         assert captured_server is not None
-        assert captured_server.id == expected_hex_uuid
-        assert len(captured_server.id) == 32
-        assert "-" not in captured_server.id
-        assert result.id == expected_hex_uuid
+        assert captured_server.id == expected_hyphenated_uuid
+        assert len(captured_server.id) == 36
+        assert "-" in captured_server.id
+        assert result.id == expected_hyphenated_uuid
 
         # Verify other operations were called
         test_db.add.assert_called_once()
@@ -1165,13 +1165,13 @@ class TestServerService:
 
     @pytest.mark.asyncio
     async def test_register_server_uuid_normalization_hex_format(self, server_service, test_db):
-        """Test server registration with hex UUID format works correctly."""
+        """Test server registration with hex UUID format normalizes to hyphenated format."""
         # Standard
         import uuid as uuid_module
 
         # Standard UUID that will be normalized
         standard_uuid = "123e4567-e89b-12d3-a456-426614174000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
+        expected_hyphenated_uuid = str(uuid_module.UUID(standard_uuid))
 
         # No existing server with the same name
         mock_scalar = Mock()
@@ -1194,7 +1194,7 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=expected_hex_uuid,
+                id=expected_hyphenated_uuid,
                 name="Hex UUID Test",
                 description="Test hex UUID handling",
                 icon=None,
@@ -1228,11 +1228,10 @@ class TestServerService:
 
         # Verify UUID was normalized correctly
         assert captured_server is not None
-        assert captured_server.id == expected_hex_uuid
-        assert len(captured_server.id) == 32
-        assert "-" not in captured_server.id
-        assert captured_server.id.isalnum()
-        assert result.id == expected_hex_uuid
+        assert captured_server.id == expected_hyphenated_uuid
+        assert len(captured_server.id) == 36
+        assert "-" in captured_server.id
+        assert result.id == expected_hyphenated_uuid
 
     @pytest.mark.asyncio
     async def test_register_server_no_uuid_auto_generation(self, server_service, test_db):
@@ -1338,7 +1337,7 @@ class TestServerService:
 
         # New UUID to update to
         new_standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace("-", "")
+        expected_hyphenated_uuid = str(uuid_module.UUID(new_standard_uuid))
 
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
         test_db.get = Mock(side_effect=lambda cls, _id, options=None: existing_server if _id == "oldserverid" else None)
@@ -1358,7 +1357,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=expected_hex_uuid,
+                id=expected_hyphenated_uuid,
                 name="Updated Server",
                 description="Updated description",
                 icon=None,
@@ -1388,10 +1387,10 @@ class TestServerService:
         # Call the service method
         result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
 
-        # Verify UUID was set correctly (note: actual normalization happens at create time)
-        # The update method currently just sets the ID directly
-        assert existing_server.id == expected_hex_uuid  # Update doesn't normalize currently
-        assert result.id == expected_hex_uuid
+        # Verify UUID was set correctly (note: actual normalization happens at creation time)
+        # The update method normalizes the UUID when creating the update
+        assert existing_server.id == expected_hyphenated_uuid  # Update normalizes to hyphenated format
+        assert result.id == expected_hyphenated_uuid
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
 
@@ -1402,20 +1401,19 @@ class TestServerService:
 
         # Test various UUID formats that should all normalize correctly
         test_cases = [
-            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard lowercase UUID"},
-            {"input": "550E8400-E29B-41D4-A716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Uppercase UUID (should normalize to lowercase)"},
-            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},
-            {"input": "ffffffff-ffff-ffff-ffff-ffffffffffff", "expected": "ffffffffffffffffffffffffffffffff", "description": "Max UUID"},
+            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400-e29b-41d4-a716-446655440000", "description": "Standard lowercase UUID"},
+            {"input": "550E8400-E29B-41D4-A716-446655440000", "expected": "550e8400-e29b-41d4-a716-446655440000", "description": "Uppercase UUID (should normalize to lowercase)"},
+            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000-0000-0000-0000-000000000000", "description": "Nil UUID"},
+            {"input": "ffffffff-ffff-ffff-ffff-ffffffffffff", "expected": "ffffffff-ffff-ffff-ffff-ffffffffffff", "description": "Max UUID"},
         ]
 
         for case in test_cases:
-            # Simulate the exact normalization logic from server_service.py
-            normalized = str(uuid_module.UUID(case["input"])).replace("-", "")
+            # Normalize to hyphenated format
+            normalized = str(uuid_module.UUID(case["input"]))
             assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
-            assert len(normalized) == 32
-            # Check that any alphabetic characters are lowercase
-            assert normalized.islower() or not any(c.isalpha() for c in normalized)
-            assert normalized.isalnum()
+            assert len(normalized) == 36
+            # Check format: should have hyphens in right places
+            assert normalized.count("-") == 4
 
     @pytest.mark.asyncio
     async def test_list_servers_with_tags(self, server_service, mock_server):
