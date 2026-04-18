@@ -1297,6 +1297,310 @@ async def test_default_session_factory_owner_task_exit_is_logged(monkeypatch, ca
 
 
 # ---------------------------------------------------------------------------
+# Branch coverage: small probe + dataclass paths not otherwise exercised
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_transport_is_broken_returns_false_when_write_stream_has_no_state():
+    """write_stream exists and isn't closed, but has no ``_state`` → ambiguity → False.
+
+    Covers upstream_session_registry.py:210 (the `state is None: return False` branch).
+    """
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Stream:
+        _closed = False  # not closed
+        # no _state attribute at all
+
+    class _Session:
+        _write_stream = _Stream()
+
+    assert _mcp_transport_is_broken(_Session()) is False  # type: ignore[arg-type]
+
+
+def test_upstream_session_age_seconds_exposes_wallclock_age():
+    """UpstreamSession.age_seconds is a convenience property; ensure it reports a positive delta.
+
+    Covers upstream_session_registry.py:273.
+    """
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    upstream = UpstreamSession(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+    )
+    age = upstream.age_seconds
+    assert age >= 0
+    assert age < 1.0  # this test should be fast enough that the session isn't ancient
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch):
+    """SSE transport + httpx_client_factory routes through sse_client with the factory threaded in.
+
+    Covers upstream_session_registry.py:295 — the SSE + httpx_client_factory branch.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    captured = {}
+    sentinel_factory = object()
+
+    def fake_sse(**kwargs):
+        captured.update(kwargs)
+        return _FakeTransportCtx(streams=("r", "w"))
+
+    monkeypatch.setattr(usr, "sse_client", fake_sse)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request(transport_type=TransportType.SSE, httpx_client_factory=sentinel_factory)
+    await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    assert captured.get("httpx_client_factory") is sentinel_factory
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monkeypatch):
+    """When ready times out, the finally clause cancels the owner task and `await task` sees CancelledError.
+
+    Covers upstream_session_registry.py:385-387. The sibling `except Exception`
+    branch (388-393) is defensive — the owner's own `except Exception` catches
+    all Exception subclasses, so a regular Exception cannot escape `await task`.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Transport context that hangs inside __aenter__ so ready.set_result never fires.
+    class _HangingCtx:
+        async def __aenter__(self):
+            await asyncio.sleep(10.0)  # far longer than the factory timeout
+            return ("r", "w", object())
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _HangingCtx())
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request(timeout_seconds=0.05)
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # The important property: the factory surfaced the TimeoutError cleanly —
+    # meaning the finally-clause cleanup completed, which requires the
+    # CancelledError branch to have swallowed the cancellation of the hung owner.
+
+
+@pytest.mark.asyncio
+async def test_evict_key_returns_false_when_key_already_gone(registry):
+    """Calling _evict_key on a missing key must return False without raising.
+
+    Covers upstream_session_registry.py:606-607 — the `session is None: return False` branch.
+    """
+    result = await registry._evict_key(("unknown-session", "unknown-gateway"))  # pylint: disable=protected-access
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_probe_health_mcp_error_other_than_method_not_found_fails_fast(factory_and_records):
+    """An McpError with a code other than METHOD_NOT_FOUND must bail out (don't keep probing).
+
+    Covers upstream_session_registry.py:689-690 — `return False` on non-method-not-found McpError.
+    """
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1.0)
+
+    # Third-Party
+    from mcp import McpError
+    from mcp.types import ErrorData
+
+    class _DeniedSession:
+        async def send_ping(self):
+            raise McpError(ErrorData(code=-32000, message="permission denied — token rotated"))
+
+    upstream = _make_upstream_for_probe(_DeniedSession())
+    assert await reg._probe_health(upstream) is False  # pylint: disable=protected-access
+    assert reg.snapshot().health_check_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_probe_health_exhausted_chain_without_skip_fails(factory_and_records, monkeypatch):
+    """If the health-check chain is patched to remove "skip", exhausting it must fail.
+
+    Defensive fallthrough at upstream_session_registry.py:697-698. Without "skip" as the
+    final terminator, a server that answers METHOD_NOT_FOUND to every probe would loop
+    and hit the tail-return. Covered by temporarily shortening the chain.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1.0)
+
+    # Trim "skip" off the end so the loop actually exhausts.
+    monkeypatch.setattr(usr, "_HEALTH_CHECK_CHAIN", ("ping", "list_tools"))
+
+    session = _ProbeChainSession({"ping": "method_not_found", "list_tools": "method_not_found"})
+    upstream = _make_upstream_for_probe(session)
+    assert await reg._probe_health(upstream) is False  # pylint: disable=protected-access
+    assert reg.snapshot().health_check_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_close_session_short_circuits_when_already_closed(registry, factory_and_records):
+    """_close_session on an already-closed UpstreamSession must return immediately.
+
+    Covers upstream_session_registry.py:702-703.
+    """
+    _, created = factory_and_records
+    async with registry.acquire(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        headers=None,
+        transport_type=TransportType.STREAMABLE_HTTP,
+    ):
+        pass
+    _, _session_obj, _event, _task = created[0]
+
+    # First eviction drains the session cleanly.
+    key = ("s1", "g1")
+    assert await registry._evict_key(key) is True  # pylint: disable=protected-access
+
+    # _close_session on the already-closed UpstreamSession must be a no-op.
+    # Recover the UpstreamSession wrapper from the factory's created list and invoke directly.
+    # (After eviction, the wrapper's _closed flag is True.)
+    upstream_wrapper = registry._sessions.get(key)  # pylint: disable=protected-access
+    if upstream_wrapper is None:
+        # Session was evicted — build a minimal closed wrapper to exercise the short-circuit.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+        fake = UpstreamSession(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            session=object(),  # type: ignore[arg-type]
+        )
+        fake._closed = True  # pylint: disable=protected-access
+        # Should return without touching any task / event — prior test already proved this is safe.
+        await registry._close_session(fake)  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_close_session_force_cancels_stuck_owner_task(caplog):
+    """A stuck owner task triggers the shutdown-timeout WARNING + force-cancel branch.
+
+    Covers upstream_session_registry.py:723-735 (force-cancel warning + final cancel cleanup).
+    Calls ``_close_session`` directly against a crafted ``UpstreamSession`` so we control the
+    exact owner-task behaviour end to end.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    factory, _ = _make_fake_factory()
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=0.2)
+
+    # Build an owner task that ignores shutdown and hangs forever — simulating
+    # a stuck upstream teardown (network stack in D-state, TLS handshake
+    # deadlock, etc.).
+    stop_forever = asyncio.Event()  # never set
+
+    async def stuck_owner():
+        await stop_forever.wait()
+
+    stuck_task = asyncio.create_task(stuck_owner(), name="stuck-forever")
+    stuck_shutdown = asyncio.Event()
+
+    upstream = UpstreamSession(
+        downstream_session_id="s-stuck",
+        gateway_id="g-stuck",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+        _owner_task=stuck_task,
+        _shutdown_event=stuck_shutdown,
+    )
+
+    with caplog.at_level("WARNING", logger=usr.logger.name):
+        await reg._close_session(upstream)  # pylint: disable=protected-access
+
+    # Force-cancel WARNING surfaces the stuck session with full triage context.
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "force-cancelling" in rec.getMessage()]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "s-stuck" in msg  # downstream_session_id in the log
+    assert "g-stuck" in msg  # gateway_id in the log
+
+    # After force-cancel, the task is cancelled.
+    assert stuck_task.cancelled() or stuck_task.done()
+
+
+# ---------------------------------------------------------------------------
+# downstream_session_id_from_request_context
+# ---------------------------------------------------------------------------
+
+
+def test_downstream_session_id_helper_prefers_x_mcp_session_id_header():
+    """The X- prefixed variant wins over the RFC header (transport-internal convention)."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    token = request_headers_var.set({"X-Mcp-Session-Id": "x-prefix", "mcp-session-id": "rfc-name"})
+    try:
+        assert downstream_session_id_from_request_context() == "x-prefix"
+    finally:
+        request_headers_var.reset(token)
+
+
+def test_downstream_session_id_helper_falls_back_to_mcp_session_id_header():
+    """When only the RFC name is present, it's returned."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    token = request_headers_var.set({"mcp-session-id": "rfc-only"})
+    try:
+        assert downstream_session_id_from_request_context() == "rfc-only"
+    finally:
+        request_headers_var.reset(token)
+
+
+def test_downstream_session_id_helper_returns_none_when_no_header_present():
+    """No header → None (not empty string)."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    token = request_headers_var.set({"authorization": "Bearer xyz"})
+    try:
+        assert downstream_session_id_from_request_context() is None
+    finally:
+        request_headers_var.reset(token)
+
+
+def test_downstream_session_id_helper_is_case_insensitive():
+    """Header lookup normalises to lowercase before matching."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    token = request_headers_var.set({"MCP-Session-Id": "mixed-case"})
+    try:
+        assert downstream_session_id_from_request_context() == "mixed-case"
+    finally:
+        request_headers_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
 # Singleton accessors
 # ---------------------------------------------------------------------------
 

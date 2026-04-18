@@ -719,7 +719,17 @@ class UpstreamSessionRegistry:
                         type(exc).__name__,
                         exc,
                     )
-            if scope.cancelled_caught:
+            # anyio quirk: `scope.cancelled_caught` only becomes True if the
+            # CancelledError propagated OUT of the scope. Since we catch it
+            # inside (to silently swallow expected cancellations on graceful
+            # shutdown), we rely on `scope.cancel_called` instead — it flips
+            # to True when the deadline fires, regardless of what the body
+            # did with the exception. Also note: `await task` inside a
+            # cancelled scope propagates the cancel into the awaited task on
+            # asyncio, so the task is usually already done by the time we
+            # get here — the force-cancel below is then a no-op but the
+            # WARNING is still worth emitting because the timeout fired.
+            if scope.cancel_called:
                 logger.warning(
                     "Upstream session owner cleanup timed out for session=%s gateway=%s url=%s; force-cancelling",
                     upstream.downstream_session_id,

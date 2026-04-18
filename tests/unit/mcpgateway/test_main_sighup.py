@@ -73,6 +73,23 @@ async def test_sighup_reload_handles_affinity_drain_error():
 
 
 @pytest.mark.asyncio
+async def test_sighup_reload_logs_warning_on_registry_drain_failure():
+    """A generic exception from close_all() surfaces as WARNING so TLS rotation issues aren't silent."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock(side_effect=RuntimeError("redis down during drain"))
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache"),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    mock_registry.close_all.assert_awaited_once()
+    warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+    assert any("upstream session registry drain failed" in m and "redis down during drain" in m for m in warning_messages)
+
+
+@pytest.mark.asyncio
 async def test_sighup_reload_handles_uninitialised_upstream_registry():
     """sighup_reload() logs at debug and keeps going when the upstream registry isn't initialised."""
     # First-Party

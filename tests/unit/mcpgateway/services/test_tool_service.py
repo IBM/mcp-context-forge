@@ -2521,6 +2521,168 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call streamablehttp client.
+
+        Covers tool_service.py:5241-5242 — the `except RegistryNotInitializedError: use_registry = False`
+        branch on the StreamableHTTP code path.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Pin a downstream session id so use_registry=True and the RegistryNotInitializedError
+        # branch actually fires. Without this, the registry-init try/except is skipped.
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-abc"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        # The per-call streamablehttp client path still reached call_tool successfully.
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "fallback ok"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_sse_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call sse_client (#4205 SSE branch).
+
+        Covers tool_service.py:5063-5065 — mirror of the StreamableHTTP test above.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/sse",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="SSE",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="sse fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_sse_client(*_args, **_kwargs):
+            yield ("read", "write")
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.sse_client", mock_sse_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "sse fallback ok"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp_creates_client_lifecycle_spans(self, tool_service, mock_tool, test_db):
         """Non-pooled MCP calls should emit client call, initialize, and request spans in order."""
         # Standard
@@ -5220,6 +5382,7 @@ class TestRestToolQueryParamHandling:
     @pytest.mark.asyncio
     async def test_rest_tool_get_param_conflict_logs_warning(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """GET request logs warning when input args conflict with URL query params."""
+        # Standard
         import logging
 
         caplog.set_level(logging.WARNING)
@@ -5287,6 +5450,7 @@ class TestRestToolNonJsonResponses:
     @pytest.mark.asyncio
     async def test_rest_tool_handles_html_error_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """REST tool handles HTML error pages gracefully without crashing."""
+        # Third-Party
         import httpx
 
         mock_tool.integration_type = "REST"
@@ -5303,6 +5467,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
         mock_response.status_code = 500
         mock_response.text = "<html><body>Internal Server Error</body></html>"
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5335,6 +5500,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = "Plain text response"
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5363,6 +5529,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = '<?xml version="1.0"?><data>value</data>'
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5417,6 +5584,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = ""
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5448,6 +5616,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = large_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5480,6 +5649,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = small_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5510,6 +5680,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = large_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
