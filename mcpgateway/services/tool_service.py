@@ -78,7 +78,6 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -88,6 +87,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -5060,7 +5060,7 @@ class ToolService(BaseService):
                                 # initialize cost across multiple tool calls in the same session.
                                 try:
                                     registry = get_upstream_session_registry()
-                                except RuntimeError:
+                                except RegistryNotInitializedError:
                                     # Registry not initialized (tests, early startup) — fall through.
                                     use_registry = False
 
@@ -5238,7 +5238,7 @@ class ToolService(BaseService):
                             if use_registry:
                                 try:
                                     registry = get_upstream_session_registry()
-                                except RuntimeError:
+                                except RegistryNotInitializedError:
                                     use_registry = False
 
                             if use_registry:

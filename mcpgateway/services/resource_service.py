@@ -67,12 +67,13 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request, get_upstream_session_registry, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
+from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -1951,7 +1952,7 @@ class ResourceService(BaseService):
                                 if use_registry:
                                     try:
                                         registry = get_upstream_session_registry()
-                                    except RuntimeError:
+                                    except RegistryNotInitializedError:
                                         use_registry = False
 
                                 if use_registry and registry is not None:
@@ -2029,7 +2030,7 @@ class ResourceService(BaseService):
                                 if use_registry:
                                     try:
                                         registry = get_upstream_session_registry()
-                                    except RuntimeError:
+                                    except RegistryNotInitializedError:
                                         use_registry = False
 
                                 if use_registry and registry is not None:

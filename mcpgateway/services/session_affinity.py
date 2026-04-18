@@ -216,18 +216,20 @@ class SessionAffinity:
         transport_type: str,
         user_email: Optional[str] = None,
     ) -> None:
-        """Pre-register session mapping for session affinity.
+        """Claim ownership of a downstream MCP session in Redis before any request routes to it.
 
-        Called from respond() to set up mapping BEFORE acquire() is called.
-        This ensures acquire() can find the correct pool key for session affinity.
+        Writes two Redis entries keyed on ``mcp_session_id``:
+          * ``mcp_session_id → {url, user_hash, identity_hash, transport_type,
+            gateway_id}`` — used cross-worker to locate the owner of a session.
+          * ``session_owner:<mcp_session_id> → WORKER_ID`` via ``SET NX`` —
+            atomically claims this worker as the owner so a second worker
+            racing the same session doesn't start creating a parallel
+            upstream connection.
 
-        The mapping stores the relationship between an incoming MCP session ID
-        and the pool key that should be used for upstream connections. This
-        enables session affinity even when JWT tokens rotate (different jti values
-        per request).
-
-        For multi-worker deployments, the mapping is also stored in Redis with TTL
-        so that any worker can look it up during acquire().
+        Both entries carry the configured session-affinity TTL and are
+        refreshed on subsequent calls. Redis failure is non-fatal — same-worker
+        requests can still route via the owner claim, and a fresh call will
+        retry. Safe to call repeatedly for an already-owned session.
 
         Args:
             mcp_session_id: The downstream MCP session ID from x-mcp-session-id header.
@@ -918,10 +920,6 @@ _mcp_session_pool: Optional[SessionAffinity] = None
 def get_session_affinity() -> SessionAffinity:
     """Return the global session-affinity service instance.
 
-    The function name is kept for compatibility with existing call-sites
-    across the code base; it is scheduled to be renamed to
-    ``get_session_affinity`` in the follow-up class/method rename.
-
     Raises:
         RuntimeError: If the service has not been initialized.
     """
@@ -948,8 +946,7 @@ def init_session_affinity(
             notification-triggered refreshes.
 
     Returns:
-        The initialized ``SessionAffinity`` (soon-to-be-renamed ``SessionAffinity``)
-        instance.
+        The initialized ``SessionAffinity`` instance.
     """
     global _mcp_session_pool  # pylint: disable=global-statement
 
@@ -995,11 +992,12 @@ async def close_session_affinity() -> None:
 
 
 async def drain_session_affinity() -> None:
-    """Drain all sessions from the global pool without destroying the pool.
+    """Delegate to ``SessionAffinity.drain_all()`` on the global service.
 
-    Sessions are closed so new ones reconnect with fresh TLS state.
-    The pool remains operational — unlike ``close_session_affinity()``,
-    which shuts it down permanently.
+    Worker-local affinity state was removed when the per-worker pool was
+    retired, so ``drain_all`` is now a log-only no-op that exists purely as
+    a stable entry point for SIGHUP wiring. Kept so callers don't need to
+    branch on whether the global service is initialised.
     """
     if _mcp_session_pool is not None:
         await _mcp_session_pool.drain_all()

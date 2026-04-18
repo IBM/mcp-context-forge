@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 # JSON-RPC error code meaning the server does not implement the requested method.
 _METHOD_NOT_FOUND = -32601
 
-# Knobs. These were settings in the old pool; here they are sensible constants
-# because the 1:1 design narrows the useful tuning range. Override via
-# UpstreamSessionRegistry constructor kwargs if a deployment needs it.
+# Default knobs. Override via UpstreamSessionRegistry constructor kwargs.
 _DEFAULT_IDLE_VALIDATION_SECONDS = 60.0
 _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS = 5.0
 _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS = 30.0
@@ -157,6 +155,12 @@ _IDENTITY_FIELDS = frozenset({"downstream_session_id", "gateway_id", "url", "tra
 # or rewrite the probe if the SDK private surface has shifted.
 _MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS = ">=1.27.0,<2.0.0"
 
+# One-shot guard for the SDK-drift log: WARNING on first occurrence per process
+# (so operators can't miss "the SDK shape just changed under us") then DEBUG on
+# every subsequent call (so a sustained mismatch doesn't flood logs — this probe
+# runs on every acquire()).
+_sdk_drift_warning_emitted = False
+
 
 def _mcp_transport_is_broken(session: ClientSession) -> bool:
     """Peek at a ``ClientSession``'s internal anyio streams to detect a dead transport.
@@ -165,12 +169,13 @@ def _mcp_transport_is_broken(session: ClientSession) -> bool:
     (closed write stream, or receive channels fully drained). Returns False on
     any ambiguity — including when SDK internals have shifted shape — so that
     callers degrade to owner-task liveness rather than evicting a session
-    that might still be usable. The debug log surfaces SDK drift without
-    pager-level noise.
+    that might still be usable.
 
-    Known-valid against MCP SDK ``{_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS}``;
-    bump that marker after revalidating when the SDK changes.
+    Validated MCP SDK range lives in
+    ``_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS``; bump that marker after
+    revalidating when the SDK changes.
     """
+    global _sdk_drift_warning_emitted  # pylint: disable=global-statement
     try:
         write_stream = getattr(session, "_write_stream", None)
         if write_stream is None:
@@ -184,11 +189,20 @@ def _mcp_transport_is_broken(session: ClientSession) -> bool:
         if isinstance(open_rx, int) and open_rx == 0:
             return True
     except Exception as exc:  # noqa: BLE001 — degrade gracefully if MCP internals shift
-        logger.debug(
-            "MCP transport-broken probe raised %s: %s; next acquire will fall back to owner-task liveness only",
-            type(exc).__name__,
-            exc,
-        )
+        if not _sdk_drift_warning_emitted:
+            _sdk_drift_warning_emitted = True
+            logger.warning(
+                "MCP transport-broken probe raised %s: %s; validated against SDK %s. Next acquires will fall back to owner-task liveness only; subsequent probe failures logged at DEBUG.",
+                type(exc).__name__,
+                exc,
+                _MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS,
+            )
+        else:
+            logger.debug(
+                "MCP transport-broken probe raised %s: %s; next acquire will fall back to owner-task liveness only",
+                type(exc).__name__,
+                exc,
+            )
     return False
 
 
@@ -345,8 +359,15 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             with anyio.move_on_after(_DEFAULT_SHUTDOWN_TIMEOUT_SECONDS):
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cleanup swallow
+                except asyncio.CancelledError:
+                    # The owner task itself got cancelled during cleanup — expected after task.cancel().
                     pass
+                except Exception as exc:  # noqa: BLE001 — cleanup unwind after failed ready
+                    logger.debug(
+                        "Owner-task cleanup after failed session create raised %s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
 
     # Smuggle the owner task + shutdown event onto the ClientSession object so
     # _create_session() (which only gets back `(session, transport_ctx)` from
@@ -661,18 +682,37 @@ class UpstreamSessionRegistry:
             with anyio.move_on_after(self._shutdown_timeout_seconds) as scope:
                 try:
                     await upstream._owner_task
-                except (asyncio.CancelledError, Exception):  # nosec B110
+                except asyncio.CancelledError:
+                    # Expected when the owner task is awaiting a stream that got cancelled on shutdown.
                     pass
+                except Exception as exc:  # noqa: BLE001 — cleanup swallow with breadcrumb
+                    logger.debug(
+                        "Owner task for %s (gateway=%s) exited during _close_session with %s: %s",
+                        sanitize_url_for_logging(upstream.url),
+                        upstream.gateway_id,
+                        type(exc).__name__,
+                        exc,
+                    )
             if scope.cancelled_caught:
                 logger.warning(
-                    "Upstream session owner cleanup timed out for %s; force-cancelling",
+                    "Upstream session owner cleanup timed out for session=%s gateway=%s url=%s; force-cancelling",
+                    upstream.downstream_session_id,
+                    upstream.gateway_id,
                     sanitize_url_for_logging(upstream.url),
                 )
                 upstream._owner_task.cancel()
                 try:
                     await upstream._owner_task
-                except (asyncio.CancelledError, Exception):  # nosec B110
+                except asyncio.CancelledError:
                     pass
+                except Exception as exc:  # noqa: BLE001 — final force-cancel unwind
+                    logger.debug(
+                        "Force-cancel of owner task for %s (gateway=%s) raised %s: %s",
+                        sanitize_url_for_logging(upstream.url),
+                        upstream.gateway_id,
+                        type(exc).__name__,
+                        exc,
+                    )
 
 
 class _AcquireDecision(Enum):

@@ -58,8 +58,14 @@ async def test_remove_session_tolerates_uninitialized_registry():
 
 
 @pytest.mark.asyncio
-async def test_remove_session_tolerates_eviction_failure():
-    """A failing upstream eviction must not mask downstream session removal."""
+async def test_remove_session_tolerates_eviction_failure(caplog):
+    """A failing upstream eviction must not mask downstream session removal AND must log at WARNING.
+
+    Log-level matters: the swallow was intentionally upgraded from DEBUG to
+    WARNING in commit a261bd231 because an orphaned upstream session is
+    otherwise invisible to ops. A silent regression back to DEBUG would
+    re-hide exactly the failures this diff exists to surface.
+    """
     # First-Party
     from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -67,9 +73,15 @@ async def test_remove_session_tolerates_eviction_failure():
     reg.evict_session = AsyncMock(side_effect=RuntimeError("redis unreachable"))  # type: ignore[method-assign]
 
     session_registry = SessionRegistry(backend="memory")
-    # Should swallow and carry on.
-    await session_registry.remove_session("downstream-session-def")
+    with caplog.at_level("DEBUG", logger="mcpgateway.cache.session_registry"):
+        await session_registry.remove_session("downstream-session-def")
     reg.evict_session.assert_awaited_once()
+
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "downstream-session-def" in rec.getMessage()]
+    assert len(warnings) == 1, f"expected 1 WARNING; got {[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    msg = warnings[0].getMessage()
+    assert "RuntimeError" in msg and "redis unreachable" in msg  # exception type + message surfaced
+    assert "orphaned" in msg  # the operator-facing hint survives
 
 
 @pytest.mark.asyncio
@@ -130,8 +142,13 @@ async def test_evict_upstream_sessions_for_gateway_helper_tolerates_uninitialize
 
 
 @pytest.mark.asyncio
-async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_errors():
-    """Registry exceptions must not mask gateway-mutation errors."""
+async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_errors(caplog):
+    """Registry exceptions must not mask gateway-mutation errors AND must log at WARNING.
+
+    The warning-level bump is deliberate: this helper runs POST-commit, so a
+    silent eviction failure means in-flight sessions keep talking to the old
+    gateway state. Operators need to see it.
+    """
     # First-Party
     from mcpgateway.services.gateway_service import _evict_upstream_sessions_for_gateway
 
@@ -139,8 +156,15 @@ async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_er
     reg.evict_gateway = AsyncMock(side_effect=RuntimeError("redis down"))  # type: ignore[method-assign]
 
     # Must not raise — gateway delete/update must still proceed.
-    assert await _evict_upstream_sessions_for_gateway("gw-target") == 0
+    with caplog.at_level("DEBUG", logger="mcpgateway.services.gateway_service"):
+        assert await _evict_upstream_sessions_for_gateway("gw-target") == 0
     reg.evict_gateway.assert_awaited_once()
+
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "gw-target" in rec.getMessage()]
+    assert len(warnings) == 1, f"expected 1 WARNING; got {[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    msg = warnings[0].getMessage()
+    assert "RuntimeError" in msg and "redis down" in msg
+    assert "stale" in msg  # operator-facing hint
 
 
 # ---------------------------------------------------------------------------

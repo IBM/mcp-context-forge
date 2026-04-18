@@ -652,6 +652,184 @@ async def test_probe_health_unexpected_exception_propagates(factory_and_records)
 
 
 # ---------------------------------------------------------------------------
+# close_all() drain semantics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_close_all_drains_in_parallel_not_series():
+    """close_all() must run evictions concurrently — serial drain would stall multi-session shutdowns.
+
+    We inject a factory whose owner task takes ~0.3s to drain; with 5 sessions a
+    serial drain would need ~1.5s while a parallel drain completes in ~0.3s.
+    Asserting with a generous headroom (0.9s) so CI scheduling jitter doesn't flake.
+    """
+    # Standard
+    import time as _time
+
+    created_events: list[asyncio.Event] = []
+
+    async def slow_drain_factory(req):
+        session = FakeClientSession()
+        shutdown_event = asyncio.Event()
+        created_events.append(shutdown_event)
+
+        async def owner():
+            await shutdown_event.wait()
+            # Simulate slow transport teardown AFTER shutdown is signalled.
+            await asyncio.sleep(0.3)
+
+        task = asyncio.create_task(owner(), name="slow-owner")
+        session._cf_owner_task = task  # type: ignore[attr-defined]
+        session._cf_shutdown_event = shutdown_event  # type: ignore[attr-defined]
+        return session, object()
+
+    reg = UpstreamSessionRegistry(
+        session_factory=slow_drain_factory,
+        shutdown_timeout_seconds=2.0,
+    )
+
+    for i in range(5):
+        async with reg.acquire(
+            downstream_session_id=f"s{i}",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            pass
+
+    assert reg.snapshot().active_sessions == 5
+
+    start = _time.monotonic()
+    await reg.close_all()
+    elapsed = _time.monotonic() - start
+
+    assert reg.snapshot().active_sessions == 0
+    assert elapsed < 0.9, f"close_all took {elapsed:.2f}s — drain appears to be serial, not parallel"
+
+
+@pytest.mark.asyncio
+async def test_close_all_continues_past_failing_evict():
+    """A failing _evict_key for one session must not prevent the others from draining.
+
+    close_all() uses asyncio.gather(..., return_exceptions=True) precisely so one
+    broken session doesn't orphan the rest at shutdown. A regression that reverts
+    to serial execution — or forgets return_exceptions — would fail this test.
+    """
+    factory, _ = _make_fake_factory()
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=1.0)
+
+    for i in range(3):
+        async with reg.acquire(
+            downstream_session_id=f"s{i}",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            pass
+
+    # Poison _evict_key for one specific key so close_all hits an exception mid-drain.
+    original_evict = reg._evict_key  # pylint: disable=protected-access
+
+    async def flaky_evict(key):
+        if key[0] == "s1":
+            raise RuntimeError("evict failure for s1 only")
+        return await original_evict(key)
+
+    reg._evict_key = flaky_evict  # type: ignore[method-assign]
+
+    await reg.close_all()
+
+    # The two non-poisoned sessions must still be drained.
+    remaining = [k for k in reg._sessions]  # pylint: disable=protected-access
+    assert ("s0", "g1") not in remaining
+    assert ("s2", "g1") not in remaining
+
+
+# ---------------------------------------------------------------------------
+# acquire() yield-body transport-error eviction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_acquire_evicts_on_closed_resource_error_in_body(registry, factory_and_records):
+    """A ClosedResourceError raised inside the acquire() body must evict and re-raise."""
+    # Third-Party
+    import anyio
+
+    _, created = factory_and_records
+    with pytest.raises(anyio.ClosedResourceError):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise anyio.ClosedResourceError()
+
+    assert len(created) == 1  # the session was built
+    assert registry.snapshot().active_sessions == 0  # and then evicted
+
+
+@pytest.mark.asyncio
+async def test_acquire_evicts_on_broken_resource_error_in_body(registry, factory_and_records):
+    """A BrokenResourceError must also trigger eviction (symmetric to ClosedResourceError)."""
+    # Third-Party
+    import anyio
+
+    _, _ = factory_and_records
+    with pytest.raises(anyio.BrokenResourceError):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise anyio.BrokenResourceError()
+
+    assert registry.snapshot().active_sessions == 0
+
+
+@pytest.mark.asyncio
+async def test_acquire_evicts_on_oserror_in_body(registry, factory_and_records):
+    """OSError from a broken socket must trigger eviction."""
+    _, _ = factory_and_records
+    with pytest.raises(OSError, match="socket hung up"):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise OSError("socket hung up")
+
+    assert registry.snapshot().active_sessions == 0
+
+
+@pytest.mark.asyncio
+async def test_acquire_does_not_evict_on_plain_value_error_in_body(registry, factory_and_records):
+    """A caller-level exception (ValueError, etc.) leaves the session intact — the transport is fine."""
+    _, _ = factory_and_records
+    with pytest.raises(ValueError, match="caller-level bug"):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise ValueError("caller-level bug")
+
+    # Session stays put — next acquire reuses it.
+    assert registry.snapshot().active_sessions == 1
+
+
+# ---------------------------------------------------------------------------
 # MCP SDK-internals transport-broken probe
 # ---------------------------------------------------------------------------
 
@@ -699,10 +877,13 @@ def test_mcp_transport_is_broken_detects_drained_receive_channels():
     assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
 
 
-def test_mcp_transport_is_broken_returns_false_on_sdk_drift(caplog):
-    """If SDK internals have shifted (descriptor raises an unexpected exception), degrade to "not sure" + debug log."""
+def test_mcp_transport_is_broken_first_drift_logs_warning_then_degrades_to_debug(caplog, monkeypatch):
+    """First SDK-drift event per process is WARNING; subsequent events are DEBUG so sustained drift doesn't spam."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
+
+    # Reset the one-shot sentinel so repeated test runs see first-call behaviour.
+    monkeypatch.setattr(usr, "_sdk_drift_warning_emitted", False)
 
     class _BrokenStream:
         @property
@@ -715,9 +896,19 @@ def test_mcp_transport_is_broken_returns_false_on_sdk_drift(caplog):
     class _Session:
         _write_stream = _BrokenStream()
 
+    # First call: WARNING expected.
     with caplog.at_level("DEBUG", logger=usr.logger.name):
         assert usr._mcp_transport_is_broken(_Session()) is False  # pylint: disable=protected-access  # type: ignore[arg-type]
-    assert any("MCP transport-broken probe raised" in rec.getMessage() for rec in caplog.records)
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "MCP transport-broken probe raised" in rec.getMessage()]
+    assert len(warnings) == 1
+    assert "SDK" in warnings[0].getMessage()  # mentions the validated range
+    caplog.clear()
+
+    # Second call on the same process: DEBUG only, no new WARNING.
+    with caplog.at_level("DEBUG", logger=usr.logger.name):
+        assert usr._mcp_transport_is_broken(_Session()) is False  # pylint: disable=protected-access  # type: ignore[arg-type]
+    assert not any(rec.levelname == "WARNING" for rec in caplog.records)
+    assert any(rec.levelname == "DEBUG" and "MCP transport-broken probe raised" in rec.getMessage() for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1026,47 +1217,57 @@ async def test_default_session_factory_transport_failure_raises_with_context(mon
 
 @pytest.mark.asyncio
 async def test_default_session_factory_owner_task_exit_is_logged(monkeypatch, caplog):
-    """An owner-task death after ready is set surfaces as a WARNING via the done-callback."""
+    """A BaseException escaping the owner task after ready is set surfaces as WARNING via the done-callback.
+
+    The owner's broad `except Exception` deliberately does NOT catch
+    BaseException classes (SystemExit, KeyboardInterrupt) — they must propagate
+    so the task exits promptly during shutdown. When they do, the task's
+    `exception()` is non-None and the `_log_owner_exit` done-callback fires a
+    WARNING so ops see the orphaned upstream session.
+    """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
-    class _BoomCtx:
-        """Opens fine, but raises on exit so owner() sees an exception after ready is set."""
+    class _CustomBaseException(BaseException):
+        """A BaseException that `except Exception` does NOT catch — the owner's broad catch must let it through."""
+
+    class _BoomClientSession:
+        """ClientSession that initialises fine but raises _CustomBaseException from __aexit__."""
+
+        def __init__(self, *_args, **_kwargs):
+            pass
 
         async def __aenter__(self):
-            return ("r", "w", object())
+            return self
 
-        async def __aexit__(self, exc_type, exc, tb):
-            raise OSError("transport exit boom")
+        async def __aexit__(self, *_exc_info):
+            raise _CustomBaseException("BaseException escaping owner")
 
-    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _BoomCtx())
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+        async def initialize(self):
+            return None
+
+    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
+    monkeypatch.setattr(usr, "ClientSession", _BoomClientSession)
 
     req = _make_request()
     session, _ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
-    assert session.initialized is True
+    assert isinstance(session, _BoomClientSession)
 
-    # Trigger the owner task to complete by signalling shutdown through the
-    # internal event. We reach into asyncio.all_tasks to find it; the task
-    # name is set by the factory.
-    owner_tasks = [t for t in asyncio.all_tasks() if t.get_name().startswith("upstream-session-")]
-    assert owner_tasks, "owner task was not scheduled"
-    owner_task = owner_tasks[0]
+    # Drive the owner task to completion by firing its shutdown event.
+    # The BaseException escapes `except Exception`, so task.exception() returns
+    # it and the done-callback hits its warning branch.
+    shutdown_event = getattr(session, "_cf_shutdown_event")  # smuggled by the factory
+    owner_task = getattr(session, "_cf_owner_task")
+    shutdown_event.set()
 
     with caplog.at_level("WARNING", logger=usr.logger.name):
-        # Cancel to force an exit; the done-callback still fires for exceptions,
-        # not for cancellation, so instead close by letting the context exit raise.
-        owner_task.cancel()
-        try:
+        with pytest.raises(_CustomBaseException):
             await owner_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
 
-    # Cancelled tasks don't hit the warning branch — but an exception from the
-    # __aexit__ raising OSError during cancellation should produce the warning.
-    # We accept either: the important property is the callback was wired and
-    # didn't crash the process. Check it was registered by inspecting the task.
-    assert owner_task.done()
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "owner task" in rec.getMessage()]
+    assert len(warnings) == 1, f"expected 1 WARNING; got {[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    msg = warnings[0].getMessage()
+    assert "_CustomBaseException" in msg and "orphaned" in msg
 
 
 # ---------------------------------------------------------------------------

@@ -53,12 +53,13 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request, get_upstream_session_registry, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
+from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -402,7 +403,7 @@ class PromptService(BaseService):
             if downstream_session_id and gateway_id:
                 try:
                     registry = get_upstream_session_registry()
-                except RuntimeError:
+                except RegistryNotInitializedError:
                     registry = None
                 if registry is not None:
                     async with registry.acquire(
