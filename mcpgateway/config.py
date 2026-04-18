@@ -279,6 +279,24 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
+    mcp_rust_ingress: Literal["internal", "public"] = Field(
+        default="internal",
+        description=(
+            "Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
+            "edge or full and no shadow override is in effect. 'internal' (default) uses "
+            "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
+            "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
+            "proxy to the Rust public listener at MCP_RUST_PUBLIC_LISTEN_HTTP — useful "
+            "for single-process deployments without nginx in front. Pydantic rejects "
+            "any other value at config load."
+        ),
+    )
+    mcp_rust_public_proxy_upstream: str = Field(
+        default="http://127.0.0.1:8787",
+        description=(
+            "Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the " "loopback address that matches docker-entrypoint.sh's " "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
+        ),
+    )
     experimental_rust_a2a_runtime_enabled: bool = Field(
         default=False,
         description="Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",

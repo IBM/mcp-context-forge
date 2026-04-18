@@ -146,6 +146,51 @@ def _rust_a2a_runtime_managed() -> bool:
     return _env_flag("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", default=True)
 
 
+def _runtime_override_mode(runtime: str) -> Optional[str]:
+    """Return the active override for ``runtime`` (``shadow`` or ``edge``) when one is set.
+
+    Args:
+        runtime: Runtime kind (``"mcp"`` or ``"a2a"``).
+
+    Returns:
+        ``"shadow"`` or ``"edge"`` when an admin override is in effect, else ``None``.
+    """
+    # First-Party
+    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
+
+    return get_runtime_state().override_mode(runtime)
+
+
+def _boot_mcp_transport_mount() -> str:
+    """Return the transport mount selected by boot-time settings (no override applied).
+
+    Returns:
+        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
+    """
+    return "rust" if bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled) else "python"
+
+
+def _boot_mcp_runtime_mode() -> str:
+    """Return the boot-time runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
+    """
+    if not settings.experimental_rust_mcp_runtime_enabled:
+        return "off"
+    if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
+        return "shadow"
+    if (
+        settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+        and settings.experimental_rust_mcp_live_stream_core_enabled
+        and settings.experimental_rust_mcp_affinity_core_enabled
+    ):
+        return "full"
+    return "edge"
+
+
 def _current_mcp_transport_mount() -> str:
     """Return which public ``/mcp`` transport is currently mounted.
 
@@ -161,8 +206,28 @@ def _should_mount_public_rust_transport() -> bool:
     Returns:
         ``True`` only when the Rust runtime is enabled and Rust can safely own
         steady-state public MCP session traffic.
+
+    **Safety invariant (must remain invariant under runtime override):**
+    Rust public ingress requires BOTH ``experimental_rust_mcp_runtime_enabled``
+    AND ``experimental_rust_mcp_session_auth_reuse_enabled``. The
+    session-auth-reuse flag is what makes Rust's handling of public MCP
+    session traffic safe (dedicated isolation coverage lives in
+    ``crates/mcp_runtime/TESTING-DESIGN.md``). A runtime override can toggle
+    between the two modes the invariant permits (``shadow`` forces Python;
+    ``edge`` matches the default), but it cannot loosen the invariant — an
+    override to ``edge`` on a deployment that did not opt into
+    session-auth-reuse at boot stays on Python.
     """
-    return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+    rust_safe_for_public = bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+    override = _runtime_override_mode("mcp")
+    if override == "shadow":
+        return False
+    # override == "edge" or override is None (default): both honor the
+    # safety invariant. This means a boot=shadow deployment with an
+    # admin-issued override=edge still returns False here (the router
+    # rejects such a PATCH with 409 at the API boundary — this is the
+    # belt to the router's braces).
+    return rust_safe_for_public
 
 
 def _should_use_rust_public_session_stack() -> bool:
@@ -254,9 +319,7 @@ def _current_mcp_session_auth_reuse_mode() -> str:
     Returns:
         ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
     """
-    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled:
-        return "rust"
-    return "python"
+    return "rust" if _should_mount_public_rust_transport() else "python"
 
 
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
@@ -265,9 +328,22 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
     Returns:
         Diagnostic payload describing the active MCP runtime configuration.
     """
+    # First-Party
+    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
+
+    state = get_runtime_state()
+    mcp_override = state.override_mode("mcp")
     payload: Dict[str, Any] = {
         "mode": _current_mcp_runtime_mode(),
         "mounted": _current_mcp_transport_mount(),
+        "boot_mode": _boot_mcp_runtime_mode(),
+        "boot_mounted": _boot_mcp_transport_mount(),
+        "effective_mode": mcp_override or _boot_mcp_runtime_mode(),
+        "override_active": mcp_override is not None,
+        "override_version": state.version("mcp"),
+        "cluster_propagation": str(state.cluster_propagation),
+        "boot_reconcile_status": str(state.boot_reconcile_status("mcp")),
+        "pod_id": state.pod_id,
         "rust_build_included": _rust_build_included(),
         "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
         "session_core_mode": _current_mcp_session_core_mode(),
@@ -298,6 +374,16 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
             payload["sidecar_transport"] = "http"
             payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
 
+    last_change = state.last_change("mcp")
+    if last_change is not None:
+        payload["last_change"] = {
+            "version": last_change.version,
+            "mode": last_change.mode,
+            "initiator_user": last_change.initiator_user,
+            "initiator_pod": last_change.initiator_pod,
+            "timestamp": last_change.timestamp,
+        }
+
     return payload
 
 
@@ -314,28 +400,160 @@ def _current_a2a_runtime_mode() -> str:
     return "python"
 
 
+def _boot_a2a_runtime_mode() -> str:
+    """Return the boot-time A2A runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, or ``"edge"`` (``edge`` and ``full`` collapse to the same flag set).
+    """
+    if not settings.experimental_rust_a2a_runtime_enabled:
+        return "off"
+    if not settings.experimental_rust_a2a_runtime_delegate_enabled:
+        return "shadow"
+    return "edge"
+
+
+def _should_delegate_a2a_to_rust() -> bool:
+    """Return whether registered A2A invocations should be delegated to the Rust runtime.
+
+    Returns:
+        ``True`` when the Rust A2A runtime should service invocations.
+
+    **Safety invariant (must remain invariant under runtime override):**
+    A2A delegation requires BOTH ``experimental_rust_a2a_runtime_enabled``
+    AND ``experimental_rust_a2a_runtime_delegate_enabled``. Mirroring the
+    MCP contract: a runtime override can toggle between the two modes the
+    invariant permits (``shadow`` forces Python; ``edge`` matches the
+    default), but cannot loosen the invariant — an override to ``edge`` on
+    a deployment that did not opt into delegate mode at boot stays on
+    Python. The router rejects such PATCHes at the API boundary.
+    """
+    a2a_safe_for_delegate = bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
+    override = _runtime_override_mode("a2a")
+    if override == "shadow":
+        return False
+    return a2a_safe_for_delegate
+
+
+def _deployment_allows_override_mode(runtime, mode):
+    """Return a ``MoveCompatibility`` for whether ``mode`` can take effect on this deployment.
+
+    Single source of truth shared by the admin router (which translates the
+    rejection reason into a 409 detail string) and the coordinator (which
+    surfaces the rejection reason via ``BootReconcileStatus``). Two concerns
+    compose:
+
+    1. **Is there a mechanism that could honor the override?** For MCP, an
+       override is observed only by the ``MCPIngressMount`` mounted for
+       ``boot=shadow`` and ``boot=edge``. ``boot=off`` has no Rust sidecar
+       (``NO_DISPATCHER``); ``boot=full`` mounts a plain Rust proxy with no
+       dispatcher (``BOOT_FULL_STRANDS``). For A2A, overrides are observed
+       per-invocation, requiring the A2A runtime to be enabled at boot —
+       ``boot=off`` returns ``NO_DISPATCHER``.
+    2. **Does the target mode satisfy the safety invariant?** An ``edge``
+       override additionally requires the session-auth-reuse (MCP) or
+       delegate-enabled (A2A) flag; without it, routing public traffic to
+       Rust would be unsafe. Failure surfaces as ``EDGE_NEEDS_SAFETY_FLAG``.
+
+    Args:
+        runtime: ``RuntimeKind`` (or its string value) being evaluated.
+        mode: ``OverrideMode`` (or its string value) being requested.
+
+    Returns:
+        A ``MoveCompatibility`` member; ``OK`` when the override can both
+        be observed and safely honored, otherwise the structured rejection
+        reason.
+    """
+    # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+    from mcpgateway.runtime_state import (  # pylint: disable=import-outside-toplevel
+        MoveCompatibility,
+        OverrideMode,
+        RuntimeKind,
+        _coerce_mode,
+        _coerce_runtime,
+    )
+
+    kind = _coerce_runtime(runtime)
+    target = _coerce_mode(mode)
+
+    if kind == RuntimeKind.MCP:
+        if not settings.experimental_rust_mcp_runtime_enabled:
+            return MoveCompatibility.NO_DISPATCHER
+        is_full_boot = bool(
+            settings.experimental_rust_mcp_session_auth_reuse_enabled
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+            and settings.experimental_rust_mcp_live_stream_core_enabled
+            and settings.experimental_rust_mcp_affinity_core_enabled
+        )
+        if is_full_boot:
+            return MoveCompatibility.BOOT_FULL_STRANDS
+        if target == OverrideMode.SHADOW:
+            return MoveCompatibility.OK
+        # target == OverrideMode.EDGE
+        if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
+            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
+        return MoveCompatibility.OK
+
+    if kind == RuntimeKind.A2A:
+        if not settings.experimental_rust_a2a_runtime_enabled:
+            return MoveCompatibility.NO_DISPATCHER
+        if target == OverrideMode.SHADOW:
+            return MoveCompatibility.OK
+        # target == OverrideMode.EDGE
+        if not settings.experimental_rust_a2a_runtime_delegate_enabled:
+            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
+        return MoveCompatibility.OK
+
+    return MoveCompatibility.NO_DISPATCHER  # pragma: no cover — _coerce_runtime rejects unknown kinds upstream
+
+
+def deployment_allows_override_mode(runtime, mode):
+    """Public wrapper for ``_deployment_allows_override_mode``.
+
+    Args:
+        runtime: ``RuntimeKind`` or string runtime kind.
+        mode: ``OverrideMode`` or string target mode.
+
+    Returns:
+        A ``MoveCompatibility`` member.
+    """
+    return _deployment_allows_override_mode(runtime, mode)
+
+
 def _current_a2a_invoke_mode() -> str:
     """Return which runtime currently owns registered A2A agent invocation.
 
     Returns:
-        ``"rust"`` when delegation is enabled, otherwise ``"python"``.
+        ``"rust"`` when delegation is enabled (or overridden to ``edge``), otherwise ``"python"``.
     """
-    if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
-        return "rust"
-    return "python"
+    return "rust" if _should_delegate_a2a_to_rust() else "python"
 
 
 def _a2a_runtime_status_payload() -> Dict[str, Any]:
     """Return A2A runtime diagnostics for version and UI surfaces.
 
     Returns:
-        Dict with mode, invoke_mode, flags, and optional sidecar transport details.
+        Dict with mode, invoke_mode, flags, override state, and optional sidecar transport details.
     """
+    # First-Party
+    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
+
+    state = get_runtime_state()
+    a2a_override = state.override_mode("a2a")
     payload: Dict[str, Any] = {
         "mode": _current_a2a_runtime_mode(),
         "invoke_mode": _current_a2a_invoke_mode(),
+        "boot_mode": _boot_a2a_runtime_mode(),
+        "effective_mode": a2a_override or _boot_a2a_runtime_mode(),
+        "override_active": a2a_override is not None,
+        "override_version": state.version("a2a"),
+        "cluster_propagation": str(state.cluster_propagation),
+        "boot_reconcile_status": str(state.boot_reconcile_status("a2a")),
+        "pod_id": state.pod_id,
         "rust_runtime_enabled": settings.experimental_rust_a2a_runtime_enabled,
-        "rust_delegate_enabled": bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled),
+        "rust_delegate_enabled": _should_delegate_a2a_to_rust(),
     }
 
     if settings.experimental_rust_a2a_runtime_enabled:
@@ -346,6 +564,16 @@ def _a2a_runtime_status_payload() -> Dict[str, Any]:
         else:
             payload["sidecar_transport"] = "http"
             payload["sidecar_target"] = settings.experimental_rust_a2a_runtime_url
+
+    last_change = state.last_change("a2a")
+    if last_change is not None:
+        payload["last_change"] = {
+            "version": last_change.version,
+            "mode": last_change.mode,
+            "initiator_user": last_change.initiator_user,
+            "initiator_pod": last_change.initiator_pod,
+            "timestamp": last_change.timestamp,
+        }
 
     return payload
 
@@ -375,6 +603,51 @@ def current_mcp_transport_mount() -> str:
         Runtime label identifying the currently mounted public MCP transport.
     """
     return _current_mcp_transport_mount()
+
+
+def boot_mcp_runtime_mode() -> str:
+    """Return the boot-time runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
+    """
+    return _boot_mcp_runtime_mode()
+
+
+def boot_mcp_transport_mount() -> str:
+    """Return the transport mount selected by boot-time settings (no override applied).
+
+    Returns:
+        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
+    """
+    return _boot_mcp_transport_mount()
+
+
+def boot_a2a_runtime_mode() -> str:
+    """Return the boot-time A2A runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, or ``"edge"``.
+    """
+    return _boot_a2a_runtime_mode()
+
+
+def should_delegate_a2a_to_rust() -> bool:
+    """Return whether registered A2A invocations should be delegated to the Rust runtime.
+
+    Returns:
+        ``True`` when the Rust A2A runtime should service invocations.
+    """
+    return _should_delegate_a2a_to_rust()
+
+
+def a2a_runtime_status_payload() -> Dict[str, Any]:
+    """Return A2A runtime diagnostics for version, health, and UI surfaces.
+
+    Returns:
+        Diagnostic payload describing the active A2A runtime configuration.
+    """
+    return _a2a_runtime_status_payload()
 
 
 def should_mount_public_rust_transport() -> bool:

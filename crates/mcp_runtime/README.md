@@ -39,6 +39,13 @@ Important nuance:
   compatibility input translated by [docker-entrypoint.sh](../../docker-entrypoint.sh).
   Prefer `RUST_MCP_MODE` unless you are intentionally testing a specific
   override path.
+- When the boot mode is `edge` an authorized admin can flip the public
+  `/mcp` ingress between `shadow` and `edge` at runtime via
+  `PATCH /admin/runtime/mcp-mode` (and `/admin/runtime/a2a-mode` for A2A).
+  `off`, `shadow`, and `full` are not flippable — `shadow` did not opt
+  into the session-auth-reuse safety invariant; see the architecture doc.
+  see [docs/docs/architecture/rust-mcp-runtime.md](../../docs/docs/architecture/rust-mcp-runtime.md#runtime-mode-override)
+  for the full operator contract and cluster propagation behavior.
 
 ## Quick reference
 
