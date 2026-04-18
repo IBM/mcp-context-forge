@@ -1723,49 +1723,6 @@ class Settings(BaseSettings):
         description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
     )
 
-    # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
-    # Disabled by default for safety. Enable explicitly in production after testing.
-    mcp_session_pool_enabled: bool = False
-    mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
-    mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
-    mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check (aligned with health_check_interval)
-    mcp_session_pool_acquire_timeout: float = 30.0  # Timeout waiting for session slot
-    mcp_session_pool_create_timeout: float = 30.0  # Timeout creating new session
-    mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
-    mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
-    mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
-    # Transport timeout for pooled sessions (default 30s to match MCP SDK default).
-    # This timeout applies to all HTTP operations (connect, read, write) on pooled sessions.
-    # Use a higher value for deployments with long-running tool calls.
-    mcp_session_pool_transport_timeout: float = 30.0
-    # Force explicit RPC (list_tools) on gateway health checks even when session is fresh.
-    # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
-    # Enable for stricter health verification at the cost of ~5ms latency per check.
-    mcp_session_pool_explicit_health_rpc: bool = False
-    # Configurable health check chain - ordered list of methods to try.
-    # Options: ping, list_tools, list_prompts, list_resources, skip
-    # Default: ping,skip - try lightweight ping, skip if unsupported (for legacy servers)
-    mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
-    # Timeout in seconds for each health check attempt
-    mcp_session_pool_health_check_timeout: float = 5.0
-    mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
-    # Global session caps to prevent resource exhaustion (0 = unlimited for backwards compat)
-    mcp_session_pool_max_total_keys: int = 0  # Max total pool keys across all buckets (0 = unlimited)
-    # Soft cap with eventual enforcement - in high-concurrency scenarios, multiple concurrent
-    # acquire() calls may pass the check before sessions are added to _active, temporarily
-    # overshooting the limit. Prevents unbounded growth but not strict at exact threshold.
-    mcp_session_pool_max_total_sessions: int = 0  # Max total active sessions across all buckets (0 = unlimited, soft cap)
-    # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
-    # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
-    # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
-    mcp_session_pool_jwt_identity_extraction: bool = True
-    # Timeout for session/transport cleanup operations (__aexit__ calls).
-    # This prevents CPU spin loops when internal tasks (like post_writer waiting on
-    # memory streams) don't respond to cancellation. Does NOT affect tool execution
-    # time - only cleanup of idle/released sessions. Increase if you see frequent
-    # "cleanup timed out" warnings; decrease for faster recovery from spin loops.
-    mcp_session_pool_cleanup_timeout: float = 5.0
-
     # Timeout for SSE task group cleanup (seconds).
     # When an SSE connection is cancelled, this controls how long to wait for
     # internal tasks to respond before forcing cleanup. Shorter values reduce
@@ -1801,10 +1758,11 @@ class Settings(BaseSettings):
     # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
     anyio_cancel_delivery_max_iterations: int = 100
 
-    # Session Affinity
+    # Session Affinity (multi-worker downstream-session → worker routing).
+    # The upstream-session pooling surface that used to share this section is
+    # gone as of #4205 — see mcpgateway.services.upstream_session_registry.
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
-    mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
 
     # Prompts
@@ -1813,7 +1771,7 @@ class Settings(BaseSettings):
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    # Interval in seconds between health checks (aligned with mcp_session_pool_health_check_interval)
+    # Interval in seconds between gateway health checks.
     health_check_interval: int = 60
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5

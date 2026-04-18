@@ -752,8 +752,10 @@ class TestShutdownEdgeCases:
             original_wait_for = asyncio.wait_for
 
             async def timeout_wait_for(coro, *, timeout=None):
-                # Simulate timeout on pubsub close
-                if timeout == settings.mcp_session_pool_cleanup_timeout:
+                # Simulate timeout on pubsub close. SessionRegistry now hardcodes
+                # the 5s cleanup timeout (previously mcp_session_pool_cleanup_timeout,
+                # removed with the pool config in #4205).
+                if timeout == 5.0:
                     raise asyncio.TimeoutError()
                 return await original_wait_for(coro, timeout=timeout)
 
@@ -1717,6 +1719,7 @@ class TestShutdownBranchArcs:
         reg._stuck_tasks.clear = Mock()
         await reg.shutdown()
 
+
 # ---------------------------------------------------------------------------
 # _register_session_mapping and get_all_session_ids (lines 1028-1079, 1087-1088)
 # ---------------------------------------------------------------------------
@@ -1779,15 +1782,13 @@ class TestRegisterSessionMapping:
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
 
         mock_cache = AsyncMock()
-        mock_cache.get = AsyncMock(return_value={
-            "gateway": {"url": "http://gw:9000", "id": "gw1", "transport": "sse"}
-        })
+        mock_cache.get = AsyncMock(return_value={"gateway": {"url": "http://gw:9000", "id": "gw1", "transport": "sse"}})
 
         mock_pool = AsyncMock()
         mock_pool.register_session_mapping = AsyncMock()
 
         with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-            with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+            with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                 await registry._register_session_mapping(
                     "sid12345678",
                     {"method": "tools/call", "params": {"name": "my_tool"}},
@@ -2246,7 +2247,6 @@ class TestGenerateResponseEdgeCases:
                 transport=tr,
                 server_id=None,
                 user={"auth_token": "my_jwt_token", "email": "user@test.com"},
-
             )
 
         assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
@@ -2404,6 +2404,7 @@ class TestCancelRespondTaskDoneStates:
     @pytest.mark.asyncio
     async def test_cancel_task_done_cancelled(self, registry):
         """Line 345: task.result() raises CancelledError."""
+
         async def cancelled_task():
             raise asyncio.CancelledError()
 

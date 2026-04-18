@@ -566,8 +566,7 @@ repos:
         description: Verifies Alembic migration naming, hashes, and source patterns.
         entry: python3 scripts/pre-commit/check_migration_patterns.py
         language: system
-        pass_filenames: false
-        files: ^mcpgateway/alembic/
+        files: ^mcpgateway/alembic/versions/.*\.py$
 
       - id: check-rust-workspace
         name: 🔐 Check Rust Workspace Layout
