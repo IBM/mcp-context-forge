@@ -3870,7 +3870,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 
@@ -3923,7 +3922,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 
@@ -3971,7 +3969,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 

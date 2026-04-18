@@ -752,8 +752,10 @@ class TestShutdownEdgeCases:
             original_wait_for = asyncio.wait_for
 
             async def timeout_wait_for(coro, *, timeout=None):
-                # Simulate timeout on pubsub close
-                if timeout == settings.mcp_session_pool_cleanup_timeout:
+                # Simulate timeout on pubsub close. SessionRegistry now hardcodes
+                # the 5s cleanup timeout (previously mcp_session_pool_cleanup_timeout,
+                # removed with the pool config in #4205).
+                if timeout == 5.0:
                     raise asyncio.TimeoutError()
                 return await original_wait_for(coro, timeout=timeout)
 

@@ -3229,7 +3229,6 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.settings.mcp_session_pool_enabled", False),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
             # ------------------------------------------------------------------

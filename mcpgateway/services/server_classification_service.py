@@ -40,53 +40,42 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ServerUsageMetrics:
-    """Aggregated usage metrics for a single server from pooled sessions."""
-
-    url: str
-    server_last_used: float = 0.0  # max(last_used) across all pooled sessions
-    active_session_count: int = 0  # Count from _active dict
-    total_use_count: int = 0  # Sum of use_count from all sessions
-    pooled_session_count: int = 0  # Total pooled sessions for this server
-
-
-@dataclass
 class ClassificationMetadata:
-    """Metadata about classification run."""
+    """Metadata about a classification run."""
 
-    total_servers: int  # Total servers
-    hot_cap: int  # Maximum hot servers (20% of total_servers)
-    hot_actual: int  # Actual hot servers selected
-    eligible_count: int  # Servers with pooled sessions
-    timestamp: float  # Classification timestamp
-    underutilized_reason: Optional[str] = None  # Why hot < 20% (if applicable)
+    total_servers: int
+    hot_cap: int
+    hot_actual: int
+    eligible_count: int  # Servers with recent-use signal (currently always 0 post-#4205)
+    timestamp: float
+    underutilized_reason: Optional[str] = None
 
 
 @dataclass
 class ClassificationResult:
     """Result of server classification."""
 
-    hot_servers: List[str]  # URLs of hot servers
-    cold_servers: List[str]  # URLs of cold servers
+    hot_servers: List[str]
+    cold_servers: List[str]
     metadata: ClassificationMetadata
 
 
 class ServerClassificationService:
-    """
-    Manages hot/cold server classification based on MCP session pool state.
+    """Manages hot/cold server classification for gated auto-refresh polling.
 
-    Classification Logic:
-        1. Scope: Uses only upstream MCP pooled session state
-        2. Hot cap: floor(20% * total_servers)
-        3. Eligibility: Server must have pooled session with valid last_used
-        4. Ranking: server_last_used descending (newest first)
-        5. Tie-breakers: active_count, use_count, URL (deterministic)
-        6. Hot selection: Top min(hot_cap, eligible_count)
-        7. Cold: All remaining servers
-        8. Guarantees: No overlap, full coverage, deterministic
+    Classification historically used per-URL usage metrics from the upstream
+    session pool to pick the top 20% of most-recently-used servers as "hot"
+    (auto-refreshed more aggressively). The pool is gone as of #4205; its
+    replacement ``UpstreamSessionRegistry`` keys by downstream-session id
+    rather than URL, so the old signal is no longer directly extractable.
 
-    Thread-safe for multi-worker deployments via Redis state management.
-    Falls back to local-only operation when Redis unavailable.
+    Until the classification logic is rewritten against registry metrics +
+    audit data, ``_classify_servers_from_pool`` is a stub that marks every
+    server as cold, which degrades to "poll all gateways on the normal
+    schedule" — the conservative, no-regression fallback.
+
+    Multi-worker coordination via Redis (leader election, result publish)
+    still works; it just publishes an empty-hot / all-cold result each run.
     """
 
     # Redis key templates
@@ -271,147 +260,45 @@ class ServerClassificationService:
         except Exception as e:
             logger.error(f"Classification failed: {e}", exc_info=True)
 
-    def _resolve_canonical_url(self, pool_key: tuple, gateway_url_map: Dict[str, str]) -> Optional[str]:
-        """Resolve the canonical gateway URL for a pool key.
+    def _classify_servers_from_pool(
+        self, pool: SessionAffinity, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None
+    ) -> ClassificationResult:  # pylint: disable=unused-argument
+        """Classify servers — currently returns "everything cold" (#4205 follow-up).
 
-        Pool keys may contain auth-mutated URLs (e.g. with query-param secrets).
-        Use gateway_id from the pool key to look up the canonical Gateway.url,
-        preventing secret leakage into classification Redis sets.
+        Historically this aggregated per-URL usage from the pool's internal
+        ``_pools`` and ``_active`` dicts. Those dicts disappeared when the
+        upstream-session pool was replaced by ``UpstreamSessionRegistry``;
+        the registry keys by ``(downstream_session_id, gateway_id)`` rather
+        than URL, so the old per-URL recency/use-count signal is no longer
+        directly available.
 
-        Args:
-            pool_key: PoolKey tuple (user_identity, url, identity_hash, transport_type, gateway_id)
-            gateway_url_map: Mapping of gateway_id → canonical URL from database
-
-        Returns:
-            Canonical URL if gateway_id resolves, else None
-        """
-        gateway_id = pool_key[4] if len(pool_key) > 4 else ""
-        if gateway_id and gateway_id in gateway_url_map:
-            return gateway_url_map[gateway_id]
-        return None
-
-    def _classify_servers_from_pool(self, pool: SessionAffinity, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None) -> ClassificationResult:
-        """Classify servers based on pooled session state.
-
-        Algorithm (deterministic):
-            1. Get total servers N
-            2. Calculate hot_cap = floor(0.20 * N)
-            3. Extract server metrics from pooled sessions (idle + active)
-            4. Filter eligible (has valid last_used or active sessions)
-            5. Sort by (server_last_used desc, active_count desc, use_count desc, url asc)
-            6. Select top min(hot_cap, eligible_count) as hot
-            7. Remaining servers are cold
+        This stub preserves the caller contract (every registered URL ends
+        up in ``cold_servers``) so hot/cold-gated polling degrades to
+        "always poll", rather than silently raising and stalling classification.
+        A rebuild against ``RegistrySnapshot`` plus gateway audit data is
+        tracked separately.
 
         Args:
-            pool: MCP session pool
-            all_gateway_urls: All registered gateway URLs
-            gateway_url_map: Optional mapping of gateway_id → canonical URL for URL normalization
+            pool: Session-affinity service. Currently unused — left in the
+                signature to preserve the caller contract and to make the
+                follow-up re-wire easier.
+            all_gateway_urls: All registered gateway URLs.
+            gateway_url_map: Optional gateway_id → URL mapping; unused here.
 
         Returns:
-            ClassificationResult with hot/cold servers and metadata
+            ClassificationResult with an empty hot set and every URL marked cold.
         """
         total_servers = len(all_gateway_urls)
-        hot_cap = floor(0.20 * total_servers)
-        canonical_url_set = set(all_gateway_urls)
-
-        # Step 3: Extract server usage from pooled sessions
-        server_metrics: Dict[str, ServerUsageMetrics] = {}
-
-        # Helper to accumulate metrics from a single PooledSession
-        def _accumulate_session(url: str, session: object) -> None:
-            """Accumulate metrics from a single pooled session into server_metrics.
-
-            Args:
-                url: Server URL
-                session: PooledSession object with last_used and use_count attributes
-            """
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-            if hasattr(session, "last_used") and session.last_used > 0:
-                server_metrics[url].server_last_used = max(server_metrics[url].server_last_used, session.last_used)
-                server_metrics[url].total_use_count += getattr(session, "use_count", 0)
-                server_metrics[url].pooled_session_count += 1
-
-        # Iterate over pool._pools (Dict[PoolKey, Queue[PooledSession]])
-        # PoolKey = (user_identity, url, identity_hash, transport_type, gateway_id)
-        for pool_key, session_queue in pool._pools.items():  # pylint: disable=protected-access
-            # Resolve canonical URL: prefer gateway_id lookup, fall back to raw pool URL
-            url = (self._resolve_canonical_url(pool_key, gateway_url_map) if gateway_url_map else None) or pool_key[1]
-
-            # Only track URLs that correspond to known gateways
-            if url not in canonical_url_set:
-                continue
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-
-            # Process each idle session in the queue
-            try:
-                if hasattr(session_queue, "_queue"):
-                    sessions_list = list(session_queue._queue)  # pylint: disable=protected-access
-                else:
-                    sessions_list = []
-
-                for session in sessions_list:
-                    _accumulate_session(url, session)
-            except Exception as e:
-                logger.warning(f"Error extracting idle metrics for {url}: {e}")
-                continue
-
-        # Process active sessions (checked-out from the pool)
-        # This ensures busy servers with all sessions in use are still eligible.
-        for pool_key, active_set in pool._active.items():  # pylint: disable=protected-access
-            url = (self._resolve_canonical_url(pool_key, gateway_url_map) if gateway_url_map else None) or pool_key[1]
-
-            if url not in canonical_url_set:
-                continue
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-
-            server_metrics[url].active_session_count += len(active_set)
-
-            # Extract last_used / use_count from active sessions too
-            for session in active_set:
-                try:
-                    _accumulate_session(url, session)
-                except Exception as active_err:
-                    logger.debug(f"Skipping active session metric for {url}: {active_err}")
-                    continue
-
-        # Step 4: Filter eligible servers (has valid last_used)
-        eligible_servers = [metrics for metrics in server_metrics.values() if metrics.server_last_used > 0.0]
-        eligible_count = len(eligible_servers)
-
-        # Step 5: Sort by recency (newer first), then tie-breakers
-        eligible_servers.sort(
-            key=lambda m: (
-                -m.server_last_used,  # Primary: most recent first (descending)
-                -m.active_session_count,  # Tie-breaker 1: more active sessions
-                -m.total_use_count,  # Tie-breaker 2: higher use count
-                m.url,  # Tie-breaker 3: deterministic (ascending)
-            )
-        )
-
-        # Step 6: Select hot servers (up to hot_cap, no backfill)
-        hot_actual = min(hot_cap, eligible_count)
-        hot_servers = [m.url for m in eligible_servers[:hot_actual]]
-
-        # Step 7: Cold servers = all remaining
-        hot_set = set(hot_servers)
-        cold_servers = [url for url in all_gateway_urls if url not in hot_set]
-
-        # Step 8: Build metadata
-        underutilized_reason = None
-        if eligible_count < hot_cap:
-            underutilized_reason = f"Only {eligible_count} servers have pooled sessions, " f"below hot_cap={hot_cap}"
-
         return ClassificationResult(
-            hot_servers=hot_servers,
-            cold_servers=cold_servers,
+            hot_servers=[],
+            cold_servers=list(all_gateway_urls),
             metadata=ClassificationMetadata(
-                total_servers=total_servers, hot_cap=hot_cap, hot_actual=hot_actual, eligible_count=eligible_count, timestamp=time.time(), underutilized_reason=underutilized_reason
+                total_servers=total_servers,
+                hot_cap=floor(0.20 * total_servers),
+                hot_actual=0,
+                eligible_count=0,
+                timestamp=time.time(),
+                underutilized_reason="pool classification disabled post-#4205; rebuild against UpstreamSessionRegistry pending",
             ),
         )
 

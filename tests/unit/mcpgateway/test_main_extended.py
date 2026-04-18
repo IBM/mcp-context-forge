@@ -38,7 +38,6 @@ import mcpgateway.db as db_mod
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
-    _create_jwt_identity_extractor,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
@@ -1614,7 +1613,6 @@ class TestApplicationStartupPaths:
         monkeypatch.setattr(settings, "metrics_rollup_enabled", False)
         monkeypatch.setattr(settings, "metrics_buffer_enabled", False)
         monkeypatch.setattr(settings, "metrics_aggregation_enabled", False)
-        monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
         monkeypatch.setattr(settings, "sso_enabled", False)
@@ -4811,9 +4809,7 @@ class TestLifespanAdvanced:
             return service
 
         # Feature flags
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)
@@ -4958,7 +4954,6 @@ class TestLifespanAdvanced:
 
         # Keep startup/shutdown lightweight.
         for flag, value in (
-            ("mcp_session_pool_enabled", False),
             ("mcpgateway_session_affinity_enabled", False),
             ("enable_header_passthrough", False),
             ("mcpgateway_tool_cancellation_enabled", False),
@@ -12130,7 +12125,6 @@ class TestRemainingCoverageGaps:
             return service
 
         # Minimal startup config: only metrics aggregation auto-start.
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -12218,7 +12212,6 @@ class TestRemainingCoverageGaps:
             service.shutdown = AsyncMock()
             return service
 
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -12301,7 +12294,6 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "logging_service", MagicMock(initialize=AsyncMock(), shutdown=AsyncMock(), configure_uvicorn_after_startup=MagicMock()))
         monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())

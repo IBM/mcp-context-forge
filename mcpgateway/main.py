@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,7 +59,6 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -1518,57 +1517,6 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         mapped_results.append(mapped_item)
 
     return mapped_results
-
-
-def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
-    """Create JWT identity extractor function for session pool.
-
-    Extracts stable user ID from JWT token to prevent bucket explosion
-    when using short-lived JWTs with rotating jti/exp/iat claims.
-
-    Returns:
-        Callable that extracts stable user identifier from request headers,
-        or None if extraction fails.
-    """
-
-    def jwt_identity_extractor(headers: dict) -> Optional[str]:
-        """Extract stable user ID from JWT token.
-
-        Decodes JWT without signature verification to extract sub, email, or user_id claim.
-        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
-
-        Args:
-            headers: Request headers dict (case-insensitive lookup handled by caller).
-
-        Returns:
-            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
-        """
-        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
-        if not auth_header:
-            return None
-
-        # Extract token from "Bearer <token>" format
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        else:
-            token = auth_header.strip()
-        if not token:
-            return None
-
-        try:
-            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
-            # This is NOT a security boundary - authentication happens separately via get_current_user.
-            # We only extract stable identity (sub/email/user_id) to group sessions by user.
-            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
-            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
-            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
-            # Try standard claims in order of preference
-            return claims.get("sub") or claims.get("email") or claims.get("user_id")
-        except Exception as e:
-            logger.debug(f"JWT identity extraction failed: {e}")
-            return None
-
-    return jwt_identity_extractor
 
 
 async def attempt_to_bootstrap_sso_providers():

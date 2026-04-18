@@ -6670,7 +6670,6 @@ class TestInvokeToolRestSuccess:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8527,7 +8526,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8644,7 +8642,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8707,7 +8704,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8782,7 +8778,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8849,7 +8844,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("no encryption")),
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8917,7 +8911,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.validate_signature", return_value=False) as mock_vs,
             patch.object(settings, "enable_ed25519_signing", True),
             patch.object(settings, "ed25519_public_key", "pubkey"),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9141,7 +9134,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9197,7 +9189,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9399,7 +9390,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9454,7 +9444,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)

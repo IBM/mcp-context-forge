@@ -1,12 +1,25 @@
 # ADR-038: Multi-Worker Session Affinity for SSE and Streamable HTTP
 
-- *Status:* Accepted
+- *Status:* Accepted (with scope change — see note below)
 - *Date:* 2025-01-31
 - *Deciders:* Platform Team
 
+> **Note — scope narrowed by #4205.** The cross-worker routing mechanism
+> described here is still in place, but it no longer lives inside a
+> "session pool" class that also manages upstream MCP `ClientSession`s.
+> The pooling concern was moved to
+> `mcpgateway.services.upstream_session_registry.UpstreamSessionRegistry`
+> (1:1 binding per downstream session), and the affinity machinery —
+> Redis-backed session→worker mapping, worker heartbeat, atomic
+> `SET NX` ownership claim, Lua CAS reclaim from dead workers, RPC
+> listener, session-owner HTTP forwarding — now lives on its own in
+> `mcpgateway.services.session_affinity.SessionAffinity`. Function
+> surface is unchanged beyond the `pool_` / `streamable_http_` prefixes
+> being dropped from public method names. ADR-032 has been superseded.
+
 ## Context
 
-ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway maintains pooled sessions to backend MCP servers for efficiency (see ADR-032).
+ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway needs to pin each downstream MCP session to one worker so the worker-local `UpstreamSessionRegistry` (see #4205) can serve subsequent calls without rebuilding upstream state.
 
 **The Problem:** In a multi-worker deployment, a client's requests may hit different workers. If each worker creates its own upstream MCP session, we lose:
 1. **Connection efficiency** - Multiple sessions to the same backend instead of one
