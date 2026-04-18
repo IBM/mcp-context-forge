@@ -584,8 +584,10 @@ class SessionRegistry(SessionBackend):
                     logger.error("Some stuck tasks could not be cancelled during shutdown")
 
         # Close Redis pubsub (but not the shared client)
-        # Use timeout to prevent blocking if pubsub doesn't close cleanly
-        cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
+        # Use timeout to prevent blocking if pubsub doesn't close cleanly.
+        # 5s is well above typical pubsub close latency but bounded enough
+        # that a stuck Redis connection can't stall shutdown indefinitely.
+        cleanup_timeout = 5.0
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
                 await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
@@ -1585,7 +1587,7 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
                 # Pubsub cleanup first - use timeouts to prevent blocking
-                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
+                cleanup_timeout = 5.0
                 try:
                     await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=cleanup_timeout)
                 except asyncio.TimeoutError:
