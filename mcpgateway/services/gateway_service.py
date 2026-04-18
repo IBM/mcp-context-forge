@@ -426,6 +426,38 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         raise ValueError("User membership in team not sufficient for this update.")
 
 
+async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
+    """Close every upstream MCP session bound to ``gateway_id``.
+
+    Called after gateway deletion or an update that changes the connect
+    parameters (url, auth_type, auth_value, auth_query_params, oauth_config).
+    Without this, the UpstreamSessionRegistry keeps handing the stale
+    ClientSession back on the next acquire, so in-flight downstream sessions
+    keep talking to the old URL / with old credentials (see #4205).
+
+    Tolerates an uninitialized registry (unit tests, early startup) and any
+    registry-side exception — eviction is best-effort and must not block
+    gateway mutation.
+
+    Args:
+        gateway_id: Gateway whose upstream sessions should be closed.
+
+    Returns:
+        The number of upstream sessions evicted (0 if the registry is
+        unavailable or nothing matched).
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        return await get_upstream_session_registry().evict_gateway(gateway_id)
+    except RuntimeError:
+        return 0
+    except Exception as exc:  # noqa: BLE001 — log and swallow; see docstring
+        logger.debug(f"Upstream session eviction for gateway {gateway_id} failed: {exc}")
+        return 0
+
+
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
@@ -2105,6 +2137,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Save original values BEFORE updating for change detection checks later
                 original_url = gateway.url
                 original_auth_type = gateway.auth_type
+                # #4205: capture enough auth/URL state to decide whether upstream
+                # sessions pinned to this gateway need to be evicted after the commit.
+                original_auth_value = gateway.auth_value
+                original_auth_query_params = gateway.auth_query_params
+                original_oauth_config = gateway.oauth_config
 
                 # Update fields if provided
                 if gateway_update.name is not None:
@@ -2482,6 +2519,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 db.commit()
                 db.refresh(gateway)
+
+                # #4205: if a connect-affecting field changed, close any upstream
+                # MCP sessions pinned to this gateway so the next acquire rebuilds
+                # against the new URL/auth. Non-connect changes (name, description,
+                # tags, passthrough_headers, visibility, etc.) leave sessions alone
+                # to preserve the 1:1 downstream-session connection-reuse benefit.
+                if (
+                    gateway.url != original_url
+                    or gateway.auth_type != original_auth_type
+                    or gateway.auth_value != original_auth_value
+                    or gateway.auth_query_params != original_auth_query_params
+                    or gateway.oauth_config != original_oauth_config
+                ):
+                    await _evict_upstream_sessions_for_gateway(str(gateway.id))
 
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
@@ -3195,6 +3246,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             db.commit()
+
+            # #4205: close any upstream MCP sessions bound to this gateway
+            # so in-flight downstream sessions can't keep talking to the
+            # deleted gateway's URL. Best-effort — registry may not be
+            # initialized in some test paths.
+            await _evict_upstream_sessions_for_gateway(str(gateway_id))
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()

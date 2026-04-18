@@ -89,3 +89,55 @@ async def test_init_is_idempotent_across_restarts():
     await registry_module.shutdown_upstream_session_registry()
     second = registry_module.init_upstream_session_registry()
     assert second is not first
+
+
+# ---------------------------------------------------------------------------
+# Gateway mutation → upstream session eviction (Codex review follow-up)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_evict_upstream_sessions_for_gateway_helper_forwards_to_registry():
+    """The gateway_service helper must call registry.evict_gateway(gateway_id).
+
+    Ensures admin-side gateway mutations (delete, URL change, auth change)
+    invalidate upstream sessions so the next acquire reconnects against the
+    new URL / with the new credentials instead of handing back a stale
+    ClientSession. Without this forwarding, #4205's isolation would still
+    hold across downstream sessions but each downstream session would keep
+    talking to the PRE-admin-change gateway state.
+    """
+    # First-Party
+    from mcpgateway.services.gateway_service import _evict_upstream_sessions_for_gateway
+
+    reg = registry_module.init_upstream_session_registry()
+    reg.evict_gateway = AsyncMock(return_value=3)  # type: ignore[method-assign]
+
+    evicted = await _evict_upstream_sessions_for_gateway("gw-target")
+
+    reg.evict_gateway.assert_awaited_once_with("gw-target")
+    assert evicted == 3
+
+
+@pytest.mark.asyncio
+async def test_evict_upstream_sessions_for_gateway_helper_tolerates_uninitialized_registry():
+    """A missing registry singleton must not block gateway mutation."""
+    # First-Party
+    from mcpgateway.services.gateway_service import _evict_upstream_sessions_for_gateway
+
+    # Registry not initialized — eviction is best-effort, should return 0.
+    assert await _evict_upstream_sessions_for_gateway("gw-anything") == 0
+
+
+@pytest.mark.asyncio
+async def test_evict_upstream_sessions_for_gateway_helper_swallows_unexpected_errors():
+    """Registry exceptions must not mask gateway-mutation errors."""
+    # First-Party
+    from mcpgateway.services.gateway_service import _evict_upstream_sessions_for_gateway
+
+    reg = registry_module.init_upstream_session_registry()
+    reg.evict_gateway = AsyncMock(side_effect=RuntimeError("redis down"))  # type: ignore[method-assign]
+
+    # Must not raise — gateway delete/update must still proceed.
+    assert await _evict_upstream_sessions_for_gateway("gw-target") == 0
+    reg.evict_gateway.assert_awaited_once()
