@@ -923,6 +923,7 @@ def test_mcp_transport_is_broken_first_drift_logs_warning_then_degrades_to_debug
         ({"downstream_session_id": ""}, r"downstream_session_id must be a non-empty string"),
         ({"timeout_seconds": 0}, r"timeout_seconds must be positive"),
         ({"timeout_seconds": -1.0}, r"timeout_seconds must be positive"),
+        ({"gateway_id": ""}, r"gateway_id must be non-empty when provided"),
     ],
 )
 def test_session_create_request_rejects_invalid_inputs(kwargs, match):
@@ -959,6 +960,31 @@ def test_session_create_request_is_frozen():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         req.url = "http://other/mcp"  # type: ignore[misc]
+
+
+def test_session_create_request_headers_are_immutable():
+    """Headers are wrapped in MappingProxyType; in-place mutation must fail."""
+    original = {"Authorization": "Bearer abc"}
+    req = SessionCreateRequest(
+        url="http://u/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        headers=original,
+        gateway_id="g1",
+        downstream_session_id="s1",
+        httpx_client_factory=None,
+        message_handler_factory=None,
+        timeout_seconds=5.0,
+    )
+    # The post-init defensively copies + freezes, so mutating the original
+    # dict after construction must not leak into the frozen request.
+    original["Authorization"] = "Bearer evil"
+    assert req.headers["Authorization"] == "Bearer abc"
+
+    # In-place mutation via the frozen proxy must fail.
+    with pytest.raises(TypeError):
+        req.headers["Authorization"] = "Bearer evil"  # type: ignore[index]
+    with pytest.raises((TypeError, AttributeError)):
+        req.headers.clear()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

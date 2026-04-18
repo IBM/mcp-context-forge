@@ -29,7 +29,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import time
-from typing import Any, AsyncIterator, Awaitable, Callable, Optional
+from types import MappingProxyType
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional
 
 # Third-Party
 import anyio
@@ -78,8 +79,19 @@ MessageHandlerFactory = Callable[
     ],
 ]
 
-# Factory for constructing the (ClientSession, transport_ctx) pair. Defaults to
-# the real MCP transports; tests inject a fake so no network is touched.
+# Factory for constructing an upstream MCP session.
+#
+# Return shape is ``(ClientSession, _unused)``. The second slot is vestigial —
+# the owner task attaches ``_cf_owner_task`` and ``_cf_shutdown_event`` onto
+# the ClientSession object itself, so ``_create_session()`` ignores the second
+# return value. Kept in the signature because (a) fake factories in the test
+# suite mirror the shape and (b) collapsing to a single return is a breaking
+# change for any downstream overrides — safe to do in the same commit that
+# replaces the attribute-smuggling convention with a typed handle (separate
+# follow-up).
+#
+# Defaults to the real MCP transports; tests inject a fake so no network is
+# touched.
 SessionFactory = Callable[
     ["SessionCreateRequest"],
     Awaitable[tuple[ClientSession, Any]],
@@ -116,12 +128,14 @@ class SessionCreateRequest:
     Frozen so a SessionFactory — which typically runs inside a spawned owner
     task — can't accidentally rewrite the caller's request mid-flight and
     silently point the upstream session at a different URL/transport than the
-    registry keyed it under.
+    registry keyed it under. ``headers`` is additionally wrapped in a
+    ``MappingProxyType`` in ``__post_init__`` so in-place dict mutation can't
+    bypass the freeze.
     """
 
     url: str
     transport_type: TransportType
-    headers: dict[str, str]
+    headers: Mapping[str, str]
     gateway_id: Optional[str]
     downstream_session_id: str
     httpx_client_factory: Optional[HttpxClientFactory]
@@ -134,8 +148,17 @@ class SessionCreateRequest:
             raise ValueError("SessionCreateRequest.url must be a non-empty string")
         if not self.downstream_session_id:
             raise ValueError("SessionCreateRequest.downstream_session_id must be a non-empty string")
+        if self.gateway_id is not None and not self.gateway_id:
+            # Optional[str] allows None, but "" would be a silent alias for None with
+            # different bucketing in log messages and registry keys. Reject it.
+            raise ValueError("SessionCreateRequest.gateway_id must be non-empty when provided")
         if self.timeout_seconds <= 0:
             raise ValueError("SessionCreateRequest.timeout_seconds must be positive")
+        # Defensively freeze the headers mapping. `object.__setattr__` is the
+        # standard workaround for mutating a frozen dataclass from inside
+        # __post_init__.
+        if not isinstance(self.headers, MappingProxyType):
+            object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
 
 
 _IDENTITY_FIELDS = frozenset({"downstream_session_id", "gateway_id", "url", "transport_type"})
@@ -508,29 +531,32 @@ class UpstreamSessionRegistry:
     async def evict_session(self, downstream_session_id: str) -> int:
         """Close and remove every upstream session owned by this downstream session id.
 
-        Returns the number of sessions evicted. Safe to call when no sessions exist.
+        Returns the number of sessions evicted. Safe to call when no sessions
+        exist. Evictions fire concurrently so a downstream session with many
+        gateways doesn't block on the slowest-draining upstream.
         """
         async with self._global_lock:
             keys = [k for k in self._sessions if k[0] == downstream_session_id]
-        count = 0
-        for key in keys:
-            if await self._evict_key(key):
-                count += 1
-        return count
+        return await self._evict_keys_in_parallel(keys)
 
     async def evict_gateway(self, gateway_id: str) -> int:
         """Close and remove every upstream session pointing at a given gateway.
 
         Intended for gateway-removal/rotation; downstream sessions survive but
-        will rebuild upstream state on the next acquire() call.
+        will rebuild upstream state on the next acquire() call. Evictions run
+        concurrently — fires post-commit on admin update/delete, so a slow
+        drain must not stall the response.
         """
         async with self._global_lock:
             keys = [k for k in self._sessions if k[1] == gateway_id]
-        count = 0
-        for key in keys:
-            if await self._evict_key(key):
-                count += 1
-        return count
+        return await self._evict_keys_in_parallel(keys)
+
+    async def _evict_keys_in_parallel(self, keys: list[tuple[str, str]]) -> int:
+        """Run _evict_key concurrently for a set of keys; returns the count that succeeded."""
+        if not keys:
+            return 0
+        results = await asyncio.gather(*[self._evict_key(k) for k in keys], return_exceptions=True)
+        return sum(1 for r in results if r is True)
 
     async def close_all(self) -> None:
         """Drain every upstream session concurrently. Intended for app shutdown.
