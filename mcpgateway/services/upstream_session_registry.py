@@ -386,7 +386,11 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                 except asyncio.CancelledError:
                     # The owner task itself got cancelled during cleanup — expected after task.cancel().
                     pass
-                except Exception as exc:  # noqa: BLE001 — cleanup unwind after failed ready
+                except Exception as exc:  # noqa: BLE001 — cleanup unwind after failed ready  # pragma: no cover
+                    # Defensive: the owner's own `except Exception` swallows all Exception
+                    # subclasses before they can escape the task, so reaching this branch
+                    # would require a BaseException that slipped through — unreachable
+                    # in practice but kept to narrow against future refactors.
                     logger.debug(
                         "Owner-task cleanup after failed session create raised %s: %s",
                         type(exc).__name__,

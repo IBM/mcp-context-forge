@@ -1494,6 +1494,123 @@ async def test_close_session_short_circuits_when_already_closed(registry, factor
 
 
 @pytest.mark.asyncio
+async def test_close_session_returns_immediately_when_owner_task_already_done(factory_and_records):
+    """If the owner task completed before _close_session runs, return without awaiting.
+
+    Covers upstream_session_registry.py:718 — the `owner_task.done()` short-circuit
+    after `_shutdown_event.set()`.
+    """
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=1.0)
+
+    # Build an owner task that exits immediately, before we call _close_session.
+    async def _already_done():
+        return None
+
+    task = asyncio.create_task(_already_done())
+    await task  # ensure it's done before we proceed
+
+    upstream = UpstreamSession(
+        downstream_session_id="s-done",
+        gateway_id="g-done",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+        _owner_task=task,
+        _shutdown_event=asyncio.Event(),
+    )
+
+    # Should return immediately — no timeout, no warnings.
+    await reg._close_session(upstream)  # pylint: disable=protected-access
+    assert upstream._closed is True  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_close_session_logs_debug_when_owner_exits_with_exception(caplog):
+    """An owner task that exits with a regular Exception inside the grace window surfaces as DEBUG.
+
+    Covers upstream_session_registry.py:730 — the `logger.debug("Owner task ... exited with ...")`
+    branch after the task completes non-cancelled with an exception.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    factory, _ = _make_fake_factory()
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=1.0)
+
+    shutdown = asyncio.Event()
+
+    async def _raises_after_shutdown():
+        await shutdown.wait()
+        raise RuntimeError("owner blew up during teardown")
+
+    task = asyncio.create_task(_raises_after_shutdown())
+    upstream = UpstreamSession(
+        downstream_session_id="s-err",
+        gateway_id="g-err",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+        _owner_task=task,
+        _shutdown_event=shutdown,
+    )
+
+    with caplog.at_level("DEBUG", logger=usr.logger.name):
+        await reg._close_session(upstream)  # pylint: disable=protected-access
+
+    debug_msgs = [rec.getMessage() for rec in caplog.records if rec.levelname == "DEBUG"]
+    assert any("exited during _close_session" in m and "RuntimeError" in m for m in debug_msgs)
+
+
+@pytest.mark.asyncio
+async def test_close_session_consumes_final_exception_after_force_cancel():
+    """After force-cancel + re-completion, `.result()` is called inside `contextlib.suppress` so the exception doesn't leak.
+
+    Covers upstream_session_registry.py:758-759. Scenario: the grace window elapses,
+    force-cancel fires, task finishes with a non-CancelledError exception.
+    """
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    factory, _ = _make_fake_factory()
+    reg = UpstreamSessionRegistry(session_factory=factory, shutdown_timeout_seconds=0.05)
+
+    # Task that ignores the graceful shutdown but exits with an Exception when cancelled.
+    async def _raises_on_cancel():
+        try:
+            await asyncio.sleep(10)  # longer than the grace window
+        except asyncio.CancelledError:
+            # On cancel, raise a regular Exception (not CancelledError).
+            raise RuntimeError("exited via force-cancel with a real exception")  # pylint: disable=raise-missing-from
+
+    task = asyncio.create_task(_raises_on_cancel())
+    upstream = UpstreamSession(
+        downstream_session_id="s-raise-on-cancel",
+        gateway_id="g-raise-on-cancel",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+        _owner_task=task,
+        _shutdown_event=asyncio.Event(),
+    )
+
+    # Should complete without propagating the RuntimeError.
+    await reg._close_session(upstream)  # pylint: disable=protected-access
+
+    # Task is done with the exception consumed.
+    assert task.done()
+    assert not task.cancelled()
+    # The RuntimeError was retrieved (via .result()) inside contextlib.suppress.
+    # Asserting no warning about "Task exception was never retrieved" is implicit —
+    # but we can at least check that accessing .exception() doesn't raise InvalidStateError.
+    assert isinstance(task.exception(), RuntimeError)
+
+
+@pytest.mark.asyncio
 async def test_close_session_bails_out_when_force_cancel_itself_wedges(caplog):
     """If the owner task ignores cancellation, _close_session must still bail out — never hang shutdown.
 
