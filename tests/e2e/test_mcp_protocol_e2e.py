@@ -42,7 +42,7 @@ from fastmcp.client.auth import BearerAuth
 from mcp.shared.exceptions import McpError
 
 # Local
-from .mcp_test_helpers import (
+from .helpers.mcp_test_helpers import (
     ADMIN_EMAIL,
     BASE_URL,
     JWT_SECRET,

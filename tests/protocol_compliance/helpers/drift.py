@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from ._helpers import GATEWAY_UPSTREAM_SLUG
+from .compliance import GATEWAY_UPSTREAM_SLUG
 
 _SLUG_PREFIX = f"{GATEWAY_UPSTREAM_SLUG}-"
 

@@ -1,7 +1,7 @@
 """Cross-target drift detection.
 
 Each test here opens a client against every available target, runs the
-same protocol probe, normalizes the results via ``_drift``, and asserts
+same protocol probe, normalizes the results via ``helpers.drift``, and asserts
 pairwise equality. Surviving divergence is drift — a gateway-introduced
 behavioral difference not explained by legitimate decoration.
 
@@ -20,14 +20,14 @@ from typing import Any, AsyncContextManager, Callable, Optional
 import pytest
 from fastmcp.client import Client
 
-from ._drift import (
+from .helpers.compliance import resolve_tool
+from .helpers.drift import (
     assert_drift_free,
     normalize_prompt_names,
     normalize_resource_uris,
     normalize_tool_names,
     normalize_tool_result,
 )
-from ._helpers import resolve_tool
 
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_drift]
 

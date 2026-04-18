@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastmcp.client import Client
 
-from ._helpers import xfail_on
+from .helpers.compliance import xfail_on
 
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_server_features]
 

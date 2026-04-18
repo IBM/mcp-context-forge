@@ -41,7 +41,7 @@ from playwright.sync_api import APIRequestContext, Playwright  # noqa: E402
 from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: E402
 
 # Local
-from .mcp_test_helpers import BASE_URL, skip_no_gateway, TEST_PASSWORD  # noqa: E402
+from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway, TEST_PASSWORD  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

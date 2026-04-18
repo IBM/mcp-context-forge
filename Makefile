@@ -7739,8 +7739,17 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-# Exclude pattern for detect-secrets to skip common directories and auto generated files
-DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock|go.sum|mcpgateway/sri_hashes.json'
+# Exclude pattern for detect-secrets to skip common directories and auto generated files.
+# Uses Python verbose-regex mode (?x) so each alternative can be commented.
+# Backslash line continuations collapse the value to one line with interleaved
+# spaces — harmless under (?x).
+DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
+  package-lock\.json$$         \
+  |Cargo\.lock$$               \
+  |uv\.lock$$                  \
+  |go\.sum$$                   \
+  |mcpgateway/sri_hashes\.json$$ \
+)'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository

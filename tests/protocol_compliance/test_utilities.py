@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from fastmcp.client import Client
 
-from ._helpers import resolve_tool, xfail_on
+from .helpers.compliance import resolve_tool, xfail_on
 
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_utilities]
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ._helpers import resolve_tool, xfail_on
+from .helpers.compliance import resolve_tool, xfail_on
 
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_client_features]
 
