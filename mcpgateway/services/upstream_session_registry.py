@@ -170,8 +170,12 @@ class UpstreamSession:
                     open_rx = getattr(state, "open_receive_channels", 1)
                     if isinstance(open_rx, int) and open_rx == 0:
                         return True
-        except Exception:  # nosec B110 — degrade gracefully if MCP internals shift
-            pass
+        except Exception as exc:  # noqa: BLE001 — degrade gracefully if MCP internals shift
+            logger.debug(
+                "is_closed introspection on ClientSession internals raised %s: %s; " "next acquire will fall back to owner-task liveness only",
+                type(exc).__name__,
+                exc,
+            )
         return False
 
 
@@ -225,7 +229,7 @@ async def _default_session_factory(req: _SessionCreateRequest) -> tuple[ClientSe
                 if req.message_handler_factory is not None:
                     try:
                         message_handler = req.message_handler_factory(req.url, req.gateway_id)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
                         logger.warning(
                             "Failed to build message handler for %s: %s",
                             sanitize_url_for_logging(req.url),
@@ -238,11 +242,31 @@ async def _default_session_factory(req: _SessionCreateRequest) -> tuple[ClientSe
                     # Block until the registry signals shutdown; do NOT rely on
                     # task cancellation from a request handler (see class docs).
                     await shutdown_event.wait()
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001 — see below
+            # Broad catch on purpose: the upstream-setup path runs many
+            # third-party coroutines (httpx, anyio, MCP SDK) whose exception
+            # classes we cannot enumerate. BaseException is deliberately NOT
+            # caught — SystemExit / KeyboardInterrupt / CancelledError must
+            # propagate so the task exits promptly during shutdown.
             if not ready.done():
                 ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {req.url}: {exc}"))
 
     task = asyncio.create_task(owner(), name=f"upstream-session-{sanitize_url_for_logging(req.url)}")
+
+    def _log_owner_exit(done_task: asyncio.Task) -> None:
+        """Surface unexpected owner-task deaths so an orphaned upstream session is visible to ops."""
+        if done_task.cancelled():
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            logger.warning(
+                "Upstream MCP owner task for %s exited with %s: %s — upstream session may be orphaned",
+                sanitize_url_for_logging(req.url),
+                type(exc).__name__,
+                exc,
+            )
+
+    task.add_done_callback(_log_owner_exit)
 
     success = False
     try:
@@ -255,7 +279,7 @@ async def _default_session_factory(req: _SessionCreateRequest) -> tuple[ClientSe
             with anyio.move_on_after(_DEFAULT_SHUTDOWN_TIMEOUT_SECONDS):
                 try:
                     await task
-                except BaseException:  # nosec B110
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cleanup swallow
                     pass
 
     # Smuggle the task + shutdown event onto the transport_ctx so the registry
@@ -373,7 +397,24 @@ class UpstreamSessionRegistry:
             session.last_used = time.time()
             session.use_count += 1
 
-        yield session
+        # Hand out the session with no lock held: MCP ClientSession multiplexes
+        # concurrent requests over its transport via JSON-RPC ids, so there's no
+        # reason to serialize callers. If the caller's body raises a transport-
+        # level error (server closed the stream, socket broke), evict so the
+        # next acquire rebuilds instead of handing out a dead session.
+        try:
+            yield session
+        except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
+            logger.info(
+                "acquire() caller raised %s for gateway=%s; evicting upstream so next acquire rebuilds",
+                type(exc).__name__,
+                gateway_id,
+            )
+            await self._evict_key(key)
+            raise
+        # All other exceptions (tool-level errors from the upstream, caller
+        # application errors) intentionally leave the session in place — the
+        # transport is fine, the caller just didn't like the result.
 
     async def evict_session(self, downstream_session_id: str) -> int:
         """Close and remove every upstream session owned by this downstream session id.
@@ -403,11 +444,19 @@ class UpstreamSessionRegistry:
         return count
 
     async def close_all(self) -> None:
-        """Drain every upstream session. Intended for app shutdown."""
+        """Drain every upstream session concurrently. Intended for app shutdown.
+
+        Each ``_evict_key`` can take up to ``shutdown_timeout_seconds`` waiting
+        for the owner task to exit; running them in series on a worker with
+        dozens of downstream sessions would turn shutdown into a multi-minute
+        stall. ``asyncio.gather`` caps the total drain at roughly
+        ``shutdown_timeout_seconds`` plus a small constant.
+        """
         async with self._global_lock:
             keys = list(self._sessions.keys())
-        for key in keys:
-            await self._evict_key(key)
+        if not keys:
+            return
+        await asyncio.gather(*[self._evict_key(k) for k in keys], return_exceptions=True)
 
     def snapshot(self) -> RegistrySnapshot:
         """Return a point-in-time copy of the registry's counters."""
@@ -495,7 +544,17 @@ class UpstreamSessionRegistry:
         )
 
     async def _probe_health(self, upstream: UpstreamSession) -> bool:
-        """Run the health check chain against an idle session. Returns False if all probes fail."""
+        """Run the health check chain against an idle session. Returns False if all probes fail.
+
+        Exception policy: we ADVANCE on ``TimeoutError`` and on
+        ``McpError(METHOD_NOT_FOUND)`` (the server chose not to implement
+        this probe), and we FAIL FAST on everything else transport- or
+        protocol-level (``OSError`` / anyio stream errors / other ``McpError``s)
+        — recreating a session on "permission denied" or "request too large"
+        would loop against the same failure. Genuinely unexpected exceptions
+        (``AttributeError`` from SDK drift, etc.) propagate so they surface in
+        telemetry instead of silently triggering a reconnect loop.
+        """
         for method in _HEALTH_CHECK_CHAIN:
             try:
                 if method == "skip":
@@ -517,7 +576,8 @@ class UpstreamSessionRegistry:
                 return False
             except TimeoutError:
                 continue
-            except Exception:
+            except OSError:
+                # Socket / stream error — upstream is dead.
                 self._metrics.health_check_failures += 1
                 return False
         self._metrics.health_check_failures += 1
@@ -562,6 +622,17 @@ class _AcquireDecision(Enum):
 _registry: Optional[UpstreamSessionRegistry] = None
 
 
+class RegistryNotInitializedError(RuntimeError):
+    """Raised when ``get_upstream_session_registry()`` is called before startup init.
+
+    Callers that need to distinguish "registry not available yet" from other
+    runtime errors (so they can silently no-op in tests / early bootstrap
+    without also swallowing unrelated ``RuntimeError``s like "Event loop is
+    closed") should catch this type specifically. Inherits ``RuntimeError``
+    for backwards compatibility with catch-sites written before the split.
+    """
+
+
 def init_upstream_session_registry(
     *,
     message_handler_factory: Optional[MessageHandlerFactory] = None,
@@ -574,9 +645,9 @@ def init_upstream_session_registry(
 
 
 def get_upstream_session_registry() -> UpstreamSessionRegistry:
-    """Return the process-wide registry or raise if it has not been initialized."""
+    """Return the process-wide registry or raise ``RegistryNotInitializedError``."""
     if _registry is None:
-        raise RuntimeError("UpstreamSessionRegistry has not been initialized; call init_upstream_session_registry() first")
+        raise RegistryNotInitializedError("UpstreamSessionRegistry has not been initialized; call init_upstream_session_registry() first")
     return _registry
 
 

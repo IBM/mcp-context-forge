@@ -446,15 +446,26 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
         The number of upstream sessions evicted (0 if the registry is
         unavailable or nothing matched).
     """
-    try:
-        # First-Party
-        from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
+        RegistryNotInitializedError,
+        get_upstream_session_registry,
+    )
 
+    try:
         return await get_upstream_session_registry().evict_gateway(gateway_id)
-    except RuntimeError:
+    except RegistryNotInitializedError:
+        # Unit tests / very-early startup — nothing to evict by definition.
         return 0
-    except Exception as exc:  # noqa: BLE001 — log and swallow; see docstring
-        logger.debug(f"Upstream session eviction for gateway {gateway_id} failed: {exc}")
+    except Exception as exc:  # noqa: BLE001 — see docstring; logged at warning because this
+        # fires POST-commit: auth / URL / TLS change is already persisted, so a silent eviction
+        # failure leaves in-flight downstream sessions talking to the stale gateway state.
+        logger.warning(
+            "Upstream session eviction for gateway %s failed (%s: %s); stale sessions may " "persist until their downstream session ends",
+            gateway_id,
+            type(exc).__name__,
+            exc,
+        )
         return 0
 
 

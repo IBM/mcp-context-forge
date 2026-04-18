@@ -1242,18 +1242,28 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Database error removing session {session_id}: {e}")
 
         # #4205: close any upstream MCP sessions this downstream session owned.
-        # Wrapped because the registry may not be initialized in every context
-        # (unit tests instantiate SessionRegistry directly), and an eviction
-        # failure must not interfere with downstream session teardown.
-        try:
-            # First-Party
-            from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+        # Wrapped because (a) the registry may not be initialized in tests or
+        # very early bootstrap, and (b) an eviction failure must not interfere
+        # with downstream-session teardown. Eviction failure is logged at
+        # warning rather than debug because it leaves an orphaned upstream
+        # session whose presence is otherwise invisible to ops.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
+            RegistryNotInitializedError,
+            get_upstream_session_registry,
+        )
 
+        try:
             await get_upstream_session_registry().evict_session(session_id)
-        except RuntimeError:
-            pass  # Registry not initialized (tests, early shutdown) — nothing to do.
-        except Exception as exc:
-            logger.debug(f"Upstream session eviction for {session_id} failed: {exc}")
+        except RegistryNotInitializedError:
+            pass  # Nothing to evict — tests or very-early bootstrap.
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Upstream session eviction for downstream session %s failed (%s: %s); " "an orphaned upstream session may persist until its owner task exits",
+                session_id,
+                type(exc).__name__,
+                exc,
+            )
 
         logger.info(f"Removed session: {session_id}")
 

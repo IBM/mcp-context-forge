@@ -56,12 +56,15 @@ class FakeClientSession:
         if self.probe_exception is not None:
             raise self.probe_exception
         if not self.healthy:
-            raise RuntimeError("ping failed")
+            # Use a transport-level error — production _probe_health narrows its
+            # catch to (OSError, ...) so unexpected exception classes propagate
+            # as signals of SDK drift rather than silent reconnect loops.
+            raise OSError("ping failed")
 
     async def list_tools(self) -> None:
         self.list_tools_calls += 1
         if not self.healthy:
-            raise RuntimeError("list_tools failed")
+            raise OSError("list_tools failed")
 
 
 def _make_fake_factory():

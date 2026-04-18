@@ -251,8 +251,16 @@ class ServerClassificationService:
                     self.CLASSIFICATION_METADATA_KEY,
                     self.CLASSIFICATION_TIMESTAMP_KEY,
                 )
-            except Exception as exc:  # noqa: BLE001 — best-effort purge
-                logger.debug(f"Classification key purge failed: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                # Warn rather than debug: the whole point of this cycle is to KEEP the
+                # classification keys absent so should_poll_server falls through to
+                # "poll now". A sustained purge failure re-opens the exact regression
+                # this method exists to prevent (#4205 follow-up). See the docstring.
+                logger.warning(
+                    "Classification key purge failed (%s: %s); stale hot/cold state " "may linger in Redis and bias should_poll_server toward the cold schedule",
+                    type(exc).__name__,
+                    exc,
+                )
 
     async def get_server_classification(self, url: str) -> Optional[str]:
         """Get classification for a server (hot/cold).
