@@ -83,7 +83,7 @@ MessageHandlerFactory = Callable[
 # Factory for constructing the (ClientSession, transport_ctx) pair. Defaults to
 # the real MCP transports; tests inject a fake so no network is touched.
 SessionFactory = Callable[
-    ["_SessionCreateRequest"],
+    ["SessionCreateRequest"],
     Awaitable[tuple[ClientSession, Any]],
 ]
 
@@ -111,9 +111,15 @@ class _RegistryMetrics:
     evictions: int = 0
 
 
-@dataclass
-class _SessionCreateRequest:
-    """Inputs for creating a single upstream session (used by SessionFactory)."""
+@dataclass(frozen=True)
+class SessionCreateRequest:
+    """Inputs for creating a single upstream session (used by SessionFactory).
+
+    Frozen so a SessionFactory — which typically runs inside a spawned owner
+    task — can't accidentally rewrite the caller's request mid-flight and
+    silently point the upstream session at a different URL/transport than the
+    registry keyed it under.
+    """
 
     url: str
     transport_type: TransportType
@@ -124,23 +130,100 @@ class _SessionCreateRequest:
     message_handler_factory: Optional[MessageHandlerFactory]
     timeout_seconds: float
 
+    def __post_init__(self) -> None:
+        """Validate invariants the registry relies on at creation time."""
+        if not self.url:
+            raise ValueError("SessionCreateRequest.url must be a non-empty string")
+        if not self.downstream_session_id:
+            raise ValueError("SessionCreateRequest.downstream_session_id must be a non-empty string")
+        if self.timeout_seconds <= 0:
+            raise ValueError("SessionCreateRequest.timeout_seconds must be positive")
+
+
+_IDENTITY_FIELDS = frozenset({"downstream_session_id", "gateway_id", "url", "transport_type"})
+
+
+# ---------------------------------------------------------------------------
+# MCP SDK-internals probe                                                     #
+#                                                                             #
+# Detecting "transport is broken but nobody told us" requires reaching into   #
+# ClientSession's private anyio streams. That coupling is fragile across MCP  #
+# SDK versions, so this is the ONE place allowed to touch those internals.   #
+# Keep it narrow: if this probe needs to grow, add a new helper rather than  #
+# scattering `getattr(session, "_write_stream", ...)` through the module.     #
+# ---------------------------------------------------------------------------
+
+# MCP SDK versions this probe has been validated against. Bump when validated,
+# or rewrite the probe if the SDK private surface has shifted.
+_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS = ">=1.27.0,<2.0.0"
+
+
+def _mcp_transport_is_broken(session: ClientSession) -> bool:
+    """Peek at a ``ClientSession``'s internal anyio streams to detect a dead transport.
+
+    Returns True only when we can positively confirm the transport is gone
+    (closed write stream, or receive channels fully drained). Returns False on
+    any ambiguity — including when SDK internals have shifted shape — so that
+    callers degrade to owner-task liveness rather than evicting a session
+    that might still be usable. The debug log surfaces SDK drift without
+    pager-level noise.
+
+    Known-valid against MCP SDK ``{_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS}``;
+    bump that marker after revalidating when the SDK changes.
+    """
+    try:
+        write_stream = getattr(session, "_write_stream", None)
+        if write_stream is None:
+            return False
+        if getattr(write_stream, "_closed", False) is True:
+            return True
+        state = getattr(write_stream, "_state", None)
+        if state is None:
+            return False
+        open_rx = getattr(state, "open_receive_channels", 1)
+        if isinstance(open_rx, int) and open_rx == 0:
+            return True
+    except Exception as exc:  # noqa: BLE001 — degrade gracefully if MCP internals shift
+        logger.debug(
+            "MCP transport-broken probe raised %s: %s; next acquire will fall back to owner-task liveness only",
+            type(exc).__name__,
+            exc,
+        )
+    return False
+
 
 @dataclass
 class UpstreamSession:
-    """A single upstream MCP session bound to one downstream session."""
+    """A single upstream MCP session bound to one downstream session.
+
+    The four identity fields (downstream_session_id, gateway_id, url,
+    transport_type) are logically immutable after construction: the registry
+    keys its session map on (downstream_session_id, gateway_id), and routing
+    decisions depend on url + transport_type. Re-assigning any of them would
+    leave the registry indexing a session under one key while the session
+    itself thought it belonged to another — a split-brain that violates the
+    1:1 invariant this class exists to enforce. ``__setattr__`` refuses such
+    assignments at runtime so the invariant can't drift silently. The
+    remaining fields (last_used, use_count, _closed, …) are mutable bookkeeping.
+    """
 
     downstream_session_id: str
     gateway_id: str
     url: str
     transport_type: TransportType
     session: ClientSession
-    transport_context: Any  # kept only to mirror pool semantics; owner task owns teardown
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
     _closed: bool = field(default=False, repr=False)
     _owner_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _shutdown_event: Optional[asyncio.Event] = field(default=None, repr=False)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Reject post-construction reassignment of identity fields."""
+        if name in _IDENTITY_FIELDS and name in self.__dict__:
+            raise AttributeError(f"{name!r} is immutable on UpstreamSession after construction")
+        super().__setattr__(name, value)
 
     @property
     def idle_seconds(self) -> float:
@@ -159,27 +242,10 @@ class UpstreamSession:
             return True
         if self._owner_task is not None and self._owner_task.done():
             return True
-        # Detect externally-broken transport (server restart, socket hang-up).
-        try:
-            write_stream = getattr(self.session, "_write_stream", None)
-            if write_stream is not None:
-                if getattr(write_stream, "_closed", False) is True:
-                    return True
-                state = getattr(write_stream, "_state", None)
-                if state is not None:
-                    open_rx = getattr(state, "open_receive_channels", 1)
-                    if isinstance(open_rx, int) and open_rx == 0:
-                        return True
-        except Exception as exc:  # noqa: BLE001 — degrade gracefully if MCP internals shift
-            logger.debug(
-                "is_closed introspection on ClientSession internals raised %s: %s; " "next acquire will fall back to owner-task liveness only",
-                type(exc).__name__,
-                exc,
-            )
-        return False
+        return _mcp_transport_is_broken(self.session)
 
 
-async def _default_session_factory(req: _SessionCreateRequest) -> tuple[ClientSession, Any]:
+async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, Any]:
     """Owner-task wrapper that builds the real transport + ClientSession.
 
     Runs inside a dedicated asyncio.Task so the transport's anyio cancel scope
@@ -282,8 +348,10 @@ async def _default_session_factory(req: _SessionCreateRequest) -> tuple[ClientSe
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cleanup swallow
                     pass
 
-    # Smuggle the task + shutdown event onto the transport_ctx so the registry
-    # can reach them without plumbing extra return values everywhere.
+    # Smuggle the owner task + shutdown event onto the ClientSession object so
+    # _create_session() (which only gets back `(session, transport_ctx)` from
+    # the factory) can recover them without a wider factory return contract.
+    # Tests that replace the factory must mirror this convention.
     setattr(session, "_cf_owner_task", task)  # type: ignore[attr-defined]
     setattr(session, "_cf_shutdown_event", shutdown_event)  # type: ignore[attr-defined]
     return session, transport_ctx_ref
@@ -519,7 +587,7 @@ class UpstreamSessionRegistry:
             if hdr.lower() in ("x-mcp-session-id", "mcp-session-id"):
                 del merged_headers[hdr]
 
-        req = _SessionCreateRequest(
+        req = SessionCreateRequest(
             url=url,
             transport_type=transport_type,
             headers=merged_headers,
@@ -529,7 +597,7 @@ class UpstreamSessionRegistry:
             message_handler_factory=self._message_handler_factory,
             timeout_seconds=self._session_create_timeout_seconds,
         )
-        session, transport_ctx = await self._session_factory(req)
+        session, _transport_ctx = await self._session_factory(req)
         owner_task = getattr(session, "_cf_owner_task", None)
         shutdown_event = getattr(session, "_cf_shutdown_event", None)
         return UpstreamSession(
@@ -538,7 +606,6 @@ class UpstreamSessionRegistry:
             url=url,
             transport_type=transport_type,
             session=session,
-            transport_context=transport_ctx,
             _owner_task=owner_task,
             _shutdown_event=shutdown_event,
         )

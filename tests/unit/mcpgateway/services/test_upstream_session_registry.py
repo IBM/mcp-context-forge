@@ -29,12 +29,12 @@ import pytest
 
 # First-Party
 from mcpgateway.services.upstream_session_registry import (
-    TransportType,
-    UpstreamSessionRegistry,
-    _SessionCreateRequest,
     get_upstream_session_registry,
     init_upstream_session_registry,
+    SessionCreateRequest,
     shutdown_upstream_session_registry,
+    TransportType,
+    UpstreamSessionRegistry,
 )
 
 # --------------------------------------------------------------------------- #
@@ -69,9 +69,9 @@ class FakeClientSession:
 
 def _make_fake_factory():
     """Return (factory, created_sessions) — tests can inspect what was built."""
-    created: list[tuple[_SessionCreateRequest, FakeClientSession, asyncio.Event, asyncio.Task]] = []
+    created: list[tuple[SessionCreateRequest, FakeClientSession, asyncio.Event, asyncio.Task]] = []
 
-    async def factory(req: _SessionCreateRequest):
+    async def factory(req: SessionCreateRequest):
         session = FakeClientSession()
         shutdown_event = asyncio.Event()
 
@@ -251,7 +251,7 @@ async def test_concurrent_acquires_for_same_key_create_exactly_one_session(facto
     original = factory
     barrier = asyncio.Event()
 
-    async def slow_factory(req: _SessionCreateRequest):
+    async def slow_factory(req: SessionCreateRequest):
         await barrier.wait()
         return await original(req)
 
@@ -577,7 +577,6 @@ def _make_upstream_for_probe(session: _ProbeChainSession):
         url="http://probe/mcp",
         transport_type=TransportType.STREAMABLE_HTTP,
         session=session,  # type: ignore[arg-type]
-        transport_context=object(),
     )
 
 
@@ -653,6 +652,175 @@ async def test_probe_health_unexpected_exception_propagates(factory_and_records)
 
 
 # ---------------------------------------------------------------------------
+# MCP SDK-internals transport-broken probe
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_transport_is_broken_returns_false_when_session_has_no_write_stream():
+    """No ``_write_stream`` attribute → we can't positively say the transport is dead."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Bare:
+        pass
+
+    assert _mcp_transport_is_broken(_Bare()) is False  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_detects_closed_write_stream():
+    """Closed write stream is the clearest "transport gone" signal."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Stream:
+        _closed = True
+
+    class _Session:
+        _write_stream = _Stream()
+
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_detects_drained_receive_channels():
+    """open_receive_channels == 0 means all readers hung up."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _State:
+        open_receive_channels = 0
+
+    class _Stream:
+        _closed = False
+        _state = _State()
+
+    class _Session:
+        _write_stream = _Stream()
+
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_returns_false_on_sdk_drift(caplog):
+    """If SDK internals have shifted (descriptor raises an unexpected exception), degrade to "not sure" + debug log."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    class _BrokenStream:
+        @property
+        def _closed(self):
+            # Not AttributeError — getattr() would silently swallow that.
+            # RuntimeError simulates SDK internals that raise in a way the
+            # probe can't recover from, so we fall through to the catch.
+            raise RuntimeError("SDK drift: _closed raised from property")
+
+    class _Session:
+        _write_stream = _BrokenStream()
+
+    with caplog.at_level("DEBUG", logger=usr.logger.name):
+        assert usr._mcp_transport_is_broken(_Session()) is False  # pylint: disable=protected-access  # type: ignore[arg-type]
+    assert any("MCP transport-broken probe raised" in rec.getMessage() for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# SessionCreateRequest validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"url": ""}, r"url must be a non-empty string"),
+        ({"downstream_session_id": ""}, r"downstream_session_id must be a non-empty string"),
+        ({"timeout_seconds": 0}, r"timeout_seconds must be positive"),
+        ({"timeout_seconds": -1.0}, r"timeout_seconds must be positive"),
+    ],
+)
+def test_session_create_request_rejects_invalid_inputs(kwargs, match):
+    """Constructor validates inputs so bad callers fail loudly, not silently."""
+    base = dict(
+        url="http://u/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        headers={},
+        gateway_id="g1",
+        downstream_session_id="s1",
+        httpx_client_factory=None,
+        message_handler_factory=None,
+        timeout_seconds=5.0,
+    )
+    base.update(kwargs)
+    with pytest.raises(ValueError, match=match):
+        SessionCreateRequest(**base)
+
+
+def test_session_create_request_is_frozen():
+    """Frozen dataclass: the factory must not mutate the request it was handed."""
+    req = SessionCreateRequest(
+        url="http://u/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        headers={},
+        gateway_id="g1",
+        downstream_session_id="s1",
+        httpx_client_factory=None,
+        message_handler_factory=None,
+        timeout_seconds=5.0,
+    )
+    # Standard
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        req.url = "http://other/mcp"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# UpstreamSession identity immutability
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field_name,new_value",
+    [
+        ("downstream_session_id", "other-session"),
+        ("gateway_id", "other-gateway"),
+        ("url", "http://elsewhere/mcp"),
+        ("transport_type", TransportType.SSE),
+    ],
+)
+def test_upstream_session_identity_fields_are_immutable(field_name, new_value):
+    """Reassigning any of the four identity fields after construction raises AttributeError."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    upstream = UpstreamSession(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+    )
+    with pytest.raises(AttributeError, match=f"{field_name!r} is immutable"):
+        setattr(upstream, field_name, new_value)
+
+
+def test_upstream_session_bookkeeping_fields_remain_mutable():
+    """Non-identity fields (last_used, use_count, _closed) must stay mutable — the registry updates them."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import UpstreamSession
+
+    upstream = UpstreamSession(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        transport_type=TransportType.STREAMABLE_HTTP,
+        session=object(),  # type: ignore[arg-type]
+    )
+    upstream.last_used = 1234.0
+    upstream.use_count = 5
+    upstream._closed = True  # pylint: disable=protected-access
+    assert upstream.last_used == 1234.0
+    assert upstream.use_count == 5
+    assert upstream.is_closed is True
+
+
+# ---------------------------------------------------------------------------
 # _default_session_factory — transport + owner-task glue
 # ---------------------------------------------------------------------------
 
@@ -699,7 +867,7 @@ class _FakeClientSessionCM:
 
 
 def _make_request(**overrides):
-    """Build a _SessionCreateRequest with sensible defaults."""
+    """Build a SessionCreateRequest with sensible defaults."""
     defaults = dict(
         url="https://upstream.example.com/mcp",
         transport_type=TransportType.STREAMABLE_HTTP,
@@ -711,7 +879,7 @@ def _make_request(**overrides):
         timeout_seconds=2.0,
     )
     defaults.update(overrides)
-    return _SessionCreateRequest(**defaults)
+    return SessionCreateRequest(**defaults)
 
 
 @pytest.mark.asyncio

@@ -40,9 +40,9 @@ import pytest
 
 # First-Party
 from mcpgateway.services.upstream_session_registry import (
+    SessionCreateRequest,
     TransportType,
     UpstreamSessionRegistry,
-    _SessionCreateRequest,
 )
 
 # --------------------------------------------------------------------------- #
@@ -82,7 +82,7 @@ def _make_counter_session_factory():
     """
     created: List[_CounterMcpServer] = []
 
-    async def factory(req: _SessionCreateRequest):
+    async def factory(req: SessionCreateRequest):
         # Fresh stateful upstream instance per call. If the registry ever
         # accidentally shares sessions across downstream session ids, two
         # acquires will produce only one _CounterMcpServer — the very

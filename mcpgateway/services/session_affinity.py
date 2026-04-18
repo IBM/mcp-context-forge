@@ -37,7 +37,7 @@ import os
 import re
 import socket
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 import uuid
 
 # Third-Party
@@ -51,9 +51,6 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 
-# JSON-RPC standard error code for method not found
-METHOD_NOT_FOUND = -32601
-
 # Shared session-id validation (downstream MCP session IDs used for affinity).
 # Intentionally strict: protects Redis key/channel construction and log lines.
 _MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -66,11 +63,6 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 logger = logging.getLogger(__name__)
 
-
-# Session affinity mapping key: (mcp_session_id, url, transport_type, gateway_id).
-# Stored in-memory on a worker to fast-path session-to-pool-key lookups before
-# falling back to Redis for cross-worker resolution.
-SessionMappingKey = Tuple[str, str, str, str]
 
 # Type alias for message handler factory.
 # Factory that creates message handlers given URL and optional gateway_id.
@@ -113,13 +105,6 @@ class SessionAffinity:
         # Lifecycle
         self._global_lock = asyncio.Lock()
         self._closed = False
-
-        # In-memory fast path before Redis fallback: maps
-        # (mcp_session_id, url, transport_type, gateway_id) → opaque
-        # pool-key-shaped tuple used on the wire for compatibility with
-        # code that pre-dates this split.
-        self._mcp_session_mapping: Dict[SessionMappingKey, Tuple[str, ...]] = {}
-        self._mcp_session_mapping_lock = asyncio.Lock()
 
         # Background tasks owned by this instance
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
@@ -265,24 +250,14 @@ class SessionAffinity:
         # Normalize gateway_id to empty string if None for consistent key matching
         normalized_gateway_id = gateway_id or ""
 
-        mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, normalized_gateway_id)
-
-        # Compute what the pool_key will be for this session
-        # Use mcp_session_id as the identity basis for affinity
+        # Compute the identity + user hashes used for the Redis mapping value.
         identity_hash = hashlib.sha256(mcp_session_id.encode()).hexdigest()
-
-        # Hash user identity for privacy (unless it's "anonymous")
         if user_identity == "anonymous":
             user_hash = "anonymous"
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
-        pool_key = (user_hash, url, identity_hash, transport_type, normalized_gateway_id)
-
-        # Store in local memory
-        async with self._mcp_session_mapping_lock:
-            self._mcp_session_mapping[mapping_key] = pool_key
-            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={SecurityValidator.sanitize_log_message(user_identity)}")
+        logger.debug(f"Session affinity pre-registering: {mcp_session_id[:8]}... → {url}, " f"user={SecurityValidator.sanitize_log_message(user_identity)}")
 
         # Store in Redis for multi-worker support AND register ownership atomically
         # Registering ownership HERE (during mapping) instead of in acquire() prevents
@@ -367,9 +342,6 @@ class SessionAffinity:
         self._closed = True
         logger.info("Closing session-affinity service...")
 
-        async with self._global_lock:
-            self._mcp_session_mapping.clear()
-
         # Stop RPC listener if running
         if self._rpc_listener_task and not self._rpc_listener_task.done():
             self._rpc_listener_task.cancel()
@@ -391,18 +363,16 @@ class SessionAffinity:
         logger.info("Session-affinity service closed")
 
     async def drain_all(self) -> None:
-        """Clear in-memory session mapping without tearing down background tasks.
+        """No-op hook kept for SIGHUP wiring (session-affinity has no in-memory state to drain).
 
-        Historically used for TLS certificate rotation (SIGHUP) to force
-        fresh upstream state. The upstream-session lifetime is now owned by
-        ``UpstreamSessionRegistry``, so draining here only invalidates the
-        in-memory affinity shortcut — Redis-backed ownership records remain
-        until they expire or are explicitly cleaned up.
+        Historically this cleared a local session-id → pool-key cache that has
+        since been removed — ownership now lives entirely in Redis (where TTLs
+        and explicit cleanup handle reuse) and the upstream session lifetime is
+        owned by ``UpstreamSessionRegistry``. The method remains so SIGHUP and
+        other drain coordinators have a stable entry point, and to advertise
+        "there is no worker-local affinity state to blow away on reload."
         """
-        logger.info("Draining session-affinity in-memory mapping...")
-        async with self._global_lock:
-            self._mcp_session_mapping.clear()
-        logger.info("Affinity mapping drained; service remains operational")
+        logger.info("Session-affinity drain requested; no worker-local state to clear")
 
     async def register_session_owner(self, mcp_session_id: str) -> None:
         """Claim this worker as the owner of a downstream MCP session, or refresh the existing lease.
