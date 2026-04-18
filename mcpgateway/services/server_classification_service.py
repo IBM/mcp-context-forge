@@ -2,10 +2,14 @@
 """
 Server Classification Service.
 
-Manages hot/cold server classification based on MCP session pool usage patterns.
-Provides staggered polling to optimize resource allocation and reduce polling overhead.
-
-Classification is based ONLY on upstream MCP pooled session state (gateway -> MCP servers).
+Hot/cold classification for gated auto-refresh polling. The original
+implementation extracted per-URL recency signals from the upstream MCP
+session pool; with the pool replaced by UpstreamSessionRegistry (#4205)
+that signal is no longer directly available. Until the rebuild lands,
+each classification cycle purges Redis classification state so
+``should_poll_server`` always returns True (same behaviour as disabling
+the feature flag) — prevents the regression that would occur if we
+published an "everything cold" result.
 
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -16,15 +20,11 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import logging
-from math import floor
 import time
-from typing import Dict, List, Literal, Optional, TYPE_CHECKING
-
-# Third-Party
-import orjson
+from typing import List, Literal, Optional, TYPE_CHECKING
 
 # First-Party
 from mcpgateway.config import settings
@@ -33,60 +33,52 @@ if TYPE_CHECKING:
     # Third-Party
     from redis.asyncio import Redis
 
-    # First-Party
-    from mcpgateway.services.mcp_session_pool import MCPSessionPool
-
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ServerUsageMetrics:
-    """Aggregated usage metrics for a single server from pooled sessions."""
-
-    url: str
-    server_last_used: float = 0.0  # max(last_used) across all pooled sessions
-    active_session_count: int = 0  # Count from _active dict
-    total_use_count: int = 0  # Sum of use_count from all sessions
-    pooled_session_count: int = 0  # Total pooled sessions for this server
-
-
-@dataclass
 class ClassificationMetadata:
-    """Metadata about classification run."""
+    """Metadata about a classification run."""
 
-    total_servers: int  # Total servers
-    hot_cap: int  # Maximum hot servers (20% of total_servers)
-    hot_actual: int  # Actual hot servers selected
-    eligible_count: int  # Servers with pooled sessions
-    timestamp: float  # Classification timestamp
-    underutilized_reason: Optional[str] = None  # Why hot < 20% (if applicable)
+    total_servers: int
+    hot_cap: int
+    hot_actual: int
+    eligible_count: int  # Servers with recent-use signal (currently always 0 post-#4205)
+    timestamp: float
+    underutilized_reason: Optional[str] = None
 
 
 @dataclass
 class ClassificationResult:
     """Result of server classification."""
 
-    hot_servers: List[str]  # URLs of hot servers
-    cold_servers: List[str]  # URLs of cold servers
+    hot_servers: List[str]
+    cold_servers: List[str]
     metadata: ClassificationMetadata
 
 
 class ServerClassificationService:
-    """
-    Manages hot/cold server classification based on MCP session pool state.
+    """Manages hot/cold server classification for gated auto-refresh polling.
 
-    Classification Logic:
-        1. Scope: Uses only upstream MCP pooled session state
-        2. Hot cap: floor(20% * total_servers)
-        3. Eligibility: Server must have pooled session with valid last_used
-        4. Ranking: server_last_used descending (newest first)
-        5. Tie-breakers: active_count, use_count, URL (deterministic)
-        6. Hot selection: Top min(hot_cap, eligible_count)
-        7. Cold: All remaining servers
-        8. Guarantees: No overlap, full coverage, deterministic
+    Classification historically used per-URL usage metrics from the upstream
+    session pool to pick the top 20% of most-recently-used servers as "hot"
+    (auto-refreshed more aggressively). The pool is gone as of #4205; its
+    replacement ``UpstreamSessionRegistry`` keys by downstream-session id
+    rather than URL, so the old signal is no longer directly extractable.
 
-    Thread-safe for multi-worker deployments via Redis state management.
-    Falls back to local-only operation when Redis unavailable.
+    Until the classification logic is rewritten against registry metrics +
+    audit data, each classification cycle actively PURGES the classification
+    keys from Redis. ``get_server_classification`` then returns ``None`` for
+    every URL, and ``should_poll_server`` falls through to "poll now" — the
+    same outcome as disabling the feature flag. This avoids the regression
+    that would occur if we published an "everything cold" result: with the
+    flag enabled, cold classification pins every gateway to the longer
+    ``cold_server_check_interval``, starving previously-hot gateways of
+    auto-refresh.
+
+    Multi-worker coordination (leader election, Redis key management,
+    heartbeat) stays in place so the eventual rebuild drops in without
+    startup-sequence surgery.
     """
 
     # Redis key templates
@@ -232,250 +224,43 @@ class ServerClassificationService:
             return False  # Fail safe: don't classify on error
 
     async def _perform_classification(self) -> None:
-        """Perform classification and publish to Redis (if available)."""
-        try:
-            # Get MCP session pool
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
+        """Perform a classification cycle.
 
+        #4205: the pool-derived per-URL usage signal no longer exists, so we
+        cannot compute a meaningful hot/cold split. Publishing the old
+        "everything cold" stub result would REGRESS production behaviour —
+        should_poll_server() reads "cold" from Redis and applies the longer
+        cold_server_check_interval, starving previously-hot gateways of
+        auto-refresh.
+
+        Instead we actively PURGE any existing classification state from
+        Redis each cycle. get_server_classification() then returns None
+        for every URL and should_poll_server() falls through to "return
+        True" — same effect as disabling the feature flag, without needing
+        every deployment to change its config.
+
+        Background: the classification loop + leader election + heartbeat
+        remain running so the rebuild (tracked as a #4205 follow-up) can
+        drop straight in without startup-sequence surgery.
+        """
+        if self._redis:
             try:
-                pool = get_mcp_session_pool()
-            except RuntimeError:
-                logger.debug("MCP session pool not initialized, skipping classification")
-                return
-
-            # Get gateway_id → canonical URL mapping from database
-            gateway_url_map = await self._get_gateway_url_map()
-            if not gateway_url_map:
-                logger.debug("No gateways found, skipping classification")
-                return
-
-            # Deduplicate: multiple gateways may share the same upstream URL
-            # (different credentials/scopes). Classification operates on unique servers.
-            all_gateway_urls = list(dict.fromkeys(gateway_url_map.values()))
-
-            # Perform classification
-            result = self._classify_servers_from_pool(pool, all_gateway_urls, gateway_url_map)
-
-            # Publish to Redis (if available)
-            if self._redis:
-                await self._publish_classification_to_redis(result)
-
-            logger.info(
-                f"Classification completed: {len(result.hot_servers)} hot, " f"{len(result.cold_servers)} cold (N={result.metadata.total_servers}, " f"eligible={result.metadata.eligible_count})"
-            )
-
-            if result.metadata.underutilized_reason:
-                logger.debug(f"Underutilization: {result.metadata.underutilized_reason}")
-
-        except Exception as e:
-            logger.error(f"Classification failed: {e}", exc_info=True)
-
-    def _resolve_canonical_url(self, pool_key: tuple, gateway_url_map: Dict[str, str]) -> Optional[str]:
-        """Resolve the canonical gateway URL for a pool key.
-
-        Pool keys may contain auth-mutated URLs (e.g. with query-param secrets).
-        Use gateway_id from the pool key to look up the canonical Gateway.url,
-        preventing secret leakage into classification Redis sets.
-
-        Args:
-            pool_key: PoolKey tuple (user_identity, url, identity_hash, transport_type, gateway_id)
-            gateway_url_map: Mapping of gateway_id → canonical URL from database
-
-        Returns:
-            Canonical URL if gateway_id resolves, else None
-        """
-        gateway_id = pool_key[4] if len(pool_key) > 4 else ""
-        if gateway_id and gateway_id in gateway_url_map:
-            return gateway_url_map[gateway_id]
-        return None
-
-    def _classify_servers_from_pool(self, pool: MCPSessionPool, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None) -> ClassificationResult:
-        """Classify servers based on pooled session state.
-
-        Algorithm (deterministic):
-            1. Get total servers N
-            2. Calculate hot_cap = floor(0.20 * N)
-            3. Extract server metrics from pooled sessions (idle + active)
-            4. Filter eligible (has valid last_used or active sessions)
-            5. Sort by (server_last_used desc, active_count desc, use_count desc, url asc)
-            6. Select top min(hot_cap, eligible_count) as hot
-            7. Remaining servers are cold
-
-        Args:
-            pool: MCP session pool
-            all_gateway_urls: All registered gateway URLs
-            gateway_url_map: Optional mapping of gateway_id → canonical URL for URL normalization
-
-        Returns:
-            ClassificationResult with hot/cold servers and metadata
-        """
-        total_servers = len(all_gateway_urls)
-        hot_cap = floor(0.20 * total_servers)
-        canonical_url_set = set(all_gateway_urls)
-
-        # Step 3: Extract server usage from pooled sessions
-        server_metrics: Dict[str, ServerUsageMetrics] = {}
-
-        # Helper to accumulate metrics from a single PooledSession
-        def _accumulate_session(url: str, session: object) -> None:
-            """Accumulate metrics from a single pooled session into server_metrics.
-
-            Args:
-                url: Server URL
-                session: PooledSession object with last_used and use_count attributes
-            """
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-            if hasattr(session, "last_used") and session.last_used > 0:
-                server_metrics[url].server_last_used = max(server_metrics[url].server_last_used, session.last_used)
-                server_metrics[url].total_use_count += getattr(session, "use_count", 0)
-                server_metrics[url].pooled_session_count += 1
-
-        # Iterate over pool._pools (Dict[PoolKey, Queue[PooledSession]])
-        # PoolKey = (user_identity, url, identity_hash, transport_type, gateway_id)
-        for pool_key, session_queue in pool._pools.items():  # pylint: disable=protected-access
-            # Resolve canonical URL: prefer gateway_id lookup, fall back to raw pool URL
-            url = (self._resolve_canonical_url(pool_key, gateway_url_map) if gateway_url_map else None) or pool_key[1]
-
-            # Only track URLs that correspond to known gateways
-            if url not in canonical_url_set:
-                continue
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-
-            # Process each idle session in the queue
-            try:
-                if hasattr(session_queue, "_queue"):
-                    sessions_list = list(session_queue._queue)  # pylint: disable=protected-access
-                else:
-                    sessions_list = []
-
-                for session in sessions_list:
-                    _accumulate_session(url, session)
-            except Exception as e:
-                logger.warning(f"Error extracting idle metrics for {url}: {e}")
-                continue
-
-        # Process active sessions (checked-out from the pool)
-        # This ensures busy servers with all sessions in use are still eligible.
-        for pool_key, active_set in pool._active.items():  # pylint: disable=protected-access
-            url = (self._resolve_canonical_url(pool_key, gateway_url_map) if gateway_url_map else None) or pool_key[1]
-
-            if url not in canonical_url_set:
-                continue
-
-            if url not in server_metrics:
-                server_metrics[url] = ServerUsageMetrics(url=url)
-
-            server_metrics[url].active_session_count += len(active_set)
-
-            # Extract last_used / use_count from active sessions too
-            for session in active_set:
-                try:
-                    _accumulate_session(url, session)
-                except Exception as active_err:
-                    logger.debug(f"Skipping active session metric for {url}: {active_err}")
-                    continue
-
-        # Step 4: Filter eligible servers (has valid last_used)
-        eligible_servers = [metrics for metrics in server_metrics.values() if metrics.server_last_used > 0.0]
-        eligible_count = len(eligible_servers)
-
-        # Step 5: Sort by recency (newer first), then tie-breakers
-        eligible_servers.sort(
-            key=lambda m: (
-                -m.server_last_used,  # Primary: most recent first (descending)
-                -m.active_session_count,  # Tie-breaker 1: more active sessions
-                -m.total_use_count,  # Tie-breaker 2: higher use count
-                m.url,  # Tie-breaker 3: deterministic (ascending)
-            )
-        )
-
-        # Step 6: Select hot servers (up to hot_cap, no backfill)
-        hot_actual = min(hot_cap, eligible_count)
-        hot_servers = [m.url for m in eligible_servers[:hot_actual]]
-
-        # Step 7: Cold servers = all remaining
-        hot_set = set(hot_servers)
-        cold_servers = [url for url in all_gateway_urls if url not in hot_set]
-
-        # Step 8: Build metadata
-        underutilized_reason = None
-        if eligible_count < hot_cap:
-            underutilized_reason = f"Only {eligible_count} servers have pooled sessions, " f"below hot_cap={hot_cap}"
-
-        return ClassificationResult(
-            hot_servers=hot_servers,
-            cold_servers=cold_servers,
-            metadata=ClassificationMetadata(
-                total_servers=total_servers, hot_cap=hot_cap, hot_actual=hot_actual, eligible_count=eligible_count, timestamp=time.time(), underutilized_reason=underutilized_reason
-            ),
-        )
-
-    async def _get_gateway_url_map(self) -> Dict[str, str]:
-        """Get mapping of gateway_id → canonical URL for all enabled gateways.
-
-        Returns:
-            Dict mapping gateway ID to its canonical URL
-        """
-        # Third-Party
-        from sqlalchemy import select
-
-        # First-Party
-        from mcpgateway.db import Gateway, SessionLocal
-
-        try:
-            with SessionLocal() as db:
-                result = db.execute(select(Gateway.id, Gateway.url).where(Gateway.enabled.is_(True)))
-                return {str(row[0]): row[1] for row in result}
-        except Exception as e:
-            logger.error(f"Failed to get gateway URL map: {e}")
-            return {}
-
-    async def _publish_classification_to_redis(self, result: ClassificationResult) -> None:
-        """Publish classification result to Redis atomically.
-
-        Args:
-            result: Classification result to publish
-        """
-        if not self._redis:
-            return
-
-        try:
-            # Atomic pipeline for transactional updates
-            async with self._redis.pipeline(transaction=True) as pipe:
-                # Clear old classification
-                await pipe.delete(self.CLASSIFICATION_HOT_KEY, self.CLASSIFICATION_COLD_KEY)
-
-                # Set new classification
-                # Set TTL on classification sets to prevent stale data after worker crash
-                ttl = int(settings.gateway_auto_refresh_interval * 2)
-
-                if result.hot_servers:
-                    await pipe.sadd(self.CLASSIFICATION_HOT_KEY, *result.hot_servers)
-
-                if result.cold_servers:
-                    await pipe.sadd(self.CLASSIFICATION_COLD_KEY, *result.cold_servers)
-
-                # Expire classification sets regardless of whether they had members
-                await pipe.expire(self.CLASSIFICATION_HOT_KEY, ttl)
-                await pipe.expire(self.CLASSIFICATION_COLD_KEY, ttl)
-
-                # Store metadata (expire after 2x classification interval)
-                metadata_json = orjson.dumps(asdict(result.metadata))
-                await pipe.set(self.CLASSIFICATION_METADATA_KEY, metadata_json, ex=ttl)
-
-                await pipe.set(self.CLASSIFICATION_TIMESTAMP_KEY, result.metadata.timestamp, ex=ttl)
-
-                await pipe.execute()
-
-            logger.debug("Classification published to Redis successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to publish classification to Redis: {e}")
+                await self._redis.delete(
+                    self.CLASSIFICATION_HOT_KEY,
+                    self.CLASSIFICATION_COLD_KEY,
+                    self.CLASSIFICATION_METADATA_KEY,
+                    self.CLASSIFICATION_TIMESTAMP_KEY,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Warn rather than debug: the whole point of this cycle is to KEEP the
+                # classification keys absent so should_poll_server falls through to
+                # "poll now". A sustained purge failure re-opens the exact regression
+                # this method exists to prevent (#4205 follow-up). See the docstring.
+                logger.warning(
+                    "Classification key purge failed (%s: %s); stale hot/cold state may linger in Redis and bias should_poll_server toward the cold schedule",
+                    type(exc).__name__,
+                    exc,
+                )
 
     async def get_server_classification(self, url: str) -> Optional[str]:
         """Get classification for a server (hot/cold).

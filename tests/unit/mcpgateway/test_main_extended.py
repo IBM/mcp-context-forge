@@ -38,7 +38,6 @@ import mcpgateway.db as db_mod
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
-    _create_jwt_identity_extractor,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
@@ -512,163 +511,6 @@ async def test_apply_runtime_mode_headers_reflects_override(monkeypatch):
 
     reset_runtime_state_for_tests()
     reset_runtime_state_coordinator_for_tests()
-
-
-class TestJwtIdentityExtractor:
-    """Test _create_jwt_identity_extractor() factory and returned closure."""
-
-    def test_extractor_returns_sub_claim(self):
-        """Valid JWT with sub claim should return sub value."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-123", "email": "user@example.com"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user-123"
-
-    def test_extractor_returns_email_claim_when_no_sub(self):
-        """Valid JWT with email but no sub should return email value."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"email": "user@example.com", "user_id": "uid-456"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user@example.com"
-
-    def test_extractor_returns_user_id_claim_when_no_sub_or_email(self):
-        """Valid JWT with user_id but no sub/email should return user_id value."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"user_id": "uid-789", "iat": 1234567890}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "uid-789"
-
-    def test_extractor_returns_none_for_malformed_token(self):
-        """Malformed JWT should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Bearer not-a-valid-jwt"}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_returns_none_for_non_bearer_header(self):
-        """Non-Bearer auth header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Basic dXNlcjpwYXNz"}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_returns_none_for_empty_authorization_header(self):
-        """Empty Authorization header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": ""}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_returns_none_for_bearer_only_header(self):
-        """Header containing only 'Bearer ' with no token should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Bearer "}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_returns_none_for_missing_authorization_header(self):
-        """Missing Authorization header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_returns_none_for_token_with_no_identity_claims(self):
-        """JWT with none of the three identity claims should return None."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"iat": 1234567890, "exp": 1234567890, "jti": "random-id"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result is None
-
-    def test_extractor_handles_lowercase_bearer(self):
-        """Lowercase 'bearer' prefix should be handled correctly."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-lowercase"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user-lowercase"
-
-    def test_extractor_handles_case_insensitive_header_lookup(self):
-        """Extractor should handle both 'authorization' and 'Authorization' keys."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-case"}, "secret", algorithm="HS256")
-
-        # Test lowercase key
-        headers_lower = {"authorization": f"Bearer {token}"}
-        assert extractor(headers_lower) == "user-case"
-
-        # Test uppercase key
-        headers_upper = {"Authorization": f"Bearer {token}"}
-        assert extractor(headers_upper) == "user-case"
-
-    def test_extractor_returns_none_on_jwt_decode_exception(self):
-        """JWT decode raising an exception should return None and log debug message."""
-        # Standard
-        from unittest.mock import patch
-
-        extractor = _create_jwt_identity_extractor()
-
-        # Create a valid-looking token that will fail decode
-        with patch("jwt.decode", side_effect=Exception("Decode failed")):
-            headers = {"Authorization": "Bearer some-token"}
-            result = extractor(headers)
-            assert result is None
-
-    def test_extractor_prefers_sub_over_email_and_user_id(self):
-        """When all three claims present, sub should be preferred."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user-sub"
-
-    def test_extractor_prefers_email_over_user_id(self):
-        """When email and user_id present but no sub, email should be preferred."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user@example.com"
 
 
 class TestInternalTrustedMcpTransportBridge:
@@ -1614,7 +1456,6 @@ class TestApplicationStartupPaths:
         monkeypatch.setattr(settings, "metrics_rollup_enabled", False)
         monkeypatch.setattr(settings, "metrics_buffer_enabled", False)
         monkeypatch.setattr(settings, "metrics_aggregation_enabled", False)
-        monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
         monkeypatch.setattr(settings, "sso_enabled", False)
@@ -4811,9 +4652,7 @@ class TestLifespanAdvanced:
             return service
 
         # Feature flags
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)
@@ -4901,11 +4740,11 @@ class TestLifespanAdvanced:
         )
 
         # MCP session pool hooks
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.init_mcp_session_pool", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.start_pool_notification_service", AsyncMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.init_session_affinity", MagicMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.start_affinity_notification_service", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.close_session_affinity", AsyncMock())
         pool = SimpleNamespace(start_rpc_listener=AsyncMock(), start_heartbeat=MagicMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(return_value=pool))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(return_value=pool))
 
         # Cache invalidation subscriber
         subscriber = MagicMock()
@@ -4958,7 +4797,6 @@ class TestLifespanAdvanced:
 
         # Keep startup/shutdown lightweight.
         for flag, value in (
-            ("mcp_session_pool_enabled", False),
             ("mcpgateway_session_affinity_enabled", False),
             ("enable_header_passthrough", False),
             ("mcpgateway_tool_cancellation_enabled", False),
@@ -6322,12 +6160,12 @@ class TestRpcHandling:
         remove_session = AsyncMock()
         cleanup_owner = AsyncMock()
         pool = MagicMock()
-        pool.cleanup_streamable_http_session_owner = cleanup_owner
+        pool.cleanup_session_owner = cleanup_owner
         monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
 
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             response = await handle_internal_mcp_session_delete(request)
 
         assert response.status_code == 204
@@ -8050,7 +7888,7 @@ class TestRpcHandling:
 
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock(return_value=None))
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(side_effect=RuntimeError("pool unavailable")))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(side_effect=RuntimeError("pool unavailable")))
 
         response = await handle_internal_mcp_session_delete(request)
         assert response.status_code == 204
@@ -9558,7 +9396,7 @@ class TestRpcHandling:
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "not-valid"}
 
-        with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=False):
+        with patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=False):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
 
@@ -9574,16 +9412,16 @@ class TestRpcHandling:
         pool.forward_request_to_owner = AsyncMock(return_value={"result": {"via": "other-worker"}})
 
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["via"] == "other-worker"
 
         pool.forward_request_to_owner = AsyncMock(return_value={"error": {"code": -32001, "message": "nope"}})
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32001
@@ -9596,8 +9434,8 @@ class TestRpcHandling:
         request.headers = {"mcp-session-id": "sess-123"}
 
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", side_effect=RuntimeError("no pool")),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("no pool")),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
@@ -9644,15 +9482,15 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
         pool = MagicMock()
-        pool.register_pool_session_owner = AsyncMock(return_value=None)
+        pool.register_session_owner = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
-            pool.register_pool_session_owner.assert_awaited_once()
+            pool.register_session_owner.assert_awaited_once()
 
-        pool.register_pool_session_owner = AsyncMock(side_effect=Exception("boom"))
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        pool.register_session_owner = AsyncMock(side_effect=Exception("boom"))
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
 
@@ -12130,7 +11968,6 @@ class TestRemainingCoverageGaps:
             return service
 
         # Minimal startup config: only metrics aggregation auto-start.
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -12218,7 +12055,6 @@ class TestRemainingCoverageGaps:
             service.shutdown = AsyncMock()
             return service
 
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -12301,7 +12137,6 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "logging_service", MagicMock(initialize=AsyncMock(), shutdown=AsyncMock(), configure_uvicorn_after_startup=MagicMock()))
         monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())

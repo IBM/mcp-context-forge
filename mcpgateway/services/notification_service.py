@@ -15,7 +15,7 @@ Description:
     - Flag merging during debounce (notifications within window merge their refresh flags)
     - Per-gateway refresh locking to prevent concurrent refresh races
     - Per-gateway refresh tracking with capability awareness
-    - Compatible with MCPSessionPool for pooled session notification handling
+    - Compatible with SessionAffinity for pooled session notification handling
     - Per-gateway session isolation ensures correct notification attribution
     - Supports tools, resources, and prompts list_changed notifications
 
@@ -131,7 +131,7 @@ class NotificationService:
     """Centralized service for handling MCP server notifications.
 
     Provides debounced refresh triggering based on list_changed notifications
-    from MCP servers. Works with MCPSessionPool to handle notifications for
+    from MCP servers. Works with SessionAffinity to handle notifications for
     pooled sessions while maintaining session isolation.
 
     Attributes:

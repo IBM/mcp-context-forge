@@ -198,7 +198,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_latency_heatmap,
     get_latency_percentiles,
     get_maintenance_partial,
-    get_mcp_session_pool_metrics,
     get_observability_metrics_partial,
     get_observability_partial,
     get_observability_query,
@@ -13144,29 +13143,6 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
 
     stats = await _unwrap(get_a2a_stats_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
     assert stats["hits"] == 2
-
-
-@pytest.mark.asyncio
-async def test_get_mcp_session_pool_metrics_paths(monkeypatch, mock_db, allow_permission):
-    request = MagicMock(spec=Request)
-    request.client = SimpleNamespace(host="10.0.0.1")
-
-    monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is False
-
-    monkeypatch.setattr(settings, "mcp_session_pool_enabled", True)
-    pool = MagicMock()
-    pool.get_metrics.return_value = {"hits": 1, "misses": 0}
-    monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: pool)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is True
-    assert result["hits"] == 1
-
-    monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is True
-    assert result["message"] == "Pool not yet initialized"
 
 
 @pytest.mark.asyncio

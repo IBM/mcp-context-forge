@@ -67,12 +67,13 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
+from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -1705,14 +1706,6 @@ class ResourceService(BaseService):
         # This is especially important when resource isn't found - we don't want to hold the transaction
         db.commit()
 
-        # Normalize user_identity to string for session pool isolation.
-        if isinstance(user_identity, dict):
-            pool_user_identity = user_identity.get("email") or "anonymous"
-        elif isinstance(user_identity, str):
-            pool_user_identity = user_identity
-        else:
-            pool_user_identity = "anonymous"
-
         oauth_user_email: Optional[str] = None
         if isinstance(user_identity, dict):
             user_email_value = user_identity.get("email")
@@ -1950,30 +1943,31 @@ class ResourceService(BaseService):
                             if authentication is None:
                                 authentication = {}
                             try:
-                                # Use session pool if enabled for 10-20x latency improvement
-                                use_pool = False
-                                pool = None
-                                if settings.mcp_session_pool_enabled:
+                                # #4205: Registry path is taken when the caller has a downstream
+                                # Mcp-Session-Id; upstream state is then bound 1:1 to that
+                                # downstream session and never shared across clients.
+                                downstream_session_id = _downstream_session_id_from_request()
+                                use_registry = bool(downstream_session_id) and bool(gateway_id)
+                                registry = None
+                                if use_registry:
                                     try:
-                                        pool = get_mcp_session_pool()
-                                        use_pool = True
-                                    except RuntimeError:
-                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                        pass
+                                        registry = get_upstream_session_registry()
+                                    except RegistryNotInitializedError:
+                                        use_registry = False
 
-                                if use_pool and pool is not None:
-                                    async with pool.session(
+                                if use_registry and registry is not None:
+                                    async with registry.acquire(
+                                        downstream_session_id=downstream_session_id,
+                                        gateway_id=gateway_id,
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
-                                        user_identity=pool_user_identity,
-                                        gateway_id=gateway_id,
-                                    ) as pooled:
-                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
+                                    ) as upstream:
+                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
-                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    # Fallback: per-call session when no downstream session id is in scope.
                                     async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
                                         read_stream,
                                         write_stream,
@@ -2029,30 +2023,29 @@ class ResourceService(BaseService):
                             if authentication is None:
                                 authentication = {}
                             try:
-                                # Use session pool if enabled for 10-20x latency improvement
-                                use_pool = False
-                                pool = None
-                                if settings.mcp_session_pool_enabled:
+                                # #4205: see SSE path above; same 1:1 binding rationale.
+                                downstream_session_id = _downstream_session_id_from_request()
+                                use_registry = bool(downstream_session_id) and bool(gateway_id)
+                                registry = None
+                                if use_registry:
                                     try:
-                                        pool = get_mcp_session_pool()
-                                        use_pool = True
-                                    except RuntimeError:
-                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                        pass
+                                        registry = get_upstream_session_registry()
+                                    except RegistryNotInitializedError:
+                                        use_registry = False
 
-                                if use_pool and pool is not None:
-                                    async with pool.session(
+                                if use_registry and registry is not None:
+                                    async with registry.acquire(
+                                        downstream_session_id=downstream_session_id,
+                                        gateway_id=gateway_id,
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
-                                        user_identity=pool_user_identity,
-                                        gateway_id=gateway_id,
-                                    ) as pooled:
-                                        resource_response = await _read_resource_with_meta(pooled.session, uri, meta_data)
+                                    ) as upstream:
+                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
-                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    # Fallback: per-call session when no downstream session id is in scope.
                                     async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
                                         read_stream,
                                         write_stream,

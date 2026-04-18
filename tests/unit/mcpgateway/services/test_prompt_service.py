@@ -211,6 +211,7 @@ class TestPromptServiceInit:
     @pytest.mark.asyncio
     async def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService._get_plugin_manager (PLUGINS_ENABLED)."""
+        # First-Party
         from mcpgateway.plugins.framework import enable_plugins, reset_plugin_manager_factory
 
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
@@ -519,7 +520,6 @@ class TestPromptService:
         prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
-            "user@test.com",
             meta_data=None,
         )
         test_db.commit.assert_called_once()
@@ -3365,23 +3365,28 @@ class TestValidateMetaDataPrompt:
     """Unit tests for _validate_meta_data in prompt_service (CWE-400 guards)."""
 
     def test_none_is_accepted(self):
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data(None)
 
     def test_empty_dict_is_accepted(self):
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data({})
 
     def test_valid_small_dict_is_accepted(self):
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
 
     def test_too_many_keys_raises(self):
         """meta_data with more than _META_MAX_KEYS keys must be rejected."""
-        from mcpgateway.common.validators import META_MAX_KEYS, validate_meta_data as _validate_meta_data
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
         with pytest.raises(ValueError, match="maximum key count"):
@@ -3389,6 +3394,7 @@ class TestValidateMetaDataPrompt:
 
     def test_excessive_nesting_depth_raises(self):
         """meta_data with depth > _META_MAX_DEPTH must be rejected."""
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         deeply_nested = {"level1": {"level2": {"level3": "value"}}}
@@ -3397,6 +3403,7 @@ class TestValidateMetaDataPrompt:
 
     def test_list_of_dicts_depth_bypass_is_rejected(self):
         """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400 / Finding 4)."""
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
@@ -3405,6 +3412,7 @@ class TestValidateMetaDataPrompt:
 
     def test_non_serializable_value_raises(self):
         """meta_data with non-JSON-serializable value must raise ValueError (CWE-20 / Finding 6)."""
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         class _Unserializable:
@@ -3414,13 +3422,16 @@ class TestValidateMetaDataPrompt:
             _validate_meta_data({"bad": _Unserializable()})
 
     def test_exact_max_depth_is_accepted(self):
+        # First-Party
         from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         two_levels = {"outer": {"inner": "value"}}
         _validate_meta_data(two_levels)
 
     def test_oversized_bytes_raises(self):
-        from mcpgateway.common.validators import META_MAX_BYTES, validate_meta_data as _validate_meta_data
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_BYTES
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 
         large_value = "x" * (META_MAX_BYTES + 1)
         with pytest.raises(ValueError, match="maximum size"):
@@ -3432,6 +3443,7 @@ class TestBuildGetPromptRequest:
 
     def test_meta_is_injected_under_alias_key(self):
         """_meta must be present on the inner params model after build (CWE-20)."""
+        # First-Party
         from mcpgateway.services.prompt_service import _build_get_prompt_request
 
         meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
@@ -3445,9 +3457,11 @@ class TestBuildGetPromptRequest:
 
     def test_returns_client_request_type(self):
         """Return value must be a ClientRequest wrapping GetPromptRequest."""
+        # Third-Party
         from mcp import types
         from mcp.types import GetPromptRequest
 
+        # First-Party
         from mcpgateway.services.prompt_service import _build_get_prompt_request
 
         req = _build_get_prompt_request("my-prompt", {"arg": "val"}, {"k": "v"})
@@ -3461,6 +3475,7 @@ class TestGetPromptMetaDataValidationIntegration:
     @pytest.mark.asyncio
     async def test_fetch_gateway_prompt_rejects_oversized_meta_data(self):
         """_fetch_gateway_prompt_result must raise ValueError for oversized meta_data."""
+        # First-Party
         from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
         from mcpgateway.services.prompt_service import PromptService
 
@@ -3480,4 +3495,103 @@ class TestGetPromptMetaDataValidationIntegration:
         oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
 
         with pytest.raises(ValueError, match="maximum key count"):
-            await service._fetch_gateway_prompt_result(prompt, {}, "user@example.com", meta_data=oversized)
+            await service._fetch_gateway_prompt_result(prompt, {}, meta_data=oversized)
+
+
+class TestFetchGatewayPromptRegistryPath:
+    """Covers the upstream-session-registry branches in _fetch_gateway_prompt_result (#4205)."""
+
+    def _build_gateway_prompt(self):
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+        gateway.auth_type = None
+        gateway.auth_query_params = None
+
+        prompt = _build_db_prompt(template="", name="gw-prompt")
+        prompt.gateway_id = "gw-1"
+        prompt.gateway = gateway
+        prompt.original_name = "gw-prompt"
+        return prompt
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_uses_registry_when_downstream_session_id_present(self):
+        """Registry path runs when Mcp-Session-Id is in scope and the registry is initialised.
+
+        Covers prompt_service.py:402-403, 405, 408-409, 416.
+        """
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "from registry"
+
+        fake_upstream = MagicMock()
+        fake_upstream.session = MagicMock()
+
+        class _Ctx:
+            async def __aenter__(self):
+                return fake_upstream
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        fake_registry = MagicMock()
+        fake_registry.acquire = MagicMock(return_value=_Ctx())
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-xyz"),
+            patch("mcpgateway.services.prompt_service.get_upstream_session_registry", return_value=fake_registry),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, {"a": "b"}, meta_data=None)
+
+        fake_registry.acquire.assert_called_once()
+        assert result.description == "from registry"
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_falls_back_when_registry_not_initialised(self):
+        """RegistryNotInitializedError falls through to the transport-direct path (covers line 406-407)."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "from fallback"
+
+        class _FakeStreamsCtx:
+            async def __aenter__(self):
+                # streamablehttp_client yields (read, write, get_session_id)
+                return (MagicMock(), MagicMock(), MagicMock())
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClientSessionCtx:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.initialize = AsyncMock()
+                return session
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-xyz"),
+            patch("mcpgateway.services.prompt_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            patch("mcpgateway.services.prompt_service.streamablehttp_client", return_value=_FakeStreamsCtx()),
+            patch("mcpgateway.services.prompt_service.ClientSession", return_value=_FakeClientSessionCtx()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
+
+        assert result.description == "from fallback"

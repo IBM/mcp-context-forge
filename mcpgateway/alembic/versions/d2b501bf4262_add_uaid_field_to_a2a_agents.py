@@ -27,8 +27,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "d2b501bf4262"
-down_revision: Union[str, Sequence[str], None] = "ffe4494639d3"
+revision: str = "d2b501bf4262"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "ffe4494639d3"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -99,7 +99,7 @@ def downgrade() -> None:
 
     # Drop uaid index if it exists
     if "ix_a2a_agents_uaid" in existing_indexes:
-        op.drop_index("ix_a2a_agents_uaid", "a2a_agents")
+        op.drop_index("ix_a2a_agents_uaid", table_name="a2a_agents")
 
     # Drop uaid column if it exists
     if "uaid" in existing_columns:

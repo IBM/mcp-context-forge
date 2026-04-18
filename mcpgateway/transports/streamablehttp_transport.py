@@ -227,8 +227,15 @@ completion_service: CompletionService = CompletionService()
 mcp_app: Server[Any] = Server("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
-request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
-user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+# First-Party
+# request_headers_var + user_context_var live in `mcpgateway.transports.context`
+# so service-layer code can read them without importing this module (which
+# would create an import cycle via prompt/tool/resource services). Imported
+# here for backwards-compat: external callers that already do
+# `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
+# keep working.
+from mcpgateway.transports.context import request_headers_var, user_context_var  # noqa: E402  # pylint: disable=wrong-import-position
+
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 
@@ -1524,14 +1531,14 @@ async def call_tool(name: str, arguments: dict) -> Union[
         try:
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
 
-            if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+            if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
                 logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
                 raise RuntimeError("invalid mcp session id")
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
 
             # Register session mapping BEFORE checking forwarding (same pattern as SSE)
             # This ensures ownership is registered atomically so forward_request_to_owner() works
@@ -2934,9 +2941,9 @@ class SessionManagerWrapper:
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
 
-                if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
                     logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
                     mcp_session_id = "not-provided"
             except Exception as exc:
@@ -3140,10 +3147,10 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-                pool = get_mcp_session_pool()
-                owner = await pool.get_streamable_http_session_owner(mcp_session_id)
+                pool = get_session_affinity()
+                owner = await pool.get_session_owner(mcp_session_id)
                 logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
                 if owner and owner != WORKER_ID:
@@ -3163,7 +3170,7 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     # Forward to owner worker
-                    response = await pool.forward_streamable_http_to_owner(
+                    response = await pool.forward_to_owner(
                         owner_worker_id=owner,
                         mcp_session_id=mcp_session_id,
                         method=method,
@@ -3418,10 +3425,10 @@ class SessionManagerWrapper:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
                         # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-                        pool = get_mcp_session_pool()
-                        await pool.register_pool_session_owner(session_to_register)
+                        pool = get_session_affinity()
+                        await pool.register_session_owner(session_to_register)
                         logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", WORKER_ID, session_to_register[:8])
                     except Exception as e:
                         logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)

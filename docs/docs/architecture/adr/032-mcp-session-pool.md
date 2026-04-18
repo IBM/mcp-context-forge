@@ -1,8 +1,24 @@
 # ADR-032: MCP Session Pool for Connection Reuse
 
-- *Status:* Accepted
+- *Status:* **Superseded by the UpstreamSessionRegistry (issue #4205)**
 - *Date:* 2025-01-05
+- *Superseded:* 2026-04
 - *Deciders:* Platform Team
+
+> **Note — superseded.** The identity-keyed pool this ADR describes caused
+> cross-downstream-session state leakage against stateful upstream MCP
+> servers (see issue #4205). It was replaced by
+> `mcpgateway.services.upstream_session_registry.UpstreamSessionRegistry`,
+> which binds one upstream session per `(downstream_session_id, gateway_id)`
+> and preserves connection reuse within a single downstream session.
+>
+> The affinity machinery this ADR's tooling shared (Redis-backed
+> downstream-session → worker mapping, heartbeat, Lua CAS reclaim,
+> cross-worker session-owner forwarding, RPC listener) now lives in
+> `mcpgateway.services.session_affinity` (see ADR-038).
+>
+> The rest of this ADR is retained as historical context for the design
+> trade-offs the registry replaces.
 
 ## Introduction: Understanding Connection Reuse
 
