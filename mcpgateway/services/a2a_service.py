@@ -14,10 +14,13 @@ and interactions with A2A-compatible agents.
 
 # Standard
 import binascii
+import json
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import quote, urlparse
 
 # Third-Party
+import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -104,6 +107,9 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize structured logger for A2A lifecycle tracking
 structured_logger = get_structured_logger("a2a_service")
+
+# Flag to track if we've logged the cross-gateway authentication warning (log once per process)
+_cross_gateway_auth_warning_logged = False
 
 
 async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
@@ -487,9 +493,6 @@ class A2AAgentService(BaseService):
                 # Handle query_param auth - encrypt and prepare for storage
                 auth_query_params_encrypted: Optional[Dict[str, str]] = None
                 if auth_type == "query_param":
-                    # Standard
-                    from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
                         raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
@@ -518,9 +521,39 @@ class A2AAgentService(BaseService):
                         # Query param auth doesn't use auth_value
                         auth_value = None
 
-                # Create new agent
+                # Generate UAID if requested
+                uaid_metadata: Dict[str, Optional[str]] = {}
+
+                if getattr(agent_data, "generate_uaid", False):
+                    # First-Party
+                    from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                    try:
+                        uaid = generate_uaid(
+                            registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
+                            name=agent_data.name,
+                            version=getattr(agent_data, "version", None) or "1.0.0",
+                            protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
+                            native_id=agent_data.endpoint_url,
+                            skills=getattr(agent_data, "uaid_skills", None) or [],
+                        )
+
+                        # Store UAID in separate field, keep UUID for id (optimal indexing and URL routing)
+                        uaid_metadata = {
+                            "uaid": uaid,
+                            "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
+                            "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
+                            "uaid_native_id": agent_data.endpoint_url,
+                        }
+                        logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
+                    except Exception as uaid_error:
+                        logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID only.")
+                        uaid_metadata = {}
+
+                # Create new agent (id will be auto-generated as UUID)
                 new_agent = DbA2AAgent(
                     name=agent_data.name,
+                    **uaid_metadata,  # Add UAID fields if generated
                     description=agent_data.description,
                     endpoint_url=agent_data.endpoint_url,
                     agent_type=agent_data.agent_type,
@@ -1254,9 +1287,6 @@ class A2AAgentService(BaseService):
             is_url_changing = agent_data.endpoint_url is not None and str(agent_data.endpoint_url) != original_endpoint_url
 
             if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
-                # Standard
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     # Grandfather clause: Allow updates to existing query_param agents
@@ -1316,6 +1346,31 @@ class A2AAgentService(BaseService):
                 if is_switching_to_queryparam:
                     agent.auth_type = "query_param"
                     agent.auth_value = None  # Query param auth doesn't use auth_value
+
+            # Generate UAID if requested and agent doesn't already have one (UAID is immutable)
+            if getattr(agent_data, "generate_uaid", False) and not agent.uaid:
+                # First-Party
+                from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                try:
+                    uaid = generate_uaid(
+                        registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
+                        name=agent.name,  # Use current agent name
+                        version=getattr(agent_data, "version", None) or "1.0.0",
+                        protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
+                        native_id=agent.endpoint_url,  # Use current endpoint_url
+                        skills=[],  # Empty skills list for now
+                    )
+
+                    # Populate UAID fields (immutable once set)
+                    agent.uaid = uaid
+                    agent.uaid_registry = getattr(agent_data, "uaid_registry", None) or "context-forge"
+                    agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
+                    agent.uaid_native_id = agent.endpoint_url
+
+                    logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
+                except Exception as uaid_error:
+                    logger.warning(f"Failed to generate UAID for agent {agent.name}: {uaid_error}. Continuing without UAID.")
 
             # Update metadata
             if modified_by:
@@ -1583,21 +1638,29 @@ class A2AAgentService(BaseService):
         parameters: Dict[str, Any],
         interaction_type: str = "query",
         *,
+        agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
     ) -> Dict[str, Any]:
-        """Invoke an A2A agent.
+        """Invoke an A2A agent by name or ID (UUID/UAID).
 
         Args:
             db: Database session.
             agent_name: Name of the agent to invoke.
             parameters: Parameters for the interaction.
             interaction_type: Type of interaction.
+            agent_id: Optional agent ID (UUID or UAID format). If provided, takes precedence over agent_name.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
             token_teams: Teams from JWT token. None = admin (no filtering),
                          [] = public-only, [...] = team-scoped access.
+            hop_count: Federation hop counter from the inbound
+                `X-Contextforge-UAID-Hop` header. Calls at or above
+                `settings.uaid_max_federation_hops` are rejected to break
+                UAID cross-gateway loops (A->B->A and self-referential
+                `endpoint_url`). Outbound calls stamp `hop_count + 1`.
 
         Returns:
             Agent response.
@@ -1606,6 +1669,63 @@ class A2AAgentService(BaseService):
             A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or invocation fails.
         """
+        # Use agent_id if provided, otherwise use agent_name
+        identifier = agent_id if agent_id else agent_name
+        is_name_lookup = bool(not agent_id and agent_name)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # FEDERATION LOOP GUARD
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Every outbound cross-gateway invocation stamps
+        # `X-Contextforge-UAID-Hop: N+1` on its request headers.  The entry
+        # handler reads the header and forwards the integer here.  If we've
+        # already traversed `uaid_max_federation_hops` hops, refuse.  This
+        # check catches BOTH:
+        #   (a) A→B→A style federation ping-pong (nativeId of a missing
+        #       UAID points back at a peer that doesn't own it), and
+        #   (b) self-referential `endpoint_url` loops where a locally-
+        #       registered agent's endpoint routes right back into this
+        #       handler.  A binary "is-federated" marker would miss (b)
+        #       because the UAID still resolves locally on every hop.
+        max_hops = settings.uaid_max_federation_hops
+        if hop_count >= max_hops:
+            logger.warning(
+                "UAID federation hop limit reached: hop_count=%d >= max=%d for identifier %r",
+                hop_count,
+                max_hops,
+                identifier,
+            )
+            raise A2AAgentNotFoundError(f"A2A Agent not found (federation hop limit reached): {identifier}")
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # UAID HANDLING: Check if identifier is UAID format
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.utils.uaid import is_uaid  # pylint: disable=import-outside-toplevel
+
+        if is_uaid(identifier):
+            # Try local lookup first (by id or uaid column)
+            agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
+
+            if not agent_row:
+                # Not found locally — attempt cross-gateway routing.
+                # Hop-count enforcement above already rejected requests
+                # that came in at the limit, so this path is safe.
+                logger.info(f"UAID agent not found locally, attempting cross-gateway routing: {identifier!r}")
+                return await self._invoke_remote_agent(
+                    uaid=identifier,
+                    parameters=parameters,
+                    interaction_type=interaction_type,
+                    user_id=user_id,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    hop_count=hop_count,
+                )
+
+            # Found locally - continue with normal invocation
+            identifier = agent_row  # Use the actual ID for lookup
+            is_name_lookup = False
+
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
         # then release the lock before performing the external HTTP call.
@@ -1614,20 +1734,31 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
 
         # Lookup the agent id, then lock the row by id using get_for_update
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+        if is_name_lookup:
+            agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == identifier)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            if not agent_row:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
 
-        agent = get_for_update(db, DbA2AAgent, agent_row)
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+        else:
+            agent_row = identifier
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
+
+        # Use agent name for logging throughout
+        agent_name = agent.name
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
         # Return 404 (not 403) to avoid leaking existence of private agents
         # ═══════════════════════════════════════════════════════════════════════════
         if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+            if is_name_lookup:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
             raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
@@ -1689,6 +1820,46 @@ class A2AAgentService(BaseService):
         }
         if is_input_capture_enabled("a2a.invoke"):
             span_attributes["langfuse.observation.input"] = serialize_trace_payload(parameters or {})
+
+        # Stamp the outbound hop counter when the target is a known CF
+        # peer — a locally-registered agent whose `endpoint_url` points
+        # back at this gateway (misconfiguration or attack) would
+        # otherwise loop without limit; the hop guard at the top of
+        # `invoke_agent` catches the re-entry once this header arrives.
+        #
+        # Stamping responsibility depends on who actually emits the
+        # outbound HTTP request:
+        #   - Non-delegate (Python emits): stamp N+1 via `stamp_hop`
+        #     so the downstream sees the incremented value.
+        #   - Delegate to Rust runtime: pass N as-is (the inbound
+        #     value).  Rust's `handle_invoke` reads it, re-checks the
+        #     guard, and emits N+1 itself.  If Python also stamped,
+        #     the counter would advance twice per logical hop and the
+        #     guard would trip `max_hops/2` levels deep — breaking
+        #     legitimate federation chains.  Stamping is unconditional:
+        #     gating on `uaid_allowed_domains` would skip the header on
+        #     any gateway reached via a host alias missing from the
+        #     allowlist, and that path self-loops without bound.  The
+        #     header is a ContextForge-internal marker and is safe for
+        #     third-party agents to receive (they ignore it).
+        # First-Party
+        from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
+
+        # Use `_should_delegate_a2a_to_rust()` (not the raw settings flags)
+        # so this branch stays in lockstep with the dispatch decision below
+        # (`if _should_delegate_a2a_to_rust(): ...`).  The helper also
+        # honors the runtime-mutable `A2A_MODE` override introduced by
+        # `mcpgateway.version`; reading raw flags here would desync the
+        # hop-stamp contract from the dispatch contract when an operator
+        # flips the mode at runtime (e.g., `PATCH /admin/runtime/a2a-mode
+        # {mode: "shadow"}` while delegate flags are boot-true).  That
+        # desync would let Python emit the HTTP POST while the header
+        # was stamped for the Rust-delegate path — downstream gateways
+        # would then trip the guard at half the configured depth.
+        if _should_delegate_a2a_to_rust():
+            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)
+        else:
+            uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
@@ -1894,6 +2065,387 @@ class A2AAgentService(BaseService):
                     set_span_attribute(span, "duration.ms", response_time * 1000)
 
         return response or {"error": error_message}
+
+    async def _invoke_remote_agent(
+        self,
+        uaid: str,
+        parameters: Dict[str, Any],
+        interaction_type: str = "query",
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
+        hop_count: int = 0,
+    ) -> Dict[str, Any]:
+        """Invoke agent on remote gateway via UAID cross-gateway routing.
+
+        Args:
+            uaid: Universal Agent ID with embedded routing metadata
+            parameters: Parameters for the interaction
+            interaction_type: Type of interaction
+            user_id: Identifier of the user initiating the call
+            user_email: Email of the user initiating the call
+            token_teams: Teams from JWT token
+            hop_count: Current federation hop depth (from the inbound
+                `X-Contextforge-UAID-Hop` header). The outbound request
+                stamps `hop_count + 1` so the receiving gateway can
+                enforce `uaid_max_federation_hops`.
+
+        Returns:
+            Agent response from remote gateway
+
+        Raises:
+            A2AAgentError: If routing fails or remote invocation fails
+            ValueError: If UAID parsing fails or endpoint not allowed
+        """
+        # First-Party
+        from mcpgateway.utils.uaid import extract_routing_info  # pylint: disable=import-outside-toplevel
+
+        try:
+            routing = extract_routing_info(uaid)
+            protocol = routing["protocol"]
+            endpoint = routing["endpoint"]
+            registry = routing.get("registry")
+
+            logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY WARNING: Log authentication gap on first cross-gateway call
+            # ═══════════════════════════════════════════════════════════════════════════
+            global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
+            if not _cross_gateway_auth_warning_logged:
+                logger.warning(
+                    "⚠️  SECURITY: First cross-gateway UAID call detected. "
+                    "Cross-gateway routing does NOT forward authentication credentials. "
+                    "Remote gateways receive unauthenticated requests. "
+                    "Ensure target gateways enforce AUTH_REQUIRED=true and configure UAID_ALLOWED_DOMAINS "
+                    "to restrict routing to trusted domains only. "
+                    "See documentation: .env.example lines 85-125 for security implications and mitigations."
+                )
+                _cross_gateway_auth_warning_logged = True
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: SSRF Protection - Validate endpoint before URL construction
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Reject endpoints with SSRF attack vectors:
+            # 1. Protocol prefixes (file://, gopher://, etc.)
+            # 2. User-info bypass (evil@127.0.0.1)
+            # 3. Path injection (example.com/path)
+            # 4. Port injection is allowed for legitimate use cases (gateway.example.com:8443)
+
+            if "://" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
+
+            if "@" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain @ character (SSRF protection)")
+
+            # Parse to check for path components (after first slash)
+            # Valid: "gateway.example.com", "gateway.example.com:8443"
+            # Invalid: "gateway.example.com/path", "127.0.0.1/admin"
+            # Also reject `?` and `#` — those would smuggle query/fragment
+            # data into the constructed URL path and let an attacker
+            # attach arbitrary params to the downstream `/a2a/{uaid}/invoke`
+            # call.  The Rust parser already rejects the same characters
+            # in `uaid::resolve_routing`; mirror that here.
+            if "/" in endpoint or "?" in endpoint or "#" in endpoint:
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain path/query/fragment components (SSRF protection)")
+
+            # Validate it's a valid hostname/IP by attempting to parse as URL
+            # This catches malformed hostnames like "not..valid..hostname"
+            try:
+                parsed = urlparse(f"https://{endpoint}/test")
+                if not parsed.netloc:
+                    raise ValueError("Empty netloc")
+            except Exception as parse_error:
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
+
+            # Security: Validate endpoint against domain allowlist
+            # Use proper subdomain matching: require exact match OR proper subdomain prefix
+            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if allowed_domains:
+                # Extract just the domain part (without port) for allowlist checking
+                # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
+                # If endpoint doesn't start with scheme, add https:// for parsing
+                url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
+                parsed = urlparse(url_to_parse)
+                endpoint_domain = parsed.hostname or endpoint.split(":")[0]
+
+                # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
+                if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
+                    raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
+            else:
+                # WARNING: Empty allowlist permits arbitrary cross-gateway routing
+                # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
+                logger.warning(
+                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint!r} without domain validation. "
+                    "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+                )
+
+            # Construct URL based on protocol (endpoint is now validated).
+            # ContextForge-to-ContextForge federation: target the receiving
+            # gateway's existing public invoke route so the UAID is routed
+            # through the same `is_uaid()` branch on the other side.
+            #
+            # URL-encode the UAID before embedding it in the path so a
+            # malformed identifier containing `/`, `?`, or `#` cannot
+            # smuggle extra path segments or query/fragment data. The
+            # parser already validates structure; this is defence in depth.
+            if protocol == "a2a":
+                url = f"https://{endpoint}/a2a/{quote(uaid, safe='')}/invoke"
+            elif protocol == "mcp":
+                url = f"https://{endpoint}/mcp/tools/call"
+            else:
+                raise ValueError(f"Unsupported protocol in UAID: {protocol}")
+
+            # Prepare request payload — matches the receiving gateway's
+            # `/a2a/{agent_name}/invoke` body signature. The UAID is carried
+            # in the URL path; no need to duplicate it in the body.
+            request_data = {
+                "parameters": parameters,
+                "interaction_type": interaction_type,
+            }
+
+            # Make HTTP request using shared client
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_http_client()
+            # Stamp the outbound hop count so the receiving gateway can
+            # enforce `uaid_max_federation_hops` and break recursion —
+            # covers both A→B→A pingpong and self-referential
+            # `endpoint_url` loops.  Uses the shared `stamp_hop` helper
+            # so Python and Rust agree on header name and overflow
+            # semantics.
+            # First-Party
+            from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
+
+            headers = {"Content-Type": "application/json"}
+            uaid_utils.stamp_hop(headers, hop_count)
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
+            #
+            # Current Behavior:
+            #   Cross-gateway HTTP calls (UAID-based routing) do NOT forward authentication
+            #   credentials. Remote gateways receive unauthenticated requests with no bearer
+            #   token or session context.
+            #
+            # Security Implications:
+            #   1. Remote Gateway MUST Authenticate: The target gateway MUST enforce its own
+            #      authentication layer (AUTH_REQUIRED=true). If disabled, public agents
+            #      are accessible without any authentication.
+            #
+            #   2. No Authorization Context: Remote gateway cannot enforce RBAC based on
+            #      originating user. All cross-gateway calls execute with target gateway's
+            #      public access level.
+            #
+            #   3. Trust Boundary: This gateway trusts the remote gateway's access control.
+            #      If remote gateway is compromised or misconfigured, this becomes a
+            #      security vector.
+            #
+            # Future Work (Roadmap):
+            #   - Bearer token forwarding (requires gateway-to-gateway trust establishment)
+            #   - Mutual TLS authentication (gateway certificates)
+            #   - Trusted gateway registry with signature verification
+            #   - Per-UAID access policies (allowlist/denylist)
+            #
+            # Current Mitigations:
+            #   - UAID_ALLOWED_DOMAINS: Restricts outbound calls to trusted domains
+            #   - Correlation ID logging: Enables cross-gateway request tracing
+            #   - Operator guidance: Documentation warns about unauthenticated cross-gateway calls
+            #
+            # Operators: Set UAID_ALLOWED_DOMAINS to a restrictive allowlist of trusted domains only.
+            # ═══════════════════════════════════════════════════════════════════════════
+
+            # Add correlation ID for distributed tracing
+            correlation_id = get_correlation_id()
+            if correlation_id:
+                headers["X-Correlation-ID"] = correlation_id
+
+            # Log cross-gateway call start
+            call_start_time = datetime.now(timezone.utc)
+            structured_logger.log(
+                level="INFO",
+                message=f"Cross-gateway call started: {uaid!r}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                metadata={
+                    "event": "cross_gateway_call_started",
+                    "uaid": uaid,
+                    "endpoint": endpoint,
+                    "protocol": protocol,
+                    "registry": registry,
+                },
+            )
+
+            # Make request
+            http_response = await client.post(url, json=request_data, headers=headers, timeout=30.0)
+            call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+
+            # Any 2xx is success.  Restricting to status 200 would
+            # spuriously reject legitimate 201/202/204 responses — an
+            # A2A agent returning `201 Created` for an accepted task
+            # would otherwise hit the failure sink below.
+            if 200 <= http_response.status_code < 300:
+                # Empty-body 2xx responses (most importantly `204 No
+                # Content`, which is spec-forbidden from carrying a body,
+                # and any 2xx that legitimately returns `Content-Length: 0`)
+                # have nothing to parse.  Calling `.json()` on an empty
+                # body raises `JSONDecodeError` and the block below would
+                # then treat this as "2xx with unparseable body" — the
+                # exact failure the stop-hook caught.  Short-circuit to
+                # an empty dict so the call registers as a clean success
+                # with no payload.
+                if not http_response.content:
+                    response = {}
+                    structured_logger.log(
+                        level="INFO",
+                        message=f"Cross-gateway call completed: {uaid!r}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        metadata={
+                            "event": "cross_gateway_call_completed",
+                            "uaid": uaid,
+                            "endpoint": endpoint,
+                            "status_code": http_response.status_code,
+                            "success": True,
+                            "empty_body": True,
+                        },
+                    )
+                    return response
+                # Wrap `.json()` so a 2xx-with-malformed-body lands in
+                # the same dual-sink diagnostic block as a non-2xx
+                # remote error.  Without this, JSONDecodeError would
+                # skip the structured log + body-snippet capture and
+                # land at the terse transport-error sink in the outer
+                # except, losing operator-useful context (the advertised
+                # 2xx status + the bytes that didn't parse).
+                try:
+                    response = http_response.json()
+                except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+                    # `log_error_message` goes to the STRUCTURED log
+                    # payload (operators filter on `error_message`) and
+                    # so includes status prose for context.  The
+                    # unstructured `logger.error` below passes the RAW
+                    # `remote_body_snippet` so its `body=%r` field shape
+                    # matches the non-200 sink at line 2358 — log parsers
+                    # can key on `body=%r` uniformly across both paths.
+                    remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                    log_error_message = f"HTTP {http_response.status_code} but body failed to decode as JSON: {decode_error}"
+                    logger.error("Cross-gateway HTTP %d from endpoint=%r uaid=%r body=%r", http_response.status_code, endpoint, uaid, remote_body_snippet)
+                    structured_logger.log(
+                        level="ERROR",
+                        message=f"Cross-gateway call failed: {uaid!r}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        error_details={"error_type": "CrossGatewayDecodeError", "error_message": log_error_message},
+                        metadata={
+                            "event": "cross_gateway_call_failed",
+                            "uaid": uaid,
+                            "endpoint": endpoint,
+                            "status_code": http_response.status_code,
+                        },
+                    )
+                    raise A2AAgentError(f"Cross-gateway routing failed: remote returned HTTP {http_response.status_code} with unparseable body") from decode_error
+
+                # Log successful cross-gateway call
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Cross-gateway call completed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    metadata={
+                        "event": "cross_gateway_call_completed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": http_response.status_code,
+                        "success": True,
+                    },
+                )
+
+                return response
+
+            # Capture the remote body for operator-side structured logging
+            # (so failures can be diagnosed) but keep the body out of the
+            # exception we raise to the caller: a cross-gateway response
+            # may contain a stack trace, internal hostnames, or partially
+            # trusted data, and surfacing that to the end user is a leak.
+            # The public message exposes only the HTTP status.
+            remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+            # `log_error_message` embeds status for the structured-log
+            # payload (which operators may filter on the bare field);
+            # the positional `%d` log below carries status separately so
+            # we don't double-stamp it in the formatted string.
+            log_error_message = f"HTTP {http_response.status_code}: {remote_body_snippet}"
+            public_error_message = f"HTTP {http_response.status_code}"
+
+            # Log failed cross-gateway call.  Dual-sink to both the
+            # structured logger AND the standard `logger` so the body
+            # snippet survives even if structured logging is disabled,
+            # mocked out, or misconfigured.  The public exception
+            # carries only the status; the body is operator-only.
+            logger.error("Cross-gateway HTTP %d from endpoint=%r uaid=%r body=%r", http_response.status_code, endpoint, uaid, remote_body_snippet)
+            structured_logger.log(
+                level="ERROR",
+                message=f"Cross-gateway call failed: {uaid!r}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                duration_ms=call_duration_ms,
+                error_details={"error_type": "CrossGatewayHTTPError", "error_message": log_error_message},
+                metadata={
+                    "event": "cross_gateway_call_failed",
+                    "uaid": uaid,
+                    "endpoint": endpoint,
+                    "status_code": http_response.status_code,
+                },
+            )
+
+            raise A2AAgentError(f"Cross-gateway routing failed: {public_error_message}")
+
+        # `A2AAgentError` raised inside the try body (e.g., from the
+        # 2xx-with-unparseable-body inner except) propagates naturally
+        # because it's a direct `Exception` subclass and no handler
+        # below catches a superclass of it.
+        #
+        # Order matters: `JSONDecodeError` and `UnicodeDecodeError` are
+        # both subclasses of `ValueError`, so they must be handled
+        # BEFORE the generic `ValueError` catch — otherwise they'd be
+        # swallowed with the wrong error message.
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Stray decode failures from `http_response.text` on the
+            # non-2xx path (the 2xx path's inner try already converts
+            # these into `A2AAgentError`).  A remote that lies about
+            # its Content-Type charset lands here.
+            logger.error(f"Cross-gateway routing response decode failure: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: response decode error: {e}")
+        except ValueError as e:
+            logger.error(f"Failed to parse UAID or validate endpoint: {e}")
+            raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {e}")
+        except (httpx.HTTPError, OSError) as e:
+            # Narrowed from a bare `except Exception` so we no longer
+            # swallow programmer errors (AttributeError, KeyError,
+            # asyncio.CancelledError, etc.).  Covered failure modes:
+            #   - httpx.HTTPError: parent of TransportError / TimeoutException
+            #     / all httpx-level wire failures
+            #   - OSError: underlying socket layer
+            # Decode errors are caught by the dedicated handler above.
+            # Programmer errors and asyncio.CancelledError deliberately
+            # propagate.
+            logger.error(f"Cross-gateway routing transport failure: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: {e}")
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.

@@ -14,6 +14,24 @@ import {
 } from "./utils.js";
 
 // ===================================================================
+// UAID TOGGLE FUNCTIONALITY
+// ===================================================================
+
+/**
+ * Toggle UAID fields visibility based on checkbox state
+ * @param {string} formSuffix - Form identifier suffix ('a2a' or 'a2a-edit')
+ * @param {boolean} enabled - Whether UAID generation is enabled
+ */
+export const toggleUAIDFields = function (formSuffix, enabled) {
+  const uaidFieldsId = `uaid-fields-${formSuffix}`;
+  const uaidFields = document.getElementById(uaidFieldsId);
+
+  if (uaidFields) {
+    uaidFields.style.display = enabled ? 'block' : 'none';
+  }
+};
+
+// ===================================================================
 // A2A AGENT TEST MODAL FUNCTIONALITY
 // ===================================================================
 
@@ -137,6 +155,39 @@ export const viewA2AAgent = async function (agentId) {
       statusSpan.innerHTML = `${statusText} ${statusIcon}`;
       statusP.appendChild(statusSpan);
       container.appendChild(statusP);
+
+      // UAID Section (if agent has UAID)
+      if (agent.uaid) {
+        const uaidSection = document.createElement("div");
+        uaidSection.className = "mt-4 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded";
+
+        const uaidTitle = document.createElement("strong");
+        uaidTitle.className = "block mb-2 text-indigo-700 dark:text-indigo-300";
+        uaidTitle.textContent = "🆔 Universal Agent ID (UAID):";
+        uaidSection.appendChild(uaidTitle);
+
+        const uaidFields = [
+          { label: "Full UAID", value: agent.uaid, mono: true },
+          { label: "Registry", value: agent.uaidRegistry || "N/A" },
+          { label: "Protocol", value: agent.uaidProto || "N/A" },
+          { label: "Native ID", value: agent.uaidNativeId || "N/A", mono: true },
+        ];
+
+        uaidFields.forEach((field) => {
+          const p = document.createElement("p");
+          p.className = "text-sm mt-1";
+          const strong = document.createElement("strong");
+          strong.textContent = field.label + ": ";
+          p.appendChild(strong);
+          const span = document.createElement("span");
+          if (field.mono) span.className = "font-mono text-xs break-all";
+          span.textContent = field.value;
+          p.appendChild(span);
+          uaidSection.appendChild(p);
+        });
+
+        container.appendChild(uaidSection);
+      }
 
       // Capabilities + Config (JSON formatted)
       const capConfigDiv = document.createElement("div");
@@ -566,6 +617,67 @@ export const editA2AAgent = async function (agentId) {
         passthroughHeadersField.value = agent.passthroughHeaders.join(", ");
       } else {
         passthroughHeadersField.value = "";
+      }
+    }
+
+    // Handle UAID fields
+    // - If agent has UAID: show as read-only (UAID is immutable)
+    // - If agent has no UAID: allow user to generate one
+    const generateUAIDCheckbox = safeGetElement("a2a-generate-uaid-edit");
+    const uaidRegistryField = safeGetElement("a2a-uaid-registry-edit");
+    const uaidProtocolField = safeGetElement("a2a-uaid-protocol-edit");
+
+    const hasUAID = !!agent.uaid;
+
+    if (generateUAIDCheckbox) {
+      generateUAIDCheckbox.checked = hasUAID;
+
+      if (hasUAID) {
+        // Agent already has UAID - make checkbox disabled (UAID is immutable)
+        generateUAIDCheckbox.disabled = true;
+        generateUAIDCheckbox.title = "UAID is immutable and cannot be changed once generated";
+      } else {
+        // Agent has no UAID - allow user to check the box to generate one
+        generateUAIDCheckbox.disabled = false;
+        generateUAIDCheckbox.title = "Generate UAID for cross-gateway routing (can only be set once)";
+      }
+
+      toggleUAIDFields("a2a-edit", hasUAID);
+    }
+
+    if (uaidRegistryField) {
+      // Clear any previous styling
+      uaidRegistryField.classList.remove('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+      uaidRegistryField.readOnly = false;
+
+      if (hasUAID) {
+        // Agent has UAID - make field read-only and populate
+        uaidRegistryField.value = agent.uaidRegistry || "";
+        uaidRegistryField.readOnly = true;
+        uaidRegistryField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+        uaidRegistryField.title = "UAID is immutable and cannot be changed";
+      } else {
+        // Agent has no UAID - allow editing
+        uaidRegistryField.value = "context-forge";
+        uaidRegistryField.title = "Registry identifier for UAID generation";
+      }
+    }
+
+    if (uaidProtocolField) {
+      // Clear any previous styling
+      uaidProtocolField.classList.remove('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+      uaidProtocolField.disabled = false;
+
+      if (hasUAID) {
+        // Agent has UAID - make field disabled and populate
+        uaidProtocolField.value = agent.uaidProto || "";
+        uaidProtocolField.disabled = true;
+        uaidProtocolField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+        uaidProtocolField.title = "UAID is immutable and cannot be changed";
+      } else {
+        // Agent has no UAID - allow selection
+        uaidProtocolField.value = "a2a";
+        uaidProtocolField.title = "Protocol for UAID generation";
       }
     }
 
