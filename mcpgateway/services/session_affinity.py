@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
-"""
-MCP Session Pool Implementation.
+"""Multi-worker session affinity for downstream MCP sessions.
 
-Provides session pooling for MCP ClientSessions to reduce per-request overhead.
-Sessions are isolated per user/tenant via identity hashing to prevent session collision.
+Keeps each downstream MCP session (identified by its ``Mcp-Session-Id``)
+pinned to one gateway worker across the horizontal-scale deployment, so
+the worker-local ``UpstreamSessionRegistry`` can serve subsequent calls
+without rebuilding upstream state. The upstream ClientSession pooling
+that used to live in this file is gone — see
+``mcpgateway.services.upstream_session_registry`` for the 1:1 replacement
+(issue #4205).
 
-Performance Impact:
-    - Without pooling: 20-23ms per tool call (new session each time)
-    - With pooling: 1-2ms per tool call (10-20x improvement)
+What survives here:
 
-Security:
-    Sessions are isolated by (url, identity_hash, transport_type) to prevent:
-    - Cross-user session sharing
-    - Cross-tenant data leakage
-    - Authentication bypass
+* Redis-backed ``(downstream_session_id, url, transport, gateway_id)`` →
+  owning-worker mapping so any worker can look up who owns a session.
+* Worker heartbeat (``SET EX``) so dead workers can be reclaimed.
+* Atomic ownership claim via ``SET NX`` and a Lua CAS reclaim script.
+* Session-owner HTTP/RPC forwarding for cross-worker fanout.
+* Pub/Sub listener for RPC-style cross-worker requests.
+* ``is_valid_mcp_session_id`` validation used by the transport layer.
 
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -83,24 +87,12 @@ MessageHandlerFactory = Callable[
 class SessionAffinity:
     """Multi-worker MCP session-affinity service.
 
-    Despite the historical class name, this object no longer pools MCP
-    ClientSessions — that responsibility moved to ``UpstreamSessionRegistry``
-    (see issue #4205). What remains here is the cluster-affinity layer that
-    keeps a downstream MCP session pinned to a single gateway worker across
-    requests:
-
-      * Redis-backed ``(downstream_session_id, url, transport, gateway_id)`` →
-        owner-worker mapping, so any worker can look up who owns a session.
-      * Worker heartbeats (SET EX) so dead workers can be reclaimed.
-      * Atomic ownership claim via SET NX and a Lua CAS script.
-      * Session-owner HTTP/RPC forwarding for cross-worker fanout.
-      * Pub/Sub listener for RPC-style cross-worker requests.
-      * ``is_valid_mcp_session_id`` validation used by both the transport
-        and this module.
-
-    The class is scheduled to be renamed ``SessionAffinity`` in the next
-    commit; the rename is mechanical and deferred so reviewers can see the
-    hollow diff in isolation.
+    Owns the Redis state (session→worker mapping, worker heartbeat,
+    ownership lease, RPC listener) that pins each downstream MCP session
+    to one gateway worker across a horizontal-scale deployment. See the
+    module docstring for the full surface; see
+    ``mcpgateway.services.upstream_session_registry`` for the per-worker
+    upstream-session layer this service routes to.
     """
 
     def __init__(
@@ -334,7 +326,7 @@ class SessionAffinity:
             logger.debug(f"Failed to store session mapping in Redis: {e}")
 
     async def _cleanup_session_owner(self, mcp_session_id: str) -> None:
-        """Clean up pool_owner key in Redis when session is closed.
+        """Clear the session-owner Redis key when a downstream MCP session closes.
 
         Only deletes the key if this worker owns it (to prevent removing other workers' ownership).
 
@@ -354,10 +346,10 @@ class SessionAffinity:
                     owner_id = owner.decode() if isinstance(owner, bytes) else owner
                     if owner_id == WORKER_ID:
                         await redis.delete(key)
-                        logger.debug(f"Cleaned up pool session owner: {mcp_session_id[:8]}...")
+                        logger.debug(f"Cleaned up session owner owner: {mcp_session_id[:8]}...")
         except Exception as e:
             # Cleanup failure is non-fatal
-            logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
+            logger.debug(f"Failed to cleanup session owner owner in Redis: {e}")
 
     async def cleanup_session_owner(self, mcp_session_id: str) -> None:
         """Public wrapper for cleaning up Streamable HTTP session ownership.
@@ -413,17 +405,16 @@ class SessionAffinity:
         logger.info("Affinity mapping drained; service remains operational")
 
     async def register_session_owner(self, mcp_session_id: str) -> None:
-        """Register this worker as owner of a pool session in Redis.
+        """Claim this worker as the owner of a downstream MCP session, or refresh the existing lease.
 
-        This enables multi-worker session affinity by tracking which worker owns
-        which pool session. When a request with x-mcp-session-id arrives at a
-        different worker, it can forward the request to the owner worker.
-
-        Note: This method is now primarily used for refreshing TTL on existing ownership.
-        Initial ownership is claimed atomically in register_session_mapping() using SETNX.
+        Runs a single Lua CAS: ``SET EX`` on miss (first-time claim), ``EXPIRE``
+        on hit where the cached owner matches this worker (TTL refresh), no-op
+        otherwise (another worker already owns it). Callers don't need to
+        distinguish claim from refresh — the semantics are identical from
+        their side. Redis failure is non-fatal and logged at debug.
 
         Args:
-            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+            mcp_session_id: The downstream ``Mcp-Session-Id`` header value.
         """
         if not settings.mcpgateway_session_affinity_enabled:
             return
@@ -459,16 +450,17 @@ class SessionAffinity:
                 logger.debug(f"Owner registration outcome={outcome} for session {mcp_session_id[:8]}...")
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
-            logger.debug(f"Failed to register pool session owner in Redis: {e}")
+            logger.debug(f"Failed to register session owner in Redis: {e}")
 
     async def _get_session_owner(self, mcp_session_id: str) -> Optional[str]:
-        """Get the worker ID that owns a pool session.
+        """Return the worker id that owns ``mcp_session_id``, or None if unclaimed.
 
         Args:
-            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+            mcp_session_id: The downstream ``Mcp-Session-Id`` header value.
 
         Returns:
-            The worker ID that owns this session, or None if not found or Redis unavailable.
+            The owning worker id, or None if the session is unclaimed or Redis
+            is unavailable.
         """
         if not settings.mcpgateway_session_affinity_enabled:
             return None
@@ -488,7 +480,7 @@ class SessionAffinity:
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
                     return decoded
         except Exception as e:
-            logger.debug(f"Failed to get pool session owner from Redis: {e}")
+            logger.debug(f"Failed to get session owner from Redis: {e}")
         return None
 
     async def forward_request_to_owner(
@@ -497,9 +489,9 @@ class SessionAffinity:
         request_data: Dict[str, Any],
         timeout: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Forward RPC request to the worker that owns the pool session.
+        """Forward RPC request to the worker that owns the session owner.
 
-        This method checks Redis to find which worker owns the pool session for
+        This method checks Redis to find which worker owns the session owner for
         the given mcp_session_id. If owned by another worker, it forwards the
         request via Redis pub/sub and waits for the response.
 
@@ -1018,7 +1010,7 @@ async def close_session_affinity() -> None:
     if _mcp_session_pool is not None:
         await _mcp_session_pool.close_all()
         _mcp_session_pool = None
-        logger.info("MCP session pool closed")
+        logger.info("Session-affinity service closed")
 
     # Close notification service if it was initialized
     try:

@@ -5254,7 +5254,10 @@ class ToolService(BaseService):
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), when
+                                # a distributed trace needs per-request trace headers, or when the
+                                # registry singleton isn't initialised (tests, early startup).
                                 with create_span(
                                     "mcp.client.call",
                                     {
