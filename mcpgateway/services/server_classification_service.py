@@ -2,10 +2,14 @@
 """
 Server Classification Service.
 
-Manages hot/cold server classification based on MCP session pool usage patterns.
-Provides staggered polling to optimize resource allocation and reduce polling overhead.
-
-Classification is based ONLY on upstream MCP pooled session state (gateway -> MCP servers).
+Hot/cold classification for gated auto-refresh polling. The original
+implementation extracted per-URL recency signals from the upstream MCP
+session pool; with the pool replaced by UpstreamSessionRegistry (#4205)
+that signal is no longer directly available. Until the rebuild lands,
+each classification cycle purges Redis classification state so
+``should_poll_server`` always returns True (same behaviour as disabling
+the feature flag) — prevents the regression that would occur if we
+published an "everything cold" result.
 
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -16,15 +20,11 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import logging
-from math import floor
 import time
-from typing import Dict, List, Literal, Optional, TYPE_CHECKING
-
-# Third-Party
-import orjson
+from typing import List, Literal, Optional, TYPE_CHECKING
 
 # First-Party
 from mcpgateway.config import settings
@@ -32,9 +32,6 @@ from mcpgateway.config import settings
 if TYPE_CHECKING:
     # Third-Party
     from redis.asyncio import Redis
-
-    # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +67,18 @@ class ServerClassificationService:
     rather than URL, so the old signal is no longer directly extractable.
 
     Until the classification logic is rewritten against registry metrics +
-    audit data, ``_classify_servers_from_pool`` is a stub that marks every
-    server as cold, which degrades to "poll all gateways on the normal
-    schedule" — the conservative, no-regression fallback.
+    audit data, each classification cycle actively PURGES the classification
+    keys from Redis. ``get_server_classification`` then returns ``None`` for
+    every URL, and ``should_poll_server`` falls through to "poll now" — the
+    same outcome as disabling the feature flag. This avoids the regression
+    that would occur if we published an "everything cold" result: with the
+    flag enabled, cold classification pins every gateway to the longer
+    ``cold_server_check_interval``, starving previously-hot gateways of
+    auto-refresh.
 
-    Multi-worker coordination via Redis (leader election, result publish)
-    still works; it just publishes an empty-hot / all-cold result each run.
+    Multi-worker coordination (leader election, Redis key management,
+    heartbeat) stays in place so the eventual rebuild drops in without
+    startup-sequence surgery.
     """
 
     # Redis key templates
@@ -221,148 +224,35 @@ class ServerClassificationService:
             return False  # Fail safe: don't classify on error
 
     async def _perform_classification(self) -> None:
-        """Perform classification and publish to Redis (if available)."""
-        try:
-            # Get MCP session pool
-            # First-Party
-            from mcpgateway.services.session_affinity import get_session_affinity
+        """Perform a classification cycle.
 
+        #4205: the pool-derived per-URL usage signal no longer exists, so we
+        cannot compute a meaningful hot/cold split. Publishing the old
+        "everything cold" stub result would REGRESS production behaviour —
+        should_poll_server() reads "cold" from Redis and applies the longer
+        cold_server_check_interval, starving previously-hot gateways of
+        auto-refresh.
+
+        Instead we actively PURGE any existing classification state from
+        Redis each cycle. get_server_classification() then returns None
+        for every URL and should_poll_server() falls through to "return
+        True" — same effect as disabling the feature flag, without needing
+        every deployment to change its config.
+
+        Background: the classification loop + leader election + heartbeat
+        remain running so the rebuild (tracked as a #4205 follow-up) can
+        drop straight in without startup-sequence surgery.
+        """
+        if self._redis:
             try:
-                pool = get_session_affinity()
-            except RuntimeError:
-                logger.debug("MCP session pool not initialized, skipping classification")
-                return
-
-            # Get gateway_id → canonical URL mapping from database
-            gateway_url_map = await self._get_gateway_url_map()
-            if not gateway_url_map:
-                logger.debug("No gateways found, skipping classification")
-                return
-
-            # Deduplicate: multiple gateways may share the same upstream URL
-            # (different credentials/scopes). Classification operates on unique servers.
-            all_gateway_urls = list(dict.fromkeys(gateway_url_map.values()))
-
-            # Perform classification
-            result = self._classify_servers_from_pool(pool, all_gateway_urls, gateway_url_map)
-
-            # Publish to Redis (if available)
-            if self._redis:
-                await self._publish_classification_to_redis(result)
-
-            logger.info(
-                f"Classification completed: {len(result.hot_servers)} hot, " f"{len(result.cold_servers)} cold (N={result.metadata.total_servers}, " f"eligible={result.metadata.eligible_count})"
-            )
-
-            if result.metadata.underutilized_reason:
-                logger.debug(f"Underutilization: {result.metadata.underutilized_reason}")
-
-        except Exception as e:
-            logger.error(f"Classification failed: {e}", exc_info=True)
-
-    def _classify_servers_from_pool(
-        self, pool: SessionAffinity, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None
-    ) -> ClassificationResult:  # pylint: disable=unused-argument
-        """Classify servers — currently returns "everything cold" (#4205 follow-up).
-
-        Historically this aggregated per-URL usage from the pool's internal
-        ``_pools`` and ``_active`` dicts. Those dicts disappeared when the
-        upstream-session pool was replaced by ``UpstreamSessionRegistry``;
-        the registry keys by ``(downstream_session_id, gateway_id)`` rather
-        than URL, so the old per-URL recency/use-count signal is no longer
-        directly available.
-
-        This stub preserves the caller contract (every registered URL ends
-        up in ``cold_servers``) so hot/cold-gated polling degrades to
-        "always poll", rather than silently raising and stalling classification.
-        A rebuild against ``RegistrySnapshot`` plus gateway audit data is
-        tracked separately.
-
-        Args:
-            pool: Session-affinity service. Currently unused — left in the
-                signature to preserve the caller contract and to make the
-                follow-up re-wire easier.
-            all_gateway_urls: All registered gateway URLs.
-            gateway_url_map: Optional gateway_id → URL mapping; unused here.
-
-        Returns:
-            ClassificationResult with an empty hot set and every URL marked cold.
-        """
-        total_servers = len(all_gateway_urls)
-        return ClassificationResult(
-            hot_servers=[],
-            cold_servers=list(all_gateway_urls),
-            metadata=ClassificationMetadata(
-                total_servers=total_servers,
-                hot_cap=floor(0.20 * total_servers),
-                hot_actual=0,
-                eligible_count=0,
-                timestamp=time.time(),
-                underutilized_reason="pool classification disabled post-#4205; rebuild against UpstreamSessionRegistry pending",
-            ),
-        )
-
-    async def _get_gateway_url_map(self) -> Dict[str, str]:
-        """Get mapping of gateway_id → canonical URL for all enabled gateways.
-
-        Returns:
-            Dict mapping gateway ID to its canonical URL
-        """
-        # Third-Party
-        from sqlalchemy import select
-
-        # First-Party
-        from mcpgateway.db import Gateway, SessionLocal
-
-        try:
-            with SessionLocal() as db:
-                result = db.execute(select(Gateway.id, Gateway.url).where(Gateway.enabled.is_(True)))
-                return {str(row[0]): row[1] for row in result}
-        except Exception as e:
-            logger.error(f"Failed to get gateway URL map: {e}")
-            return {}
-
-    async def _publish_classification_to_redis(self, result: ClassificationResult) -> None:
-        """Publish classification result to Redis atomically.
-
-        Args:
-            result: Classification result to publish
-        """
-        if not self._redis:
-            return
-
-        try:
-            # Atomic pipeline for transactional updates
-            async with self._redis.pipeline(transaction=True) as pipe:
-                # Clear old classification
-                await pipe.delete(self.CLASSIFICATION_HOT_KEY, self.CLASSIFICATION_COLD_KEY)
-
-                # Set new classification
-                # Set TTL on classification sets to prevent stale data after worker crash
-                ttl = int(settings.gateway_auto_refresh_interval * 2)
-
-                if result.hot_servers:
-                    await pipe.sadd(self.CLASSIFICATION_HOT_KEY, *result.hot_servers)
-
-                if result.cold_servers:
-                    await pipe.sadd(self.CLASSIFICATION_COLD_KEY, *result.cold_servers)
-
-                # Expire classification sets regardless of whether they had members
-                await pipe.expire(self.CLASSIFICATION_HOT_KEY, ttl)
-                await pipe.expire(self.CLASSIFICATION_COLD_KEY, ttl)
-
-                # Store metadata (expire after 2x classification interval)
-                metadata_json = orjson.dumps(asdict(result.metadata))
-                await pipe.set(self.CLASSIFICATION_METADATA_KEY, metadata_json, ex=ttl)
-
-                await pipe.set(self.CLASSIFICATION_TIMESTAMP_KEY, result.metadata.timestamp, ex=ttl)
-
-                await pipe.execute()
-
-            logger.debug("Classification published to Redis successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to publish classification to Redis: {e}")
+                await self._redis.delete(
+                    self.CLASSIFICATION_HOT_KEY,
+                    self.CLASSIFICATION_COLD_KEY,
+                    self.CLASSIFICATION_METADATA_KEY,
+                    self.CLASSIFICATION_TIMESTAMP_KEY,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort purge
+                logger.debug(f"Classification key purge failed: {exc}")
 
     async def get_server_classification(self, url: str) -> Optional[str]:
         """Get classification for a server (hot/cold).
