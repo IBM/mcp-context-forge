@@ -78,7 +78,6 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -88,6 +87,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -122,6 +122,11 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+# NOTE: downstream session-id extraction lives in upstream_session_registry so
+# tool_service, prompt_service, and resource_service share one implementation.
+_downstream_session_id_from_request = downstream_session_id_from_request_context
 
 
 def _get_tool_lookup_cache():
@@ -5041,38 +5046,39 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # Prefer the registry when we have a downstream Mcp-Session-Id and
+                            # we're not inside a distributed trace (reused transports carry
+                            # pinned headers, so per-request traceparent can't propagate).
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                async with pool.session(
+                            if use_registry:
+                                # Registry path: 1:1 binding means upstream state is private to
+                                # this downstream session. Connection reuse still amortizes the
+                                # initialize cost across multiple tool calls in the same session.
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    # Registry not initialized (tests, early startup) — fall through.
+                                    use_registry = False
+
+                            if use_registry:
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), or
+                                # when a distributed trace needs per-request trace headers.
                                 with create_span(
                                     "mcp.client.call",
                                     {
@@ -5223,40 +5229,35 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # See the SSE branch above for the full rationale.
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                # Determine transport type based on current transport setting
-                                pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-                                async with pool.session(
+                            if use_registry:
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    use_registry = False
+
+                            if use_registry:
+                                registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=pool_transport_type,
+                                    transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), when
+                                # a distributed trace needs per-request trace headers, or when the
+                                # registry singleton isn't initialised (tests, early startup).
                                 with create_span(
                                     "mcp.client.call",
                                     {

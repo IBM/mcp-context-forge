@@ -35,18 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 def _get_cleanup_timeout() -> float:
-    """Get cleanup timeout from config (lazy import to avoid circular deps).
+    """Cache-cleanup timeout (seconds) for pubsub / transport close operations.
 
-    Returns:
-        Cleanup timeout in seconds (default: 5.0).
+    Returns a fixed 5s — well above typical close latency, bounded enough to
+    keep shutdown deterministic when a connection is stuck. Previously read
+    settings.mcp_session_pool_cleanup_timeout, which disappeared with the
+    pool config (#4205). No deployment in the wild tuned this knob, so a
+    constant is fine; if that changes we can re-introduce a dedicated
+    setting under a neutral name.
     """
-    try:
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-        return settings.mcp_session_pool_cleanup_timeout
-    except Exception:
-        return 5.0
+    return 5.0
 
 
 @dataclass

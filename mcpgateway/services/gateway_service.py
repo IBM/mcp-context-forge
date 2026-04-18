@@ -56,7 +56,6 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-import anyio
 from filelock import FileLock, Timeout
 import httpx
 from mcp import ClientSession
@@ -102,8 +101,8 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, register_gateway_capabilities_for_notifications, TransportType
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
@@ -425,6 +424,49 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
     )
     if not membership:
         raise ValueError("User membership in team not sufficient for this update.")
+
+
+async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
+    """Close every upstream MCP session bound to ``gateway_id``.
+
+    Called after gateway deletion or an update that changes the connect
+    parameters (url, auth_type, auth_value, auth_query_params, oauth_config).
+    Without this, the UpstreamSessionRegistry keeps handing the stale
+    ClientSession back on the next acquire, so in-flight downstream sessions
+    keep talking to the old URL / with old credentials (see #4205).
+
+    Tolerates an uninitialized registry (unit tests, early startup) and any
+    registry-side exception — eviction is best-effort and must not block
+    gateway mutation.
+
+    Args:
+        gateway_id: Gateway whose upstream sessions should be closed.
+
+    Returns:
+        The number of upstream sessions evicted (0 if the registry is
+        unavailable or nothing matched).
+    """
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
+        get_upstream_session_registry,
+        RegistryNotInitializedError,
+    )
+
+    try:
+        return await get_upstream_session_registry().evict_gateway(gateway_id)
+    except RegistryNotInitializedError:
+        # Unit tests / very-early startup — nothing to evict by definition.
+        return 0
+    except Exception as exc:  # noqa: BLE001 — see docstring; logged at warning because this
+        # fires POST-commit: auth / URL / TLS change is already persisted, so a silent eviction
+        # failure leaves in-flight downstream sessions talking to the stale gateway state.
+        logger.warning(
+            "Upstream session eviction for gateway %s failed (%s: %s); stale sessions may persist until their downstream session ends",
+            gateway_id,
+            type(exc).__name__,
+            exc,
+        )
+        return 0
 
 
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
@@ -2106,6 +2148,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Save original values BEFORE updating for change detection checks later
                 original_url = gateway.url
                 original_auth_type = gateway.auth_type
+                # #4205: capture every connect-affecting field so we know after
+                # the commit whether to evict upstream sessions pinned to this
+                # gateway. "Connect-affecting" means anything that changes the
+                # HTTP/TLS envelope or credentials the upstream ClientSession
+                # would use — URL, auth, or any of the TLS/mTLS material.
+                original_transport = gateway.transport
+                original_auth_value = gateway.auth_value
+                original_auth_query_params = gateway.auth_query_params
+                original_oauth_config = gateway.oauth_config
+                original_ca_certificate = gateway.ca_certificate
+                original_ca_certificate_sig = gateway.ca_certificate_sig
+                original_signing_algorithm = gateway.signing_algorithm
+                original_client_cert = getattr(gateway, "client_cert", None)
+                original_client_key = getattr(gateway, "client_key", None)
 
                 # Update fields if provided
                 if gateway_update.name is not None:
@@ -2483,6 +2539,28 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 db.commit()
                 db.refresh(gateway)
+
+                # #4205: if a connect-affecting field changed, close any upstream
+                # MCP sessions pinned to this gateway so the next acquire rebuilds
+                # against the new URL/auth/TLS material. Non-connect changes
+                # (name, description, tags, passthrough_headers, visibility, etc.)
+                # leave sessions alone to preserve the 1:1 downstream-session
+                # connection-reuse benefit.
+                _connect_field_changes = (
+                    (gateway.url, original_url),
+                    (gateway.transport, original_transport),
+                    (gateway.auth_type, original_auth_type),
+                    (gateway.auth_value, original_auth_value),
+                    (gateway.auth_query_params, original_auth_query_params),
+                    (gateway.oauth_config, original_oauth_config),
+                    (gateway.ca_certificate, original_ca_certificate),
+                    (gateway.ca_certificate_sig, original_ca_certificate_sig),
+                    (gateway.signing_algorithm, original_signing_algorithm),
+                    (getattr(gateway, "client_cert", None), original_client_cert),
+                    (getattr(gateway, "client_key", None), original_client_key),
+                )
+                if any(new_value != old_value for new_value, old_value in _connect_field_changes):
+                    await _evict_upstream_sessions_for_gateway(str(gateway.id))
 
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
@@ -3197,6 +3275,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             db.commit()
 
+            # #4205: close any upstream MCP sessions bound to this gateway
+            # so in-flight downstream sessions can't keep talking to the
+            # deleted gateway's URL. Best-effort — registry may not be
+            # initialized in some test paths.
+            await _evict_upstream_sessions_for_gateway(str(gateway_id))
+
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_gateways()
@@ -3645,42 +3729,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
-                        # Use session pool if enabled for faster health checks
-                        use_pool = False
-                        pool = None
-                        if settings.mcp_session_pool_enabled:
-                            try:
-                                pool = get_mcp_session_pool()
-                                use_pool = True
-                            except RuntimeError:
-                                # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                pass
-
-                        if use_pool and pool is not None:
-                            # Health checks are system operations, not user-driven.
-                            # Use system identity to isolate from user sessions.
-                            async with pool.session(
-                                url=gateway_url,
-                                headers=headers,
-                                transport_type=TransportType.STREAMABLE_HTTP,
-                                httpx_client_factory=get_httpx_client_factory,
-                                user_identity="_system_health_check",
-                                gateway_id=gateway_id,
-                            ) as pooled:
-                                # Optional explicit RPC verification (off by default for performance).
-                                # Pool's internal staleness check handles health via _validate_session.
-                                if settings.mcp_session_pool_explicit_health_rpc:
-                                    with anyio.fail_after(settings.health_check_timeout):
-                                        await pooled.session.list_tools()
-                        else:
-                            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                                read_stream,
-                                write_stream,
-                                _get_session_id,
-                            ):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    # Initialize the session
-                                    response = await session.initialize()
+                        # Health checks are system operations with no downstream MCP session,
+                        # so they don't go through the UpstreamSessionRegistry (which requires
+                        # a downstream session id). A fresh per-call session suffices — the
+                        # probe is cheap and verifies that an initialize round-trip works.
+                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                            read_stream,
+                            write_stream,
+                            _get_session_id,
+                        ):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                response = await session.initialize()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:

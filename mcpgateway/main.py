@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,7 +59,6 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -1520,57 +1519,6 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
-def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
-    """Create JWT identity extractor function for session pool.
-
-    Extracts stable user ID from JWT token to prevent bucket explosion
-    when using short-lived JWTs with rotating jti/exp/iat claims.
-
-    Returns:
-        Callable that extracts stable user identifier from request headers,
-        or None if extraction fails.
-    """
-
-    def jwt_identity_extractor(headers: dict) -> Optional[str]:
-        """Extract stable user ID from JWT token.
-
-        Decodes JWT without signature verification to extract sub, email, or user_id claim.
-        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
-
-        Args:
-            headers: Request headers dict (case-insensitive lookup handled by caller).
-
-        Returns:
-            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
-        """
-        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
-        if not auth_header:
-            return None
-
-        # Extract token from "Bearer <token>" format
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        else:
-            token = auth_header.strip()
-        if not token:
-            return None
-
-        try:
-            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
-            # This is NOT a security boundary - authentication happens separately via get_current_user.
-            # We only extract stable identity (sub/email/user_id) to group sessions by user.
-            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
-            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
-            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
-            # Try standard claims in order of preference
-            return claims.get("sub") or claims.get("email") or claims.get("user_id")
-        except Exception as e:
-            logger.debug(f"JWT identity extraction failed: {e}")
-            return None
-
-    return jwt_identity_extractor
-
-
 async def attempt_to_bootstrap_sso_providers():
     """
     Try to bootstrap SSO provider services based on settings.
@@ -1683,47 +1631,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, "update_http_pool_metrics"):
         app.state.update_http_pool_metrics()
 
-    # Initialize MCP session pool (for session reuse across tool invocations)
-    # Also initialize if session affinity is enabled (needs the ownership registry)
-    if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+    # Initialize the session-affinity service (Redis-backed worker mapping,
+    # heartbeat, session-owner forwarding). Only needed when affinity is on.
+    # The upstream-session pooling concept that used to live here has moved
+    # to UpstreamSessionRegistry (see issue #4205).
+    if settings.mcpgateway_session_affinity_enabled:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
 
-        # Auto-align pool health check interval to min of pool and gateway settings
-        effective_health_check_interval = min(
-            settings.health_check_interval,
-            settings.mcp_session_pool_health_check_interval,
-        )
-
-        max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
-
-        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
-        identity_extractor = None
-        if settings.mcp_session_pool_jwt_identity_extraction:
-            identity_extractor = _create_jwt_identity_extractor()
-            logger.info("JWT identity extraction enabled for session pool")
-
-        init_mcp_session_pool(
-            max_sessions_per_key=max_sessions_per_key,
-            session_ttl_seconds=settings.mcp_session_pool_ttl,
-            health_check_interval_seconds=effective_health_check_interval,
-            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
-            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
-            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
-            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
-            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
-            identity_extractor=identity_extractor,
-            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-            # Use dedicated transport timeout (default 30s to match MCP SDK default).
-            # This is separate from health_check_timeout to allow long-running tool calls.
-            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
-            # Configurable health check chain - ordered list of methods to try.
-            health_check_methods=settings.mcp_session_pool_health_check_methods,
-            health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
-            max_total_keys=settings.mcp_session_pool_max_total_keys,
-            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
-        )
+        init_session_affinity()
         logger.info("MCP session pool initialized")
+
+    # Initialize the upstream session registry (#4205). 1:1 binding between a
+    # downstream MCP session and its upstream session per gateway, replacing
+    # the old identity-keyed sharing semantics. Always on — no feature flag.
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import init_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+    init_upstream_session_registry()
+    logger.info("Upstream session registry initialized")
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
@@ -1791,22 +1717,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
-        # Start notification service for event-driven refresh (after gateway_service is ready)
-        if settings.mcp_session_pool_enabled:
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import start_pool_notification_service  # pylint: disable=import-outside-toplevel
-
-            await start_pool_notification_service(gateway_service)
-
-        # Start heartbeat and RPC listener for multi-worker session affinity.
-        # This must be outside the mcp_session_pool_enabled guard because
-        # affinity-only deployments (pool disabled, affinity enabled) still
-        # need heartbeat and RPC forwarding.
+        # Start heartbeat, RPC listener, and notification service for multi-worker
+        # session affinity. The upstream-session-pool that used to live under
+        # this guard is gone (#4205); only the affinity layer remains here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+                get_session_affinity,
+                start_affinity_notification_service,
+            )
 
-            pool = get_mcp_session_pool()
+            await start_affinity_notification_service(gateway_service)
+            pool = get_session_affinity()
             pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
             logger.info("Multi-worker session affinity heartbeat and RPC listener started")
@@ -2064,13 +1986,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await shutdown_services(services_to_shutdown)
 
-        # Shutdown MCP session pool (before shared HTTP client)
-        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
-        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+        # Shutdown session-affinity service (before shared HTTP client).
+        if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import close_session_affinity  # pylint: disable=import-outside-toplevel
 
-            await close_mcp_session_pool()
+            await close_session_affinity()
+
+        # Drain upstream session registry (#4205): every (downstream_session_id,
+        # gateway_id) → upstream ClientSession owned by this worker is closed.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        await shutdown_upstream_session_registry()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
@@ -7412,10 +7340,10 @@ async def handle_internal_mcp_session_delete(request: Request):
     if settings.mcpgateway_session_affinity_enabled:
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.cleanup_streamable_http_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.cleanup_session_owner(mcp_session_id)
         except RuntimeError:
             pass
 
@@ -9560,9 +9488,9 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-        if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+        if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
@@ -9570,9 +9498,9 @@ async def _maybe_forward_affinitized_rpc_request(
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
@@ -9588,7 +9516,7 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
@@ -9637,10 +9565,10 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.register_pool_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.register_session_owner(mcp_session_id)
             logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
