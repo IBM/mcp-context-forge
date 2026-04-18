@@ -50,8 +50,8 @@ to re-derive the same trade-off from scratch.
 
 ## Rationale
 
-1. **N=1 is the wrong moment to abstract.** CLAUDE.md is explicit:
-   > Three similar lines is better than a premature abstraction.
+1. **N=1 is the wrong moment to abstract.** Repo convention is explicit:
+   three similar lines beats a premature abstraction.
 
    We have exactly one concrete consumer (with two sub-kinds, MCP and A2A,
    that already share most of the implementation). The shape of the right
@@ -59,12 +59,12 @@ to re-derive the same trade-off from scratch.
    in one consumer often turns out to be policy-specific in the second.
 
 2. **The current code is the most-reviewed code on the branch.** Six
-   stop-time review iterations from Codex caught real bugs (safety-invariant
-   bypass, stranded overrides, listen-loop false-recovery, self-contradicting
-   409 messages, etc.). Pulling the propagation primitives into a separate
-   framework now would either lose that hardening or require porting all
-   the regression tests across an additional API boundary. Either path is
-   net-negative for reliability.
+   stop-time review iterations caught real bugs during development
+   (safety-invariant bypass, stranded overrides, listen-loop
+   false-recovery, self-contradicting 409 messages, etc.). Pulling the
+   propagation primitives into a separate framework now would either lose
+   that hardening or require porting all the regression tests across an
+   additional API boundary. Either path is net-negative for reliability.
 
 3. **The current factoring already supports a second consumer cheaply.**
    `MoveCompatibility`, `BootReconcileStatus`, and the per-runtime keying
