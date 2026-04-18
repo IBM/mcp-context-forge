@@ -53,6 +53,21 @@ _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
 
 
+def _should_delegate_a2a_to_rust() -> bool:
+    """Return whether A2A invocations should be delegated to the Rust runtime.
+
+    Lazy import of ``mcpgateway.version`` avoids the circular import between
+    ``mcpgateway.services`` package init and ``mcpgateway.version``.
+
+    Returns:
+        ``True`` when the Rust A2A runtime should service invocations.
+    """
+    # First-Party
+    from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+    return should_delegate_a2a_to_rust()
+
+
 def _get_registry_cache():
     """Get registry cache singleton lazily.
 
@@ -1693,11 +1708,11 @@ class A2AAgentService(BaseService):
                         "endpoint_url": prepared.sanitized_endpoint_url,
                         "interaction_type": interaction_type,
                         "protocol_version": agent_protocol_version,
-                        "runtime": "rust" if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled else "python",
+                        "runtime": "rust" if _should_delegate_a2a_to_rust() else "python",
                     },
                 )
 
-                if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
+                if _should_delegate_a2a_to_rust():
                     runtime_response = await get_rust_a2a_runtime_client().invoke(
                         prepared,
                         timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
@@ -1790,7 +1805,7 @@ class A2AAgentService(BaseService):
                     # delegate mode (experimental_rust_a2a_runtime_delegate_enabled=true)
                     # for full Rust-path execution.
                     # ═══════════════════════════════════════════════════════════════════════════
-                    if settings.experimental_rust_a2a_runtime_enabled and not settings.experimental_rust_a2a_runtime_delegate_enabled:
+                    if settings.experimental_rust_a2a_runtime_enabled and not _should_delegate_a2a_to_rust():
                         structured_logger.log(
                             level="INFO",
                             message=f"A2A shadow mode active (observe-only): {agent_name}",

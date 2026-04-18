@@ -363,6 +363,8 @@ These checks are aligned with equivalent REST endpoints.
 | JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
 | Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
 | Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
+| `GET`/`PATCH /admin/runtime/mcp-mode` | `admin.system_config` | Runtime override of public `/mcp` ingress (`shadow ↔ edge`); see [Rust MCP Runtime](../architecture/rust-mcp-runtime.md#runtime-mode-override). |
+| `GET`/`PATCH /admin/runtime/a2a-mode` | `admin.system_config` | Runtime override of registered-A2A invocation path (`shadow ↔ edge`). |
 
 ---
 
