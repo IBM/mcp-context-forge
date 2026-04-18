@@ -154,3 +154,32 @@ def test_names_returns_sorted_registered_ingresses():
     mount.register("alpha", _make_recording_app("a", []))
     mount.register("mike", _make_recording_app("m", []))
     assert mount.names() == ["alpha", "mike", "zebra"]
+
+
+@pytest.mark.asyncio
+async def test_set_fallback_swaps_the_fallback_app_at_runtime():
+    """set_fallback replaces the fallback so a misconfigured selector routes to the new app on the next request."""
+    sink: List[str] = []
+    mount = MCPIngressMount(selector=lambda _scope: "ghost")
+    mount.set_fallback(_make_recording_app("first", sink))
+
+    async def _noop(*_):
+        pass
+
+    await mount.dispatch({"type": "http", "path": "/a"}, _noop, _noop)
+    mount.set_fallback(_make_recording_app("second", sink))
+    await mount.dispatch({"type": "http", "path": "/b"}, _noop, _noop)
+    # set_fallback(None) restores the 503-on-miss behavior.
+    mount.set_fallback(None)
+    captured = []
+
+    async def _capture(message):
+        captured.append(message)
+
+    async def _no_receive():
+        return {"type": "http.request"}
+
+    await mount.dispatch({"type": "http", "path": "/c"}, _no_receive, _capture)
+
+    assert sink == ["first:/a", "second:/b"]
+    assert any(msg.get("type") == "http.response.start" and msg.get("status") == 503 for msg in captured)

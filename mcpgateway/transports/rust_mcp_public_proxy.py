@@ -223,6 +223,9 @@ class RustMCPPublicProxyApp:
         upstream_path = scope.get("path", "/")
         method = request.method
 
+        # asyncio.CancelledError is BaseException in 3.8+ — neither the
+        # httpx.HTTPError nor the bare ``Exception`` arms below will swallow
+        # a client-disconnect cancel; it propagates out naturally.
         try:
             client = await self._get_client()
             headers = _build_forwarded_headers(request)
@@ -234,10 +237,6 @@ class RustMCPPublicProxyApp:
                 content=request.stream(),
             )
             upstream_response = await client.send(upstream_request, stream=True)
-        except asyncio.CancelledError:
-            # Client disconnected before upstream replied — let asyncio
-            # propagate the cancel rather than swallowing it.
-            raise
         except httpx.HTTPError as exc:
             logger.error(
                 "rust-public ingress: upstream %s %s failed (%s): %s",

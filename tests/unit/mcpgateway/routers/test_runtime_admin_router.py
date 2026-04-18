@@ -8,6 +8,7 @@ desired allow/deny outcome and exercise the endpoint functions directly.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -466,3 +467,51 @@ async def test_patch_mcp_mode_superseded_path_writes_audit_and_returns_status(al
     assert audit_kwargs["additional_context"]["attempted_version"] == 50
     assert audit_kwargs["additional_context"]["superseded_by_version"] == 100
     assert audit_kwargs["additional_context"]["superseded_by_mode"] == "edge"
+
+
+# ---------------------------------------------------------------------
+# _warn_if_behind_reverse_proxy — diagnostic for non-nginx reverse-proxy
+# topologies where the proxy itself won't follow the override.
+# ---------------------------------------------------------------------
+
+
+def test_warn_if_behind_reverse_proxy_logs_when_xforward_headers_detected(caplog):
+    """A PATCH that arrives via a reverse proxy (X-Forwarded-* present) gets a warning naming the headers."""
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import _warn_if_behind_reverse_proxy
+    from mcpgateway.runtime_state import RuntimeKind
+
+    request = SimpleNamespace(headers={"x-forwarded-for": "10.0.0.1", "x-forwarded-proto": "https"})
+    caplog.set_level("WARNING", logger="mcpgateway.routers.runtime_admin_router")
+    _warn_if_behind_reverse_proxy(request, runtime=RuntimeKind.MCP)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("reverse proxy" in w.message for w in warnings), [w.message for w in warnings]
+    assert any("x-forwarded-for" in w.message and "x-forwarded-proto" in w.message for w in warnings)
+
+
+def test_warn_if_behind_reverse_proxy_silent_when_no_forwarded_headers(caplog):
+    """No X-Forwarded-* present → no warning (silent path covers the early return)."""
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import _warn_if_behind_reverse_proxy
+    from mcpgateway.runtime_state import RuntimeKind
+
+    request = SimpleNamespace(headers={"content-type": "application/json"})
+    caplog.set_level("WARNING", logger="mcpgateway.routers.runtime_admin_router")
+    _warn_if_behind_reverse_proxy(request, runtime=RuntimeKind.MCP)
+    assert [r for r in caplog.records if "reverse proxy" in r.message] == []
+
+
+def test_warn_if_behind_reverse_proxy_handles_missing_headers_attribute(caplog):
+    """A request stub without a ``headers`` attribute hits the defensive early return without raising."""
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import _warn_if_behind_reverse_proxy
+    from mcpgateway.runtime_state import RuntimeKind
+
+    caplog.set_level("WARNING", logger="mcpgateway.routers.runtime_admin_router")
+    # Build an object that explicitly lacks ``headers`` — getattr returns None,
+    # the function returns immediately with no warning.
+    request = SimpleNamespace()
+    request.headers = None
+    _warn_if_behind_reverse_proxy(request, runtime=RuntimeKind.MCP)
+    assert [r for r in caplog.records if "reverse proxy" in r.message] == []

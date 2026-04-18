@@ -506,7 +506,7 @@ def _deployment_allows_override_mode(runtime, mode):
             return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
         return MoveCompatibility.OK
 
-    return MoveCompatibility.NO_DISPATCHER
+    return MoveCompatibility.NO_DISPATCHER  # pragma: no cover — _coerce_runtime rejects unknown kinds upstream
 
 
 def deployment_allows_override_mode(runtime, mode):

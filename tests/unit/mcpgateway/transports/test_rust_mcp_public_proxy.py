@@ -370,11 +370,12 @@ async def test_proxy_returns_500_on_unexpected_exception(caplog) -> None:
 async def test_proxy_re_raises_cancelled_error_during_send() -> None:
     """asyncio.CancelledError from the upstream send must propagate, not be swallowed as 502/500.
 
-    The proxy explicitly catches and re-raises CancelledError before the
-    httpx.HTTPError / Exception handlers so a client disconnect during
-    the upstream call doesn't get masked as an "unavailable" 502 in the
-    logs. CancelledError IS BaseException, so the explicit handler is
-    belt-and-suspenders against future refactors that broaden the catch.
+    Since CancelledError is BaseException in Python 3.8+, neither the
+    httpx.HTTPError nor the broad ``except Exception`` arm catches it —
+    it propagates naturally out of __call__. This test pins that
+    contract so a future refactor that widens the catch (e.g. to
+    BaseException) doesn't accidentally mask client disconnects as
+    bogus 502 responses.
     """
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -388,6 +389,31 @@ async def test_proxy_re_raises_cancelled_error_during_send() -> None:
 
     # No 502/500 was sent — the cancel propagated before any response.
     assert send.messages == []
+
+
+@pytest.mark.asyncio
+async def test_body_iter_logs_exception_on_mid_stream_non_cancel_error(caplog) -> None:
+    """A non-cancellation exception mid-stream takes the broad ``except Exception`` arm and logs with traceback."""
+
+    async def _exploding_stream():
+        yield b"first-chunk"
+        raise RuntimeError("upstream-died-mid-stream")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=AsyncIteratorByteStream(_exploding_stream()), headers={"content-type": "text/event-stream"})
+
+    proxy = _make_proxy(handler)
+    send = _SendCollector()
+    caplog.set_level("ERROR", logger="mcpgateway.transports.rust_mcp_public_proxy")
+
+    # Don't assert on raise/no-raise — depends on Starlette's task-group behavior.
+    try:
+        await proxy(_make_scope(), _make_receive(), send)
+    except RuntimeError:
+        pass
+
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert any("error streaming body" in rec.message and "upstream-died-mid-stream" in (rec.exc_text or "") for rec in error_records), [(r.message, r.exc_text) for r in error_records]
 
 
 @pytest.mark.asyncio

@@ -95,8 +95,8 @@ def _move_compat_to_409_detail(runtime: RuntimeKind, mode: OverrideMode, boot_mo
             f"Boot with RUST_{runtime.value.upper()}_MODE='edge' to enable edge overrides. "
             "(mode='shadow' is always accepted as an escape hatch to clear a stale override.)"
         )
-    # OK shouldn't reach here; defensive default.
-    return f"{runtime_label} runtime cannot accept this override on boot_mode={boot_mode!r} (reason={compat.value})."
+    # OK shouldn't reach here; defensive default for any future MoveCompatibility variant.
+    return f"{runtime_label} runtime cannot accept this override on boot_mode={boot_mode!r} (reason={compat.value})."  # pragma: no cover
 
 
 class RuntimeModeUpdate(BaseModel):

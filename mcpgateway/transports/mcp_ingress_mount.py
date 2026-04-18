@@ -34,7 +34,6 @@ class ASGIApp(Protocol):
 
     async def __call__(self, scope: dict, receive: Callable[[], Awaitable[dict]], send: Callable[[dict], Awaitable[None]]) -> None:
         """ASGI 3.0 entry point. Implementations consume ``receive`` and emit via ``send``."""
-        ...
 
 
 # An ``IngressSelector`` returns the registered ingress name to serve THIS

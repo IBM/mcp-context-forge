@@ -1007,3 +1007,350 @@ async def test_listen_loop_dedupes_self_pubsub_message(monkeypatch: pytest.Monke
         assert state.version("mcp") == 0
     finally:
         await coord.stop()
+
+
+# ---------------------------------------------------------------------
+# Defensive ValueError branches — accessor methods on RuntimeState
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,expected",
+    [
+        ("boot_reconcile_status", "coordinator_offline"),
+        ("override_mode", None),
+        ("version", 0),
+        ("last_change", None),
+    ],
+)
+def test_runtime_state_accessors_return_safe_defaults_for_unknown_runtime(method, expected):
+    """Accessors must not raise when handed an unknown runtime kind — they return a safe default so callers (e.g. health endpoints) keep working."""
+    state = RuntimeState()
+    result = getattr(state, method)("rpc")  # "rpc" is not a registered kind
+    if method == "boot_reconcile_status":
+        assert result.value == expected
+    else:
+        assert result == expected
+
+
+# ---------------------------------------------------------------------
+# RuntimeStateCoordinator.start: idempotent + degraded path
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coordinator_start_is_idempotent():
+    """Calling start() twice is a no-op; the second call returns immediately without re-attaching."""
+    coord = RuntimeStateCoordinator()
+    await coord.start()
+    try:
+        await coord.start()  # second call must not raise / re-attach
+        assert coord._started is True  # noqa: SLF001 — verifying idempotency
+    finally:
+        await coord.stop()
+
+
+# ---------------------------------------------------------------------
+# _reconcile_from_hint: no-redis and malformed-mode paths
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_no_redis_marks_status_ok():
+    """When Redis isn't configured, boot reconcile is trivially OK — no hint to apply."""
+    coord = RuntimeStateCoordinator()
+    coord._redis = None  # noqa: SLF001 — explicitly model the no-Redis deployment
+    await coord._reconcile_from_hint("mcp")  # noqa: SLF001
+    assert get_runtime_state().boot_reconcile_status("mcp").value == "ok"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_hint_malformed_mode_in_payload_falls_through():
+    """A hint payload whose ``mode`` field can't be coerced is treated as 'no compatibility check' and falls through to apply_remote."""
+    coord = RuntimeStateCoordinator()
+    coord._redis = MagicMock()
+    coord._redis.get = AsyncMock(return_value=orjson.dumps({"mode": "not-a-mode", "version": 1, "initiator_pod": "pod-x"}))
+    await coord._reconcile_from_hint("mcp")  # noqa: SLF001
+    # Either OK (apply_remote rejected the malformed mode silently) or an
+    # incompatible-* status — the important thing is no exception bubbled up.
+    assert get_runtime_state().boot_reconcile_status("mcp") is not None
+
+
+# ---------------------------------------------------------------------
+# _cleanup_pubsub: timeout + close paths
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cleanup_pubsub_handles_unsubscribe_timeout_and_close_paths():
+    """Both unsubscribe and close take the timeout/exception arms cleanly — they must never raise out of _cleanup_pubsub."""
+    # Standard
+    import asyncio as _asyncio
+
+    coord = RuntimeStateCoordinator()
+    fake_pubsub = MagicMock()
+    fake_pubsub.unsubscribe = AsyncMock(side_effect=_asyncio.TimeoutError())
+    fake_pubsub.aclose = AsyncMock(side_effect=_asyncio.TimeoutError())
+    coord._pubsub = fake_pubsub  # noqa: SLF001
+
+    # Must not raise.
+    await coord._cleanup_pubsub()  # noqa: SLF001
+    assert coord._pubsub is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_cleanup_pubsub_falls_back_to_close_when_aclose_missing():
+    """Older redis clients expose ``close`` not ``aclose`` — the cleanup must fall back without raising."""
+    coord = RuntimeStateCoordinator()
+    fake_pubsub = MagicMock(spec=["unsubscribe", "close"])  # NO aclose
+    fake_pubsub.unsubscribe = AsyncMock(return_value=None)
+    fake_pubsub.close = AsyncMock(return_value=None)
+    coord._pubsub = fake_pubsub  # noqa: SLF001
+
+    await coord._cleanup_pubsub()  # noqa: SLF001
+    fake_pubsub.close.assert_awaited_once()
+    assert coord._pubsub is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_cleanup_pubsub_swallows_unsubscribe_and_close_exceptions():
+    """Non-timeout exceptions during unsubscribe / close are caught and logged, never raised."""
+    coord = RuntimeStateCoordinator()
+    fake_pubsub = MagicMock()
+    fake_pubsub.unsubscribe = AsyncMock(side_effect=RuntimeError("unsub blew up"))
+    fake_pubsub.aclose = AsyncMock(side_effect=RuntimeError("close blew up"))
+    coord._pubsub = fake_pubsub  # noqa: SLF001
+
+    await coord._cleanup_pubsub()  # noqa: SLF001
+    assert coord._pubsub is None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------
+# Listen-loop edge cases — exercised by driving _listen_loop with a
+# fake pubsub that yields specific message shapes.
+# ---------------------------------------------------------------------
+
+
+class _ScriptedPubSub:
+    """Async stub that yields a scripted sequence of get_message values, then signals the coordinator's stop_event so _listen_loop exits cleanly."""
+
+    def __init__(self, script: list, stop_event) -> None:
+        # Each entry is either a callable returning a dict (or raising) OR a
+        # bare value yielded as-is.
+        self._script = list(script)
+        self._stop = stop_event
+
+    async def get_message(self, ignore_subscribe_messages: bool = True, timeout: float = 1.0):  # noqa: ARG002
+        if not self._script:
+            # Set the stop_event then yield None so the coordinator hits its
+            # "non-message return" continue and re-checks the loop condition.
+            self._stop.set()
+            return None
+        item = self._script.pop(0)
+        if callable(item):
+            return item()
+        return item
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_recovers_cluster_propagation_after_idle_following_errors():
+    """After a stretch of receive errors degrades cluster_propagation, an idle-timeout (no message) restores it."""
+    # Standard
+    import asyncio as _asyncio
+
+    state = get_runtime_state()
+    state.set_cluster_propagation(PROPAGATION_DEGRADED)
+
+    coord = RuntimeStateCoordinator()
+    coord._started = True  # noqa: SLF001
+    stop = _asyncio.Event()
+    coord._stop_event = stop  # noqa: SLF001
+
+    # First call raises a non-Timeout to bump consecutive_errors > 0;
+    # second call raises TimeoutError to take the recovery branch.
+    def _raise_runtime():
+        raise RuntimeError("transient receive error")
+
+    def _raise_timeout():
+        raise _asyncio.TimeoutError()
+
+    coord._pubsub = _ScriptedPubSub([_raise_runtime, _raise_timeout], stop)  # noqa: SLF001
+
+    await coord._listen_loop()  # noqa: SLF001
+
+    assert state.cluster_propagation == PROPAGATION_REDIS
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_discards_malformed_pubsub_payload(caplog):
+    """A pub/sub message whose data isn't valid JSON is logged and skipped — no crash, no state change."""
+    # Standard
+    import asyncio as _asyncio
+
+    coord = RuntimeStateCoordinator()
+    coord._started = True  # noqa: SLF001
+    stop = _asyncio.Event()
+    coord._stop_event = stop  # noqa: SLF001
+
+    coord._pubsub = _ScriptedPubSub(  # noqa: SLF001
+        [{"type": "message", "data": b"not-valid-json{{{"}],
+        stop,
+    )
+
+    caplog.set_level("WARNING", logger="mcpgateway.runtime_state")
+    await coord._listen_loop()  # noqa: SLF001
+
+    assert any("malformed pub/sub payload" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_skips_message_with_empty_data():
+    """A pub/sub message with empty ``data`` is skipped without raising."""
+    # Standard
+    import asyncio as _asyncio
+
+    coord = RuntimeStateCoordinator()
+    coord._started = True  # noqa: SLF001
+    stop = _asyncio.Event()
+    coord._stop_event = stop  # noqa: SLF001
+
+    coord._pubsub = _ScriptedPubSub([{"type": "message", "data": ""}], stop)  # noqa: SLF001
+
+    # Must not raise.
+    await coord._listen_loop()  # noqa: SLF001
+    assert get_runtime_state().override_mode("mcp") is None
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_treats_uncoerceable_payload_fields_as_none(monkeypatch, caplog):
+    """When ``mode`` or ``runtime`` in the payload can't be coerced to enums, the compatibility check is skipped and apply_remote handles the malformed payload."""
+    # Standard
+    import asyncio as _asyncio
+
+    coord = RuntimeStateCoordinator()
+    coord._started = True  # noqa: SLF001
+    stop = _asyncio.Event()
+    coord._stop_event = stop  # noqa: SLF001
+
+    payload = orjson.dumps(
+        {
+            "runtime": "not-a-real-runtime",
+            "mode": "not-a-real-mode",
+            "version": 1,
+            "initiator_pod": "pod-other",
+        }
+    )
+    coord._pubsub = _ScriptedPubSub([{"type": "message", "data": payload}], stop)  # noqa: SLF001
+
+    caplog.set_level("WARNING", logger="mcpgateway.runtime_state")
+    await coord._listen_loop()  # noqa: SLF001
+
+    # No state change; apply_remote should have rejected the malformed payload.
+    assert get_runtime_state().override_mode("mcp") is None
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_decodes_bytes_payload_and_reaches_compatibility_check(monkeypatch, caplog):
+    """Message data delivered as bytes is decoded UTF-8, JSON-parsed, and reaches the per-pod compatibility check."""
+    # Standard
+    import asyncio as _asyncio
+
+    # First-Party
+    from mcpgateway.config import settings as _settings
+
+    # Enable MCP runtime + safety flag so the compatibility check returns OK
+    # for an edge override; we can then apply_remote it.
+    monkeypatch.setattr(_settings, "experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr(_settings, "experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+
+    state = get_runtime_state()
+    coord = RuntimeStateCoordinator()
+    coord._started = True  # noqa: SLF001
+    stop = _asyncio.Event()
+    coord._stop_event = stop  # noqa: SLF001
+
+    payload = orjson.dumps(
+        {
+            "runtime": "mcp",
+            "mode": "edge",
+            "version": 99,
+            "initiator_user": "alice@example.com",
+            "initiator_pod": "pod-other",
+            "timestamp": 1234567890.0,
+        }
+    )
+    coord._pubsub = _ScriptedPubSub([{"type": "message", "data": payload}], stop)  # noqa: SLF001
+
+    caplog.set_level("INFO", logger="mcpgateway.runtime_state")
+    await coord._listen_loop()  # noqa: SLF001
+
+    # The bytes payload was decoded, parsed, found compatible, and applied.
+    assert state.override_mode("mcp") == "edge"
+    assert state.version("mcp") == 99
+
+
+# ---------------------------------------------------------------------
+# version.py status payload includes last_change after an override
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_status_payload_includes_last_change_after_override(monkeypatch):
+    """After an override is applied, _mcp_runtime_status_payload exposes a last_change block."""
+    # First-Party
+    from mcpgateway.config import settings as _settings
+    from mcpgateway.version import _mcp_runtime_status_payload
+
+    monkeypatch.setattr(_settings, "experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr(_settings, "experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+
+    state = get_runtime_state()
+    await state.apply_local("mcp", "edge", initiator_user="alice@example.com", version=42)
+
+    payload = _mcp_runtime_status_payload()
+    assert "last_change" in payload
+    assert payload["last_change"]["version"] == 42
+    assert payload["last_change"]["mode"] == "edge"
+    assert payload["last_change"]["initiator_user"] == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a2a_runtime_status_payload_includes_last_change_after_override(monkeypatch):
+    """After an A2A override is applied, _a2a_runtime_status_payload exposes a last_change block."""
+    # First-Party
+    from mcpgateway.config import settings as _settings
+    from mcpgateway.version import _a2a_runtime_status_payload
+
+    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_enabled", True, raising=False)
+
+    state = get_runtime_state()
+    await state.apply_local("a2a", "shadow", initiator_user="bob@example.com", version=7)
+
+    payload = _a2a_runtime_status_payload()
+    assert "last_change" in payload
+    assert payload["last_change"]["version"] == 7
+    assert payload["last_change"]["mode"] == "shadow"
+
+
+@pytest.mark.asyncio
+async def test_should_delegate_a2a_to_rust_returns_false_under_shadow_override(monkeypatch):
+    """An A2A shadow override forces _should_delegate_a2a_to_rust to False even when boot flags allow delegation."""
+    # First-Party
+    from mcpgateway.config import settings as _settings
+    from mcpgateway.version import _should_delegate_a2a_to_rust
+
+    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_enabled", True, raising=False)
+    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
+
+    state = get_runtime_state()
+    await state.apply_local("a2a", "shadow", initiator_user=None, version=1)
+
+    assert _should_delegate_a2a_to_rust() is False
+
+
+def test_boot_mcp_transport_mount_returns_underlying_value():
+    """``boot_mcp_transport_mount`` is a thin public wrapper — verify it returns the same value as the underlying helper."""
+    # First-Party
+    from mcpgateway.version import _boot_mcp_transport_mount, boot_mcp_transport_mount
+
+    assert boot_mcp_transport_mount() == _boot_mcp_transport_mount()

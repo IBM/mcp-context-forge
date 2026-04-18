@@ -160,7 +160,7 @@ def _move_compat_to_reconcile_status(compat: "MoveCompatibility") -> "BootReconc
     Returns:
         The matching ``BootReconcileStatus``. ``OK`` maps to ``OK`` for symmetry.
     """
-    if compat == MoveCompatibility.OK:
+    if compat == MoveCompatibility.OK:  # pragma: no cover — caller filters OK upstream
         return BootReconcileStatus.OK
     if compat == MoveCompatibility.NO_DISPATCHER:
         return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
@@ -168,7 +168,7 @@ def _move_compat_to_reconcile_status(compat: "MoveCompatibility") -> "BootReconc
         return BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
     if compat == MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG:
         return BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
-    return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER  # defensive default
+    return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER  # pragma: no cover — defensive default for future MoveCompatibility variants
 
 
 # Backward-compat aliases for callers that consume the bare string set or the
@@ -802,7 +802,7 @@ class RuntimeStateCoordinator:
             hint_mode = None
         if hint_mode is not None:
             # First-Party: lazy to avoid the version <-> runtime_state import cycle.
-            from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel
+            from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
 
             compat = _deployment_allows_override_mode(kind, hint_mode)
             if compat != MoveCompatibility.OK:
@@ -839,99 +839,99 @@ class RuntimeStateCoordinator:
         """
         consecutive_errors = 0
         state = get_runtime_state()
-        try:
-            while self._started and not (self._stop_event and self._stop_event.is_set()):
-                if self._pubsub is None:
-                    break
-                try:
-                    message = await asyncio.wait_for(
-                        self._pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
-                        timeout=2.0,
-                    )
-                except asyncio.TimeoutError:
-                    # Idle timeout is the normal path when no messages arrive;
-                    # treat it as evidence the subscriber is alive.
-                    if consecutive_errors > 0:
-                        consecutive_errors = 0
-                        if state.cluster_propagation == PROPAGATION_DEGRADED:
-                            state.set_cluster_propagation(PROPAGATION_REDIS)
-                            logger.info("RuntimeStateCoordinator: pub/sub recovered, cluster_propagation back to %s", PROPAGATION_REDIS)
-                    continue
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    consecutive_errors += 1
-                    if consecutive_errors == LISTEN_LOOP_DEGRADE_THRESHOLD:
-                        state.set_cluster_propagation(PROPAGATION_DEGRADED)
-                        logger.error(
-                            "RuntimeStateCoordinator: %d consecutive pub/sub receive failures; cluster_propagation downgraded to %s. Last error: %s",
-                            consecutive_errors,
-                            PROPAGATION_DEGRADED,
-                            exc,
-                        )
-                    else:
-                        logger.debug("RuntimeStateCoordinator: receive error (%d consecutive): %s", consecutive_errors, exc)
-                    await asyncio.sleep(0.1)
-                    continue
-                # A non-exception return without a real message (e.g. ``None`` from
-                # a pubsub that's broken in a way that doesn't raise) is NOT
-                # evidence the subscriber is alive — the idle-timeout branch above
-                # handles the legit silence case. Only count real messages as
-                # "subscriber is healthy" for the recovery promotion.
-                if not message or message.get("type") != "message":
-                    continue
+        # asyncio.CancelledError is BaseException in 3.8+ — the inner
+        # ``except Exception`` won't swallow a task cancel; it propagates
+        # naturally out of this coroutine.
+        while self._started and not (self._stop_event and self._stop_event.is_set()):
+            if self._pubsub is None:
+                break
+            try:
+                message = await asyncio.wait_for(
+                    self._pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                    timeout=2.0,
+                )
+            except asyncio.TimeoutError:
+                # Idle timeout is the normal path when no messages arrive;
+                # treat it as evidence the subscriber is alive.
                 if consecutive_errors > 0:
                     consecutive_errors = 0
                     if state.cluster_propagation == PROPAGATION_DEGRADED:
                         state.set_cluster_propagation(PROPAGATION_REDIS)
                         logger.info("RuntimeStateCoordinator: pub/sub recovered, cluster_propagation back to %s", PROPAGATION_REDIS)
-                data = message.get("data")
-                if isinstance(data, bytes):
-                    data = data.decode("utf-8", errors="replace")
-                if not data:
-                    continue
-                try:
-                    payload = orjson.loads(data)
-                except orjson.JSONDecodeError as exc:
-                    logger.warning("RuntimeStateCoordinator: discarding malformed pub/sub payload: %s", exc)
-                    continue
-                # Mirror _reconcile_from_hint's compatibility check: a remote pod
-                # may publish a flip that this pod cannot safely honor (e.g. an
-                # edge-boot pod publishes ``edge`` and a shadow-boot peer
-                # receives it). Without this guard the override would land in
-                # local state, the transport layer would refuse to honor it,
-                # and diagnostics would lie. Discard with a WARN.
-                try:
-                    remote_mode = _coerce_mode(payload.get("mode", ""))
-                    remote_runtime = _coerce_runtime(payload.get("runtime", ""))
-                except ValueError:
-                    # apply_remote will log the malformed payload; let it run.
-                    remote_mode = None
-                    remote_runtime = None
-                if remote_mode is not None and remote_runtime is not None:
-                    # First-Party: lazy to avoid the version <-> runtime_state import cycle.
-                    from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel
-
-                    remote_compat = _deployment_allows_override_mode(remote_runtime, remote_mode)
-                    if remote_compat != MoveCompatibility.OK:
-                        logger.warning(
-                            "RuntimeStateCoordinator: discarding incompatible remote override for %s (mode=%s) from pod=%s; "
-                            "reason=%s. The publishing pod's flags allow this mode but this pod's do not.",
-                            remote_runtime.value,
-                            remote_mode.value,
-                            payload.get("initiator_pod", "unknown"),
-                            remote_compat.value,
-                        )
-                        continue
-                applied = await get_runtime_state().apply_remote(payload)
-                if applied is not None:
-                    logger.info(
-                        "RuntimeStateCoordinator: applied remote %s override mode=%s version=%d from pod=%s",
-                        applied.runtime,
-                        applied.mode,
-                        applied.version,
-                        applied.initiator_pod,
+                continue
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                consecutive_errors += 1
+                if consecutive_errors == LISTEN_LOOP_DEGRADE_THRESHOLD:
+                    state.set_cluster_propagation(PROPAGATION_DEGRADED)
+                    logger.error(
+                        "RuntimeStateCoordinator: %d consecutive pub/sub receive failures; cluster_propagation downgraded to %s. Last error: %s",
+                        consecutive_errors,
+                        PROPAGATION_DEGRADED,
+                        exc,
                     )
-        except asyncio.CancelledError:
-            raise
+                else:
+                    logger.debug("RuntimeStateCoordinator: receive error (%d consecutive): %s", consecutive_errors, exc)
+                await asyncio.sleep(0.1)
+                continue
+            # A non-exception return without a real message (e.g. ``None`` from
+            # a pubsub that's broken in a way that doesn't raise) is NOT
+            # evidence the subscriber is alive — the idle-timeout branch above
+            # handles the legit silence case. Only count real messages as
+            # "subscriber is healthy" for the recovery promotion.
+            if not message or message.get("type") != "message":
+                continue
+            if consecutive_errors > 0:
+                consecutive_errors = 0
+                if state.cluster_propagation == PROPAGATION_DEGRADED:
+                    state.set_cluster_propagation(PROPAGATION_REDIS)
+                    logger.info("RuntimeStateCoordinator: pub/sub recovered, cluster_propagation back to %s", PROPAGATION_REDIS)
+            data = message.get("data")
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", errors="replace")
+            if not data:
+                continue
+            try:
+                payload = orjson.loads(data)
+            except orjson.JSONDecodeError as exc:
+                logger.warning("RuntimeStateCoordinator: discarding malformed pub/sub payload: %s", exc)
+                continue
+            # Mirror _reconcile_from_hint's compatibility check: a remote pod
+            # may publish a flip that this pod cannot safely honor (e.g. an
+            # edge-boot pod publishes ``edge`` and a shadow-boot peer
+            # receives it). Without this guard the override would land in
+            # local state, the transport layer would refuse to honor it,
+            # and diagnostics would lie. Discard with a WARN.
+            try:
+                remote_mode = _coerce_mode(payload.get("mode", ""))
+                remote_runtime = _coerce_runtime(payload.get("runtime", ""))
+            except ValueError:
+                # apply_remote will log the malformed payload; let it run.
+                remote_mode = None
+                remote_runtime = None
+            if remote_mode is not None and remote_runtime is not None:
+                # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+                from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
+
+                remote_compat = _deployment_allows_override_mode(remote_runtime, remote_mode)
+                if remote_compat != MoveCompatibility.OK:
+                    logger.warning(
+                        "RuntimeStateCoordinator: discarding incompatible remote override for %s (mode=%s) from pod=%s; "
+                        "reason=%s. The publishing pod's flags allow this mode but this pod's do not.",
+                        remote_runtime.value,
+                        remote_mode.value,
+                        payload.get("initiator_pod", "unknown"),
+                        remote_compat.value,
+                    )
+                    continue
+            applied = await get_runtime_state().apply_remote(payload)
+            if applied is not None:
+                logger.info(
+                    "RuntimeStateCoordinator: applied remote %s override mode=%s version=%d from pod=%s",
+                    applied.runtime,
+                    applied.mode,
+                    applied.version,
+                    applied.initiator_pod,
+                )
 
     async def _cleanup_pubsub(self) -> None:
         """Unsubscribe and close the pubsub connection if open."""
