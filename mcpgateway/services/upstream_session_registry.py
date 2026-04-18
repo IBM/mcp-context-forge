@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Upstream MCP session registry (1:1 per downstream session).
 
-Replaces the previous ``MCPSessionPool`` which keyed upstream sessions by
+Replaces the previous ``SessionAffinity`` which keyed upstream sessions by
 ``(user_identity, url, identity_hash, transport_type, gateway_id)``. That
 sharing leaked state between downstream MCP sessions whose callers happened
 to share the same identity (issue #4205): two chat tabs opened by the same
@@ -556,7 +556,7 @@ class _AcquireDecision(Enum):
 
 
 # ----------------------------------------------------------------------
-# Module-level singleton accessors (mirrors the shape of get_mcp_session_pool)
+# Module-level singleton accessors (mirrors the shape of get_session_affinity)
 # ----------------------------------------------------------------------
 
 _registry: Optional[UpstreamSessionRegistry] = None

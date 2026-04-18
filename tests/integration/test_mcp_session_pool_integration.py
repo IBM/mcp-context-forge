@@ -24,12 +24,12 @@ import pytest
 
 # First-Party
 from mcpgateway.services.session_affinity import (
-    MCPSessionPool,
+    SessionAffinity,
     PooledSession,
     TransportType,
-    close_mcp_session_pool,
-    get_mcp_session_pool,
-    init_mcp_session_pool,
+    close_session_affinity,
+    get_session_affinity,
+    init_session_affinity,
 )
 
 
@@ -39,7 +39,7 @@ class TestCrossUserIsolation:
     @pytest.fixture
     def pool(self):
         """Create pool with short TTL for testing."""
-        return MCPSessionPool(
+        return SessionAffinity(
             max_sessions_per_key=5,
             session_ttl_seconds=300,
             health_check_interval_seconds=60,
@@ -144,7 +144,7 @@ class TestConcurrentAccess:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool(max_sessions_per_key=10)
+        return SessionAffinity(max_sessions_per_key=10)
 
     @pytest.mark.asyncio
     async def test_concurrent_users_isolated(self, pool):
@@ -198,7 +198,7 @@ class TestSessionLifecycle:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool(max_sessions_per_key=2, session_ttl_seconds=300)
+        return SessionAffinity(max_sessions_per_key=2, session_ttl_seconds=300)
 
     @pytest.mark.asyncio
     async def test_released_session_not_given_to_different_user(self, pool):
@@ -275,7 +275,7 @@ class TestTransportIsolation:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     @pytest.mark.asyncio
     async def test_sse_and_streamable_http_isolated(self, pool):
@@ -310,22 +310,22 @@ class TestPoolDisabledBehavior:
     async def test_pool_not_initialized_raises(self):
         """Getting pool when not initialized should raise RuntimeError."""
         # Ensure pool is closed
-        await close_mcp_session_pool()
+        await close_session_affinity()
 
         with pytest.raises(RuntimeError, match="not initialized"):
-            get_mcp_session_pool()
+            get_session_affinity()
 
     @pytest.mark.asyncio
     async def test_pool_enabled_then_disabled(self):
         """Pool should be unavailable after close."""
-        pool = init_mcp_session_pool()
+        pool = init_session_affinity()
         assert pool is not None
-        assert get_mcp_session_pool() is pool
+        assert get_session_affinity() is pool
 
-        await close_mcp_session_pool()
+        await close_session_affinity()
 
         with pytest.raises(RuntimeError, match="not initialized"):
-            get_mcp_session_pool()
+            get_session_affinity()
 
 
 class TestPoolMetricsIsolation:
@@ -333,7 +333,7 @@ class TestPoolMetricsIsolation:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     @pytest.mark.asyncio
     async def test_metrics_track_hits_and_misses_per_identity(self, pool):

@@ -4901,11 +4901,11 @@ class TestLifespanAdvanced:
         )
 
         # MCP session pool hooks
-        monkeypatch.setattr("mcpgateway.services.session_affinity.init_mcp_session_pool", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.session_affinity.start_pool_notification_service", AsyncMock())
-        monkeypatch.setattr("mcpgateway.services.session_affinity.close_mcp_session_pool", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.init_session_affinity", MagicMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.start_affinity_notification_service", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.close_session_affinity", AsyncMock())
         pool = SimpleNamespace(start_rpc_listener=AsyncMock(), start_heartbeat=MagicMock())
-        monkeypatch.setattr("mcpgateway.services.session_affinity.get_mcp_session_pool", MagicMock(return_value=pool))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(return_value=pool))
 
         # Cache invalidation subscriber
         subscriber = MagicMock()
@@ -6322,12 +6322,12 @@ class TestRpcHandling:
         remove_session = AsyncMock()
         cleanup_owner = AsyncMock()
         pool = MagicMock()
-        pool.cleanup_streamable_http_session_owner = cleanup_owner
+        pool.cleanup_session_owner = cleanup_owner
         monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
 
-        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             response = await handle_internal_mcp_session_delete(request)
 
         assert response.status_code == 204
@@ -8050,7 +8050,7 @@ class TestRpcHandling:
 
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock(return_value=None))
-        monkeypatch.setattr("mcpgateway.services.session_affinity.get_mcp_session_pool", MagicMock(side_effect=RuntimeError("pool unavailable")))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(side_effect=RuntimeError("pool unavailable")))
 
         response = await handle_internal_mcp_session_delete(request)
         assert response.status_code == 204
@@ -9558,7 +9558,7 @@ class TestRpcHandling:
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "not-valid"}
 
-        with patch("mcpgateway.services.session_affinity.MCPSessionPool.is_valid_mcp_session_id", return_value=False):
+        with patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=False):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
 
@@ -9574,16 +9574,16 @@ class TestRpcHandling:
         pool.forward_request_to_owner = AsyncMock(return_value={"result": {"via": "other-worker"}})
 
         with (
-            patch("mcpgateway.services.session_affinity.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["via"] == "other-worker"
 
         pool.forward_request_to_owner = AsyncMock(return_value={"error": {"code": -32001, "message": "nope"}})
         with (
-            patch("mcpgateway.services.session_affinity.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32001
@@ -9596,8 +9596,8 @@ class TestRpcHandling:
         request.headers = {"mcp-session-id": "sess-123"}
 
         with (
-            patch("mcpgateway.services.session_affinity.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.session_affinity.get_mcp_session_pool", side_effect=RuntimeError("no pool")),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("no pool")),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
@@ -9644,15 +9644,15 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
         pool = MagicMock()
-        pool.register_pool_session_owner = AsyncMock(return_value=None)
+        pool.register_session_owner = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
-            pool.register_pool_session_owner.assert_awaited_once()
+            pool.register_session_owner.assert_awaited_once()
 
-        pool.register_pool_session_owner = AsyncMock(side_effect=Exception("boom"))
-        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=pool):
+        pool.register_session_owner = AsyncMock(side_effect=Exception("boom"))
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
 

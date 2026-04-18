@@ -30,9 +30,9 @@ async def sighup_reload() -> None:
 
     try:
         # First-Party
-        from mcpgateway.services.session_affinity import drain_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import drain_session_affinity  # pylint: disable=import-outside-toplevel
 
-        await drain_mcp_session_pool()
+        await drain_session_affinity()
         logger.info("SIGHUP: MCP session pool drained for TLS rotation")
     except Exception as exc:
         logger.debug(f"SIGHUP: MCP session pool drain skipped: {exc}")

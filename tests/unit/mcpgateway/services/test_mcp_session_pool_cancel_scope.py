@@ -23,7 +23,7 @@ import anyio
 import pytest
 
 # First-Party
-from mcpgateway.services.session_affinity import MCPSessionPool, PooledSession, TransportType
+from mcpgateway.services.session_affinity import SessionAffinity, PooledSession, TransportType
 
 
 class TestOwnerTaskLifecycle:
@@ -32,7 +32,7 @@ class TestOwnerTaskLifecycle:
     @pytest.mark.asyncio
     async def test_create_session_sets_owner_task_and_shutdown_event(self):
         """Created sessions should have an owner task and shutdown event."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         transport_ctx = MagicMock()
         transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
@@ -117,7 +117,7 @@ class TestOwnerTaskLifecycle:
             _shutdown_event=shutdown,
         )
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         await pool._close_session(pooled)
         assert shutdown.is_set()
         assert task.done()
@@ -149,7 +149,7 @@ class TestOwnerTaskLifecycle:
             _shutdown_event=asyncio.Event(),  # Owner ignores this
         )
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         with patch("mcpgateway.services.session_affinity._get_cleanup_timeout", return_value=0.01):
             await pool._close_session(pooled)
 
@@ -158,7 +158,7 @@ class TestOwnerTaskLifecycle:
     @pytest.mark.asyncio
     async def test_owner_fails_before_readiness_propagates_error(self):
         """If the owner task fails before signaling readiness, _create_session should raise."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         transport_ctx = MagicMock()
         transport_ctx.__aenter__ = AsyncMock(side_effect=ConnectionRefusedError("refused"))
@@ -264,7 +264,7 @@ class TestReleaseWithDeadOwner:
     @pytest.mark.asyncio
     async def test_release_discard_true_with_dead_owner_cleans_up(self):
         """release(discard=True) with dead owner should still remove from active and release semaphore."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         done_future = asyncio.get_event_loop().create_future()
         done_future.set_result(None)
@@ -298,7 +298,7 @@ class TestReleaseWithDeadOwner:
     @pytest.mark.asyncio
     async def test_release_discard_false_with_dead_owner_still_discards(self):
         """release(discard=False) with dead owner should auto-discard."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         done_future = asyncio.get_event_loop().create_future()
         done_future.set_result(None)
@@ -331,7 +331,7 @@ class TestCreateSessionCancelledError:
     @pytest.mark.asyncio
     async def test_create_session_cleans_up_on_outer_cancellation(self):
         """If _create_session is cancelled by an outer wait_for, the owner task should be cleaned up."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         owner_tasks_created = []
 
         original_create_task = asyncio.create_task
@@ -369,7 +369,7 @@ class TestCreateSessionCancelledError:
     @pytest.mark.asyncio
     async def test_create_session_finally_swallows_base_exception_from_owner_cleanup(self):
         """The finally block should swallow BaseException when awaiting the cancelled owner task."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         transport_ctx = MagicMock()
         transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
@@ -405,7 +405,7 @@ class TestHealthCheckAnyioTimeout:
     @pytest.mark.asyncio
     async def test_health_check_timeout_raises_timeout_error(self):
         """Health check timeout should be caught and handled."""
-        pool = MCPSessionPool(health_check_methods=["ping", "skip"])
+        pool = SessionAffinity(health_check_methods=["ping", "skip"])
         pooled = PooledSession(
             session=MagicMock(),
             transport_context=MagicMock(),
@@ -423,7 +423,7 @@ class TestHealthCheckAnyioTimeout:
     @pytest.mark.asyncio
     async def test_health_check_all_timeout_returns_false(self):
         """When all health check methods timeout, should return False."""
-        pool = MCPSessionPool(health_check_methods=["ping"])
+        pool = SessionAffinity(health_check_methods=["ping"])
         pooled = PooledSession(
             session=MagicMock(),
             transport_context=MagicMock(),
@@ -445,7 +445,7 @@ class TestValidateSessionWithOwnerTask:
     @pytest.mark.asyncio
     async def test_validate_rejects_dead_owner_session(self):
         """_validate_session should reject sessions with dead owner tasks."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         done_future = asyncio.get_event_loop().create_future()
         done_future.set_result(None)
@@ -473,7 +473,7 @@ class TestPromptPooledRegression:
     @pytest.mark.asyncio
     async def test_pooled_get_prompt_succeeds(self):
         """Pooled get_prompt() should succeed when pool is available."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         transport_ctx = MagicMock()
         transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
@@ -507,7 +507,7 @@ class TestPromptPooledRegression:
         """PromptService should fall back to non-pooled path when pool raises RuntimeError.
 
         Exercises the actual fallback branch at prompt_service.py:312-316
-        where get_mcp_session_pool() raises and pool is set to None,
+        where get_session_affinity() raises and pool is set to None,
         causing PromptService to use sse_client/streamablehttp_client directly.
         """
         from mcpgateway.services.prompt_service import PromptService
@@ -548,7 +548,7 @@ class TestPromptPooledRegression:
             mock_settings.mcp_session_pool_enabled = True
             mock_settings.health_check_timeout = 5.0
             # Pool raises RuntimeError → falls back to non-pooled path
-            with patch("mcpgateway.services.prompt_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")):
+            with patch("mcpgateway.services.prompt_service.get_session_affinity", side_effect=RuntimeError("not initialized")):
                 with patch("mcpgateway.services.prompt_service.sse_client", return_value=mock_transport):
                     with patch("mcpgateway.services.prompt_service.ClientSession", return_value=mock_session):
                         result = await service._fetch_gateway_prompt_result(

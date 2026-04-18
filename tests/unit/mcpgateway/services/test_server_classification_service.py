@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.session_affinity import MCPSessionPool, PooledSession, TransportType
+from mcpgateway.services.session_affinity import SessionAffinity, PooledSession, TransportType
 from mcpgateway.services.server_classification_service import (
     ClassificationMetadata,
     ClassificationResult,
@@ -165,9 +165,9 @@ class TestClassificationLogic:
             use_count=use_count,
         )
 
-    def _setup_pool_with_sessions(self, sessions_by_url: Dict[str, List[PooledSession]]) -> MCPSessionPool:
-        """Helper to setup MCPSessionPool with mock sessions."""
-        pool = MCPSessionPool()
+    def _setup_pool_with_sessions(self, sessions_by_url: Dict[str, List[PooledSession]]) -> SessionAffinity:
+        """Helper to setup SessionAffinity with mock sessions."""
+        pool = SessionAffinity()
 
         # Mock the _pools dict (Dict[PoolKey, Queue[PooledSession]])
         pool._pools = {}
@@ -322,7 +322,7 @@ class TestClassificationLogic:
         service = ServerClassificationService(redis_client=None)
 
         # Empty pool
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pool._pools = {}
         pool._active = {}
 
@@ -1287,8 +1287,8 @@ class TestErrorHandling:
 
         # _get_gateway_url_map is a method on the service instance
         with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={})):
-            # get_mcp_session_pool is imported lazily inside _perform_classification
-            with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=MagicMock()):
+            # get_session_affinity is imported lazily inside _perform_classification
+            with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=MagicMock()):
                 # Should return early without error
                 await service._perform_classification()
 
@@ -1397,7 +1397,7 @@ class TestErrorHandling:
         """Test _perform_classification returns early when pool not initialized (lines 188-190)."""
         service = ServerClassificationService(redis_client=None)
 
-        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", side_effect=RuntimeError("pool not initialized")):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("pool not initialized")):
             # Should return early without error
             await service._perform_classification()
 
@@ -1431,7 +1431,7 @@ class TestErrorHandling:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={f"gw-{i}": u for i, u in enumerate(all_urls)})):
-                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                     await service._perform_classification()
 
         mock_redis.pipeline.assert_called()
@@ -1458,7 +1458,7 @@ class TestErrorHandling:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={"gw-1": "http://test:8080"})):
-                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                     await service._perform_classification()
 
         # Redis pipeline should have been called to publish classification
@@ -1470,7 +1470,7 @@ class TestErrorHandling:
         service = ServerClassificationService(redis_client=None)
 
         with patch.object(service, "_get_gateway_url_map", AsyncMock(side_effect=RuntimeError("unexpected"))):
-            with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=MagicMock()):
+            with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=MagicMock()):
                 # Should not raise — exception is caught inside _perform_classification
                 await service._perform_classification()
 
@@ -1933,7 +1933,7 @@ class TestMissingBranchCoverage:
             mock_settings.gateway_auto_refresh_interval = 60
 
             with patch.object(service, "_get_gateway_url_map", AsyncMock(return_value={"gw-1": "http://server1:8080"})):
-                with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                     # Must not raise; no Redis publish occurs (line 202->False->205)
                     await service._perform_classification()
 

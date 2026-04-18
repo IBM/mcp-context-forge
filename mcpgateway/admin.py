@@ -134,7 +134,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.session_affinity import get_mcp_session_pool
+from mcpgateway.services.session_affinity import get_session_affinity
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service
@@ -2381,7 +2381,7 @@ async def get_a2a_stats_cache_stats(
 @admin_router.get("/mcp-pool/metrics")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=60)
-async def get_mcp_session_pool_metrics(
+async def get_session_affinity_metrics(
     request: Request,  # pylint: disable=unused-argument
     _user=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
@@ -2415,18 +2415,18 @@ async def get_mcp_session_pool_metrics(
         HTTPException: If session pool is not initialized
 
     Examples:
-        >>> from mcpgateway.admin import get_mcp_session_pool_metrics
-        >>> get_mcp_session_pool_metrics.__name__
-        'get_mcp_session_pool_metrics'
+        >>> from mcpgateway.admin import get_session_affinity_metrics
+        >>> get_session_affinity_metrics.__name__
+        'get_session_affinity_metrics'
         >>> import inspect
-        >>> inspect.iscoroutinefunction(get_mcp_session_pool_metrics)
+        >>> inspect.iscoroutinefunction(get_session_affinity_metrics)
         True
     """
     if not settings.mcp_session_pool_enabled:
         return {"enabled": False, "message": "MCP session pool is disabled"}
 
     try:
-        pool = get_mcp_session_pool()
+        pool = get_session_affinity()
         metrics = pool.get_metrics()
         return {"enabled": True, **metrics}
     except RuntimeError as e:

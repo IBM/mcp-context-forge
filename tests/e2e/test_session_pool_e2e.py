@@ -32,12 +32,12 @@ from mcp import ClientSession
 
 # First-Party
 from mcpgateway.services.session_affinity import (
-    MCPSessionPool,
+    SessionAffinity,
     PooledSession,
     TransportType,
-    close_mcp_session_pool,
-    get_mcp_session_pool,
-    init_mcp_session_pool,
+    close_session_affinity,
+    get_session_affinity,
+    init_session_affinity,
 )
 from mcpgateway.services.notification_service import (
     NotificationService,
@@ -68,7 +68,7 @@ class TestIdentityExtractorE2E:
                 return f"user-{parts[1]}"
             return None
 
-        pool = MCPSessionPool(identity_extractor=extract_user_id_from_jwt)
+        pool = SessionAffinity(identity_extractor=extract_user_id_from_jwt)
 
         try:
             # Two different JWTs for the same user
@@ -97,7 +97,7 @@ class TestIdentityExtractorE2E:
         def failing_extractor(headers: dict) -> str | None:
             raise ValueError("Token decode failed")
 
-        pool = MCPSessionPool(identity_extractor=failing_extractor)
+        pool = SessionAffinity(identity_extractor=failing_extractor)
 
         try:
             headers = {"Authorization": "Bearer some-token"}
@@ -117,7 +117,7 @@ class TestTransportIsolationE2E:
     @pytest.mark.asyncio
     async def test_same_url_identity_different_transport_separate_pools(self):
         """Same URL + identity with different transports should use separate sessions."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             headers = {"Authorization": "Bearer user-token"}
@@ -147,7 +147,7 @@ class TestIdleEvictionE2E:
     @pytest.mark.asyncio
     async def test_idle_pool_key_evicted(self):
         """Idle pool keys should be evicted after configured time."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             idle_pool_eviction_seconds=0.05,  # 50ms
             session_ttl_seconds=300,
         )
@@ -190,7 +190,7 @@ class TestIdleEvictionE2E:
     @pytest.mark.asyncio
     async def test_stale_sessions_reaped_via_metrics(self):
         """Stale sessions should be reaped and reflected in metrics."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             idle_pool_eviction_seconds=0.05,
             session_ttl_seconds=0.01,  # Very short TTL
         )
@@ -284,7 +284,7 @@ class TestPoolMetricsE2E:
     @pytest.mark.asyncio
     async def test_metrics_reflect_pool_behavior(self):
         """Verify pool metrics accurately reflect hits, misses, and operations."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
@@ -342,7 +342,7 @@ class TestPoolMetricsE2E:
     @pytest.mark.asyncio
     async def test_circuit_breaker_metrics(self):
         """Verify circuit breaker trips are tracked in metrics."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             circuit_breaker_threshold=2,
             circuit_breaker_reset_seconds=0.05,
         )
@@ -373,7 +373,7 @@ class TestSessionReusePerfE2E:
     @pytest.mark.asyncio
     async def test_pool_hit_faster_than_miss(self):
         """Verify that pool hits are faster than misses (no session creation)."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
@@ -446,7 +446,7 @@ class TestNotificationE2E:
         service.register_gateway_capabilities(gateway_id, {"tools": {"listChanged": True}})
 
         # Create session pool
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             # Simulate a pooled session with message handler hooked up
@@ -566,7 +566,7 @@ class TestSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_register_session_mapping_creates_affinity(self):
         """Verify register_session_mapping creates pool key mapping."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             # Register a session mapping
@@ -602,7 +602,7 @@ class TestSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_acquire_uses_preregistered_mapping(self):
         """Verify acquire() uses pre-registered mapping for session affinity."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
@@ -672,7 +672,7 @@ class TestSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_session_affinity_disabled_ignores_mapping(self):
         """Verify session affinity mapping is ignored when disabled."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             session_id = "downstream-session-789"
@@ -694,7 +694,7 @@ class TestSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_different_session_ids_different_pools(self):
         """Verify different downstream session IDs use different upstream pools."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
@@ -778,7 +778,7 @@ class TestSessionRegistryAffinityE2E:
 
                 with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_cache)}):
                     with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                        with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                             # Call _register_session_mapping with user_email (simulates respond() call)
                             await registry._register_session_mapping(session_id, message, user_email)
 
@@ -819,7 +819,7 @@ class TestSessionRegistryAffinityE2E:
                     mock_pool = MagicMock()
                     mock_pool.register_session_mapping = AsyncMock()
 
-                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                         await registry._register_session_mapping(session_id, message)
 
                         # Should NOT call register_session_mapping for non-tools/call
@@ -856,7 +856,7 @@ class TestSessionRegistryAffinityE2E:
                 mock_pool.register_session_mapping = AsyncMock()
 
                 with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                         # Should not raise
                         await registry._register_session_mapping(session_id, message)
 
@@ -903,7 +903,7 @@ class TestSessionRegistryAffinityE2E:
                 mock_pool.register_session_mapping = AsyncMock()
 
                 with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-                    with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+                    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                         # Call broadcast (which no longer calls _register_session_mapping)
                         # In production, registration happens in respond()
                         await registry.broadcast(session_id, message)
@@ -939,9 +939,9 @@ class TestMultiWorkerSessionAffinityE2E:
         assert WORKER_ID == expected
 
     @pytest.mark.asyncio
-    async def test_register_pool_session_owner_disabled_when_affinity_off(self):
-        """Verify register_pool_session_owner does nothing when affinity disabled."""
-        pool = MCPSessionPool()
+    async def test_register_session_owner_disabled_when_affinity_off(self):
+        """Verify register_session_owner does nothing when affinity disabled."""
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-disabled"
@@ -950,7 +950,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
                 # Should return immediately without calling Redis
-                await pool.register_pool_session_owner(mcp_session_id)
+                await pool.register_session_owner(mcp_session_id)
                 # No assertion needed - just verify it doesn't hang or crash
         finally:
             await pool.close_all()
@@ -958,7 +958,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_forward_request_returns_none_when_affinity_disabled(self):
         """Verify forward_request_to_owner returns None when affinity disabled."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
@@ -975,7 +975,7 @@ class TestMultiWorkerSessionAffinityE2E:
         """Verify forward_request_to_owner returns None when we own the session."""
         from mcpgateway.services.session_affinity import WORKER_ID
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-local"
@@ -1002,7 +1002,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_forward_request_returns_none_when_no_owner(self):
         """Verify forward_request_to_owner returns None when no owner registered."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-no-owner"
@@ -1029,7 +1029,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_forward_request_returns_none_when_no_redis(self):
         """Verify forward_request_to_owner returns None when Redis unavailable."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
@@ -1055,7 +1055,7 @@ class TestMultiWorkerSessionAffinityE2E:
         """
         import httpx as httpx_mod
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch.object(httpx_mod.AsyncClient, "post", side_effect=httpx_mod.ConnectError("Connection refused")):
@@ -1076,7 +1076,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_execute_forwarded_request_returns_error_on_non_2xx_non_jsonrpc(self):
         """Verify _execute_forwarded_request maps non-2xx non-JSON-RPC responses to error."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             # Mock httpx to return 401 with non-JSON-RPC body
@@ -1109,7 +1109,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_execute_forwarded_request_propagates_jsonrpc_error_on_non_2xx(self):
         """Verify _execute_forwarded_request propagates JSON-RPC errors from non-2xx responses."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             # Mock httpx to return 403 with JSON-RPC error body
@@ -1145,7 +1145,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_start_rpc_listener_returns_when_affinity_disabled(self):
         """Verify start_rpc_listener returns immediately when affinity disabled."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
@@ -1159,7 +1159,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_start_rpc_listener_returns_when_no_redis(self):
         """Verify start_rpc_listener returns when Redis unavailable."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
@@ -1180,7 +1180,7 @@ class TestMultiWorkerSessionAffinityE2E:
         import logging
         from mcpgateway.services.session_affinity import WORKER_ID
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-log-own"
@@ -1215,7 +1215,7 @@ class TestMultiWorkerSessionAffinityE2E:
         """Verify [AFFINITY] log is emitted when no owner is registered."""
         import logging
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-log-noowner"
@@ -1251,7 +1251,7 @@ class TestMultiWorkerSessionAffinityE2E:
         import logging
         from mcpgateway.services.session_affinity import WORKER_ID
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             mcp_session_id = "test-session-log-forward"
@@ -1321,7 +1321,7 @@ class TestMultiWorkerSessionAffinityE2E:
 
         from mcpgateway.services.session_affinity import WORKER_ID
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         try:
             with caplog.at_level(logging.INFO, logger="mcpgateway.services.session_affinity"):

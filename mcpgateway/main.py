@@ -1689,9 +1689,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # to UpstreamSessionRegistry (see issue #4205).
     if settings.mcpgateway_session_affinity_enabled:
         # First-Party
-        from mcpgateway.services.session_affinity import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
 
-        init_mcp_session_pool()
+        init_session_affinity()
         logger.info("MCP session pool initialized")
 
     # Initialize the upstream session registry (#4205). 1:1 binding between a
@@ -1775,12 +1775,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
-                get_mcp_session_pool,
-                start_pool_notification_service,
+                get_session_affinity,
+                start_affinity_notification_service,
             )
 
-            await start_pool_notification_service(gateway_service)
-            pool = get_mcp_session_pool()
+            await start_affinity_notification_service(gateway_service)
+            pool = get_session_affinity()
             pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
             logger.info("Multi-worker session affinity heartbeat and RPC listener started")
@@ -2041,9 +2041,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Shutdown session-affinity service (before shared HTTP client).
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.session_affinity import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import close_session_affinity  # pylint: disable=import-outside-toplevel
 
-            await close_mcp_session_pool()
+            await close_session_affinity()
 
         # Drain upstream session registry (#4205): every (downstream_session_id,
         # gateway_id) → upstream ClientSession owned by this worker is closed.
@@ -7392,10 +7392,10 @@ async def handle_internal_mcp_session_delete(request: Request):
     if settings.mcpgateway_session_affinity_enabled:
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.cleanup_streamable_http_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.cleanup_session_owner(mcp_session_id)
         except RuntimeError:
             pass
 
@@ -9540,9 +9540,9 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.session_affinity import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-        if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+        if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
@@ -9550,9 +9550,9 @@ async def _maybe_forward_affinitized_rpc_request(
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
@@ -9617,10 +9617,10 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.register_pool_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.register_session_owner(mcp_session_id)
             logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)

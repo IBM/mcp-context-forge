@@ -80,7 +80,7 @@ MessageHandlerFactory = Callable[
 ]
 
 
-class MCPSessionPool:
+class SessionAffinity:
     """Multi-worker MCP session-affinity service.
 
     Despite the historical class name, this object no longer pools MCP
@@ -181,7 +181,7 @@ class MCPSessionPool:
         return f"mcpgw:session_mapping:{sanitized_session_id}:{url_hash}:{transport_type}:{gateway_id}"
 
     @staticmethod
-    def _pool_owner_key(mcp_session_id: str) -> str:
+    def _session_owner_key(mcp_session_id: str) -> str:
         """Return Redis key for session ownership tracking."""
         return f"mcpgw:pool_owner:{mcp_session_id}"
 
@@ -317,7 +317,7 @@ class MCPSessionPool:
                 # CRITICAL: Register ownership atomically with mapping.
                 # This claims ownership BEFORE any session creation attempt, preventing
                 # the race condition where two workers both start creating sessions
-                owner_key = self._pool_owner_key(mcp_session_id)
+                owner_key = self._session_owner_key(mcp_session_id)
                 # Atomic claim with TTL (avoids the SETNX/EXPIRE crash window).
                 was_set = await redis.set(owner_key, WORKER_ID, nx=True, ex=settings.mcpgateway_session_affinity_ttl)
                 if was_set:
@@ -333,7 +333,7 @@ class MCPSessionPool:
             # Redis failure is non-fatal - local mapping still works for same-worker requests
             logger.debug(f"Failed to store session mapping in Redis: {e}")
 
-    async def _cleanup_pool_session_owner(self, mcp_session_id: str) -> None:
+    async def _cleanup_session_owner(self, mcp_session_id: str) -> None:
         """Clean up pool_owner key in Redis when session is closed.
 
         Only deletes the key if this worker owns it (to prevent removing other workers' ownership).
@@ -347,7 +347,7 @@ class MCPSessionPool:
 
             redis = await get_redis_client()
             if redis:
-                key = self._pool_owner_key(mcp_session_id)
+                key = self._session_owner_key(mcp_session_id)
                 # Only delete if we own it
                 owner = await redis.get(key)
                 if owner:
@@ -359,7 +359,7 @@ class MCPSessionPool:
             # Cleanup failure is non-fatal
             logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
 
-    async def cleanup_streamable_http_session_owner(self, mcp_session_id: str) -> None:
+    async def cleanup_session_owner(self, mcp_session_id: str) -> None:
         """Public wrapper for cleaning up Streamable HTTP session ownership.
 
         This is used by trusted internal MCP session teardown paths that need to
@@ -368,7 +368,7 @@ class MCPSessionPool:
         if not self.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid mcp_session_id for owner cleanup, skipping")
             return
-        await self._cleanup_pool_session_owner(mcp_session_id)
+        await self._cleanup_session_owner(mcp_session_id)
 
     async def close_all(self) -> None:
         """Stop background tasks and clear affinity state. Call at shutdown."""
@@ -412,7 +412,7 @@ class MCPSessionPool:
             self._mcp_session_mapping.clear()
         logger.info("Affinity mapping drained; service remains operational")
 
-    async def register_pool_session_owner(self, mcp_session_id: str) -> None:
+    async def register_session_owner(self, mcp_session_id: str) -> None:
         """Register this worker as owner of a pool session in Redis.
 
         This enables multi-worker session affinity by tracking which worker owns
@@ -438,7 +438,7 @@ class MCPSessionPool:
 
             redis = await get_redis_client()
             if redis:
-                key = self._pool_owner_key(mcp_session_id)
+                key = self._session_owner_key(mcp_session_id)
 
                 # Do not steal ownership: only claim if missing, or refresh TTL if we already own.
                 # Lua keeps this atomic.
@@ -461,7 +461,7 @@ class MCPSessionPool:
             # Redis failure is non-fatal - single worker mode still works
             logger.debug(f"Failed to register pool session owner in Redis: {e}")
 
-    async def _get_pool_session_owner(self, mcp_session_id: str) -> Optional[str]:
+    async def _get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a pool session.
 
         Args:
@@ -482,7 +482,7 @@ class MCPSessionPool:
 
             redis = await get_redis_client()
             if redis:
-                key = self._pool_owner_key(mcp_session_id)
+                key = self._session_owner_key(mcp_session_id)
                 owner = await redis.get(key)
                 if owner:
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
@@ -532,7 +532,7 @@ class MCPSessionPool:
                 return None  # Execute locally - no Redis
 
             # Check who owns this session
-            owner = await redis.get(self._pool_owner_key(mcp_session_id))
+            owner = await redis.get(self._session_owner_key(mcp_session_id))
             method = request_data.get("method", "unknown")
             if not owner:
                 logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
@@ -555,12 +555,12 @@ class MCPSessionPool:
                 return 0
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
-                reclaimed = await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
+                reclaimed = await redis.eval(cas_script, 1, self._session_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
                 if reclaimed == 1:
                     logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
                     return None  # We won the reclaim - execute locally
                 # Another worker already reclaimed; re-read the new owner and forward
-                new_owner = await redis.get(self._pool_owner_key(mcp_session_id))
+                new_owner = await redis.get(self._session_owner_key(mcp_session_id))
                 if not new_owner:
                     return None  # Key vanished - execute locally
                 owner_id = new_owner.decode() if isinstance(new_owner, bytes) else new_owner
@@ -831,10 +831,10 @@ class MCPSessionPool:
                 except Exception as publish_error:
                     logger.debug(f"Failed to publish error response via Redis: {publish_error}")
 
-    async def get_streamable_http_session_owner(self, mcp_session_id: str) -> Optional[str]:
+    async def get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.
 
-        This is a public wrapper around _get_pool_session_owner for use by
+        This is a public wrapper around _get_session_owner for use by
         streamablehttp_transport to check session ownership before handling requests.
 
         Args:
@@ -843,9 +843,9 @@ class MCPSessionPool:
         Returns:
             Worker ID if found, None otherwise.
         """
-        return await self._get_pool_session_owner(mcp_session_id)
+        return await self._get_session_owner(mcp_session_id)
 
-    async def forward_streamable_http_to_owner(
+    async def forward_to_owner(
         self,
         owner_worker_id: str,
         mcp_session_id: str,
@@ -950,10 +950,10 @@ class MCPSessionPool:
             return None
 
 
-_mcp_session_pool: Optional[MCPSessionPool] = None
+_mcp_session_pool: Optional[SessionAffinity] = None
 
 
-def get_mcp_session_pool() -> MCPSessionPool:
+def get_session_affinity() -> SessionAffinity:
     """Return the global session-affinity service instance.
 
     The function name is kept for compatibility with existing call-sites
@@ -964,16 +964,16 @@ def get_mcp_session_pool() -> MCPSessionPool:
         RuntimeError: If the service has not been initialized.
     """
     if _mcp_session_pool is None:
-        raise RuntimeError("Session-affinity service not initialized. Call init_mcp_session_pool() first.")
+        raise RuntimeError("Session-affinity service not initialized. Call init_session_affinity() first.")
     return _mcp_session_pool
 
 
-def init_mcp_session_pool(
+def init_session_affinity(
     *,
     message_handler_factory: Optional[MessageHandlerFactory] = None,
     enable_notifications: bool = True,
     notification_debounce_seconds: float = 5.0,
-) -> MCPSessionPool:
+) -> SessionAffinity:
     """Initialize the global session-affinity service.
 
     Args:
@@ -986,7 +986,7 @@ def init_mcp_session_pool(
             notification-triggered refreshes.
 
     Returns:
-        The initialized ``MCPSessionPool`` (soon-to-be-renamed ``SessionAffinity``)
+        The initialized ``SessionAffinity`` (soon-to-be-renamed ``SessionAffinity``)
         instance.
     """
     global _mcp_session_pool  # pylint: disable=global-statement
@@ -1007,12 +1007,12 @@ def init_mcp_session_pool(
         effective_handler_factory = default_handler_factory
         logger.info("MCP notification service created (debounce=%ss)", notification_debounce_seconds)
 
-    _mcp_session_pool = MCPSessionPool(message_handler_factory=effective_handler_factory)
+    _mcp_session_pool = SessionAffinity(message_handler_factory=effective_handler_factory)
     logger.info("Session-affinity service initialized")
     return _mcp_session_pool
 
 
-async def close_mcp_session_pool() -> None:
+async def close_session_affinity() -> None:
     """Close the global MCP session pool and notification service."""
     global _mcp_session_pool  # pylint: disable=global-statement
     if _mcp_session_pool is not None:
@@ -1032,18 +1032,18 @@ async def close_mcp_session_pool() -> None:
         pass  # Notification service not initialized
 
 
-async def drain_mcp_session_pool() -> None:
+async def drain_session_affinity() -> None:
     """Drain all sessions from the global pool without destroying the pool.
 
     Sessions are closed so new ones reconnect with fresh TLS state.
-    The pool remains operational — unlike ``close_mcp_session_pool()``,
+    The pool remains operational — unlike ``close_session_affinity()``,
     which shuts it down permanently.
     """
     if _mcp_session_pool is not None:
         await _mcp_session_pool.drain_all()
 
 
-async def start_pool_notification_service(gateway_service: Any = None) -> None:
+async def start_affinity_notification_service(gateway_service: Any = None) -> None:
     """Start the notification service background worker.
 
     Call this after gateway_service is initialized to enable event-driven refresh.

@@ -1786,7 +1786,7 @@ class TestRegisterSessionMapping:
         mock_pool.register_session_mapping = AsyncMock()
 
         with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
-            with patch("mcpgateway.services.session_affinity.get_mcp_session_pool", return_value=mock_pool):
+            with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
                 await registry._register_session_mapping(
                     "sid12345678",
                     {"method": "tools/call", "params": {"name": "my_tool"}},

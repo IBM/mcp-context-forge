@@ -67,16 +67,16 @@ class TestPoolInitAutoAlignment:
         assert transport_timeout == 60.0
 
     @pytest.mark.asyncio
-    async def test_init_mcp_session_pool_receives_correct_parameters(self):
-        """Verify init_mcp_session_pool receives the calculated parameters."""
+    async def test_init_session_affinity_receives_correct_parameters(self):
+        """Verify init_session_affinity receives the calculated parameters."""
         # First-Party
         from mcpgateway.services.session_affinity import (
-            close_mcp_session_pool,
-            init_mcp_session_pool,
+            close_session_affinity,
+            init_session_affinity,
         )
 
         # Create pool with specific values including new global capacity limits
-        pool = init_mcp_session_pool(
+        pool = init_session_affinity(
             health_check_interval_seconds=30.0,
             default_transport_timeout_seconds=7.5,
             max_total_keys=100,
@@ -90,19 +90,19 @@ class TestPoolInitAutoAlignment:
             assert pool._max_total_keys == 100
             assert pool._max_total_sessions == 500
         finally:
-            await close_mcp_session_pool()
+            await close_session_affinity()
 
     @pytest.mark.asyncio
     async def test_pool_init_uses_all_settings(self):
         """Verify pool initialization uses all expected settings from config."""
         # First-Party
         from mcpgateway.services.session_affinity import (
-            close_mcp_session_pool,
-            init_mcp_session_pool,
+            close_session_affinity,
+            init_session_affinity,
         )
 
         # Initialize with specific values that match main.py pattern
-        pool = init_mcp_session_pool(
+        pool = init_session_affinity(
             max_sessions_per_key=5,
             session_ttl_seconds=120.0,
             health_check_interval_seconds=25.0,  # Simulates min() result
@@ -128,7 +128,7 @@ class TestPoolInitAutoAlignment:
             assert pool._idle_pool_eviction == 300.0
             assert pool._default_transport_timeout == 5.0
         finally:
-            await close_mcp_session_pool()
+            await close_session_affinity()
 
 
 class TestPoolInitIntegration:
@@ -140,8 +140,8 @@ class TestPoolInitIntegration:
         # First-Party
         from mcpgateway.config import Settings
         from mcpgateway.services.session_affinity import (
-            close_mcp_session_pool,
-            init_mcp_session_pool,
+            close_session_affinity,
+            init_session_affinity,
         )
 
         # Use real settings (with defaults)
@@ -153,7 +153,7 @@ class TestPoolInitIntegration:
                 settings.health_check_interval,
                 settings.mcp_session_pool_health_check_interval,
             )
-            pool = init_mcp_session_pool(
+            pool = init_session_affinity(
                 max_sessions_per_key=settings.mcp_session_pool_max_per_key,
                 session_ttl_seconds=settings.mcp_session_pool_ttl,
                 health_check_interval_seconds=effective_health_check_interval,
@@ -178,4 +178,4 @@ class TestPoolInitIntegration:
                 # 2. Transport timeout should use mcp_session_pool_transport_timeout
                 assert pool._default_transport_timeout == settings.mcp_session_pool_transport_timeout
             finally:
-                await close_mcp_session_pool()
+                await close_session_affinity()

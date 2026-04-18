@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
     # First-Party
-    from mcpgateway.services.session_affinity import MCPSessionPool
+    from mcpgateway.services.session_affinity import SessionAffinity
 
 logger = logging.getLogger(__name__)
 
@@ -236,10 +236,10 @@ class ServerClassificationService:
         try:
             # Get MCP session pool
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool
+            from mcpgateway.services.session_affinity import get_session_affinity
 
             try:
-                pool = get_mcp_session_pool()
+                pool = get_session_affinity()
             except RuntimeError:
                 logger.debug("MCP session pool not initialized, skipping classification")
                 return
@@ -290,7 +290,7 @@ class ServerClassificationService:
             return gateway_url_map[gateway_id]
         return None
 
-    def _classify_servers_from_pool(self, pool: MCPSessionPool, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None) -> ClassificationResult:
+    def _classify_servers_from_pool(self, pool: SessionAffinity, all_gateway_urls: List[str], gateway_url_map: Optional[Dict[str, str]] = None) -> ClassificationResult:
         """Classify servers based on pooled session state.
 
         Algorithm (deterministic):

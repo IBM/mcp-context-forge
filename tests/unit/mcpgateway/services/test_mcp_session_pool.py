@@ -18,21 +18,21 @@ import pytest
 
 # First-Party
 from mcpgateway.services.session_affinity import (
-    MCPSessionPool,
+    SessionAffinity,
     PooledSession,
     TransportType,
-    get_mcp_session_pool,
-    init_mcp_session_pool,
-    close_mcp_session_pool,
+    get_session_affinity,
+    init_session_affinity,
+    close_session_affinity,
 )
 
 
-class TestMCPSessionPoolInit:
-    """Tests for MCPSessionPool initialization."""
+class TestSessionAffinityInit:
+    """Tests for SessionAffinity initialization."""
 
     def test_init_defaults(self):
         """Test pool initialization with defaults."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         assert pool._max_sessions == 10
         assert pool._session_ttl == 300.0
@@ -47,7 +47,7 @@ class TestMCPSessionPoolInit:
 
     def test_init_custom_values(self):
         """Test pool initialization with custom values."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             max_sessions_per_key=5,
             session_ttl_seconds=120.0,
             health_check_interval_seconds=30.0,
@@ -70,27 +70,27 @@ class TestMCPSessionPoolInit:
     def test_init_custom_identity_headers(self):
         """Test pool initialization with custom identity headers."""
         custom_headers = frozenset(["x-custom-header", "authorization"])
-        pool = MCPSessionPool(identity_headers=custom_headers)
+        pool = SessionAffinity(identity_headers=custom_headers)
 
         assert pool._identity_headers == custom_headers
 
     def test_init_custom_transport_timeout(self):
         """Test pool initialization with custom transport timeout (timeout consolidation)."""
-        pool = MCPSessionPool(default_transport_timeout_seconds=10.0)
+        pool = SessionAffinity(default_transport_timeout_seconds=10.0)
 
         assert pool._default_transport_timeout == 10.0
 
     @pytest.mark.asyncio
-    async def test_init_transport_timeout_passed_through_init_mcp_session_pool(self):
-        """Test that default_transport_timeout_seconds is passed through init_mcp_session_pool()."""
+    async def test_init_transport_timeout_passed_through_init_session_affinity(self):
+        """Test that default_transport_timeout_seconds is passed through init_session_affinity()."""
         try:
             # Initialize with custom timeout
-            pool = init_mcp_session_pool(default_transport_timeout_seconds=7.5)
+            pool = init_session_affinity(default_transport_timeout_seconds=7.5)
 
             assert pool._default_transport_timeout == 7.5
         finally:
             # Always cleanup to prevent leaking global pool into other tests
-            await close_mcp_session_pool()
+            await close_session_affinity()
 
 
 class TestCleanupTimeout:
@@ -122,7 +122,7 @@ class TestValidateSession:
     def pool(self):
         # Use short health check interval so sessions become stale quickly
         # Configure to use list_tools for testing (easier to mock than ping)
-        return MCPSessionPool(
+        return SessionAffinity(
             health_check_interval_seconds=0.01,  # 10ms
             health_check_timeout_seconds=3.0,  # Custom health check timeout
             health_check_methods=["list_tools"],  # Use list_tools for testing
@@ -237,7 +237,7 @@ class TestHealthCheckChain:
     @pytest.mark.asyncio
     async def test_health_check_ping_success(self):
         """Ping health check should return True on success."""
-        pool = MCPSessionPool(health_check_methods=["ping"])
+        pool = SessionAffinity(health_check_methods=["ping"])
         pooled = self._make_pooled()
         pooled.session.send_ping = AsyncMock(return_value=True)
 
@@ -246,7 +246,7 @@ class TestHealthCheckChain:
     @pytest.mark.asyncio
     async def test_health_check_list_prompts_and_resources_success(self):
         """list_prompts and list_resources should be supported in the chain."""
-        pool = MCPSessionPool(health_check_methods=["list_prompts", "list_resources"])
+        pool = SessionAffinity(health_check_methods=["list_prompts", "list_resources"])
         pooled = self._make_pooled()
         pooled.session.list_prompts = AsyncMock(return_value=[])
         pooled.session.list_resources = AsyncMock(return_value=[])
@@ -256,7 +256,7 @@ class TestHealthCheckChain:
     @pytest.mark.asyncio
     async def test_health_check_skip_and_unknown_method(self):
         """Unknown methods should warn and skip to next."""
-        pool = MCPSessionPool(health_check_methods=["unknown", "skip"])
+        pool = SessionAffinity(health_check_methods=["unknown", "skip"])
         pooled = self._make_pooled()
 
         with patch("mcpgateway.services.session_affinity.logger") as mock_logger:
@@ -275,7 +275,7 @@ class TestHealthCheckChain:
                 super().__init__("mcp error")
                 self.error = SimpleNamespace(code=code)
 
-        pool = MCPSessionPool(health_check_methods=["ping", "skip"])
+        pool = SessionAffinity(health_check_methods=["ping", "skip"])
         pooled = self._make_pooled()
         pooled.session.send_ping = AsyncMock(side_effect=DummyMcpError(-32601))
 
@@ -293,7 +293,7 @@ class TestHealthCheckChain:
                 super().__init__("mcp error")
                 self.error = SimpleNamespace(code=code)
 
-        pool = MCPSessionPool(health_check_methods=["ping"])
+        pool = SessionAffinity(health_check_methods=["ping"])
         pooled = self._make_pooled()
         pooled.session.send_ping = AsyncMock(side_effect=DummyMcpError(500))
 
@@ -305,7 +305,7 @@ class TestHealthCheckChain:
     @pytest.mark.asyncio
     async def test_health_check_generic_exception_failure(self):
         """Generic exceptions should fail and increment counter."""
-        pool = MCPSessionPool(health_check_methods=["ping"])
+        pool = SessionAffinity(health_check_methods=["ping"])
         pooled = self._make_pooled()
         pooled.session.send_ping = AsyncMock(side_effect=RuntimeError("boom"))
 
@@ -318,7 +318,7 @@ class TestIdentityHashing:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_identity_hash_different_for_different_auth(self, pool):
         """Different Authorization headers should produce different identity hashes."""
@@ -457,12 +457,12 @@ class TestIdentityHashing:
 
 
 class TestSessionPoolIsolation:
-    """Tests for strict user isolation in MCPSessionPool."""
+    """Tests for strict user isolation in SessionAffinity."""
 
     @pytest.mark.asyncio
     async def test_session_isolation_by_user_identity(self):
         """Test that sessions are isolated by user identity."""
-        pool = MCPSessionPool(max_sessions_per_key=10)
+        pool = SessionAffinity(max_sessions_per_key=10)
 
         # Mock _create_session to avoid network calls and return a mock PooledSession
         pool._create_session = AsyncMock()
@@ -546,7 +546,7 @@ class TestSessionPoolIsolation:
     @pytest.mark.asyncio
     async def test_session_isolation_defaults(self):
         """Test backward compatibility (defaulting to anonymous)."""
-        pool = MCPSessionPool(max_sessions_per_key=10)
+        pool = SessionAffinity(max_sessions_per_key=10)
         pool._create_session = AsyncMock()
 
         async def create_mock_session(url, headers, transport_type, *args, **kwargs):
@@ -590,7 +590,7 @@ class TestIdentityExtractor:
         def extract_user_id(headers: dict) -> str:
             return "user-123"
 
-        pool = MCPSessionPool(identity_extractor=extract_user_id)
+        pool = SessionAffinity(identity_extractor=extract_user_id)
 
         # Different tokens should hash to same identity
         hash1 = pool._compute_identity_hash({"Authorization": "Bearer token-abc"})
@@ -605,7 +605,7 @@ class TestIdentityExtractor:
         def failing_extractor(headers: dict) -> str:
             raise ValueError("Failed to extract")
 
-        pool = MCPSessionPool(identity_extractor=failing_extractor)
+        pool = SessionAffinity(identity_extractor=failing_extractor)
 
         # Should not raise, should fall back to header hashing
         hash1 = pool._compute_identity_hash({"Authorization": "Bearer token"})
@@ -617,7 +617,7 @@ class TestIdentityExtractor:
         def none_extractor(headers: dict) -> str | None:
             return None
 
-        pool = MCPSessionPool(identity_extractor=none_extractor)
+        pool = SessionAffinity(identity_extractor=none_extractor)
 
         hash1 = pool._compute_identity_hash({"Authorization": "Bearer token"})
         assert hash1 != "anonymous"
@@ -628,7 +628,7 @@ class TestPoolKeyGeneration:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_pool_key_includes_url(self, pool):
         """Pool key should include URL."""
@@ -671,7 +671,7 @@ class TestCircuitBreaker:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool(
+        return SessionAffinity(
             circuit_breaker_threshold=3,
             circuit_breaker_reset_seconds=0.1,  # Short for testing
         )
@@ -770,7 +770,7 @@ class TestPoolMetrics:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_initial_metrics(self, pool):
         """Test initial metrics are zero."""
@@ -802,40 +802,40 @@ class TestGlobalPoolFunctions:
     async def test_init_and_get_pool(self):
         """Test pool initialization and retrieval."""
         # Initialize
-        pool = init_mcp_session_pool(max_sessions_per_key=5)
+        pool = init_session_affinity(max_sessions_per_key=5)
 
         assert pool is not None
         assert pool._max_sessions == 5
 
         # Get
-        retrieved = get_mcp_session_pool()
+        retrieved = get_session_affinity()
         assert retrieved is pool
 
         # Cleanup
-        await close_mcp_session_pool()
+        await close_session_affinity()
 
     @pytest.mark.asyncio
     async def test_get_pool_before_init_raises(self):
         """Getting pool before initialization should raise."""
         # Ensure pool is closed
-        await close_mcp_session_pool()
+        await close_session_affinity()
 
         with pytest.raises(RuntimeError, match="not initialized"):
-            get_mcp_session_pool()
+            get_session_affinity()
 
     @pytest.mark.asyncio
     async def test_close_pool(self):
         """Test pool closure."""
-        init_mcp_session_pool()
-        pool = get_mcp_session_pool()
+        init_session_affinity()
+        pool = get_session_affinity()
 
-        await close_mcp_session_pool()
+        await close_session_affinity()
 
         assert pool._closed is True
 
         # Should raise after close
         with pytest.raises(RuntimeError, match="not initialized"):
-            get_mcp_session_pool()
+            get_session_affinity()
 
 
 class TestAcquireAndRelease:
@@ -843,7 +843,7 @@ class TestAcquireAndRelease:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool(max_sessions_per_key=2, session_ttl_seconds=60)
+        return SessionAffinity(max_sessions_per_key=2, session_ttl_seconds=60)
 
     @pytest.mark.asyncio
     async def test_acquire_creates_new_session(self, pool):
@@ -1131,14 +1131,14 @@ class TestIdlePoolEviction:
     @pytest.fixture
     def pool(self):
         # Use longer TTL so sessions don't expire during test
-        pool = MCPSessionPool(idle_pool_eviction_seconds=0.1, session_ttl_seconds=300)
+        pool = SessionAffinity(idle_pool_eviction_seconds=0.1, session_ttl_seconds=300)
         pool._eviction_run_interval = 0  # No throttling for tests
         return pool
 
     @pytest.mark.asyncio
     async def test_eviction_throttling(self):
         """Eviction should be throttled to prevent excessive runs."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pool._eviction_run_interval = 1.0  # 1 second throttle
 
         # First eviction should run
@@ -1154,7 +1154,7 @@ class TestIdlePoolEviction:
     async def test_stale_sessions_reaped_during_eviction(self):
         """Stale sessions parked in pools should be closed during eviction."""
         # Use specific TTL that we'll override on the session
-        pool = MCPSessionPool(idle_pool_eviction_seconds=0.05, session_ttl_seconds=0.01)
+        pool = SessionAffinity(idle_pool_eviction_seconds=0.05, session_ttl_seconds=0.01)
         pool._eviction_run_interval = 0
 
         with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
@@ -1204,7 +1204,7 @@ class TestIdlePoolEviction:
         This prevents a race where eviction sees the key as idle + inactive
         while release is in progress.
         """
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             idle_pool_eviction_seconds=1000,  # Very long so eviction doesn't trigger
             session_ttl_seconds=300,
         )
@@ -1250,7 +1250,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_create_session_sse_success(self):
         """SSE session creation should initialize and return pooled session."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pool._message_handler_factory = MagicMock(return_value=MagicMock())
 
         transport_ctx = MagicMock()
@@ -1288,7 +1288,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_create_session_streamablehttp_with_factory(self):
         """STREAMABLE_HTTP should use streamablehttp_client with httpx client factory."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         httpx_factory = MagicMock()
 
         transport_ctx = MagicMock()
@@ -1319,7 +1319,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_create_session_message_handler_factory_failure_logs_warning(self):
         """Message handler factory failures should warn and proceed."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         def boom_factory(_url, _gateway_id):
             raise RuntimeError("boom")
@@ -1352,7 +1352,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_create_session_failure_cleanup(self):
         """Failure during initialization should cleanup via background task unwinding."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         transport_ctx = MagicMock()
         transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
@@ -1380,7 +1380,7 @@ class TestCloseSession:
     @pytest.mark.asyncio
     async def test_close_session_noop_when_closed(self):
         """Closed sessions should short-circuit cleanup."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pooled = PooledSession(
             session=MagicMock(),
             transport_context=MagicMock(),
@@ -1408,7 +1408,7 @@ class TestCloseSession:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pooled = PooledSession(
             session=MagicMock(),
             transport_context=MagicMock(),
@@ -1435,7 +1435,7 @@ class TestContextManager:
     @pytest.mark.asyncio
     async def test_pool_context_manager(self):
         """Test pool as async context manager."""
-        async with MCPSessionPool() as pool:
+        async with SessionAffinity() as pool:
             assert pool._closed is False
 
         assert pool._closed is True
@@ -1443,7 +1443,7 @@ class TestContextManager:
     @pytest.mark.asyncio
     async def test_session_context_manager(self):
         """Test session context manager."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
 
         with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             mock_session = PooledSession(
@@ -1471,23 +1471,23 @@ class TestStreamableHttpSessionOwnerCleanup:
     """Tests for the public session-owner cleanup wrapper."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_streamable_http_session_owner_skips_invalid_ids(self):
+    async def test_cleanup_session_owner_skips_invalid_ids(self):
         """Invalid MCP session ids should be ignored."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pool.is_valid_mcp_session_id = MagicMock(return_value=False)
-        pool._cleanup_pool_session_owner = AsyncMock()
+        pool._cleanup_session_owner = AsyncMock()
 
-        await pool.cleanup_streamable_http_session_owner("not-valid")
+        await pool.cleanup_session_owner("not-valid")
 
-        pool._cleanup_pool_session_owner.assert_not_awaited()
+        pool._cleanup_session_owner.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_cleanup_streamable_http_session_owner_cleans_valid_ids(self):
+    async def test_cleanup_session_owner_cleans_valid_ids(self):
         """Valid MCP session ids should delegate to the private cleanup helper."""
-        pool = MCPSessionPool()
+        pool = SessionAffinity()
         pool.is_valid_mcp_session_id = MagicMock(return_value=True)
-        pool._cleanup_pool_session_owner = AsyncMock()
+        pool._cleanup_session_owner = AsyncMock()
 
-        await pool.cleanup_streamable_http_session_owner("abc123def456")
+        await pool.cleanup_session_owner("abc123def456")
 
-        pool._cleanup_pool_session_owner.assert_awaited_once_with("abc123def456")
+        pool._cleanup_session_owner.assert_awaited_once_with("abc123def456")

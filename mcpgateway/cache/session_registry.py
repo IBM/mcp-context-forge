@@ -1418,9 +1418,9 @@ class SessionRegistry(SessionBackend):
 
             # Register the session mapping with the pool
             # First-Party
-            from mcpgateway.services.session_affinity import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             await pool.register_session_mapping(
                 session_id,
                 gateway_url,

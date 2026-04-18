@@ -27,7 +27,7 @@ import pytest
 
 # First-Party
 from mcpgateway.services.session_affinity import (
-    MCPSessionPool,
+    SessionAffinity,
     PooledSession,
     TransportType,
 )
@@ -38,7 +38,7 @@ class TestPoolMetricsSecurityOutput:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_identity_hash_is_hashed_not_raw(self, pool):
         """Pool key identity should be a SHA-256 hash, not raw auth header."""
@@ -108,7 +108,7 @@ class TestPoolMetricsStructure:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_metrics_contains_required_fields(self, pool):
         """Metrics should contain all required fields."""
@@ -186,7 +186,7 @@ class TestPoolMetricsEvictionTracking:
     @pytest.mark.asyncio
     async def test_eviction_metrics_tracked(self):
         """Pool key evictions should be tracked in metrics."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             idle_pool_eviction_seconds=0.001,  # Very short eviction time
             session_ttl_seconds=300,
         )
@@ -231,7 +231,7 @@ class TestPoolMetricsEvictionTracking:
     @pytest.mark.asyncio
     async def test_session_reaping_metrics_tracked(self):
         """Stale session reaping should be tracked in metrics."""
-        pool = MCPSessionPool(
+        pool = SessionAffinity(
             idle_pool_eviction_seconds=0.01,
             session_ttl_seconds=0.001,  # Very short TTL
         )
@@ -278,7 +278,7 @@ class TestSecurityValidation:
 
     @pytest.fixture
     def pool(self):
-        return MCPSessionPool()
+        return SessionAffinity()
 
     def test_anonymous_sessions_isolated_from_authenticated(self, pool):
         """Anonymous sessions should not share with authenticated sessions."""
