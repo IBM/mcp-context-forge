@@ -285,6 +285,48 @@ class TestConditionalPaths:
         assert "rust-public" not in module.mcp_transport_app.names()
         assert "rust-internal" in module.mcp_transport_app.names()
 
+    def test_import_logs_error_when_public_ingress_misconfigured_on_shadow_boot(self, monkeypatch, caplog):
+        """shadow boot + mcp_rust_ingress=public is a misconfig: boot must log at error so it survives the default LOG_LEVEL=ERROR."""
+        caplog.set_level("ERROR")
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                # session-auth-reuse OFF → boot mode is shadow, the public
+                # listener is not bound, and `mcp_rust_ingress=public` is
+                # the operator misconfig we want to surface loudly.
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # rust-public is never registered on shadow boot — the public
+        # listener isn't bound there. Without the error log, an operator
+        # would never know their setting is being silently overridden.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert any("mcp_rust_ingress=public is set on boot=shadow" in rec.message and rec.levelname == "ERROR" for rec in caplog.records)
+
+    def test_select_mcp_ingress_downgrades_public_to_internal_on_shadow_boot(self, monkeypatch):
+        """Even when an active edge override would otherwise route to Rust, shadow boot must NEVER select rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        # Force the safety predicate True (as a runtime edge override
+        # would) and assert the selector still refuses to return
+        # "rust-public" on shadow boot. This is the regression guard:
+        # dropping the `boot_mcp_runtime_mode() == "edge"` clause would
+        # silently route auth-sensitive traffic to an unregistered name,
+        # whose only fallback is the python transport.
+        with patch.object(module, "_should_mount_public_rust_transport", return_value=True):
+            assert module._select_mcp_ingress({}) == "rust-internal"
+
     def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
         """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
         caplog.set_level("WARNING")

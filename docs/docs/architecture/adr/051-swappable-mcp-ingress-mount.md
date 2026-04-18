@@ -138,8 +138,8 @@ the same way the prior dispatcher consumed the same predicates.
 - **Drain semantics preserved.** Per-request selection means in-flight
   requests on a deselected ingress complete on their original handler;
   only newly-accepted requests follow the new selection. Same property
-  the prior dispatcher had — tested at
-  `tests/unit/mcpgateway/test_main_extended.py::test_mcp_ingress_mount_in_flight_request_finishes_on_original_ingress`.
+  the prior dispatcher had — see the in-flight drain test in
+  `tests/unit/mcpgateway/test_main_extended.py`.
 
 ### Negative
 
@@ -190,13 +190,18 @@ Code consumers:
 
 Tests:
 
-- `MCPStreamableHTTPModeDispatcher` references in
-  `test_main_extended.py:245,261,277` and the two dispatcher-behavior
-  tests have been migrated to assert against `MCPIngressMount` /
-  `_select_mcp_ingress` instead. Behavior assertions (per-request
-  routing, in-flight drain) are preserved.
+- The dispatcher-behavior tests in `tests/unit/mcpgateway/test_main_extended.py`
+  (the `TestConditionalPaths::test_import_*` group plus the two
+  `test_mcp_ingress_mount_*` async tests) now assert against
+  `MCPIngressMount` / `_select_mcp_ingress` instead of the prior
+  dispatcher class. Behavior assertions (per-request routing, in-flight
+  drain) are preserved.
 - New focused tests for the mount itself live at
   `tests/unit/mcpgateway/transports/test_mcp_ingress_mount.py`.
+- New focused tests for the public-listener proxy (header forwarding,
+  XFF spoof rejection, hop-by-hop stripping, error mapping, streaming
+  close-on-exit) live at
+  `tests/unit/mcpgateway/transports/test_rust_mcp_public_proxy.py`.
 
 ## When to revisit
 

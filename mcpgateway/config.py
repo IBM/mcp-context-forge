@@ -279,7 +279,7 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
-    mcp_rust_ingress: str = Field(
+    mcp_rust_ingress: Literal["internal", "public"] = Field(
         default="internal",
         description=(
             "Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
@@ -287,7 +287,8 @@ class Settings(BaseSettings):
             "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
             "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
             "proxy to the Rust public listener at MCP_RUST_PUBLIC_LISTEN_HTTP — useful "
-            "for single-process deployments without nginx in front."
+            "for single-process deployments without nginx in front. Pydantic rejects "
+            "any other value at config load."
         ),
     )
     mcp_rust_public_proxy_upstream: str = Field(

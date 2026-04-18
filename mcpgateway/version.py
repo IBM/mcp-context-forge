@@ -444,12 +444,12 @@ def _deployment_allows_override_mode(runtime, mode):
     compose:
 
     1. **Is there a mechanism that could honor the override?** For MCP, an
-       override is observed only by the ``MCPStreamableHTTPModeDispatcher``,
-       which is mounted for ``boot=shadow`` and ``boot=edge`` only. ``boot=off``
-       has no Rust sidecar (``NO_DISPATCHER``); ``boot=full`` mounts a plain
-       Rust proxy with no dispatcher (``BOOT_FULL_STRANDS``). For A2A,
-       overrides are observed per-invocation, requiring the A2A runtime to be
-       enabled at boot — ``boot=off`` returns ``NO_DISPATCHER``.
+       override is observed only by the ``MCPIngressMount`` mounted for
+       ``boot=shadow`` and ``boot=edge``. ``boot=off`` has no Rust sidecar
+       (``NO_DISPATCHER``); ``boot=full`` mounts a plain Rust proxy with no
+       dispatcher (``BOOT_FULL_STRANDS``). For A2A, overrides are observed
+       per-invocation, requiring the A2A runtime to be enabled at boot —
+       ``boot=off`` returns ``NO_DISPATCHER``.
     2. **Does the target mode satisfy the safety invariant?** An ``edge``
        override additionally requires the session-auth-reuse (MCP) or
        delegate-enabled (A2A) flag; without it, routing public traffic to

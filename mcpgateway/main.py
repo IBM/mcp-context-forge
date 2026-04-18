@@ -11948,6 +11948,13 @@ def _select_mcp_ingress(_scope: dict) -> str:
     - Override forces ``shadow``, OR safety invariant is unmet: route to
       the Python transport (the always-safe fallback).
 
+    The ``"rust-public"`` ingress is only registered on ``boot=edge``
+    (the public listener isn't bound on shadow boot per the entrypoint
+    flow). On any other boot mode the selector transparently downgrades
+    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
+    routing to an unregistered name; the misconfig itself is surfaced
+    as a boot-time error in ``_build_mcp_transport_app``.
+
     Args:
         _scope: ASGI scope (unused today; reserved so future selectors
             can route by method/path/headers without changing the
@@ -11956,9 +11963,11 @@ def _select_mcp_ingress(_scope: dict) -> str:
     Returns:
         The ingress name to look up in the mount's registry.
     """
-    if _should_mount_public_rust_transport():
-        return "rust-public" if settings.mcp_rust_ingress == "public" else "rust-internal"
-    return "python"
+    if not _should_mount_public_rust_transport():
+        return "python"
+    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
+        return "rust-public"
+    return "rust-internal"
 
 
 def _build_mcp_transport_app():
@@ -11999,6 +12008,18 @@ def _build_mcp_transport_app():
             from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
 
             ingress.register("rust-public", build_rust_public_proxy_app())
+        elif settings.mcp_rust_ingress == "public":
+            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
+            # Rust public listener isn't bound on shadow boot, so the
+            # selector deliberately downgrades to "rust-internal". Logged
+            # at error severity so it survives the default LOG_LEVEL=ERROR
+            # — a warning here would be invisible in most production
+            # deployments and the operator would never know their setting
+            # is being silently overridden.
+            logger.error(
+                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
+                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
+            )
 
         logger.warning(
             "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",

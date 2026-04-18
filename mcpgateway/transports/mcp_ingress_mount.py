@@ -14,8 +14,9 @@ shadow-comparison, percentage-traffic-split, …) is a one-line
 This replaces the role of the prior ``MCPStreamableHTTPModeDispatcher``
 (which was hard-coded to a Python transport plus a single Rust transport,
 with the per-request choice baked into its ``handle_streamable_http``
-method). See ``docs/docs/architecture/adr/051-...md`` for the design
-decision and migration notes.
+method). See
+``docs/docs/architecture/adr/051-swappable-mcp-ingress-mount.md`` for
+the design decision and migration notes.
 """
 
 # Future
@@ -156,10 +157,24 @@ class MCPIngressMount:
         name = self._selector(scope)
         app = self._ingresses.get(name)
         if app is None:
+            # Selector miss is an invariant violation — the registered set
+            # and the policy are out of sync. Either path (fallback or
+            # 503) deserves a warning, not debug, so a misconfigured
+            # selector doesn't silently route auth-sensitive traffic to
+            # the wrong handler.
             if self._fallback is None:
+                logger.warning(
+                    "MCPIngressMount: selector returned %r but no ingress is registered under that name; available=%s. Returning 503.",
+                    name,
+                    self.names(),
+                )
                 await self._send_503(send, name)
                 return
-            logger.debug("MCPIngressMount: ingress %r not registered, using fallback", name)
+            logger.warning(
+                "MCPIngressMount: selector returned %r which is not registered; available=%s. Falling back to the configured fallback app.",
+                name,
+                self.names(),
+            )
             app = self._fallback
         await app(scope, receive, send)
 

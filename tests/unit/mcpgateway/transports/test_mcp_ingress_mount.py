@@ -100,6 +100,44 @@ async def test_dispatch_503s_when_selector_misses_and_no_fallback():
     assert "alpha" in body_text  # available list
 
 
+@pytest.mark.asyncio
+async def test_dispatch_logs_warning_when_falling_back_to_fallback(caplog):
+    """Selector miss + fallback → warning log so a misrouted ingress is never silent."""
+    sink: List[str] = []
+    fallback = _make_recording_app("fallback", sink)
+    mount = MCPIngressMount(selector=lambda _scope: "ghost", fallback=fallback)
+    mount.register("alpha", _make_recording_app("alpha", sink))
+
+    async def _noop(*_):
+        pass
+
+    caplog.set_level("WARNING", logger="mcpgateway.transports.mcp_ingress_mount")
+    await mount.dispatch({"type": "http", "path": "/x"}, _noop, _noop)
+
+    assert sink == ["fallback:/x"]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("'ghost'" in w.message and "alpha" in w.message for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_503_path_logs_warning(caplog):
+    """Selector miss + no fallback → 503 ALSO emits a warning, not just a wire response."""
+    mount = MCPIngressMount(selector=lambda _scope: "ghost")
+    mount.register("alpha", _make_recording_app("alpha", []))
+
+    async def _capture_send(_msg):
+        pass
+
+    async def _noop_receive():
+        return {"type": "http.request"}
+
+    caplog.set_level("WARNING", logger="mcpgateway.transports.mcp_ingress_mount")
+    await mount.dispatch({"type": "http", "path": "/x"}, _noop_receive, _capture_send)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("'ghost'" in w.message and "503" in w.message for w in warnings)
+
+
 def test_register_is_idempotent_and_replaces():
     sink: List[str] = []
     mount = MCPIngressMount(selector=lambda _scope: "alpha")

@@ -34,6 +34,7 @@ the selector picks it when ``settings.mcp_rust_ingress == "public"``.
 from __future__ import annotations
 
 # Standard
+import asyncio
 import logging
 from typing import Awaitable, Callable, Optional
 
@@ -75,14 +76,61 @@ _HOP_BY_HOP_RESPONSE = frozenset(
         "upgrade",
     }
 )
+# Forwarded-chain headers are dropped from the inbound request and
+# re-set unconditionally below. This is the no-nginx-in-front case: the
+# immediate hop is the client, so we cannot trust any value they
+# pre-populate. The set is intentionally a superset of the
+# trusted-internal proxy's forwarded-chain set (it additionally drops
+# ``x-real-ip`` because we re-derive it from the ASGI client info).
+_FORWARDED_CHAIN_HEADERS = frozenset(
+    {
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-port",
+        "x-forwarded-proto",
+        "x-real-ip",
+    }
+)
+
+
+def _format_forwarded_for(host: Optional[str], port: int) -> str:
+    """Format an RFC 7239 ``for=`` directive value.
+
+    Args:
+        host: Client host (may be IPv4, IPv6, or ``None``).
+        port: Client port; ``0`` is treated as "no port" because
+            Starlette synthesizes ``0`` when ``request.client`` is
+            unavailable, which is not a valid port number to advertise.
+
+    Returns:
+        A token suitable as the value of ``for=`` — ``unknown`` for
+        absent clients, otherwise a quoted ``"ip[:port]"`` (with IPv6
+        addresses bracketed per RFC 3986).
+    """
+    if not host:
+        return "unknown"
+    # IPv6 addresses contain colons and must be bracketed per RFC 3986;
+    # detect already-bracketed input so a caller passing "[::1]" doesn't
+    # end up with "[[::1]]".
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        address = f"[{host}]"
+    else:
+        address = host
+    return f'"{address}:{port}"' if port else f'"{address}"'
 
 
 def _build_forwarded_headers(request: Request) -> dict:
     """Construct the request headers Rust's public listener will see.
 
-    Strips hop-by-hop headers, preserves auth / cookies / content-type /
-    MCP session headers, and adds nginx-style forwarded metadata so
-    Rust's auth callback sees the original client.
+    Strips hop-by-hop and forwarded-chain headers from the inbound
+    request, preserves auth / cookies / content-type / MCP session
+    headers, then adds nginx-style forwarded metadata derived from the
+    trusted ASGI ``request.client`` info. The forwarded-chain strip is
+    a security control: this proxy is the first hop in the
+    no-nginx-in-front deployment, so any client-supplied
+    ``X-Forwarded-*`` or ``Forwarded`` value would let the caller spoof
+    their own source IP to Rust's auth callback.
 
     Args:
         request: Incoming Starlette request.
@@ -92,19 +140,20 @@ def _build_forwarded_headers(request: Request) -> dict:
     """
     forwarded: dict = {}
     for name, value in request.headers.items():
-        if name.lower() in _HOP_BY_HOP_REQUEST:
+        lowered = name.lower()
+        if lowered in _HOP_BY_HOP_REQUEST or lowered in _FORWARDED_CHAIN_HEADERS:
             continue
         forwarded[name] = value
 
-    client_host = request.client.host if request.client else "unknown"
+    client_host = request.client.host if request.client else None
     client_port = request.client.port if request.client else 0
+    host_header = request.headers.get("host", "")
 
-    existing_xff = request.headers.get("x-forwarded-for", "")
-    forwarded["X-Forwarded-For"] = f"{existing_xff}, {client_host}".lstrip(", ") if existing_xff else client_host
+    forwarded["X-Forwarded-For"] = client_host or "unknown"
     forwarded["X-Forwarded-Proto"] = request.url.scheme
-    forwarded["X-Forwarded-Host"] = request.headers.get("host", "")
-    forwarded["X-Real-IP"] = client_host
-    forwarded["Forwarded"] = f'for="{client_host}:{client_port}";' f"proto={request.url.scheme};" f'host={request.headers.get("host", "")}'
+    forwarded["X-Forwarded-Host"] = host_header
+    forwarded["X-Real-IP"] = client_host or "unknown"
+    forwarded["Forwarded"] = f'for={_format_forwarded_for(client_host, client_port)};proto={request.url.scheme};host="{host_header}"'
     return forwarded
 
 
@@ -171,21 +220,32 @@ class RustMCPPublicProxyApp:
             return
 
         request = Request(scope, receive)
-        client = await self._get_client()
         upstream_path = scope.get("path", "/")
-        headers = _build_forwarded_headers(request)
+        method = request.method
 
         try:
+            client = await self._get_client()
+            headers = _build_forwarded_headers(request)
             upstream_request = client.build_request(
-                method=request.method,
+                method=method,
                 url=upstream_path,
                 headers=headers,
                 params=request.query_params,
                 content=request.stream(),
             )
             upstream_response = await client.send(upstream_request, stream=True)
+        except asyncio.CancelledError:
+            # Client disconnected before upstream replied — let asyncio
+            # propagate the cancel rather than swallowing it.
+            raise
         except httpx.HTTPError as exc:
-            logger.error("rust-public ingress: upstream request to %s failed: %s", upstream_path, exc)
+            logger.error(
+                "rust-public ingress: upstream %s %s failed (%s): %s",
+                method,
+                upstream_path,
+                type(exc).__name__,
+                exc,
+            )
             error_response = Response(
                 status_code=502,
                 content=b"Rust MCP public ingress unavailable",
@@ -193,14 +253,64 @@ class RustMCPPublicProxyApp:
             )
             await error_response(scope, receive, send)
             return
+        except Exception:  # pylint: disable=broad-except
+            # Defensive catch-all: anything else (RuntimeError, SSLError
+            # subclasses outside HTTPError, etc.) becomes a 500 with a
+            # logged stack trace, so silent 500s never reach the client
+            # without a server-side breadcrumb.
+            logger.exception(
+                "rust-public ingress: unexpected error preparing upstream %s %s",
+                method,
+                upstream_path,
+            )
+            error_response = Response(
+                status_code=500,
+                content=b"Rust MCP public ingress error",
+                media_type="text/plain",
+            )
+            await error_response(scope, receive, send)
+            return
+
+        # Auth-relevant or server-error upstream statuses get a warning so
+        # ops can spot a flood of 401s after a credential rotation, or a
+        # cascading 503, without raising the log level globally.
+        if upstream_response.status_code >= 500 or upstream_response.status_code in (401, 403):
+            logger.warning(
+                "rust-public ingress: upstream %s %s returned %d",
+                method,
+                upstream_path,
+                upstream_response.status_code,
+            )
 
         response_headers = {name: value for name, value in upstream_response.headers.items() if name.lower() not in _HOP_BY_HOP_RESPONSE}
 
         async def _body_iter():
-            """Stream the upstream response body chunk-by-chunk and close on exit."""
+            """Stream the upstream response body and close the upstream connection on exit.
+
+            The ``finally`` returns the connection to the pool whether
+            iteration completes normally, the client disconnects
+            (``CancelledError``), or upstream errors mid-stream. Errors
+            other than cancellation are logged with the upstream context
+            so a mid-SSE Rust crash leaves a breadcrumb instead of just
+            a generic Starlette 500.
+            """
             try:
                 async for chunk in upstream_response.aiter_raw():
                     yield chunk
+            except asyncio.CancelledError:
+                logger.debug(
+                    "rust-public ingress: client disconnected mid-stream from upstream %s %s",
+                    method,
+                    upstream_path,
+                )
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "rust-public ingress: error streaming body from upstream %s %s",
+                    method,
+                    upstream_path,
+                )
+                raise
             finally:
                 await upstream_response.aclose()
 
