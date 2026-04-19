@@ -579,7 +579,7 @@ curl -s -X POST \
 2. `GatewayTenantPluginManagerFactory.get_config_from_db()` fetches all DB bindings for the `(team_id, tool_name)` pair, including any wildcard `*` bindings.
 3. For each binding, the DB `mode` and `config` are merged over the global `config.yaml` values (`_merge_tenant_config`). DB values always win.
 4. A **`TenantPluginManager`** is instantiated with the merged config and cached in memory, keyed by context ID.
-5. On upsert or delete, the cache entry is invalidated immediately so the next call picks up the new config.
+5. On upsert or delete, the handling worker invalidates its local cache entry and broadcasts a `binding_change` frame on the `plugin:invalidation` Redis pub/sub channel, so peer workers evict within milliseconds. If pub/sub delivery fails, the cache TTL (default 30 seconds) bounds the worst-case drift. For wildcard bindings (`tool_name="*"`), every cached context for the team is evicted on the handling worker.
 
 ### Priority execution order
 
