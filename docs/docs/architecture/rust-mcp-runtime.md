@@ -417,7 +417,7 @@ Recommended stack-backed validation:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-session-isolation
 cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml

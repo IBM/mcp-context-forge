@@ -18,7 +18,23 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: |
+  (?x)(
+    # Specific files (auto-generated or intentionally exempt)
+    (^|/)(
+      \.pre-commit-.*\.yaml          # transient pre-commit state/baselines
+      |normalize_special_characters\.py
+      |test_input_validation\.py
+      |ai_artifacts_normalizer\.py
+    )$
+    # Template trees (not real source)
+    |(^|/)mcp-servers/templates/
+    |(^|/)plugin_templates/
+    # Load tests (separate lifecycle)
+    |(^|/)tests/load/
+    # Jinja templates
+    |.*\.(jinja|j2)$
+  )
 fail_fast: true
 
 repos:
@@ -347,10 +363,16 @@ repos:
 
       - id: name-tests-test
         name: 🐍 Python Tests Naming
-        description: Verifies test files in tests/ directories start with `test_`.
+        description: Verifies test files start with `test_` in unit, e2e, protocol_compliance, security, and playwright suites.
         language: python
-        files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load.*|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
+        files: ^tests/(unit|e2e|protocol_compliance|security|playwright)/.+\.py$
+        exclude: |
+          (?x)^(
+            # POM / helper / fixture / target support modules — by convention,
+            # any *.py under a helpers/, fixtures/, targets/, or pages/ dir is
+            # not a test file.
+            tests/(unit|e2e|protocol_compliance|security|playwright)/(.*/)?(helpers|fixtures|targets|pages)/.*\.py
+          )$
         args: [--pytest-test-first] # `test_.*\.py`
 
 
@@ -614,3 +636,13 @@ repos:
         description: Detects secrets within a repository using IBM's detect-secrets.
         args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
         types: [text]
+        # Keep in sync with DETECT_SECRETS_FILES_EXCLUDE in Makefile.
+        # (.secrets.baseline is auto-excluded by detect-secrets itself.)
+        exclude: |
+          (?x)(
+            package-lock\.json$
+            |Cargo\.lock$
+            |uv\.lock$
+            |go\.sum$
+            |mcpgateway/sri_hashes\.json$
+          )

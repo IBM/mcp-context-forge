@@ -572,7 +572,7 @@ async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
       ``test_call_tool_session_affinity_forwarded_preserves_is_error`` in
       this file.
     - End-to-end verification:
-      ``tests/e2e/test_mcp_cli_protocol.py::TestMcpStdioProtocol::test_tools_call_schema_error_preserves_payload``.
+      ``tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload``.
     """
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types

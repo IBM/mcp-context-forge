@@ -69,7 +69,7 @@ make testing-up-rust-full
 
 ```bash
 make test
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load
@@ -353,7 +353,7 @@ For the full-Rust public path:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-session-isolation
 cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml
@@ -373,7 +373,7 @@ For the safe fallback path:
 
 ```bash
 make testing-rebuild-rust-shadow
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 ```
 

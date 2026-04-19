@@ -879,7 +879,7 @@ Observed behavior:
 - The same probe against the compose full-Rust stack behind nginx returned
   plain JSON with no `Content-Encoding`.
 - Client-visible failures on the Rust-enabled Minikube path included:
-  - `make test-mcp-cli`:
+  - `make test-mcp-protocol-e2e`:
     - `14 failed`, `9 passed`, `4 rerun`
   - `make test-mcp-access-matrix`:
     - `2 failed`, `3 passed`
@@ -888,7 +888,7 @@ Observed behavior:
 - A direct validation of the workaround succeeded:
   - setting `COMPRESSION_ENABLED=false` on the Rust-enabled Helm release and
     restarting the gateway removed `Content-Encoding: zstd` from `/mcp/`
-  - `make test-mcp-cli` then passed cleanly against the same Rust-enabled
+  - `make test-mcp-protocol-e2e` then passed cleanly against the same Rust-enabled
     Minikube endpoint:
     - `23 passed`
 - The current Python compression middleware behavior explains the issue:
@@ -936,7 +936,7 @@ Recommended next step:
     (`COMPRESSION_ENABLED=false`)
 - Re-run the Rust-enabled Minikube validation after that change:
   - `/health`
-  - `make test-mcp-cli`
+  - `make test-mcp-protocol-e2e`
   - `make test-mcp-access-matrix`
 
 #### 26. Optional `2025-11-25-report` surface is not release-clean

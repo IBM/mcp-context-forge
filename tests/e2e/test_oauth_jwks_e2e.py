@@ -41,7 +41,7 @@ from playwright.sync_api import APIRequestContext, Playwright  # noqa: E402
 from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: E402
 
 # Local
-from .mcp_test_helpers import BASE_URL, skip_no_gateway, TEST_PASSWORD  # noqa: E402
+from .helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, skip_no_gateway, TEST_PASSWORD  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,10 @@ KEYCLOAK_TOKEN_URL = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-co
 KEYCLOAK_TEST_USER = "admin@example.com"
 KEYCLOAK_TEST_PASSWORD = "changeme"  # pragma: allowlist secret — e2e Keycloak fixture, not a real credential
 OAUTH_PREFIX = "oauth-jwks"
-_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+# Shared with the rest of the e2e suite so this test can't drift from the
+# gateway's ≥32-char JWT_SECRET_KEY minimum; overriding via the env var
+# still works for non-default deployments.
+_JWT_SECRET = JWT_SECRET
 
 
 # ---------------------------------------------------------------------------
