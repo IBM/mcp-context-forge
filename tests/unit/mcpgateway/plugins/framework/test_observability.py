@@ -558,7 +558,13 @@ def test_reset_plugin_manager_factory_clears_reference():
 
 @pytest.mark.asyncio
 async def test_shutdown_plugin_manager_factory_when_disabled():
-    """shutdown_plugin_manager_factory is a no-op when _PLUGINS_ENABLED is False (line 145)."""
+    """Shutdown must tear the factory down even when the in-memory flag is False.
+
+    Runtime-disabling plugins flips ``_PLUGINS_ENABLED`` to False, but gateway
+    shutdown must still call ``factory.shutdown()`` — otherwise in-flight build
+    tasks leak. Pins the fix that removed the ``if not _PLUGINS_ENABLED``
+    early-return.
+    """
     # Standard
     from unittest.mock import AsyncMock, MagicMock
 
@@ -570,12 +576,12 @@ async def test_shutdown_plugin_manager_factory_when_disabled():
     fw._plugin_manager_factory = mock_factory
     fw.enable_plugins(False)
 
-    await fw.shutdown_plugin_manager_factory()
-
-    mock_factory.shutdown.assert_not_awaited()
-    # factory reference unchanged since we returned early
-    assert fw._plugin_manager_factory is mock_factory
-    fw.reset_plugin_manager_factory()
+    try:
+        await fw.shutdown_plugin_manager_factory()
+        mock_factory.shutdown.assert_awaited_once()
+        assert fw._plugin_manager_factory is None
+    finally:
+        fw._plugin_manager_factory = None
 
 
 @pytest.mark.asyncio

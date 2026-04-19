@@ -84,12 +84,18 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
                 bindings = get_bindings_for_tool(db, team_id, tool_name)
             finally:
                 db.close()
-        except Exception as exc:
-            logger.warning(
-                "get_config_from_db: DB error for context_id=%s (%s), falling back to base config",
-                context_id, exc,
+        except Exception:
+            # Previously this swallowed the error and returned None, which made
+            # the factory rebuild the manager with base YAML config — silently
+            # dropping any per-team/per-tool overrides (including enforce-mode
+            # security plugins). Fail loudly so the rebuild bubbles up; the
+            # caller retries on the next request or cache TTL expiry.
+            logger.error(
+                "get_config_from_db: DB error for context_id=%s — failing rebuild to avoid dropping bindings",
+                context_id,
+                exc_info=True,
             )
-            return None
+            raise
 
         if not bindings:
             logger.debug("get_config_from_db: no bindings found for context_id=%s", context_id)

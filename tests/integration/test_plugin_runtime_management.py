@@ -79,8 +79,16 @@ def auth_headers():
 
 @pytest.fixture(autouse=True)
 def ensure_plugins_enabled(auth_headers):
-    """Ensure plugins are enabled before and after each test."""
-    # Enable before test
+    """Ensure plugins are enabled before and after each test.
+
+    Unconditional PUT + sleep. An earlier attempt probed state first and
+    skipped the sleep when it looked like plugins were already enabled, but
+    the probe goes through the same NGINX that caches GET responses for
+    ``NGINX_CACHE_TTL`` seconds — so a previous test's disable could still
+    be cached as ``enabled=True`` at probe time, causing this fixture to
+    skip the re-enable and leave the next test running against disabled
+    plugins. The ~6 s wall-clock cost is worth the correctness guarantee.
+    """
     requests.put(
         f"{GATEWAY_URL}/admin/plugins",
         json={"enabled": True},
@@ -89,7 +97,7 @@ def ensure_plugins_enabled(auth_headers):
     )
     time.sleep(NGINX_CACHE_TTL)
     yield
-    # Re-enable after test
+    # Re-enable after test in case it left them off.
     requests.put(
         f"{GATEWAY_URL}/admin/plugins",
         json={"enabled": True},
@@ -321,7 +329,14 @@ class TestPutAdminPluginsNameMode:
 
 
 class TestCrossReplicaPropagation:
-    """Tests that plugin state changes propagate via Redis."""
+    """Tests that plugin state changes propagate via Redis.
+
+    TODO(#4300): these assertions assume NGINX round-robins across replicas
+    but don't actually verify different replicas responded. Sticky sessions or
+    source-IP hashing would let every sampled request hit the same backend and
+    the test would still pass. Gate the assertions on a ``Server-Name`` (or
+    equivalent) response header so we can assert ``len(set(replicas_seen)) >= 2``.
+    """
 
     def test_disable_propagates_across_requests(self, auth_headers):
         """After disabling, multiple requests all see disabled state.
@@ -394,6 +409,10 @@ class TestMultiInstanceGlobalToggle:
 
     These tests send multiple requests through NGINX load balancer
     to verify state consistency across all gateway replicas.
+
+    TODO(#4300): same replica-identity gap as ``TestCrossReplicaPropagation`` —
+    requests are assumed to spread across replicas but never verified. Close by
+    asserting distinct replica identities in the response set.
     """
 
     def test_toggle_cycle_consistent(self, auth_headers):
@@ -420,9 +439,7 @@ class TestMultiInstanceGlobalToggle:
                 if resp.status_code == 200:
                     results.append(resp.json().get("plugins_globally_enabled"))
 
-            assert all(r is enabled for r in results), (
-                f"State mismatch after setting enabled={enabled}: {results}"
-            )
+            assert all(r is enabled for r in results), f"State mismatch after setting enabled={enabled}: {results}"
 
     def test_rapid_toggle_converges(self, auth_headers):
         """Rapid toggling eventually converges to the last state."""
@@ -521,9 +538,7 @@ class TestPubSubInstantPropagation:
                 results.append(resp.json().get("plugins_globally_enabled"))
 
         assert len(results) > 0, "No successful responses"
-        assert all(r is False for r in results), (
-            f"Not all replicas see disabled state within {PUBSUB_PROPAGATION_WAIT}s: {results}"
-        )
+        assert all(r is False for r in results), f"Not all replicas see disabled state within {PUBSUB_PROPAGATION_WAIT}s: {results}"
 
     def test_global_enable_instant_propagation(self, auth_headers):
         """Global re-enable propagates to all replicas within 2 seconds."""
@@ -560,9 +575,7 @@ class TestPubSubInstantPropagation:
                 results.append(resp.json().get("plugins_globally_enabled"))
 
         assert len(results) > 0
-        assert all(r is True for r in results), (
-            f"Not all replicas see enabled state within {PUBSUB_PROPAGATION_WAIT}s: {results}"
-        )
+        assert all(r is True for r in results), f"Not all replicas see enabled state within {PUBSUB_PROPAGATION_WAIT}s: {results}"
 
     def test_rapid_toggle_instant_convergence(self, auth_headers):
         """Rapid toggling converges instantly via pub/sub (no 30s TTL wait)."""
@@ -590,6 +603,4 @@ class TestPubSubInstantPropagation:
             if resp.status_code == 200:
                 results.append(resp.json().get("plugins_globally_enabled"))
 
-        assert all(r is True for r in results), (
-            f"Replicas didn't converge within {PUBSUB_PROPAGATION_WAIT}s: {results}"
-        )
+        assert all(r is True for r in results), f"Replicas didn't converge within {PUBSUB_PROPAGATION_WAIT}s: {results}"

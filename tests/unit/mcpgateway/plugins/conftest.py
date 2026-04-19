@@ -14,21 +14,30 @@ import pytest
 import mcpgateway.plugins.framework as fw
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.plugins.framework.settings import settings
+from tests.utils.plugin_redis_helper import install_dynamic_redis_provider
+
+
+@pytest.fixture(autouse=True)
+def _install_redis_provider():
+    """Route the framework's Redis shim to the real ``get_redis_client`` for the duration of each test."""
+    with install_dynamic_redis_provider():
+        yield
 
 
 @pytest.fixture(autouse=True)
 def reset_plugin_manager_state():
-    """Reset PluginManager Borg state before and after each test.
-
-    This ensures each test starts with a fresh PluginManager instance,
-    preventing state leakage between tests when using the Borg pattern.
-    Also resets the module-level singleton cached by get_plugin_manager().
-    """
+    """Reset PluginManager Borg state, the shared-toggle cache, and the factory singleton before/after each test."""
     PluginManager.reset()
-    fw._plugin_manager = None
+    fw.reset_plugin_manager_factory()
+    fw._invalidate_shared_enabled_cache()
+    fw._state.clear_local_mode_overrides()
+    fw._reset_factory_init_degraded_for_tests()
     yield
     PluginManager.reset()
-    fw._plugin_manager = None
+    fw.reset_plugin_manager_factory()
+    fw._invalidate_shared_enabled_cache()
+    fw._state.clear_local_mode_overrides()
+    fw._reset_factory_init_degraded_for_tests()
 
 
 @pytest.fixture(autouse=True)
