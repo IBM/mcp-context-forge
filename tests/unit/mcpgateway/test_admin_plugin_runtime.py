@@ -491,6 +491,31 @@ class TestUpdatePluginModeHandler:
         mock_redis_client.publish.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_invalidate_failure_logged_not_raised(self, allow_admin, admin_user, mock_request, mock_plugin_service, mock_redis_client, monkeypatch):
+        """``invalidate_all_plugin_managers`` raising must become a WARNING, not a 500.
+
+        The override is already stored by ``publish_plugin_mode_change`` at this
+        point — a cache-sweep failure would strand operators without this pin.
+        """
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis_client))
+
+        async def _fail_invalidate():
+            raise RuntimeError("cache sweep blew up")
+
+        monkeypatch.setattr("mcpgateway.plugins.framework.invalidate_all_plugin_managers", _fail_invalidate)
+
+        with _capture_admin_logger_records() as records:
+            response = await admin_module.update_plugin_mode(
+                name="RateLimiterPlugin",
+                payload=PluginModeUpdateRequest(mode="permissive"),
+                user=admin_user,
+            )
+
+        assert response.plugin == "RateLimiterPlugin"
+        assert response.mode == "permissive"
+        assert any("cache invalidation failed" in record.getMessage() for record in records)
+
+    @pytest.mark.asyncio
     async def test_single_node_no_redis_applies_override_locally(self, allow_admin, admin_user, mock_request, mock_plugin_service, monkeypatch):
         """On Redis-less deployments the override lands in the in-process map; response signals redis_persisted=False."""
         monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
