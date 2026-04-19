@@ -7530,10 +7530,40 @@ class PluginDetail(PluginSummary):
 class PluginListResponse(BaseModel):
     """Response for plugin list endpoint."""
 
+    plugins_globally_enabled: bool = Field(True, description="Whether the plugin subsystem is globally enabled at runtime")
     plugins: List[PluginSummary] = Field(..., description="List of plugins")
     total: int = Field(..., description="Total number of plugins")
     enabled_count: int = Field(0, description="Number of enabled plugins")
     disabled_count: int = Field(0, description="Number of disabled plugins")
+
+
+class PluginToggleRequest(BaseModel):
+    """Request body for ``PUT /admin/plugins`` — toggles the plugin subsystem globally."""
+
+    enabled: bool = Field(..., description="Activate plugins when true, deactivate when false")
+
+
+class PluginToggleResponse(BaseModel):
+    """Response body for the global plugin toggle endpoint."""
+
+    plugins_enabled: bool = Field(..., description="Effective plugin subsystem state after the toggle")
+    redis_persisted: bool = Field(..., description="True when the shared Redis toggle accepted the write")
+
+
+class PluginModeUpdateRequest(BaseModel):
+    """Request body for ``PUT /admin/plugins/{name}`` — drives the Pydantic enum validation."""
+
+    # Mirrors PluginMode.value; importing the enum here would create a cycle
+    # (schemas -> plugins.framework -> services -> schemas), so use a Literal.
+    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled")
+
+
+class PluginModeUpdateResponse(BaseModel):
+    """Response body for the per-plugin mode update endpoint."""
+
+    plugin: str = Field(..., description="Plugin name whose mode was updated")
+    mode: str = Field(..., description="New plugin mode")
+    redis_persisted: bool = Field(..., description="True when the shared Redis override accepted the write")
 
 
 class PluginStatsResponse(BaseModel):

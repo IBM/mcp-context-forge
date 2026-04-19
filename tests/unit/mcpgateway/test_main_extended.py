@@ -4856,6 +4856,130 @@ class TestLifespanAdvanced:
 
         assert excinfo.value.code == 1
 
+    async def _prepare_lifespan_stubs(self, monkeypatch, *, plugins_enabled: bool) -> None:
+        """Install the minimal set of stubs needed for ``lifespan`` to reach the plugin-init try/except."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        def make_service():  # noqa: ANN001
+            service = MagicMock()
+            service.initialize = AsyncMock()
+            service.shutdown = AsyncMock()
+            return service
+
+        for flag, value in (
+            ("mcpgateway_session_affinity_enabled", False),
+            ("enable_header_passthrough", False),
+            ("mcpgateway_tool_cancellation_enabled", False),
+            ("mcpgateway_elicitation_enabled", False),
+            ("metrics_buffer_enabled", False),
+            ("metrics_cleanup_enabled", False),
+            ("metrics_rollup_enabled", False),
+            ("sso_enabled", False),
+            ("metrics_aggregation_enabled", False),
+        ):
+            monkeypatch.setattr(main_mod.settings, flag, value)
+        # ``settings.plugins.enabled`` is a property that reads ``PLUGINS_ENABLED``
+        # as the authoritative override — set it directly rather than patching.
+        monkeypatch.setenv("PLUGINS_ENABLED", "true" if plugins_enabled else "false")
+
+        logging_service = make_service()
+        logging_service.configure_uvicorn_after_startup = MagicMock()
+        monkeypatch.setattr(main_mod, "logging_service", logging_service)
+
+        for attr in (
+            "tool_service",
+            "resource_service",
+            "prompt_service",
+            "gateway_service",
+            "root_service",
+            "completion_service",
+            "sampling_handler",
+            "resource_cache",
+            "streamable_http_session",
+            "session_registry",
+            "export_service",
+            "import_service",
+        ):
+            monkeypatch.setattr(main_mod, attr, make_service())
+        monkeypatch.setattr(main_mod, "a2a_service", None)
+
+        monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+        monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
+        monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+        subscriber = MagicMock()
+        subscriber.start = AsyncMock()
+        subscriber.stop = AsyncMock()
+        # First-Party
+        import mcpgateway.cache.registry_cache as registry_cache_mod
+
+        monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
+        monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+        monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+        monkeypatch.setattr(main_mod, "start_plugin_invalidation_listener", AsyncMock())
+        monkeypatch.setattr(main_mod, "stop_plugin_invalidation_listener", AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_lifespan_raises_when_init_factory_fails_and_plugins_enabled(self, monkeypatch):
+        """Plugins explicitly enabled + factory init failure must loud-crash, not silently degrade."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=True)
+        # The lifespan's outer handler converts errors whose message contains
+        # "Plugin initialization failed" to a clean ``SystemExit(1)``; matching
+        # that phrasing pins the "operator-meaningful crash" path.
+        monkeypatch.setattr(
+            main_mod,
+            "init_plugin_manager_factory",
+            MagicMock(side_effect=RuntimeError("Plugin initialization failed: bad YAML")),
+        )
+
+        with pytest.raises(SystemExit):
+            async with main_mod.lifespan(main_mod.app):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_lifespan_marks_degraded_when_init_factory_fails_and_plugins_disabled(self, monkeypatch):
+        """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.plugins.framework import _state as plugin_state
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock(side_effect=RuntimeError("bad YAML")))
+
+        # pylint: disable=protected-access
+        plugin_state._reset_factory_init_degraded_for_tests()
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+        # The degraded flag must now be set so ``get_plugin_manager`` will emit
+        # its one-shot ERROR when a shared-toggle flip asks for plugins.
+        assert plugin_state.is_factory_init_degraded() is True
+        plugin_state._reset_factory_init_degraded_for_tests()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_swallows_stop_listener_exception(self, monkeypatch):
+        """``stop_plugin_invalidation_listener`` raising during shutdown must not crash lifespan teardown."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        # Keep startup clean so we actually reach the shutdown block.
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod, "stop_plugin_invalidation_listener", AsyncMock(side_effect=RuntimeError("stop blew up")))
+
+        # Must not raise — the shutdown block swallows and DEBUG-logs.
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
     @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
         """Cover shutdown_services exception logging branch."""
