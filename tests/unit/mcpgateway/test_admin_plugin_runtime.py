@@ -14,6 +14,8 @@ pattern used by ``tests/unit/mcpgateway/routers/test_runtime_admin_router.py``.
 """
 
 # Standard
+from contextlib import contextmanager
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,6 +28,34 @@ import pytest
 import mcpgateway.admin as admin_module
 import mcpgateway.plugins.framework as fw
 from mcpgateway.schemas import PluginModeUpdateRequest, PluginToggleRequest
+
+
+@contextmanager
+def _capture_admin_logger_records():
+    """Attach a temporary handler to the ``mcpgateway.admin`` logger and yield captured records.
+
+    We deliberately avoid ``caplog``: under ``pytest-xdist`` an earlier test in
+    the same worker may have triggered the app's lifespan, which calls
+    ``root_logger.handlers.clear()`` and wipes ``caplog``'s root-attached
+    handler. Attaching directly to the named logger is immune to that, and
+    bypasses the root level gate too (the handler's own level is NOTSET).
+    """
+    captured: list[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    logger = logging.getLogger("mcpgateway.admin")
+    handler = _ListHandler(level=logging.DEBUG)
+    prior_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield captured
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prior_level)
 
 
 @pytest.fixture(autouse=True)
@@ -232,21 +262,25 @@ class TestToggleGlobalPluginsAdminCacheSync:
         Regression pin: before the try/except, an exception inside the sync
         block (e.g. ``set_plugin_manager`` raising on a degraded node) propagated
         up and the handler 500'd even though the global toggle was already
-        persisted. We verify the handler still returns normally and that the
-        sync attempt was made (which raised internally and was swallowed).
+        persisted. We also pin the swallow-and-warn log path so a future
+        refactor that drops the log can't silently strand operators.
         """
         monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
         # Force the sync step to fail mid-way. The shared toggle has already
         # been written by ``enable_plugins_shared`` at this point.
         mock_plugin_service.set_plugin_manager.side_effect = RuntimeError("cache unavailable")
 
-        # Must not raise — the swallow-and-warn path is what makes this safe.
-        response = await admin_module.toggle_plugins_global(payload=PluginToggleRequest(enabled=False), request=mock_request, user=admin_user)
+        # Attach directly to the admin module's LOGGER — pytest's ``caplog``
+        # lives on root and is lost if any earlier test's lifespan ran
+        # ``root_logger.handlers.clear()``. A logger-local handler survives.
+        with _capture_admin_logger_records() as records:
+            response = await admin_module.toggle_plugins_global(payload=PluginToggleRequest(enabled=False), request=mock_request, user=admin_user)
 
         assert response.redis_persisted is False
-        # The sync path was entered (mock raised), confirming the try/except
-        # actually ran rather than the branch being skipped.
+        # The sync path was entered (mock raised), and the swallow path logged
+        # the admin-cache-sync failure warning.
         mock_plugin_service.set_plugin_manager.assert_called_once_with(None)
+        assert any("admin-cache sync failed" in record.getMessage() for record in records)
 
     @pytest.mark.asyncio
     async def test_disabling_clears_admin_cache(self, allow_admin, admin_user, mock_request, mock_plugin_service, monkeypatch):
@@ -320,7 +354,7 @@ class TestAdminCacheSelfHeal:
 
     @pytest.mark.asyncio
     async def test_sync_helper_swallows_errors_and_never_raises(self, monkeypatch):
-        """A failure inside the helper must not turn a read into a 500."""
+        """A failure inside the helper must not turn a read into a 500 — and must log."""
         req = MagicMock()
         req.app = MagicMock()
         req.app.state = SimpleNamespace()
@@ -335,15 +369,16 @@ class TestAdminCacheSelfHeal:
         monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", exploding)
 
         # Must return without raising — the try/except around the helper body
-        # is what stops a framework failure from turning into a 500.
-        await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
+        # is what stops a framework failure from turning into a 500. We also
+        # pin the warning log (via a logger-local handler, see note above)
+        # so the operator signal isn't quietly dropped.
+        with _capture_admin_logger_records() as records:
+            await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
 
-        # The exploding framework call was reached (proves we exercised the
-        # failure path rather than short-circuiting before the raise) and no
-        # state was written to either the ``app.state`` cache or the service.
         assert called["exploding"] is True
         assert not hasattr(req.app.state, "plugin_manager") or req.app.state.plugin_manager is None
         plugin_service.set_plugin_manager.assert_not_called()
+        assert any("self-heal failed" in record.getMessage() for record in records)
 
 
 # ---------------------------------------------------------------------------
