@@ -9,7 +9,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z" }
+exclude-newer-package = { "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-09T23:59:59Z", "cpex-url-reputation" = "2026-04-09T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z", "authlib" = "2026-04-19T23:59:59Z" }
+
+[tool.uv.sources]
+compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -97,6 +100,7 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.13.4",
     "argparse-manpage>=4.7",
+    "authlib>=1.7.0", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
     "bump2version>=1.0.1",
@@ -107,6 +111,8 @@ dev = [
     "diff-cover>=9.0.0",
     "dodgy>=0.2.1",
     "faker>=20.0.0",
+    "compliance-reference-server",
+    "fastmcp>=2.0",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.140.3",
@@ -612,7 +618,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/e2e/test_mcp_cli_protocol.py"
+addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/e2e/test_mcp_protocol_e2e.py"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -671,6 +677,14 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
+    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/protocol_compliance)",
+    "target_reference: marks tests that exercise the reference FastMCP server target",
+    "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
+    "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",
+    "transport_stdio: marks tests that exercise the stdio transport",
+    "transport_sse: marks tests that exercise the SSE transport",
+    "transport_http: marks tests that exercise the Streamable HTTP transport",
+    "mcp_drift: marks cross-target behavioral-equivalence tests",
 ]
 
 # Playwright-specific test discovery patterns

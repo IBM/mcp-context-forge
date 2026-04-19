@@ -100,7 +100,7 @@ For the Rust MCP runtime path, the most important stack-backed checks are:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation

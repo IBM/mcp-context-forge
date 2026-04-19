@@ -60,7 +60,7 @@ Rules:
 - [ ] Confirm `/health` reports Python MCP mode
 - [ ] Confirm admin Overview shows `🐍 Python MCP Core`
 - [ ] Confirm Version Info shows the MCP Runtime card in Python mode
-- [ ] `make test-mcp-cli`
+- [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
@@ -80,7 +80,7 @@ Rules:
 - [ ] `curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'`
 - [ ] Confirm `/health` reports `rust-managed` runtime with Python transport mounted
 - [ ] Confirm admin Overview shows Rust runtime present but Python public transport semantics
-- [ ] `make test-mcp-cli`
+- [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
@@ -93,7 +93,7 @@ Rules:
 - [ ] Confirm `/health` reports Rust transport mounted
 - [ ] Confirm admin Overview shows `🦀 Rust MCP Core`
 - [ ] Confirm Version Info shows MCP Runtime card with Rust transport mounted
-- [ ] `make test-mcp-cli`
+- [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
@@ -106,7 +106,7 @@ Rules:
 - [ ] Confirm `/health` reports Rust transport/session/event-store/resume/live-stream/affinity/auth-reuse mounted as expected
 - [ ] Confirm admin Overview shows `🦀 Rust MCP Core`
 - [ ] Confirm Version Info shows MCP Runtime card with the expected mounted/core modes
-- [ ] `make test-mcp-cli`
+- [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
@@ -172,7 +172,7 @@ support beyond local non-TLS compose testing.
 - [ ] `make minikube-port-forward`
 - [ ] Confirm `/health` is reachable through the Minikube deployment
 - [ ] Confirm the admin UI loads through the Minikube deployment
-- [ ] Run at least one MCP protocol check against the Minikube deployment (`make test-mcp-cli` with the base URL pointed at the forwarded service)
+- [ ] Run at least one MCP protocol check against the Minikube deployment (`make test-mcp-protocol-e2e` with the base URL pointed at the forwarded service)
 - [ ] If re-install validation is required, run the explicit cleanup/reinstall flow:
   `helm list -A | grep mcp-stack`
 - [ ] `helm uninstall mcp-stack -n mcp-private`

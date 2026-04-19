@@ -4335,7 +4335,7 @@ class TestExtractAndValidateErrorResponses:
     - Egress-side counterpart guard:
       ``tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress``
     - End-to-end regression:
-      ``tests/e2e/test_mcp_cli_protocol.py::test_tools_call_schema_error_preserves_payload``
+      ``tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload``
     """
 
     def test_skip_validation_for_error_response_is_error(self, tool_service):

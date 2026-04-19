@@ -724,10 +724,12 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-mcp-cli         - Run MCP protocol tests via mcp-cli against live gateway (localhost:8080)
-# help:                        Requires: mcp-cli installed, ContextForge running (docker-compose up)
-# help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
-# help:                        No LLM or API key required - tests MCP protocol only
+# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
+# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
+# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
+# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -759,9 +761,10 @@ clean:
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
-    tests/e2e/test_mcp_cli_protocol.py \
+    tests/e2e/test_mcp_protocol_e2e.py \
     tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust
+    tests/e2e_rust \
+    tests/protocol_compliance
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -773,13 +776,46 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
-	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+test-mcp-protocol-e2e:  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
-			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
-		echo "✅ mcp-cli protocol tests passed!"'
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+			|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }; \
+		echo "✅ MCP protocol E2E tests passed!"'
+
+test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
+	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
+	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
+	@$(MAKE) test-mcp-protocol-e2e
+
+test-protocol-compliance:  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
+	@echo "📜 Running MCP protocol compliance harness (tests/protocol_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
+			|| { echo "❌ protocol compliance harness failed!"; exit 1; }; \
+		echo "✅ protocol compliance harness passed!"'
+
+test-protocol-compliance-reference:  ## Protocol compliance harness — reference server only (fast, always-on)
+	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "reference-stdio" -v --tb=short \
+			|| { echo "❌ reference-target compliance harness failed!"; exit 1; }; \
+		echo "✅ reference-target compliance harness passed!"'
+
+test-protocol-compliance-gateway:  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
+	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+			|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }; \
+		echo "✅ gateway-target compliance harness passed!"'
+
+test-protocol-compliance-matrix:  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/python scripts/compliance_matrix.py $(MATRIX_ARGS)'
 
 test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1619,7 +1655,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@mkdir -p reports
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -1630,6 +1666,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
+	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1676,7 +1713,7 @@ testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast --profile sso down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -7703,8 +7740,17 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-# Exclude pattern for detect-secrets to skip common directories and auto generated files
-DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock|go.sum|mcpgateway/sri_hashes.json'
+# Exclude pattern for detect-secrets to skip common directories and auto generated files.
+# Uses Python verbose-regex mode (?x) so each alternative can be commented.
+# Backslash line continuations collapse the value to one line with interleaved
+# spaces — harmless under (?x).
+DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
+  package-lock\.json$$         \
+  |Cargo\.lock$$               \
+  |uv\.lock$$                  \
+  |go\.sum$$                   \
+  |mcpgateway/sri_hashes\.json$$ \
+)'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
