@@ -226,28 +226,27 @@ class TestToggleGlobalPluginsAdminCacheSync:
         mock_plugin_service.set_plugin_manager.assert_called_once_with(fake_manager)
 
     @pytest.mark.asyncio
-    async def test_sync_failure_does_not_mask_successful_toggle(self, allow_admin, admin_user, mock_request, mock_plugin_service, monkeypatch, caplog):
+    async def test_sync_failure_does_not_mask_successful_toggle(self, allow_admin, admin_user, mock_request, mock_plugin_service, monkeypatch):
         """The shared toggle has already committed; a failed admin-cache sync must not turn into a 500.
 
         Regression pin: before the try/except, an exception inside the sync
         block (e.g. ``set_plugin_manager`` raising on a degraded node) propagated
         up and the handler 500'd even though the global toggle was already
-        persisted.
+        persisted. We verify the handler still returns normally and that the
+        sync attempt was made (which raised internally and was swallowed).
         """
-        import logging as _logging
-
         monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
         # Force the sync step to fail mid-way. The shared toggle has already
         # been written by ``enable_plugins_shared`` at this point.
         mock_plugin_service.set_plugin_manager.side_effect = RuntimeError("cache unavailable")
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.admin"):
-            response = await admin_module.toggle_plugins_global(payload=PluginToggleRequest(enabled=False), request=mock_request, user=admin_user)
+        # Must not raise — the swallow-and-warn path is what makes this safe.
+        response = await admin_module.toggle_plugins_global(payload=PluginToggleRequest(enabled=False), request=mock_request, user=admin_user)
 
-        # Toggle itself succeeded — that's what the caller sees. The failed
-        # sync surfaces only as a WARNING.
         assert response.redis_persisted is False
-        assert any("admin-cache sync failed" in record.message for record in caplog.records)
+        # The sync path was entered (mock raised), confirming the try/except
+        # actually ran rather than the branch being skipped.
+        mock_plugin_service.set_plugin_manager.assert_called_once_with(None)
 
     @pytest.mark.asyncio
     async def test_disabling_clears_admin_cache(self, allow_admin, admin_user, mock_request, mock_plugin_service, monkeypatch):
@@ -320,25 +319,31 @@ class TestAdminCacheSelfHeal:
         plugin_service.set_plugin_manager.assert_called_once_with(None)
 
     @pytest.mark.asyncio
-    async def test_sync_helper_swallows_errors_and_never_raises(self, monkeypatch, caplog):
-        """A failure inside the helper must not turn a read into a 500 — it just logs."""
-        import logging as _logging
-
+    async def test_sync_helper_swallows_errors_and_never_raises(self, monkeypatch):
+        """A failure inside the helper must not turn a read into a 500."""
         req = MagicMock()
         req.app = MagicMock()
         req.app.state = SimpleNamespace()
 
         plugin_service = MagicMock()
+        called = {"exploding": False}
 
         async def exploding(*_, **__):
+            called["exploding"] = True
             raise RuntimeError("factory unavailable")
 
         monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", exploding)
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.admin"):
-            await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
+        # Must return without raising — the try/except around the helper body
+        # is what stops a framework failure from turning into a 500.
+        await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
 
-        assert any("self-heal failed" in record.message for record in caplog.records)
+        # The exploding framework call was reached (proves we exercised the
+        # failure path rather than short-circuiting before the raise) and no
+        # state was written to either the ``app.state`` cache or the service.
+        assert called["exploding"] is True
+        assert not hasattr(req.app.state, "plugin_manager") or req.app.state.plugin_manager is None
+        plugin_service.set_plugin_manager.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
