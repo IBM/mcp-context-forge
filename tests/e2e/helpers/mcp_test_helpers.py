@@ -6,9 +6,15 @@ Authors: Mihai Criveti
 
 Shared MCP protocol test helpers for E2E tests.
 
-Provides common utilities for testing MCP JSON-RPC protocol via the mcpgateway.wrapper
-stdio transport. Used by both test_mcp_cli_protocol.py (single-user admin tests) and
-test_mcp_rbac_transport.py (multi-user RBAC + multi-transport tests).
+Provides utilities for testing MCP JSON-RPC protocol via the mcpgateway.wrapper
+stdio transport plus the mcp-cli CLI. Used by the remaining subprocess-based
+E2E suites (``test_mcp_rbac_transport.py`` — multi-user RBAC + multi-transport,
+and ``test_langfuse_traces.py`` — tracing integration).
+
+New protocol-level E2E tests should prefer the FastMCP ``Client``-based pattern
+in ``test_mcp_protocol_e2e.py`` (no subprocess, no external CLI). The helpers
+below are retained for the suites that still need mcp-cli / wrapper semantics
+and are candidates for removal once those suites migrate.
 """
 
 # Future
@@ -30,7 +36,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
+BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://127.0.0.1:8080")  # IPv4 explicit — `localhost` resolves IPv6-first under the test conftest's getaddrinfo stub, which docker-compose doesn't bind
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes

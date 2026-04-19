@@ -44,7 +44,7 @@ from playwright.sync_api import APIRequestContext, Playwright
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
-from .mcp_test_helpers import (
+from .helpers.mcp_test_helpers import (
     BASE_URL,
     build_initialize,
     build_wrapper_env,

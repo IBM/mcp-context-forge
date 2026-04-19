@@ -35,7 +35,7 @@ import pytest
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
-from tests.e2e.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway, skip_no_rust_mcp_session_core
+from tests.e2e.helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway, skip_no_rust_mcp_session_core
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway, skip_no_rust_mcp_session_core]
 

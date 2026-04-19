@@ -120,7 +120,7 @@ Verified locally and currently green:
 
 Most recent rebuilt full-Rust compose validation on this branch:
 
-- `make test-mcp-cli`
+- `make test-mcp-protocol-e2e`
   - `23 passed`
 - `make test-mcp-rbac`
   - `40 passed`
@@ -349,7 +349,7 @@ items below and any remaining issues are either fixed or explicitly understood.
   substantive change:
   - `make testing-rebuild-rust-full`
   - `make test`
-  - `make test-mcp-cli`
+  - `make test-mcp-protocol-e2e`
   - `make test-mcp-rbac`
   - `make test-mcp-session-isolation`
   - `cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml`
