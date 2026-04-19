@@ -15,9 +15,8 @@ pattern used by ``tests/unit/mcpgateway/routers/test_runtime_admin_router.py``.
 
 # Standard
 from contextlib import contextmanager
-import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -32,30 +31,38 @@ from mcpgateway.schemas import PluginModeUpdateRequest, PluginToggleRequest
 
 @contextmanager
 def _capture_admin_logger_records():
-    """Attach a temporary handler to the ``mcpgateway.admin`` logger and yield captured records.
+    """Intercept ``admin_module.LOGGER`` calls directly and yield record-like sentinels.
 
-    We deliberately avoid ``caplog``: under ``pytest-xdist`` an earlier test in
-    the same worker may have triggered the app's lifespan, which calls
-    ``root_logger.handlers.clear()`` and wipes ``caplog``'s root-attached
-    handler. Attaching directly to the named logger is immune to that, and
-    bypasses the root level gate too (the handler's own level is NOTSET).
+    Earlier attempts attached a handler to ``logging.getLogger("mcpgateway.admin")``
+    (and before that, used ``caplog``). Both routes go through the standard
+    logging chain, which CI configurations sometimes mute via root-handler
+    clearing during lifespan, ``logger.disabled`` flips, propagation toggles,
+    or LOG_LEVEL gates. Replacing ``LOGGER`` with a spy bypasses all of that —
+    the test asserts on what the production code actually called, not on what
+    the logging machinery happened to forward.
     """
-    captured: list[logging.LogRecord] = []
+    captured: list[SimpleNamespace] = []
+    spy = MagicMock()
 
-    class _ListHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            captured.append(record)
+    def _record(level: str):
+        def _impl(msg, *args, **_kwargs):
+            try:
+                formatted = msg % args if args else str(msg)
+            except Exception:
+                formatted = str(msg)
+            captured.append(SimpleNamespace(level=level, message=formatted, getMessage=lambda f=formatted: f))
 
-    logger = logging.getLogger("mcpgateway.admin")
-    handler = _ListHandler(level=logging.DEBUG)
-    prior_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
+        return _impl
+
+    spy.debug.side_effect = _record("debug")
+    spy.info.side_effect = _record("info")
+    spy.warning.side_effect = _record("warning")
+    spy.error.side_effect = _record("error")
+    spy.critical.side_effect = _record("critical")
+    spy.exception.side_effect = _record("error")
+
+    with patch.object(admin_module, "LOGGER", spy):
         yield captured
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prior_level)
 
 
 @pytest.fixture(autouse=True)
