@@ -76,7 +76,7 @@ def test_mcp_session_id_header_behavior(gateway_http_client: httpx.Client) -> No
     assert resp.status_code == 200, f"initialize → {resp.status_code}: {resp.text[:200]}"
     sid = resp.headers.get("mcp-session-id")
     if sid is None:
-        pytest.skip("gateway does not issue Mcp-Session-Id (see #4205 / GAP-010 discussion)")
+        pytest.skip("gateway does not issue Mcp-Session-Id (spec-sanctioned MAY; see #4205)")
 
     # If a session id was issued, a subsequent ping carrying it must be accepted.
     call_headers = dict(_MCP_HEADERS)

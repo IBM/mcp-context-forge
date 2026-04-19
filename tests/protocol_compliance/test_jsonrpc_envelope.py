@@ -136,3 +136,157 @@ def test_request_without_id_is_rejected_or_treated_as_notification(
         return
     envelope = _parse_first_jsonrpc_message(resp)
     assert "id" not in envelope or envelope.get("id") is None, f"request without id must not receive an id-bearing response: {envelope}"
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC 2.0 error-code semantics (§ 5.1 — reserved pre-defined errors)
+#
+# A generic -32603 ("internal") fallback masks real bugs in method dispatch
+# and argument validation. These probes pin that the server picks the
+# *specific* reserved code for the failure mode it's reporting, so a
+# regression that reroutes everything to -32603 is caught.
+# ---------------------------------------------------------------------------
+def _unwrap_error(resp: httpx.Response) -> dict | None:
+    """Return the JSON-RPC error object, or None if this is an HTTP-level rejection.
+
+    HTTP >=400 with no JSON-RPC envelope is also spec-valid (§ Streamable
+    HTTP transport), so tests that want to probe the envelope skip those
+    responses with a caller-visible None.
+    """
+    if resp.status_code >= 400 and "json" not in resp.headers.get("content-type", "").lower() and "event-stream" not in resp.headers.get("content-type", "").lower():
+        return None
+    try:
+        envelope = _parse_first_jsonrpc_message(resp)
+    except (AssertionError, json.JSONDecodeError, ValueError):
+        return None
+    return envelope.get("error")
+
+
+def test_parse_error_returns_32700(gateway_http_client: httpx.Client) -> None:
+    """Malformed JSON body → JSON-RPC parse error code -32700.
+
+    Per JSON-RPC 2.0 § 5.1, a server that receives invalid JSON MUST
+    respond with this specific code. Servers that fall back to -32603
+    ("internal error") mask a real client-side or transport-side bug.
+    """
+    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, content=b"not valid json {")
+    # 5xx indicates the server crashed parsing bad input instead of
+    # cleanly rejecting it — that's a real bug, not spec-compliant.
+    assert resp.status_code < 500, f"malformed JSON produced 5xx (server crash, not clean rejection): " f"{resp.status_code} {resp.text[:200]}"
+    # 4xx with no JSON-RPC envelope is an acceptable HTTP-level rejection
+    # (many servers reject at the Content-parse layer before JSON-RPC).
+    if 400 <= resp.status_code < 500 and not _unwrap_error(resp):
+        return
+    err = _unwrap_error(resp)
+    assert err is not None, f"expected JSON-RPC error envelope, got {resp.status_code}: {resp.text[:200]}"
+    assert err.get("code") == -32700, f"parse-error should carry code=-32700, got {err.get('code')!r} (message: {err.get('message')!r})"
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=("GAP-012: gateway returns -32000 (implementation-defined) instead of the " "spec-mandated -32601 (Method not found) for unknown JSON-RPC methods."),
+)
+def test_method_not_found_returns_32601(gateway_http_client: httpx.Client) -> None:
+    """Unknown method → JSON-RPC code -32601 (Method not found)."""
+    body = {"jsonrpc": "2.0", "id": 1, "method": "definitely/not/a/real/method", "params": {}}
+    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=body)
+    assert resp.status_code < 500, f"unknown method produced 5xx (server crash, not clean rejection): " f"{resp.status_code} {resp.text[:200]}"
+    if 400 <= resp.status_code < 500 and not _unwrap_error(resp):
+        return
+    err = _unwrap_error(resp)
+    assert err is not None, f"expected JSON-RPC error envelope, got {resp.status_code}: {resp.text[:200]}"
+    assert err.get("code") == -32601, f"unknown-method should carry code=-32601, got {err.get('code')!r} (message: {err.get('message')!r})"
+
+
+def test_invalid_params_returns_32602(gateway_http_client: httpx.Client) -> None:
+    """Known method with malformed params → JSON-RPC code -32602 (Invalid params).
+
+    A server that collapses this to -32603 loses the distinction the spec
+    defines between "I don't know that method" and "I know it but your
+    arguments are wrong" — an interop-meaningful distinction.
+    """
+    # initialize requires a structured params object; passing a primitive
+    # is semantically invalid regardless of transport.
+    body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "not-an-object"}
+    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=body)
+    assert resp.status_code < 500, f"invalid params produced 5xx (server crash, not clean rejection): " f"{resp.status_code} {resp.text[:200]}"
+    if 400 <= resp.status_code < 500 and not _unwrap_error(resp):
+        return
+    err = _unwrap_error(resp)
+    assert err is not None, f"expected JSON-RPC error envelope, got {resp.status_code}: {resp.text[:200]}"
+    # -32602 is the spec-mandated code. Some servers return -32600 (Invalid
+    # Request) if they class param-shape issues with the envelope itself,
+    # which is a softer spec violation but common in practice. Accept
+    # either and fail loudly on the -32603 fallback.
+    assert err.get("code") in (-32602, -32600), (
+        f"invalid-params should carry code=-32602 (or -32600 Invalid Request); "
+        f"got {err.get('code')!r} (message: {err.get('message')!r}) — -32603 "
+        f"'internal error' would mask argument-validation bugs."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle safety rails
+# ---------------------------------------------------------------------------
+def test_initialize_rejected_when_called_twice(gateway_http_client: httpx.Client) -> None:
+    """Second initialize on the same session MUST NOT succeed.
+
+    Per the lifecycle spec, initialize is the first message on a session
+    and negotiates capabilities; repeating it would let a mid-session
+    attacker renegotiate downward or would leak server state across
+    logical client-lifetimes. Servers SHOULD reject the second call.
+    This test tolerates either a JSON-RPC error envelope or an HTTP 4xx.
+    """
+    first = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_initialize_body(1))
+    assert first.status_code == 200, f"first initialize must succeed: {first.status_code} {first.text[:200]}"
+    sid = first.headers.get("mcp-session-id")
+    call_headers = dict(_MCP_HEADERS)
+    if sid:
+        call_headers["mcp-session-id"] = sid
+
+    second = gateway_http_client.post("/mcp/", headers=call_headers, json=_initialize_body(2))
+    assert second.status_code < 500, f"second initialize produced 5xx (server crash, not clean rejection): " f"{second.status_code} {second.text[:200]}"
+    if 400 <= second.status_code < 500:
+        return  # acceptable: HTTP-level rejection
+    # Otherwise there must be an error envelope — a plain success would mean
+    # the server silently re-initialized mid-session.
+    err = _unwrap_error(second)
+    if err is None:
+        # Some servers tolerate repeat initialize and simply return fresh
+        # capabilities. The spec says SHOULD-reject, not MUST-reject, so
+        # this is a softer probe: warn by xfail-style assertion if neither
+        # error envelope nor 4xx surfaced. We don't want to be brittle.
+        envelope = _parse_first_jsonrpc_message(second)
+        if "result" in envelope:
+            pytest.xfail("server accepts repeat initialize (spec says SHOULD reject, not MUST)")
+        pytest.fail(f"unexpected second-initialize shape: {envelope}")
+    assert isinstance(err.get("code"), int), f"error envelope must carry integer code: {err}"
+
+
+def test_mcp_protocol_version_header_mismatch_handled(gateway_http_client: httpx.Client) -> None:
+    """A bogus MCP-Protocol-Version must be rejected or negotiated, not silently ignored.
+
+    Per the Streamable HTTP transport spec, the version header on a POST
+    is the client's declared protocol. A server that receives a version
+    it doesn't speak MUST either reject (4xx) or negotiate down (reply
+    with its supported version in the initialize result). Silently
+    proceeding to speak an unintended version is an interop bug.
+    """
+    headers = dict(_MCP_HEADERS)
+    headers["mcp-protocol-version"] = "2099-01-01"  # far future, definitely not implemented
+    resp = gateway_http_client.post("/mcp/", headers=headers, json=_initialize_body(1))
+
+    assert resp.status_code < 500, f"bogus protocol version produced 5xx (server crash, not negotiation): " f"{resp.status_code} {resp.text[:200]}"
+    if 400 <= resp.status_code < 500:
+        return  # HTTP-level rejection is spec-compliant
+
+    envelope = _parse_first_jsonrpc_message(resp)
+    if "error" in envelope:
+        return  # JSON-RPC error envelope is also fine
+
+    # Otherwise the response must be a success with the *negotiated* version
+    # in the result — and that version must not echo the bogus one.
+    version = (envelope.get("result") or {}).get("protocolVersion")
+    assert isinstance(version, str) and version != "2099-01-01", (
+        f"server must negotiate a real protocolVersion in its initialize response, " f"got {version!r} — echoing the bogus client version silently is an interop bug."
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, ClassVar
 
 from fastmcp.client import Client
 from fastmcp.client.auth import BearerAuth
@@ -13,17 +13,15 @@ from .base import ComplianceTarget, Transport
 
 
 class GatewayProxyTarget(ComplianceTarget):
-    name = "gateway_proxy"
-    supported_transports = frozenset({"http"})
+    name: ClassVar[str] = "gateway_proxy"
+    supported_transports: ClassVar[frozenset[Transport]] = frozenset({"http"})
 
     def __init__(self, base_url: str, auth_token: str) -> None:
         self._base_url = base_url
         self._auth_token = auth_token
 
     @asynccontextmanager
-    async def client(self, transport: Transport, **client_kwargs: object) -> AsyncIterator[Client]:
-        if transport != "http":
-            raise NotImplementedError(f"GatewayProxyTarget transport '{transport}' not yet supported.")
+    async def _open_client(self, transport: Transport, **client_kwargs: object) -> AsyncIterator[Client]:
         # Trailing slash matters — see the IPv6/path-rewrite notes in
         # tests/e2e/test_mcp_protocol_e2e.py::mcp_url.
         streamable = StreamableHttpTransport(

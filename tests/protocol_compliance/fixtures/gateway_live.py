@@ -17,6 +17,8 @@ reason. Same pattern as ``test_mcp_protocol_e2e.py``.
 from __future__ import annotations
 
 import os
+import sys
+import warnings
 from typing import Iterator
 
 import httpx
@@ -118,7 +120,20 @@ def _wait_for_effective_mode(client: httpx.Client, expected: str, timeout_s: flo
     deadline = _time.monotonic() + timeout_s
     last: dict = {}
     while _time.monotonic() < deadline:
-        last = client.get("/admin/runtime/mcp-mode").json()
+        resp = client.get("/admin/runtime/mcp-mode")
+        if resp.status_code != 200:
+            # Non-200 during polling usually means the admin route is down
+            # or the JWT expired mid-session; keep polling but capture the
+            # last body so the timeout message is actionable.
+            last = {"_http_status": resp.status_code, "_body": resp.text[:200]}
+            _time.sleep(0.1)
+            continue
+        try:
+            last = resp.json()
+        except ValueError as exc:
+            last = {"_parse_error": str(exc), "_body": resp.text[:200]}
+            _time.sleep(0.1)
+            continue
         if last.get("effective_mode") == expected:
             return last
         _time.sleep(0.1)
@@ -151,17 +166,23 @@ def flip_runtime_mode(gateway_http_client: httpx.Client, runtime_mode_state: dic
     finally:
         # Restore: if an override was originally active, re-apply it; otherwise
         # best-effort clear by flipping back to the boot mode. Failures on
-        # restore are logged but not raised (the test itself already finished).
-        try:
-            if override_was_active:
-                gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": original_mode})
-            else:
-                # No way to explicitly clear an override via this API yet —
-                # leaving the test's override in place is acceptable within the
-                # session; other tests re-read via runtime_mode_state.
-                pass
-        except Exception:  # noqa: BLE001 — best-effort teardown
-            pass
+        # restore are *warned* (not raised — the test itself already finished)
+        # so the operator sees what mode the test left the gateway in and
+        # can correlate downstream failures.
+        if override_was_active:
+            try:
+                resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": original_mode})
+                if resp.status_code >= 400:
+                    msg = f"flip_runtime_mode: failed to restore mode {original_mode!r} ({resp.status_code}): {resp.text[:200]}"
+                    warnings.warn(msg, stacklevel=2)
+                    print(f"[flip_runtime_mode] {msg}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001 — best-effort teardown
+                msg = f"flip_runtime_mode: restore to {original_mode!r} raised {type(exc).__name__}: {exc}"
+                warnings.warn(msg, stacklevel=2)
+                print(f"[flip_runtime_mode] {msg}", file=sys.stderr)
+        # else: no override was originally active — there's no clear-override
+        # API today, so leaving the test's override in place is acceptable
+        # within the session (other tests re-read runtime_mode_state).
 
 
 @pytest.fixture(scope="session")

@@ -15,7 +15,11 @@ async def test_elicit_trigger_invokes_client_handler(connect, request) -> None:
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason="GAP-005: gateway does not relay server-initiated elicitation/create (see #4205)",
+        reason=(
+            "GAP-005: server→client `elicitation/create` request must travel on "
+            "the POST-correlated stream (spec forbids it on the standalone "
+            "stream); gateway does not broker server→client requests there."
+        ),
     )
     prompts: list[str] = []
 

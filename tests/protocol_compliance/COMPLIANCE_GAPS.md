@@ -5,6 +5,35 @@ surfaced by this harness. Entries describe observed vs. expected behavior,
 link to the relevant spec section and tracking issues, and name the test(s)
 marked `xfail` for the gap.
 
+## Stream-attribution note
+
+Streamable HTTP has two server→client streams:
+
+- **Standalone stream** — a long-lived SSE stream opened by an HTTP GET
+  to `/mcp/`. Used for server-initiated traffic that isn't tied to any
+  specific client request.
+- **POST-correlated stream** — SSE opened as the response body to a
+  client POST that declared `Accept: text/event-stream`. Carries
+  everything emitted in the context of that request (including the
+  eventual response).
+
+The spec is explicit: **server→client *requests* (`roots/list`,
+`sampling/createMessage`, `elicitation/create`) MUST NOT be sent on the
+standalone stream** — they travel on the POST-correlated stream of the
+originating client request. Server→client *notifications* are more
+flexible: request-tied notifications (progress, `*/list_changed`
+triggered by a tool call, the response's own `notifications/message`)
+SHOULD ride the POST-correlated stream; notifications not tied to a
+specific request (subscription updates, level-change-triggered logs
+between calls) ride the standalone stream.
+
+Issue #4205 is specifically about the standalone stream (gateway
+returning 405 on `GET /mcp/`). Attributing a gap to #4205 is only
+correct for standalone-only traffic (e.g. GAP-011 resource-subscription
+updates). Gaps concerning server→client *requests* or request-tied
+*notifications* are about POST-correlated-stream relay and should not
+point at #4205 as the root cause.
+
 ## Workflow
 
 ### Logging a new gap
@@ -25,11 +54,13 @@ marked `xfail` for the gap.
 ### Keeping the gap entry and the `xfail` marker in sync
 
 If the gap's scope, symptoms, or related issues change — e.g. a fix
-narrows it to one transport, or a new tracking issue supersedes #4205 —
-update **both** the gap entry below **and** the `reason="…"` string in the
-test. The reason string is what shows up in pytest output, so it should
-read well on its own as a breadcrumb to the gap entry (e.g.
-``"GAP-004: gateway does not relay server-initiated sampling (see #4205)"``).
+narrows it to one transport, or a new tracking issue supersedes the
+cited blocker — update **both** the gap entry below **and** the
+`reason="…"` string in the test. The reason string is what shows up in
+pytest output, so it should read well on its own as a breadcrumb to
+the gap entry and should be accurate about which stream (standalone
+vs. POST-correlated) the failing capability would travel on. See the
+"Stream-attribution note" section above before citing #4205.
 
 ### Closing a gap (fully or partially)
 
@@ -58,21 +89,24 @@ the marker and the entry per the rules above.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_logging.py::test_log_message_reaches_client` |
+| **Tests** | `test_logging.py::test_log_message_reaches_client`; secondary blocker for `test_notifications.py::test_tools_list_changed_notification_delivered` and `::test_resources_list_changed_notification_delivered` (primary GAP-008) |
 | **Spec** | [MCP 2025-11-25 — server `logging` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging) |
-| **Related** | [#4205](https://github.com/IBM/mcp-context-forge/issues/4205) — same root cause |
 
-**Observed**: when an upstream tool calls `ctx.log(...)`, the gateway accepts
-the upstream's `notifications/message` but does not relay it to the
-downstream client. The client's `log_handler` is never invoked.
+**Observed**: when an upstream tool calls `ctx.log(...)` during a tool
+invocation, the gateway accepts the upstream's `notifications/message`
+but does not relay it to the downstream client. The client's
+`log_handler` is never invoked.
 
 **Expected**: the spec requires the server to emit `notifications/message`
 to clients that subscribed via `logging/setLevel`. Federation should
 forward upstream-emitted log messages.
 
-**Why**: server→client notifications need a long-lived SSE channel
-(`GET /mcp/`). The gateway currently returns 405 there (a spec-clean
-stopgap), which closes off the only delivery channel for this capability.
+**Why**: the log emitted during a tool call is a request-tied
+notification — it SHOULD ride the POST-correlated stream for that call.
+The gateway isn't relaying notifications on that stream. (Logs emitted
+*between* calls — e.g. in response to a `logging/setLevel` change —
+would ride the standalone stream, which #4205 also closes, but the
+test exercises the in-call path.)
 
 ---
 
@@ -81,9 +115,8 @@ stopgap), which closes off the only delivery channel for this capability.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_utilities.py::test_progress_notifications_delivered` |
+| **Tests** | `test_utilities.py::test_progress_notifications_delivered`; secondary blocker for `test_notifications.py::test_tools_list_changed_notification_delivered` and `::test_resources_list_changed_notification_delivered` (primary GAP-008) |
 | **Spec** | [MCP 2025-11-25 — `progress` notifications](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress) |
-| **Related** | [#4205](https://github.com/IBM/mcp-context-forge/issues/4205) |
 
 **Observed**: a tool calling `ctx.report_progress(...)` returns successfully,
 but the client's `progress_handler` is never invoked.
@@ -91,7 +124,11 @@ but the client's `progress_handler` is never invoked.
 **Expected**: with a `progressToken` on the request, the server must emit
 `notifications/progress` events the client can observe.
 
-**Why**: same root cause as GAP-001 — no GET SSE channel.
+**Why**: progress notifications are request-tied (the `progressToken`
+is scoped to one client request) and ride the POST-correlated stream
+of that request. Root cause is the gateway not relaying notifications
+on the POST-correlated stream — **not** #4205, which only closes the
+standalone GET stream that progress wouldn't have used anyway.
 
 ---
 
@@ -111,9 +148,12 @@ list even when the downstream client advertised roots in initialize.
 that ask. Without this, server-initiated roots queries can't see what
 the actual user-facing client offered.
 
-**Why**: roots forwarding requires a server→client request channel for
-`roots/list` (issued from upstream's perspective, brokered by the
-gateway). Same dependency as GAP-001/002.
+**Why**: `roots/list` is a server→client *request* — spec (basic/
+transports § Listening for Messages from the Server) says it MUST NOT
+be sent on the standalone stream, so it has to travel on the
+POST-correlated stream of the originating client call. Gateway does
+not broker server→client requests on that stream. Independent of
+#4205.
 
 ---
 
@@ -122,9 +162,8 @@ gateway). Same dependency as GAP-001/002.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_sampling.py::test_sample_trigger_invokes_client_handler` |
+| **Tests** | `test_sampling.py::test_sample_trigger_invokes_client_handler`, `test_sampling_depth.py::test_sample_with_max_tokens_parameter` |
 | **Spec** | [MCP 2025-11-25 — `sampling` capability](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling) |
-| **Related** | [#4205](https://github.com/IBM/mcp-context-forge/issues/4205) |
 
 **Observed**: an upstream tool calling `ctx.sample(...)` errors or returns
 an empty response. The downstream client's `sampling_handler` is never
@@ -134,8 +173,11 @@ invoked.
 upstream → gateway → client, and back. The client's sampling handler
 should produce the response.
 
-**Why**: same as above — server→client requests need the GET SSE channel
-plus per-client session correlation.
+**Why**: `sampling/createMessage` is a server→client *request* — per
+spec MUST NOT be on the standalone stream. Must be brokered on the
+POST-correlated stream of the originating tool call, and needs
+per-client session correlation because the gateway may have multiple
+downstream clients. Independent of #4205.
 
 ---
 
@@ -144,9 +186,8 @@ plus per-client session correlation.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_elicitation.py::test_elicit_trigger_invokes_client_handler` |
+| **Tests** | `test_elicitation.py::test_elicit_trigger_invokes_client_handler`, `test_elicitation_depth.py::test_elicit_numeric_schema_roundtrip` |
 | **Spec** | [MCP 2025-11-25 — `elicitation` capability](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) |
-| **Related** | [#4205](https://github.com/IBM/mcp-context-forge/issues/4205) |
 
 **Observed**: same shape as GAP-004 — upstream calls `ctx.elicit(...)`,
 client `elicitation_handler` never sees the request.
@@ -154,7 +195,9 @@ client `elicitation_handler` never sees the request.
 **Expected**: gateway forwards `elicitation/create` to the right client and
 returns the client's response to the upstream.
 
-**Why**: same root cause.
+**Why**: `elicitation/create` is a server→client *request* — same
+stream-attribution story as GAP-004: MUST travel on the POST-correlated
+stream, not the standalone stream. Independent of #4205.
 
 ---
 
@@ -163,7 +206,7 @@ returns the client's response to the upstream.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy` (also `gateway_virtual` to confirm) |
-| **Tests** | `test_prompts.py::test_prompt_listed`, `::test_prompt_renders_argument` |
+| **Tests** | `test_prompts.py::test_prompt_listed`, `::test_prompt_renders_argument`, `test_drift.py::test_drift_prompt_names`, `test_notifications.py::test_prompts_list_changed_notification_delivered` (co-blocked with GAP-008) |
 | **Spec** | [MCP 2025-11-25 — server `prompts` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) |
 
 **Observed**: the reference server registers a `greet` prompt; after
@@ -185,16 +228,20 @@ limitation. Independent of #4205.
 | | |
 |---|---|
 | **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_drift.py::test_drift_tool_names`, `test_tools.py::test_tool_error_is_surfaced_as_is_error`, `test_utilities.py::test_long_running_tool_is_cancellable`, `test_notifications.py::test_tools_list_changed_via_mutator`, `test_notifications.py::test_resources_updated_after_bump` |
+| **Tests** | `test_drift.py::test_drift_tool_names`, `test_tools.py::test_tool_error_is_surfaced_as_is_error`, `test_utilities.py::test_long_running_tool_is_cancellable`, `::test_cancellation_notification_reaches_server`, `test_notifications.py::test_tools_list_changed_notification_delivered`, `::test_resources_list_changed_notification_delivered`, `::test_prompts_list_changed_notification_delivered` (co-blocked with GAP-006), `::test_resources_updated_after_bump` (co-blocked with GAP-009) |
 | **Spec** | [MCP 2025-11-25 — server `tools` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) |
 
-**Observed**: the reference server registers 131 tools (including `echo`,
-`add`, `boom`, `bump_subscribable`, `mutate_tool_list`, `long_running`,
-`progress_reporter`, `log_at_level`, `roots_echo`, `sample_trigger`,
-`elicit_trigger`, and 120 `stub_NNN` pagination stubs). After gateway
-federation, `compliance-reference-*` only covers 127 of them. Specifically
-missing on the gateway side: `boom`, `bump_subscribable`, `mutate_tool_list`,
-`long_running`.
+**Observed**: the reference server registers 136 tools (16 named tools —
+`echo`, `add`, `boom`, `progress_reporter`, `long_running`,
+`get_cancellation_count`, `mutate_tool_list`, `mutate_resource_list`,
+`mutate_prompt_list`, `bump_subscribable`, `roots_echo`,
+`sample_trigger`, `sample_trigger_with_params`, `elicit_trigger`,
+`elicit_trigger_numeric`, `log_at_level` — plus 120 `stub_NNN`
+pagination stubs). Several of the named tools are missing after gateway
+federation (specifically the no-arg / raising / long-sleep variants —
+`boom`, `bump_subscribable`, `mutate_tool_list`, `long_running` have
+been observed dropped; exact current set varies and should be re-probed
+when this gap is investigated).
 
 **Expected**: the gateway should federate every tool the upstream
 advertises, provided it passes the gateway's validator layer. If a tool
@@ -210,9 +257,15 @@ or a silent federation bug.
 
 **How to close**: confirm root cause, either (a) fix federation to
 propagate all well-formed tools, or (b) document the filter rule
-explicitly so the reference server can sidestep it in the stubs it uses
-to exercise federation. Once federation covers the 4 missing tools,
-remove the xfail on `test_drift.py::test_drift_tool_names`.
+explicitly so the reference server can sidestep it in the stubs it
+uses to exercise federation. Once federation covers the missing tools,
+re-probe every test in the "Tests" row and drop or narrow the
+`xfail_on` call individually as each passes. Tests that depend on a
+dropped tool AND a separate gap (e.g. `test_resources_updated_after_bump`
+needs GAP-009's resource federation too, and
+`test_tools_list_changed_notification_delivered` needs the
+POST-correlated notification relay tracked by GAP-001/002) will
+remain xfailed against the surviving gap after GAP-008 closes.
 
 ---
 
@@ -221,7 +274,7 @@ remove the xfail on `test_drift.py::test_drift_tool_names`.
 | | |
 |---|---|
 | **Targets affected** | `gateway_virtual` (static + templates still missing) |
-| **Tests** | `test_resources.py::test_static_resource_listed_and_readable`, `::test_templated_resource_registered_and_resolves` |
+| **Tests** | `test_resources.py::test_static_resource_listed_and_readable`, `::test_templated_resource_registered_and_resolves`, `test_drift.py::test_drift_resource_uris`, `test_notifications.py::test_resources_updated_after_bump` (co-blocked with GAP-008) |
 | **Spec** | [MCP 2025-11-25 — server `resources` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) |
 
 **Scope history**:
@@ -286,6 +339,65 @@ FastAPI is the sole public ingress. When nginx follows the flip,
 remove the xfail on
 `test_data_plane_runtime_header_under_shadow`; the XPASS will
 confirm the fix.
+
+---
+
+### GAP-011 — Subscription updates (`notifications/resources/updated`) not relayed
+
+| | |
+|---|---|
+| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
+| **Tests** | `test_subscriptions.py::test_resources_updated_notification_delivered_to_subscriber` |
+| **Spec** | [MCP 2025-11-25 — server `resources` subscription](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#subscriptions) |
+| **Related** | [#4205](https://github.com/IBM/mcp-context-forge/issues/4205) — standalone `GET /mcp/` stream returns 405 |
+
+**Observed**: after a subscribing client calls `resources/subscribe`, a
+subsequent server-side mutation (`bump_subscribable`) correctly fires
+`notifications/resources/updated` on the reference target but the client
+never receives it through either gateway target.
+
+**Expected**: subscribers should receive the notification on the same
+session that opened the subscription.
+
+**Why**: `notifications/resources/updated` for subscribed resources is
+not tied to any specific client request — per spec it rides the
+standalone stream (`GET /mcp/`). The gateway currently closes that
+stream with 405 (see #4205), so the notification has no channel to
+the client. Unlike the other server→client gaps (GAP-001/002/003/004/
+005), this one is genuinely about the standalone stream and #4205 is
+the correct blocker.
+
+**How to close**: once #4205 lands server→client relay, the test will
+XPASS. Remove `xfail_on` and move this entry to the closed section.
+
+---
+
+### GAP-012 — Unknown JSON-RPC method returns -32000 instead of -32601
+
+| | |
+|---|---|
+| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
+| **Tests** | `test_jsonrpc_envelope.py::test_method_not_found_returns_32601` |
+| **Spec** | [JSON-RPC 2.0 § 5.1 reserved error codes](https://www.jsonrpc.org/specification#error_object), referenced by MCP 2025-11-25 base protocol |
+
+**Observed**: POSTing a JSON-RPC request with an unknown `method` to the
+gateway yields an error envelope with `code: -32000` and
+`message: "Invalid method"`.
+
+**Expected**: JSON-RPC 2.0 reserves `-32601 Method not found` specifically
+for this failure mode. `-32000..-32099` is a range for
+*implementation-defined* server errors; using it for method-not-found
+loses the interoperable distinction the spec defines. A client with
+routing logic that branches on `code == -32601` (e.g. "try a different
+server") can't work against this gateway.
+
+**Why**: likely a generic error-path fallthrough in the gateway's
+method-dispatch layer rather than a deliberate design choice.
+
+**How to close**: map the method-not-found path in the gateway's JSON-RPC
+handler to `-32601`. The same dispatch point should also emit `-32602
+Invalid params` when arguments fail schema validation on a recognized
+method. Once fixed, remove the `xfail_on` from this test.
 
 ---
 

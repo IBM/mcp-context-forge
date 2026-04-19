@@ -3,7 +3,7 @@
 A deliberately minimal, fully MCP-compliant reference server built on
 [FastMCP](https://github.com/jlowin/fastmcp). It exists as the known-good
 "ground truth" target for the ContextForge MCP protocol compliance test
-harness (`tests/compliance/mcp_protocol/`).
+harness (`tests/protocol_compliance/`).
 
 ## Scope
 

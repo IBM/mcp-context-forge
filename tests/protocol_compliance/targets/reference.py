@@ -1,14 +1,15 @@
 """Reference MCP server target.
 
-Phase 2 supports stdio only, via FastMCP's in-process `Client(mcp)` wiring
-(no subprocess). SSE and Streamable HTTP arrive in Phase 4 together with
-the gateway lifecycle plumbing they share.
+Currently supports stdio only, via FastMCP's in-process ``Client(mcp)``
+wiring (no subprocess). SSE / Streamable HTTP can be added by extending
+``supported_transports`` and expanding ``_open_client``; the base class's
+transport-validation wrapper will then route appropriately.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, ClassVar
 
 from fastmcp.client import Client
 
@@ -16,13 +17,11 @@ from .base import ComplianceTarget, Transport
 
 
 class ReferenceTarget(ComplianceTarget):
-    name = "reference"
-    supported_transports = frozenset({"stdio"})
+    name: ClassVar[str] = "reference"
+    supported_transports: ClassVar[frozenset[Transport]] = frozenset({"stdio"})
 
     @asynccontextmanager
-    async def client(self, transport: Transport, **client_kwargs: object) -> AsyncIterator[Client]:
-        if transport != "stdio":
-            raise NotImplementedError(f"ReferenceTarget transport '{transport}' is scheduled for Phase 4.")
+    async def _open_client(self, transport: Transport, **client_kwargs: object) -> AsyncIterator[Client]:
         from compliance_reference_server.server import mcp
 
         async with Client(mcp, **client_kwargs) as connected:

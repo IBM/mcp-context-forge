@@ -195,3 +195,114 @@ async def test_mutate_tool_list_adds_new_tool() -> None:
         after = {t.name for t in await client.list_tools()}
     assert new_name in after
     assert new_name not in before
+
+
+# ---------------------------------------------------------------------------
+# Notification side-effect witnesses
+#
+# The harness treats this server as the "ground truth" witness for several
+# gateway xfails (GAP-001 through GAP-005). If these notifications silently
+# stop firing here, the gateway tests would XPASS / flip the wrong way
+# without anyone noticing the reference itself broke. These tests pin the
+# invariant so a FastMCP bump or a reference-server refactor doesn't let
+# the witness drift out from under the harness.
+# ---------------------------------------------------------------------------
+def _notification_method(msg) -> str | None:
+    """Return the JSON-RPC method string if ``msg`` is a notification, else None."""
+    inner = getattr(msg, "root", None) or msg
+    method = getattr(inner, "method", None)
+    return str(method) if method else None
+
+
+@pytest.mark.asyncio
+async def test_mutate_resource_list_fires_list_changed() -> None:
+    """mutate_resource_list registers a resource AND emits notifications/resources/list_changed."""
+    observed: list[str] = []
+
+    async def msg_handler(msg):
+        method = _notification_method(msg)
+        if method:
+            observed.append(method)
+
+    async with Client(mcp, message_handler=msg_handler) as client:
+        before_uris = {str(r.uri) for r in await client.list_resources()}
+        result = await client.call_tool_mcp(name="mutate_resource_list", arguments={})
+        assert result.isError is False
+        new_uri = result.content[0].text if result.content else ""
+        assert new_uri.startswith("reference://ephemeral/resource_"), f"expected ephemeral resource uri, got {new_uri!r}"
+        await asyncio.sleep(0.1)  # fire-and-forget notification — give transport a beat
+        after_uris = {str(r.uri) for r in await client.list_resources()}
+
+    assert new_uri in after_uris and new_uri not in before_uris, f"resource {new_uri!r} must appear after mutator call"
+    assert "notifications/resources/list_changed" in observed, f"expected notifications/resources/list_changed; observed: {observed}"
+
+
+@pytest.mark.asyncio
+async def test_mutate_prompt_list_fires_list_changed() -> None:
+    """mutate_prompt_list registers a prompt AND emits notifications/prompts/list_changed."""
+    observed: list[str] = []
+
+    async def msg_handler(msg):
+        method = _notification_method(msg)
+        if method:
+            observed.append(method)
+
+    async with Client(mcp, message_handler=msg_handler) as client:
+        before_names = {p.name for p in await client.list_prompts()}
+        result = await client.call_tool_mcp(name="mutate_prompt_list", arguments={})
+        assert result.isError is False
+        new_name = result.content[0].text if result.content else ""
+        assert new_name.startswith("ephemeral_prompt_"), f"expected ephemeral prompt name, got {new_name!r}"
+        await asyncio.sleep(0.1)
+        after_names = {p.name for p in await client.list_prompts()}
+
+    assert new_name in after_names and new_name not in before_names, f"prompt {new_name!r} must appear after mutator call"
+    assert "notifications/prompts/list_changed" in observed, f"expected notifications/prompts/list_changed; observed: {observed}"
+
+
+@pytest.mark.asyncio
+async def test_bump_subscribable_fires_resource_updated_for_subscriber() -> None:
+    """After subscribe + bump, the client observes notifications/resources/updated.
+
+    Pins the subscription contract that the gateway xfail (GAP-011)
+    inherits: if the reference server stops firing ``resources/updated``
+    in response to ``bump_subscribable``, the gateway test can't
+    meaningfully report compliance — it'd pass for the wrong reason.
+    """
+    observed_uris: list[str] = []
+
+    async def msg_handler(msg):
+        if _notification_method(msg) != "notifications/resources/updated":
+            return
+        inner = getattr(msg, "root", None) or msg
+        params = getattr(inner, "params", None)
+        uri = getattr(params, "uri", None)
+        if uri is not None:
+            observed_uris.append(str(uri))
+
+    async with Client(mcp, message_handler=msg_handler) as client:
+        await client.session.subscribe_resource("reference://mutable/counter")
+        await client.call_tool_mcp(name="bump_subscribable", arguments={})
+        await asyncio.sleep(0.1)
+
+    assert "reference://mutable/counter" in observed_uris, f"expected notifications/resources/updated with the counter uri; " f"observed uris: {observed_uris}"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_unsubscribe_tracks_uri_set() -> None:
+    """resources/subscribe and unsubscribe update the server's subscription set.
+
+    The reference server wires these via ``mcp._mcp_server.subscribe_resource`` /
+    ``unsubscribe_resource`` hooks; a FastMCP bump that renames the low-level
+    decorator would silently desync these handlers without surfacing here —
+    unless something asserts the hook wiring still works.
+    """
+    from compliance_reference_server.server import _subscribed_uris
+
+    uri = "reference://mutable/counter"
+    async with Client(mcp) as client:
+        _subscribed_uris.discard(uri)  # isolate from prior-test state
+        await client.session.subscribe_resource(uri)
+        assert uri in _subscribed_uris, f"subscribe handler must add {uri!r} to the tracking set; " f"current: {_subscribed_uris}"
+        await client.session.unsubscribe_resource(uri)
+        assert uri not in _subscribed_uris, f"unsubscribe handler must remove {uri!r}; current: {_subscribed_uris}"

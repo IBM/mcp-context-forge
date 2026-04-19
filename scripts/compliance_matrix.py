@@ -80,8 +80,20 @@ _ENGINE_FLIP_TARGET = {
 # ---------------------------------------------------------------------------
 @dataclass
 class SliceResult:
+    """Per-engine pytest run outcome.
+
+    Invariant: ``skip_reason is None`` iff the slice actually ran. The
+    parallel ``ran`` boolean that used to exist alongside ``skip_reason``
+    was redundant and let callers construct nonsense states (e.g.
+    ``ran=True, skip_reason='refused'``). ``ran`` is now derived from
+    ``skip_reason`` via the property below, and ``__post_init__``
+    enforces that a skipped slice carries no counts — previously a
+    zero-test row from a crashed pytest looked identical to a clean
+    skip, which was the kernel of the "0/0/0/0 silent failure" bug
+    fixed this pass.
+    """
+
     engine: str
-    ran: bool = False
     skip_reason: Optional[str] = None
     passed: int = 0
     failed: int = 0
@@ -93,6 +105,24 @@ class SliceResult:
     junit_path: Optional[str] = None
     failures: list[tuple[str, str]] = field(default_factory=list)
     xpasses: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Negative counts are never meaningful and usually indicate a
+        # bookkeeping bug (e.g. the XPASS subtraction going below zero).
+        for field_name in ("passed", "failed", "xfailed", "xpassed", "skipped", "errors"):
+            value = getattr(self, field_name)
+            if value < 0:
+                raise ValueError(f"SliceResult.{field_name} must be >= 0, got {value}")
+        # Skipped-vs-ran is exclusive. Non-zero counts on a skipped slice
+        # are structurally inconsistent and would misreport matrix totals.
+        if self.skip_reason is not None and self.total != 0:
+            raise ValueError(
+                f"SliceResult for engine={self.engine!r} has skip_reason={self.skip_reason!r} " f"but counts are non-zero (total={self.total}); skipped slices must " f"not carry test counts"
+            )
+
+    @property
+    def ran(self) -> bool:
+        return self.skip_reason is None
 
     @property
     def total(self) -> int:
@@ -147,9 +177,11 @@ def _gateway_client(base_url: str, token: str) -> httpx.Client:
 def _probe_state(client: httpx.Client) -> Optional[dict]:
     try:
         resp = client.get("/admin/runtime/mcp-mode")
-    except Exception:  # noqa: BLE001 — gateway unreachable → None
+    except Exception as exc:  # noqa: BLE001 — gateway unreachable → None
+        print(f"[compliance-matrix] /admin/runtime/mcp-mode unreachable: {type(exc).__name__}: {exc}", file=sys.stderr)
         return None
     if resp.status_code != 200:
+        print(f"[compliance-matrix] /admin/runtime/mcp-mode returned {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
         return None
     return resp.json()
 
@@ -238,8 +270,15 @@ def _run_slice(engine: str, keyword: str, junit_path: Path, xpass_log: Path, ext
     """
     junit_path.parent.mkdir(parents=True, exist_ok=True)
     xpass_log.parent.mkdir(parents=True, exist_ok=True)
+    # Clear BOTH sidecar artifacts before running. Leaving an old junit on
+    # disk would let a crashed-before-writing pytest invocation pick up the
+    # prior slice's XML and report those stale counts as the current
+    # slice's — silently. _parse_junit's FileNotFoundError → ran=False
+    # path only triggers if the file is genuinely absent.
     if xpass_log.exists():
-        xpass_log.unlink()  # fresh per slice
+        xpass_log.unlink()
+    if junit_path.exists():
+        junit_path.unlink()
     env = os.environ.copy()
     env["COMPLIANCE_XPASS_LOG"] = str(xpass_log)
     cmd = [
@@ -282,12 +321,23 @@ def _read_xpass_log(path: Path) -> list[str]:
 
 
 def _parse_junit(path: Path) -> SliceResult:
-    """Parse pytest's JUnit XML into a SliceResult. Engine populated by caller."""
-    out = SliceResult(engine="", ran=True)
+    """Parse pytest's JUnit XML into a SliceResult. Engine populated by caller.
+
+    A missing or malformed XML means pytest never produced output (e.g.
+    collection error, CLI-usage error, crash before the junitxml plugin
+    wrote). Surface that as ``ran=False`` with a ``skip_reason`` so the
+    caller can distinguish "no tests matched" from "the slice never
+    actually executed" — the original silent-zero-row behavior masked a
+    real bug during development (0/0/0/0 looked identical to a clean
+    zero-test run).
+    """
     try:
         tree = ET.parse(path)
-    except (ET.ParseError, FileNotFoundError):
-        return out
+    except FileNotFoundError:
+        return SliceResult(engine="", skip_reason=f"junit XML not written: {path}")
+    except ET.ParseError as exc:
+        return SliceResult(engine="", skip_reason=f"junit XML unparseable ({exc}): {path}")
+    out = SliceResult(engine="")
     root = tree.getroot()
     # pytest emits a <testsuite> root (or wrapped in <testsuites>)
     suites = root.iter("testsuite")
@@ -439,20 +489,50 @@ def main(argv: Optional[list[str]] = None) -> int:
                     slices.append(s)
                     continue
                 expected_runtime = "rust" if target_mode == "edge" else "python"
-                _wait_data_plane_converges(client, expected_runtime, timeout_s=3.0)
+                # If the data plane hasn't actually converged on the expected
+                # runtime, running the slice would probe whatever transport
+                # is really live — not what the engine label says — and the
+                # resulting numbers would misattribute behavior. Skip with a
+                # diagnostic rather than silently running against the wrong
+                # thing.
+                if not _wait_data_plane_converges(client, expected_runtime, timeout_s=3.0):
+                    s.skip_reason = f"data plane did not converge on {expected_runtime!r} after flip to {target_mode!r}"
+                    slices.append(s)
+                    continue
             junit = ARTIFACT_DIR / f"{engine}.xml"
             xpass_log = ARTIFACT_DIR / f"{engine}.xpass"
-            _ = _run_slice(engine, _ENGINE_KEYWORD[engine], junit, xpass_log, extra_pytest)
+            rc = _run_slice(engine, _ENGINE_KEYWORD[engine], junit, xpass_log, extra_pytest)
             parsed = _parse_junit(junit)
             parsed.engine = engine
             parsed.junit_path = str(junit.relative_to(REPO_ROOT))
+            # pytest exit codes: 0 ok / 1 failed tests / 2 interrupted / 3 internal /
+            # 4 CLI usage / 5 no tests collected. A non-zero code combined with
+            # "ran=False" (no junit produced) is unambiguous infrastructure
+            # breakage — flag it so the summary row doesn't read as a clean
+            # zero-test run. Non-zero with a populated junit usually just means
+            # test failures, which are already represented in the counts.
+            if not parsed.ran and rc != 0:
+                prior = parsed.skip_reason or "pytest produced no junit output"
+                parsed.skip_reason = f"{prior} (pytest exit code {rc})"
             xpasses = _read_xpass_log(xpass_log)
             if xpasses:
                 parsed.xpassed = len(xpasses)
                 parsed.xpasses = xpasses
-                # The conftest sidecar catches XPASS events that pytest counts
-                # as "passed" in JUnit. Subtract so "Passed" in the summary
-                # reflects genuine passes, not gap closures.
+                # Standard JUnit emits XPASS as a plain `<testcase>` with no
+                # failure/error/skipped child when strict=False, so the parser
+                # above bucketed them into `passed`. Subtract to reflect
+                # genuine passes in the summary. If the sidecar reports more
+                # XPASS events than JUnit counted passes, the two sources of
+                # truth have drifted — loud warning, don't silently clamp.
+                if parsed.xpassed > parsed.passed:
+                    print(
+                        f"[compliance-matrix] WARNING: engine={engine}: "
+                        f"xpass sidecar reports {parsed.xpassed} events but "
+                        f"junit only has {parsed.passed} non-fail/error/skip "
+                        f"cases. Bookkeeping drift — hook may have missed "
+                        f"events or sidecar picked up stale entries.",
+                        file=sys.stderr,
+                    )
                 parsed.passed = max(0, parsed.passed - parsed.xpassed)
             slices.append(parsed)
     finally:

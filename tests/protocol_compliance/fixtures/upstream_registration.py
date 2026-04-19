@@ -11,7 +11,9 @@ and the gateway-compliance-gap backlog stays visible.
 
 from __future__ import annotations
 
+import sys
 import time
+import warnings
 from typing import Any, Iterator
 
 import httpx
@@ -24,23 +26,36 @@ def _wait_for_federation_sync(
     client: httpx.Client,
     gateway_id: str,
     timeout: float = 30.0,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], str]:
     """Poll /tools until at least one tool shows up for the given gateway.
+
+    Returns ``(matched_tools, diagnostic)``. The diagnostic is "" on success
+    or a short description of the last non-200 / empty-list state so the
+    caller can include it in a skip message. Distinguishing "endpoint sound
+    but federation slow" from "endpoint returning 401/500" prevents a
+    network/auth regression from being misread as eventual consistency.
 
     Note: gateway returns ``gatewayId`` (camelCase) not ``gateway_id``, and
     /tools defaults to 50 entries — we ask for the full set so the
     pagination test isn't starved.
     """
     deadline = time.time() + timeout
+    last_status: int | None = None
+    last_body: str = ""
     while time.time() < deadline:
         resp = client.get("/tools", params={"limit": 500})
+        last_status = resp.status_code
         if resp.status_code == 200:
             tools = resp.json()
             matched = [t for t in tools if t.get("gatewayId") == gateway_id]
             if matched:
-                return matched
+                return matched, ""
+        else:
+            last_body = resp.text[:200]
         time.sleep(0.5)
-    return []
+    if last_status != 200:
+        return [], f"last /tools response: {last_status} {last_body}"
+    return [], "federation produced no tools for this gateway within timeout (endpoint healthy)"
 
 
 def _delete_if_exists(client: httpx.Client, path: str, name: str) -> None:
@@ -48,14 +63,23 @@ def _delete_if_exists(client: httpx.Client, path: str, name: str) -> None:
 
     Prevents 409 "already exists" on fixture setup when a previous session
     terminated without running teardown (common during iterative harness
-    development).
+    development). Non-2xx responses on the listing or delete are warned
+    to stderr so auth/RBAC regressions don't masquerade as "already exists"
+    fixture-setup failures one step later.
     """
     listing = client.get(path)
     if listing.status_code != 200:
+        msg = f"_delete_if_exists: GET {path} returned {listing.status_code}: {listing.text[:200]}"
+        warnings.warn(msg, stacklevel=2)
+        print(f"[fixture] {msg}", file=sys.stderr)
         return
     for entry in listing.json():
         if entry.get("name") == name:
-            client.request("DELETE", f"{path}/{entry['id']}")
+            resp = client.request("DELETE", f"{path}/{entry['id']}")
+            if resp.status_code not in (200, 204, 404):
+                msg = f"_delete_if_exists: DELETE {path}/{entry['id']} returned {resp.status_code}: {resp.text[:200]}"
+                warnings.warn(msg, stacklevel=2)
+                print(f"[fixture] {msg}", file=sys.stderr)
 
 
 @pytest.fixture(scope="session")
@@ -91,9 +115,9 @@ def virtual_server(
     registered_reference_upstream: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
     """Create a virtual server composing the reference server's tools."""
-    tools = _wait_for_federation_sync(gateway_http_client, registered_reference_upstream["id"])
+    tools, diag = _wait_for_federation_sync(gateway_http_client, registered_reference_upstream["id"])
     if not tools:
-        pytest.skip(f"federation sync did not surface any tools for gateway " f"{registered_reference_upstream['id']} within timeout")
+        pytest.skip(f"federation sync did not surface any tools for gateway " f"{registered_reference_upstream['id']}: {diag}")
 
     _delete_if_exists(gateway_http_client, "/servers", "compliance_virtual")
     # POST /servers takes ServerCreate nested under a top-level "server" key

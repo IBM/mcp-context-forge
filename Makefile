@@ -763,7 +763,8 @@ PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
     tests/e2e/test_mcp_protocol_e2e.py \
     tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust
+    tests/e2e_rust \
+    tests/protocol_compliance
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))

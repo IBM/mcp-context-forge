@@ -44,8 +44,18 @@ mcp: FastMCP = FastMCP(name="compliance-reference-server", version="0.2.0")
 
 # ---------------------------------------------------------------------------
 # Shared mutable state — reference server is single-process; no locking needed.
+#
+# Two separate counters because the names they source are in different
+# namespaces: ``_subscribable_counter`` is the value of the subscribable
+# resource (incremented by ``bump_subscribable``) so subscribers see a
+# monotonic read; ``_mutation_counter`` is a per-call UID used by the
+# ``mutate_*_list`` tools to build unique ephemeral names. Sharing one
+# counter would let a ``mutate_*_list`` call collide with a previously
+# registered ``ephemeral_<n>`` whenever ``bump_subscribable`` hadn't
+# advanced in between — FastMCP rejects the duplicate registration.
 # ---------------------------------------------------------------------------
 _subscribable_counter: int = 0
+_mutation_counter: int = 0
 _subscribed_uris: set[str] = set()
 
 
@@ -57,12 +67,12 @@ _subscribed_uris: set[str] = set()
 # the harness exercise the subscribe → notify → unsubscribe flow.
 # ---------------------------------------------------------------------------
 @mcp._mcp_server.subscribe_resource()
-async def _on_subscribe(uri) -> None:  # pragma: no cover — trivial tracking
+async def _on_subscribe(uri) -> None:
     _subscribed_uris.add(str(uri))
 
 
 @mcp._mcp_server.unsubscribe_resource()
-async def _on_unsubscribe(uri) -> None:  # pragma: no cover — trivial tracking
+async def _on_unsubscribe(uri) -> None:
     _subscribed_uris.discard(str(uri))
 
 
@@ -95,10 +105,28 @@ async def progress_reporter(ctx: Context, total_steps: int = 3) -> str:
     return f"completed {total_steps} steps"
 
 
+_cancellation_count: int = 0
+
+
 @mcp.tool(description="Sleep for the requested duration; used to exercise cancellation.")
 async def long_running(duration_seconds: float = 30.0) -> str:
-    await asyncio.sleep(duration_seconds)
+    global _cancellation_count
+    try:
+        await asyncio.sleep(duration_seconds)
+    except asyncio.CancelledError:
+        # Increment a process-wide counter so a follow-up probe can verify
+        # the server actually received and honored the client's
+        # `notifications/cancelled` (gateways that don't relay the
+        # notification leave this counter unchanged even though the
+        # client-side timeout fires).
+        _cancellation_count += 1
+        raise
     return f"slept {duration_seconds}s"
+
+
+@mcp.tool(description="Report how many times `long_running` has been cancelled since process start.")
+def get_cancellation_count() -> int:
+    return _cancellation_count
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +134,11 @@ async def long_running(duration_seconds: float = 30.0) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(description="Add a one-off tool at runtime; fires tools/list_changed.")
 async def mutate_tool_list(ctx: Context) -> str:
-    ephemeral_name = f"ephemeral_{_subscribable_counter}"
+    global _mutation_counter
+    _mutation_counter += 1
+    ephemeral_name = f"ephemeral_{_mutation_counter}"
 
-    @mcp.tool(name=ephemeral_name, description=f"Ephemeral tool #{_subscribable_counter}.")
+    @mcp.tool(name=ephemeral_name, description=f"Ephemeral tool #{_mutation_counter}.")
     def _ephemeral() -> str:
         return f"hello from {ephemeral_name}"
 
@@ -120,12 +150,14 @@ async def mutate_tool_list(ctx: Context) -> str:
 
 @mcp.tool(description="Add a one-off resource at runtime; fires resources/list_changed.")
 async def mutate_resource_list(ctx: Context) -> str:
-    ephemeral_uri = f"reference://ephemeral/resource_{_subscribable_counter}"
+    global _mutation_counter
+    _mutation_counter += 1
+    ephemeral_uri = f"reference://ephemeral/resource_{_mutation_counter}"
 
     @mcp.resource(
         ephemeral_uri,
-        name=f"ephemeral-resource-{_subscribable_counter}",
-        description=f"Ephemeral resource #{_subscribable_counter}.",
+        name=f"ephemeral-resource-{_mutation_counter}",
+        description=f"Ephemeral resource #{_mutation_counter}.",
         mime_type="text/plain",
     )
     def _ephemeral_resource() -> str:
@@ -137,9 +169,11 @@ async def mutate_resource_list(ctx: Context) -> str:
 
 @mcp.tool(description="Add a one-off prompt at runtime; fires prompts/list_changed.")
 async def mutate_prompt_list(ctx: Context) -> str:
-    ephemeral_name = f"ephemeral_prompt_{_subscribable_counter}"
+    global _mutation_counter
+    _mutation_counter += 1
+    ephemeral_name = f"ephemeral_prompt_{_mutation_counter}"
 
-    @mcp.prompt(name=ephemeral_name, description=f"Ephemeral prompt #{_subscribable_counter}.")
+    @mcp.prompt(name=ephemeral_name, description=f"Ephemeral prompt #{_mutation_counter}.")
     def _ephemeral_prompt(subject: str = "world") -> str:
         return f"Hello, {subject}, from {ephemeral_name}."
 

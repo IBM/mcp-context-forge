@@ -44,24 +44,17 @@ The harness runs against a live ContextForge gateway. Defaults match the
 If your environment overrides those vars to ``false``, the harness will
 skip gateway-target rows with the SSRF reason.
 
-### Known gateway-compliance gaps (current failure backlog)
+### Known gateway-compliance gaps
 
-These tests fail against `gateway_proxy-http`. They're left red on purpose
-so the gap surfaces as a tracked backlog rather than hidden behind `xfail`:
-
-| Failing test | Why |
-|---|---|
-| `test_log_message_reaches_client` | Server→client log notifications need a GET SSE stream; gateway currently returns 405 (spec-clean per [#4205 discussion](https://github.com/IBM/mcp-context-forge/issues/4205)). |
-| `test_progress_notifications_delivered` | Same — progress events ride the GET stream. |
-| `test_roots_echo_receives_client_roots` | Gateway doesn't forward client-advertised roots to the upstream. |
-| `test_sample_trigger_invokes_client_handler` | `sampling/createMessage` is a server→client request — needs the GET stream. |
-| `test_elicit_trigger_invokes_client_handler` | Same — `elicitation/create` is server→client. |
-| `test_prompt_listed`, `test_prompt_renders_argument` | Gateway federation may not surface upstream prompts (only tools today). |
-| `test_list_tools_returns_all_stubs` | Gateway may cap the `tools/list` page below the ≥120 stubs the test expects. |
-
-All of these will turn green when the per-client session work tracked in
-#4205 lands and the gateway can route server→client messages. Until then
-the backlog reads itself off the harness output.
+Tracked in [`COMPLIANCE_GAPS.md`](./COMPLIANCE_GAPS.md) with one entry
+per gap (ID, affected targets, tests, spec section, observed vs.
+expected, remediation). The gaps themselves are wired into the affected
+tests via `xfail_on(...)` so pytest reports `XFAIL` rather than
+`FAILED` — the XPASS sidecar (see `conftest.pytest_runtest_logreport`)
+catches any that start passing so closures get noticed even when nobody
+is reading the gap file. When a gap closes, remove the `xfail_on` line
+and move the entry to the "Closed gaps" section at the bottom of that
+file.
 
 ## Scope boundary: Authorization
 

@@ -52,10 +52,17 @@ def pytest_runtest_logreport(report):  # noqa: D401 — pytest hook
     if not sidecar:
         return
     sidecar_path = Path(sidecar)
-    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-    with sidecar_path.open("a") as f:
-        reason = getattr(report, "wasxfail", "") or ""
-        f.write(f"{report.nodeid}\t{reason}\n")
+    try:
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        with sidecar_path.open("a") as f:
+            reason = getattr(report, "wasxfail", "") or ""
+            f.write(f"{report.nodeid}\t{reason}\n")
+    except OSError as exc:
+        # An unwriteable sidecar (permissions, full disk, racing cleanup)
+        # shouldn't poison the whole pytest run — warn and continue. The
+        # compliance matrix will see a low XPASS count and log a bookkeeping
+        # drift warning of its own.
+        print(f"[conftest] XPASS sidecar write failed ({type(exc).__name__}: {exc}); " f"nodeid={report.nodeid}", file=sys.stderr)
 
 
 if find_spec("compliance_reference_server") is None:
@@ -91,14 +98,22 @@ _CASES: list[tuple[str, Transport]] = [
 def _gateway_fixture_or_skip(request: pytest.FixtureRequest, name: str):
     """Resolve a gateway-side fixture or pytest.skip with a readable reason.
 
-    The in-process gateway boot is currently blocked on bootstrap gaps
-    (platform_admin role seeding, cross-loop pytest-asyncio scoping). Until
-    those resolve, gateway-target rows skip rather than erroring — reference
-    rows stay green, and the skipped rows document what still needs fixing.
+    Scope: this only swallows runtime unreachability / refusal — connection
+    errors, httpx transport errors, and pytest.skip from dependent fixtures.
+    Programming errors (ImportError, NameError, SyntaxError, AttributeError
+    on the fixture body, TypeError from a bad signature) propagate so a
+    broken fixture definition surfaces as a real test error rather than
+    pretending every gateway row is "unavailable". Without this narrowing,
+    a typo in ``gateway_live.py`` would silently skip every gateway row
+    across the entire matrix and the bug would escape notice.
     """
     try:
         return request.getfixturevalue(name)
-    except Exception as exc:  # noqa: BLE001 — whatever boot fails, skip not error
+    except pytest.skip.Exception:
+        raise  # pytest.skip() from a dependency — let it through verbatim
+    except (ImportError, NameError, SyntaxError, AttributeError, TypeError):
+        raise  # broken fixture definition — real test error
+    except Exception as exc:  # noqa: BLE001 — runtime unreachability / refusal
         pytest.skip(f"gateway fixture {name!r} unavailable: {type(exc).__name__}: {str(exc)[:200]}")
 
 

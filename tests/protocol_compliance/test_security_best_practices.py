@@ -65,7 +65,7 @@ def test_session_id_is_non_guessable_if_issued(gateway_http_client: httpx.Client
     resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_initialize_body(1))
     sid = resp.headers.get("mcp-session-id")
     if sid is None:
-        pytest.skip("gateway does not issue Mcp-Session-Id (see GAP-010 discussion)")
+        pytest.skip("gateway does not issue Mcp-Session-Id (spec-sanctioned MAY; see #4205)")
     assert not sid.isdigit(), f"session id is a plain integer (guessable): {sid!r}"
     assert len(sid) >= 16, f"session id too short for reasonable entropy: {sid!r} (len {len(sid)})"
     assert "@" not in sid, f"session id contains '@' — possible PII leak: {sid!r}"

@@ -51,7 +51,7 @@ async def test_resources_updated_notification_delivered_to_subscriber(connect, r
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason=("GAP-002/003/004/005/006 family — subscription updates require the " "server→client SSE channel that the gateway currently closes (405 on " "GET /mcp/); see #4205."),
+        reason=("GAP-011: subscription updates require the server→client SSE channel " "that the gateway currently closes (405 on GET /mcp/); see #4205."),
     )
 
     observed_uris: list[str] = []

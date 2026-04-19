@@ -56,20 +56,23 @@ def drift_helper(request: pytest.FixtureRequest) -> Callable[[str], AsyncContext
 async def _collect(drift_helper: Callable, collect_fn: Callable) -> dict[str, Optional[Any]]:
     """Run ``collect_fn(client)`` against each target. Unavailable → None.
 
-    Catches ``BaseException`` (narrowed to skip KeyboardInterrupt / SystemExit)
-    because ``pytest.skip(...)`` raises ``_pytest.outcomes.Skipped`` which
-    is a ``BaseException`` subclass — a plain ``except Exception`` would
-    let it escape and fail the drift test outright.
+    Catches ``pytest.skip.Exception`` specifically (that's what ``pytest.skip(...)``
+    raises via the ``_pytest.outcomes.Skipped`` BaseException subclass — a
+    plain ``except Exception`` would let it escape and fail the drift test
+    outright). Real bugs in the probe — crashes, assertion errors, name
+    errors — are recorded with their text into the result so the drift
+    diff surfaces the root cause instead of silently dropping the target.
     """
     out: dict[str, Optional[Any]] = {}
+    skip_exc = pytest.skip.Exception  # type: ignore[attr-defined]
     for name in _TARGET_NAMES:
         try:
             async with drift_helper(name) as client:
                 out[name] = await collect_fn(client)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:  # noqa: BLE001 — treat any skip/error as "unavailable"
+        except skip_exc:
             out[name] = None
+        except Exception as exc:  # noqa: BLE001 — record, don't swallow
+            out[name] = {"_probe_error": f"{type(exc).__name__}: {exc}"[:200]}
     return out
 
 

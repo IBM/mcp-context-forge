@@ -30,9 +30,10 @@ async def test_tools_list_changed_notification_delivered(connect, request) -> No
         "gateway_proxy",
         "gateway_virtual",
         reason=(
-            "GAP-008: gateway federation drops `mutate_tool_list`, so the trigger is unreachable. "
-            "The list_changed notification itself is also in the server→client channel family "
-            "(#4205) that gateways don't yet relay."
+            "GAP-008: gateway federation drops `mutate_tool_list`, so the trigger is "
+            "unreachable. Even with federation fixed, the list_changed notification "
+            "would still be blocked by the same POST-correlated-stream "
+            "notification-relay issue tracked in GAP-001/GAP-002."
         ),
     )
     observed_methods: list[str] = []
@@ -58,7 +59,12 @@ async def test_resources_list_changed_notification_delivered(connect, request) -
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason=("GAP-008: gateway federation drops `mutate_resource_list`, so the trigger is unreachable. " "Server→client notifications family (#4205) also applies."),
+        reason=(
+            "GAP-008: gateway federation drops `mutate_resource_list`, so the trigger "
+            "is unreachable. Even with federation fixed, the list_changed "
+            "notification would still be blocked by the same POST-correlated-stream "
+            "notification-relay issue tracked in GAP-001/GAP-002."
+        ),
     )
     observed_methods: list[str] = []
 

@@ -20,7 +20,11 @@ async def test_sample_with_max_tokens_parameter(connect, request) -> None:
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason="GAP-004: gateway does not relay server-initiated sampling/createMessage (see #4205)",
+        reason=(
+            "GAP-004: server→client `sampling/createMessage` request must travel "
+            "on the POST-correlated stream (spec forbids it on the standalone "
+            "stream); gateway does not broker server→client requests there."
+        ),
     )
 
     captured_max_tokens: list[int | None] = []
