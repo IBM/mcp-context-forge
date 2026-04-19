@@ -16,6 +16,59 @@ plugin_settings:
   include_user_info: false
 
 plugins:
+  # Span Attribute Customizer - customize OpenTelemetry span attributes
+  - name: "SpanAttributeCustomizer"
+    kind: "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin"
+    description: "Customizes OpenTelemetry span attributes for enhanced observability and compliance"
+    version: "1.0.0"
+    author: "ContextForge Team"
+    hooks: ["tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"]
+    tags: ["observability", "telemetry", "opentelemetry", "spans", "attributes"]
+    mode: "disabled"  # Set to "permissive" or "enforce" to activate
+    priority: 10  # Run early to set attributes before other plugins
+    conditions: []
+    config:
+      # Global attributes added to all spans
+      global_attributes:
+        environment: "production"
+        region: "us-east-1"
+        team: "platform"
+        deployment: "k8s-cluster-1"
+      
+      # Per-tool attribute overrides
+      tool_overrides:
+        weather_api:
+          attributes:
+            service: "weather"
+            cost_center: "engineering"
+        database_query:
+          attributes:
+            service: "database"
+          remove_attributes: ["tool.arguments"]  # Remove sensitive data
+      
+      # Attribute transformations
+      transformations:
+        - field: "user.email"
+          operation: "hash"  # Hash PII for privacy
+        - field: "team_id"
+          operation: "uppercase"
+        - field: "description"
+          operation: "truncate"
+          params:
+            max_length: 100
+      
+      # Conditional attributes based on context
+      conditions:
+        - when: "tool.name == \"sensitive_operation\""
+          add:
+            audit_required: true
+            compliance_level: "high"
+      
+      # Global attribute removal list
+      remove_attributes:
+        - "internal_debug_info"
+        - "temporary_data"
+
   # Argument Normalizer - stabilize inputs before anything else
   - name: "ArgumentNormalizer"
     kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"
