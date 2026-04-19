@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-09T08:47:02.723252Z"
+exclude-newer = "2026-04-09T09:03:36.506311Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -20,6 +20,7 @@ cpex-rate-limiter = "2026-04-09T23:59:59Z"
 cpex-url-reputation = "2026-04-09T23:59:59Z"
 cryptography = "2026-04-11T23:59:59Z"
 uv = "2026-04-11T23:59:59Z"
+authlib = "2026-04-19T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
 
 [[package]]
@@ -325,14 +326,15 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.6.9"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
+    { name = "joserfc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/98/00d3dd826d46959ad8e32af2dbb2398868fd9fd0683c26e56d0789bd0e68/authlib-1.6.9.tar.gz", hash = "sha256:d8f2421e7e5980cc1ddb4e32d3f5fa659cfaf60d8eaf3281ebed192e4ab74f04", size = 165134, upload-time = "2026-03-02T07:44:01.998Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/82/4d0603f30c1b4629b1f091bb266b0d7986434891d6940a8c87f8098db24e/authlib-1.7.0.tar.gz", hash = "sha256:b3e326c9aa9cc3ea95fe7d89fd880722d3608da4d00e8a27e061e64b48d801d5", size = 175890, upload-time = "2026-04-18T11:00:28.559Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/23/b65f568ed0c22f1efacb744d2db1a33c8068f384b8c9b482b52ebdbc3ef6/authlib-1.6.9-py2.py3-none-any.whl", hash = "sha256:f08b4c14e08f0861dc18a32357b33fbcfd2ea86cfe3fe149484b4d764c4a0ac3", size = 244197, upload-time = "2026-03-02T07:44:00.307Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/48/c954218b2a250e23f178f10167c4173fecb5a75d2c206f0a67ba58006c26/authlib-1.7.0-py2.py3-none-any.whl", hash = "sha256:e36817afb02f6f0b6bf55f150782499ddd6ddf44b402bb055d3263cc65ac9ae0", size = 258779, upload-time = "2026-04-18T11:00:26.64Z" },
 ]
 
 [[package]]
@@ -2256,6 +2258,18 @@ wheels = [
 ]
 
 [[package]]
+name = "joserfc"
+version = "1.6.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/90/b8cc8635c4ce2e5e8104bf26ef147f6e599478f6329107283cdc53aae97f/joserfc-1.6.3.tar.gz", hash = "sha256:c00c2830db969b836cba197e830e738dd9dda0955f1794e55d3c636f17f5c9a6", size = 229090, upload-time = "2026-02-25T15:33:38.167Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/4f/124b3301067b752f44f292f0b9a74e837dd75ff863ee39500a082fc4c733/joserfc-1.6.3-py3-none-any.whl", hash = "sha256:6beab3635358cbc565cb94fb4c53d0557e6d10a15b933e2134939351590bda9a", size = 70465, upload-time = "2026-02-25T15:33:36.997Z" },
+]
+
+[[package]]
 name = "jq"
 version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3079,6 +3093,7 @@ dev = [
     { name = "a2a-sdk", extra = ["http-server"] },
     { name = "aiohttp" },
     { name = "argparse-manpage" },
+    { name = "authlib" },
     { name = "autoflake" },
     { name = "bandit" },
     { name = "bump2version" },
@@ -3233,6 +3248,7 @@ dev = [
     { name = "a2a-sdk", extras = ["http-server"] },
     { name = "aiohttp", specifier = ">=3.13.4" },
     { name = "argparse-manpage", specifier = ">=4.7" },
+    { name = "authlib", specifier = ">=1.7.0" },
     { name = "autoflake", specifier = ">=2.3.1" },
     { name = "bandit", specifier = ">=1.8.6" },
     { name = "bump2version", specifier = ">=1.0.1" },
