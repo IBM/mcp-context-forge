@@ -25,8 +25,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.plugins.framework import reload_plugin_context
-from mcpgateway.plugins.gateway_plugin_manager import make_context_id
+from mcpgateway.plugins.framework import get_plugin_manager_factory, publish_binding_change, publish_team_binding_change, reload_plugin_context
+from mcpgateway.plugins.gateway_plugin_manager import CONTEXT_ID_SEPARATOR, make_context_id
 from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError, ToolPluginBindingService
@@ -37,6 +37,30 @@ logger = logging_service.get_logger(__name__)
 router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
 
 _service = ToolPluginBindingService()
+
+
+async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -> None:
+    """Evict local caches and broadcast pub/sub frames for a batch of bindings.
+
+    Wildcard bindings (``tool_name == "*"``) affect every cached context for
+    the team, so they go through the team-wide channel; specific bindings only
+    evict the one context. Factory may be ``None`` on nodes where opportunistic
+    init failed — we still publish so healthy peers converge.
+    """
+    wildcard_teams = {b.team_id for b in bindings if b.tool_name == "*"}
+    specific_ctx_ids = {make_context_id(b.team_id, b.tool_name) for b in bindings if b.tool_name != "*"}
+
+    for ctx_id in specific_ctx_ids:
+        await reload_plugin_context(ctx_id)
+        await publish_binding_change(ctx_id)
+
+    if wildcard_teams:
+        factory = get_plugin_manager_factory()
+        if factory is not None:
+            for team_id in wildcard_teams:
+                await factory.invalidate_team(team_id, CONTEXT_ID_SEPARATOR)
+        for team_id in wildcard_teams:
+            await publish_team_binding_change(team_id)
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +116,8 @@ async def upsert_tool_plugin_bindings(
         # Commit before invalidating cache so the new session opened by reload
         # reads committed data. The get_db() cleanup commit is then a safe no-op.
         db.commit()
-        for ctx_id in {make_context_id(b.team_id, b.tool_name) for b in bindings}:
-            await reload_plugin_context(ctx_id)
+
+        await _invalidate_and_broadcast(bindings)
         return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
     except ValueError as exc:
         logger.error("Failed to upsert tool plugin bindings: %s", exc)
@@ -199,9 +223,7 @@ async def delete_tool_plugin_bindings_by_reference(
     """
     deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id)
     db.commit()
-    # Invalidate cache for every affected (team_id, tool_name) pair.
-    for ctx_id in {make_context_id(b.team_id, b.tool_name) for b in deleted}:
-        await reload_plugin_context(ctx_id)
+    await _invalidate_and_broadcast(deleted)
     return ToolPluginBindingListResponse(bindings=deleted, total=len(deleted))
 
 
@@ -241,7 +263,7 @@ async def delete_tool_plugin_binding(
     try:
         deleted = _service.delete_binding(db, binding_id)
         db.commit()
-        await reload_plugin_context(make_context_id(deleted.team_id, deleted.tool_name))
+        await _invalidate_and_broadcast([deleted])
         return deleted
     except ToolPluginBindingNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

@@ -104,7 +104,11 @@ from mcpgateway.schemas import (
     PaginationMeta,
     PluginDetail,
     PluginListResponse,
+    PluginModeUpdateRequest,
+    PluginModeUpdateResponse,
     PluginStatsResponse,
+    PluginToggleRequest,
+    PluginToggleResponse,
     PromptCreate,
     PromptMetrics,
     PromptRead,
@@ -2028,11 +2032,10 @@ async def get_overview_partial(
         resources_total = db.query(func.count(DbResource.id)).scalar() or 0  # pylint: disable=not-callable
         resources_active = db.query(func.count(DbResource.id)).filter(DbResource.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
-        # Plugin stats
+        # Plugin stats — self-heal the cache so the overview reflects the live
+        # shared toggle even on a process that booted with plugins disabled.
         overview_plugin_service = get_plugin_service()
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            overview_plugin_service.set_plugin_manager(plugin_manager)
+        await _sync_plugin_service_from_runtime(request, overview_plugin_service)
         plugin_stats = await overview_plugin_service.get_plugin_statistics()
 
         # Infrastructure status (database, cache, uptime)
@@ -16535,6 +16538,41 @@ async def get_gateways_section(
 ####################
 
 
+async def _sync_plugin_service_from_runtime(request: Request, plugin_service) -> None:
+    """Self-heal the admin plugin cache from the live framework state.
+
+    The framework's ``get_plugin_manager`` is the single source of truth — it
+    reads the shared toggle (TTL-cached, so this is a cheap call) and returns
+    ``None`` when plugins are globally disabled, even when the disable came
+    from a *remote* node via the Redis toggle.
+
+    Every admin read mirrors that answer back into ``app.state.plugin_manager``
+    and the ``PluginService`` singleton. This closes three gaps:
+
+    1. Processes that booted with plugins disabled never had ``app.state`` set,
+       so admin views returned empty until restart even after the shared
+       toggle was flipped on.
+    2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
+       stale cache would persist forever — now the next GET repairs it.
+    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
+       worker) would leave this worker's ``app.state.plugin_manager``
+       populated from a prior enable, making admin views serve plugin
+       metadata the cluster had already turned off.
+
+    Best-effort: a failure logs a WARNING and leaves ``app.state`` alone. It
+    never raises, so it can't turn a read into a 500.
+    """
+    try:
+        # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework import get_plugin_manager
+
+        plugin_manager = await get_plugin_manager()
+        request.app.state.plugin_manager = plugin_manager
+        plugin_service.set_plugin_manager(plugin_manager)
+    except Exception as sync_exc:
+        LOGGER.warning("Admin plugin-cache self-heal failed (%s) — view may render stale/empty", sync_exc)
+
+
 @admin_router.get("/plugins/partial")
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
@@ -16558,17 +16596,15 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         # Get plugin service and check if plugins are enabled
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available in app state
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache so the partial reflects the live shared toggle.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
         stats = await plugin_service.get_plugin_statistics()
 
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": _resolve_root_path(request)}
+        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_service.get_plugin_manager() is not None, "root_path": _resolve_root_path(request)}
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
@@ -16620,10 +16656,8 @@ async def list_plugins(
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get filtered plugins
         if any([search, mode, hook, tag]):
@@ -16656,12 +16690,71 @@ async def list_plugins(
             },
         )
 
-        return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
+        from mcpgateway.plugins.framework import are_plugins_enabled_shared  # pylint: disable=import-outside-toplevel
+
+        return PluginListResponse(plugins_globally_enabled=await are_plugins_enabled_shared(), plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
         structured_logger.error("Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins", response_model=PluginToggleResponse)
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def toggle_plugins_global(
+    payload: PluginToggleRequest,
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+) -> PluginToggleResponse:
+    """Enable or disable the plugin subsystem globally and broadcast the change."""
+    # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins_shared, get_plugin_manager
+
+    redis_persisted = await enable_plugins_shared(payload.enabled)
+
+    # Sync the admin-side cache so ``GET /admin/plugins`` and
+    # ``GET /admin/plugins/{name}`` reflect the toggle on a process that
+    # started with plugins disabled (``app.state.plugin_manager`` stayed unset
+    # and ``PluginService`` was never wired). Without this, enabling plugins
+    # at runtime leaves the admin surfaces reading stale/empty metadata until
+    # the next restart; disabling likewise keeps the old manager visible.
+    #
+    # Treat the sync as best-effort: the shared toggle above already committed,
+    # so an exception here (e.g. factory build failure on a degraded node) must
+    # not turn into a 500 for a toggle that actually took effect. The admin
+    # surfaces will self-correct on the next request that re-reads the manager.
+    try:
+        plugin_service = get_plugin_service()
+        if payload.enabled:
+            plugin_manager = await get_plugin_manager()
+            if plugin_manager is not None:
+                plugin_service.set_plugin_manager(plugin_manager)
+                request.app.state.plugin_manager = plugin_manager
+        else:
+            plugin_service.set_plugin_manager(None)
+            request.app.state.plugin_manager = None
+    except Exception as sync_exc:
+        LOGGER.warning(
+            "Plugin global toggle applied (enabled=%s) but admin-cache sync failed (%s) — admin views will refresh on next request",
+            payload.enabled,
+            sync_exc,
+        )
+
+    LOGGER.info(f"Plugins globally {'enabled' if payload.enabled else 'disabled'} by {get_user_email(user)}")
+    structured_logger = get_structured_logger()
+    structured_logger.info(
+        f"Plugin subsystem globally {'enabled' if payload.enabled else 'disabled'}",
+        user_id=get_user_id(user),
+        user_email=get_user_email(user),
+        component="plugin_runtime",
+        category="security",
+        resource_type="plugin_global_toggle",
+        resource_action="update",
+        custom_fields={"enabled": payload.enabled, "redis_persisted": redis_persisted},
+    )
+
+    return PluginToggleResponse(plugins_enabled=await are_plugins_enabled_shared(), redis_persisted=redis_persisted)
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
@@ -16687,10 +16780,8 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get statistics
         stats = await plugin_service.get_plugin_statistics()
@@ -16749,10 +16840,8 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin details
         plugin = plugin_service.get_plugin_by_name(name)
@@ -16804,6 +16893,69 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins/{name}", response_model=PluginModeUpdateResponse)
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def update_plugin_mode(
+    name: str,
+    payload: PluginModeUpdateRequest,
+    _db: Session = Depends(get_db),  # required by rbac decorator's session lookup
+    user=Depends(get_current_user_with_permissions),
+) -> PluginModeUpdateResponse:
+    """Persist a per-plugin mode override in Redis and invalidate cached managers."""
+    # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins.framework import invalidate_all_plugin_managers, list_configured_plugin_names, publish_plugin_mode_change
+
+    mode = payload.mode
+
+    # Validate against the *configured* plugin set, not the live manager. On a
+    # process that booted with plugins globally disabled, no manager is wired
+    # and ``PluginService.get_all_plugins()`` returns ``[]``; without this the
+    # handler 404s for every valid name and blocks operators from pre-staging
+    # a per-plugin mode before turning the subsystem on.
+    plugin_names = list_configured_plugin_names()
+    if name not in plugin_names:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found. Available: {', '.join(plugin_names[:10])}")
+
+    # publish_plugin_mode_change always updates the in-process override map
+    # (so single-node-no-Redis deployments still work) and additionally
+    # attempts a Redis SET + publish. The Redis outcome is surfaced back to
+    # the caller as redis_persisted so they know whether the change reached
+    # other workers.
+    redis_persisted = await publish_plugin_mode_change(name, mode)
+    # The override is already stored (in-process map and/or Redis) by the line
+    # above. Treat the cache sweep as best-effort — if it raises, a background
+    # TTL refresh still reaches the new mode, and the operator must not see a
+    # 500 for an override that actually took effect.
+    try:
+        await invalidate_all_plugin_managers()
+    except Exception as invalidate_exc:
+        LOGGER.warning(
+            "Plugin '%s' mode override stored but cache invalidation failed (%s) — fresh managers will rebuild on next TTL expiry",
+            name,
+            invalidate_exc,
+        )
+
+    if redis_persisted:
+        LOGGER.info(f"Plugin '{name}' mode changed to '{mode}' by {get_user_email(user)} (Redis persisted, 24h TTL)")
+    else:
+        LOGGER.warning(f"Plugin '{name}' mode changed to '{mode}' by {get_user_email(user)} (this worker only — Redis unavailable)")
+
+    structured_logger = get_structured_logger()
+    structured_logger.info(
+        f"Plugin '{name}' mode changed to '{mode}'",
+        user_id=get_user_id(user),
+        user_email=get_user_email(user),
+        component="plugin_runtime",
+        category="security",
+        resource_type="plugin_mode",
+        resource_id=name,
+        resource_action="update",
+        custom_fields={"plugin_name": name, "new_mode": mode, "redis_persisted": redis_persisted},
+    )
+
+    return PluginModeUpdateResponse(plugin=name, mode=mode, redis_persisted=redis_persisted)
 
 
 ##################################################

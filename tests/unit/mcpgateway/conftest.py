@@ -70,6 +70,30 @@ def clear_plugins_settings_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_plugin_framework_redis_provider():
+    """Clear the plugin framework's shared Redis provider between tests.
+
+    ``main.py`` lifespan registers ``get_redis_client`` as the framework's
+    Redis provider. Lifespan-exercising tests monkeypatch
+    ``main_mod.get_redis_client`` to an ``AsyncMock`` so their lifespan run
+    registers that mock as the provider — but ``set_shared_redis_provider``
+    is module-level state that ``monkeypatch`` doesn't roll back, so the
+    mock bleeds into subsequent tests. ``_read_shared_enabled`` then treats
+    the mock's return value as a truthy-but-non-string Redis reply, which
+    decodes to ``False`` and makes ``get_plugin_manager`` return ``None``.
+
+    Resetting the provider to ``None`` before and after every test keeps
+    that state out of the hot path; plugin-suite tests (which have their
+    own conftest) re-install a real dynamic provider after this runs.
+    """
+    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+
+    set_shared_redis_provider(None)
+    yield
+    set_shared_redis_provider(None)
+
+
+@pytest.fixture(autouse=True)
 def reset_app_root_path(monkeypatch):
     """Reset app_root_path to empty string for all tests.
 

@@ -59,11 +59,15 @@ class PluginService:
         """
         return self._plugin_manager
 
-    def set_plugin_manager(self, manager: PluginManager) -> None:
-        """Set the plugin manager instance.
+    def set_plugin_manager(self, manager: Optional[PluginManager]) -> None:
+        """Set or clear the plugin manager instance.
+
+        ``None`` is accepted so the admin runtime-toggle handler can detach the
+        cached manager when the subsystem is disabled at runtime (otherwise the
+        admin surfaces keep reading a now-stale manager until restart).
 
         Args:
-            manager: The PluginManager instance to use.
+            manager: The PluginManager instance to attach, or ``None`` to clear.
         """
         self._plugin_manager = manager
 

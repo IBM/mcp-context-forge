@@ -106,6 +106,8 @@ from mcpgateway.plugins.framework import (
     PromptHookType,
     ResourceHookType,
     shutdown_plugin_manager_factory,
+    start_plugin_invalidation_listener,
+    stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -1621,6 +1623,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 
+    # Register the Redis provider with the plugin framework so framework
+    # modules can reach Redis without importing mcpgateway.utils directly
+    # (isolation enforced by scripts/pre-commit/check_framework_imports.py).
+    # First-Party
+    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+
+    set_shared_redis_provider(get_redis_client)
+
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
     from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
@@ -1668,11 +1678,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
-        # Initialize plugin manager factory if plugins are enabled
-        if settings.plugins.enabled:
-            # First-Party
-            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+        # Initialize the plugin manager factory whenever the YAML config is
+        # available. We used to gate this on ``settings.plugins.enabled`` but
+        # that broke runtime enable-from-disabled: a node that boots with the
+        # flag off would never create the factory, so a later shared-toggle
+        # flip to "enabled" from a peer worker left this node unable to run
+        # plugins until restart. Keep initialisation unconditional; gate
+        # *execution* on the shared toggle in ``get_plugin_manager``.
+        # First-Party
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
 
+        try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
                 timeout=settings.plugins.plugin_timeout,
@@ -1681,6 +1697,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 db_factory=SessionLocal,
             )
             logger.info("Plugin manager factory initialized")
+        except Exception as init_exc:
+            if settings.plugins.enabled:
+                # Operator asked for plugins — a failed init (bad YAML, missing
+                # plugin module, validation error) must be a hard boot failure
+                # rather than a silent no-op. Preserve the original loud-crash
+                # semantics; the outer lifespan handler logs and re-raises.
+                logger.error("Plugin manager factory initialization failed: %s", init_exc, exc_info=True)
+                raise
+            # Plugins disabled locally; we init opportunistically so a later
+            # shared-toggle flip from a peer worker can turn the subsystem on
+            # without restarting this node. If that opportunistic init fails,
+            # the gateway still boots — but mark the node degraded so
+            # ``get_plugin_manager`` emits an ERROR the first time the shared
+            # toggle asks us to serve plugins we can't actually run.
+            logger.warning(
+                "Plugin manager factory init failed (%s); runtime-enable from a peer worker will require this node to restart",
+                init_exc,
+            )
+            # First-Party
+            from mcpgateway.plugins.framework import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
+
+            mark_factory_init_degraded()
 
         try:
             plugin_manager = await get_plugin_manager()
@@ -1697,6 +1735,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as diag_exc:
             logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
             raise
+
+        # Always start the invalidation listener when a factory is live, even
+        # if the local ``plugins.enabled`` setting is false. The listener
+        # early-exits when no Redis provider is registered, so single-node
+        # deployments don't spin.
+        await start_plugin_invalidation_listener()
+        logger.info("Plugin invalidation listener started")
 
         # Wire observability adapter to plugin manager if observability is enabled
         if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
@@ -1899,6 +1944,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+
+        # Stop the plugin invalidation listener before the factory so in-flight
+        # messages don't race with a half-torn-down cache.
+        try:
+            await stop_plugin_invalidation_listener()
+        except Exception as e:
+            logger.debug(f"Error stopping plugin invalidation listener: {e}")
 
         # Shutdown global plugin manager factory (no-op when plugins were never initialised)
         try:
