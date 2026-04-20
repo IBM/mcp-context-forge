@@ -35,7 +35,7 @@ import logging  # noqa: E402
 # test_admin_a2a_listing_continues_on_conversion_error exercises the
 # A2A listing endpoint.
 import os  # noqa: F401
-from unittest.mock import MagicMock  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 from urllib.parse import quote  # noqa: E402
 import uuid  # noqa: E402
 
@@ -813,37 +813,65 @@ class TestAdminGatewayAPIs:
         """Test complete gateway lifecycle through admin UI."""
         # Gateway tests would require mocking external connections
 
-    # FIXME: Temporarily disabled due to issues with gateway lifecycle tests
-    # async def test_admin_test_gateway_endpoint(self, client: AsyncClient, mock_settings):
-    #     """Test the gateway test endpoint."""
-    #     # Fix the import path - should be admin module directly
-    #     with patch("mcpgateway.admin.httpx.AsyncClient") as mock_client_class:
-    #         mock_client = MagicMock()
-    #         mock_response = MagicMock()
-    #         mock_response.status_code = 200
-    #         mock_response.json.return_value = {"status": "ok"}
-    #         mock_response.headers = {}
+    async def test_admin_test_gateway_allowlist_blocks_non_allowlisted(self, client: AsyncClient, mock_settings):
+        """Test that gateway test endpoint blocks non-allowlisted hosts (ICACF-15)."""
+        from mcpgateway.config import settings
 
-    #         # Setup async context manager
-    #         mock_client.__aenter__.return_value = mock_client
-    #         mock_client.__aexit__.return_value = None
-    #         mock_client.request.return_value = mock_response
-    #         mock_client_class.return_value = mock_client
+        # Configure allowlist
+        with patch.object(settings, "gateway_test_allowed_hosts", ["api.approved.com"]):
+            request_data = {"base_url": "https://evil.com", "path": "/", "method": "GET", "headers": {}, "body": None}
 
-    #         request_data = {
-    #             "base_url": "https://api.example.com",
-    #             "path": "/test",
-    #             "method": "GET",
-    #             "headers": {},
-    #             "body": None,
-    #         }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
 
-    #         response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200  # HTTP status is always 200
+            data = response.json()
+            assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
+            assert "error" in data["body"]
+            assert data["body"]["error"] == "Invalid gateway URL"
 
-    #         assert response.status_code == 200
-    #         data = response.json()
-    #         assert data["status_code"] == 200
-    #         assert "latency_ms" in data
+    async def test_admin_test_gateway_allowlist_allows_allowlisted(self, client: AsyncClient, mock_settings):
+        """Test that gateway test endpoint allows allowlisted hosts (ICACF-15)."""
+        from mcpgateway.config import settings
+
+        # Configure allowlist and mock HTTP client
+        with patch.object(settings, "gateway_test_allowed_hosts", ["api.example.com"]):
+            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                mock_client = MagicMock()
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.json.return_value = {"status": "ok"}
+                mock_response.text = '{"status": "ok"}'
+
+                # Setup async context manager
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=None)
+                mock_client.request = AsyncMock(return_value=mock_response)
+                mock_client_class.return_value = mock_client
+
+                request_data = {"base_url": "https://api.example.com", "path": "/test", "method": "GET", "headers": {}, "body": None}
+
+                response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["statusCode"] == 200  # camelCase due to BaseModelWithConfigDict
+                assert "latencyMs" in data  # camelCase due to BaseModelWithConfigDict
+
+    async def test_admin_test_gateway_empty_allowlist_uses_ssrf(self, client: AsyncClient, mock_settings):
+        """Test that empty allowlist falls back to SSRF protection (ICACF-15)."""
+        from mcpgateway.config import settings
+
+        # Empty allowlist = use SSRF protection
+        with patch.object(settings, "gateway_test_allowed_hosts", []):
+            request_data = {"base_url": "http://169.254.169.254/", "path": "/", "method": "GET", "headers": {}, "body": None}
+
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+
+            # Should be blocked by SSRF protection
+            assert response.status_code == 200  # HTTP status is always 200
+            data = response.json()
+            assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
+            assert "error" in data["body"]
 
 
 # -------------------------
