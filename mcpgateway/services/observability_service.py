@@ -439,7 +439,7 @@ class ObservabilityService:
     # Span Management
     # ==============================
 
-    def start_span(
+    def start_span(  # pylint: disable=too-many-locals
         self,
         trace_id: str,
         name: str,
@@ -500,21 +500,21 @@ class ObservabilityService:
         try:
             # Merge attributes with plugin-provided custom attributes
             final_attributes = dict(attributes or {})
-            
+
             # Read custom attributes from plugin context (SpanAttributeCustomizerPlugin)
-            if context and hasattr(context, 'global_context') and hasattr(context.global_context, 'state'):
-                custom_attrs = context.global_context.state.get('custom_span_attributes', {})
+            if context and hasattr(context, "global_context") and hasattr(context.global_context, "state"):
+                custom_attrs = context.global_context.state.get("custom_span_attributes", {})
                 if custom_attrs:
                     final_attributes.update(custom_attrs)
                     logger.debug(f"Merged {len(custom_attrs)} custom attributes from plugin context")
-                
+
                 # Remove attributes specified by plugin
-                remove_attrs = context.global_context.state.get('remove_span_attributes', [])
+                remove_attrs = context.global_context.state.get("remove_span_attributes", [])
                 if remove_attrs:
                     for attr_name in remove_attrs:
                         final_attributes.pop(attr_name, None)
                     logger.debug(f"Removed {len(remove_attrs)} attributes as specified by plugin")
-            
+
             span_id = str(uuid.uuid4())
             span = ObservabilitySpan(
                 span_id=span_id,

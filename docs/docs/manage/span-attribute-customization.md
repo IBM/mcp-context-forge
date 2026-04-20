@@ -136,7 +136,7 @@ config:
   remove_attributes:
     - "internal_debug_info"
     - "temporary_data"
-  
+
   # Per-tool removal
   tool_overrides:
     sensitive_tool:
@@ -169,13 +169,13 @@ config:
     gdpr_compliant: true
     data_classification: "confidential"
     retention_policy: "90_days"
-  
+
   transformations:
     - field: "user.email"
       operation: "hash"
     - field: "user.phone"
       operation: "hash"
-  
+
   remove_attributes:
     - "user.ssn"
     - "credit_card"
@@ -237,7 +237,7 @@ plugins:
         region: "us-east-1"
         team: "platform"
         deployment: "k8s-cluster-1"
-      
+
       # Per-tool overrides
       tool_overrides:
         weather_api:
@@ -249,7 +249,7 @@ plugins:
             service: "database"
           remove_attributes:
             - "tool.arguments"
-      
+
       # Attribute transformations
       transformations:
         - field: "user.email"
@@ -260,14 +260,14 @@ plugins:
           operation: "truncate"
           params:
             max_length: 100
-      
+
       # Conditional attributes
       conditions:
         - when: "tool.name == \"sensitive_operation\""
           add:
             audit_required: true
             compliance_level: "high"
-      
+
       # Global attribute removal
       remove_attributes:
         - "internal_debug_info"

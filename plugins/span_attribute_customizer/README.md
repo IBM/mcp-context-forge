@@ -31,7 +31,7 @@ plugins:
         environment: "production"
         region: "us-east-1"
         team: "platform"
-      
+
       # Per-tool overrides
       tool_overrides:
         weather_api:
@@ -40,21 +40,21 @@ plugins:
             cost_center: "engineering"
         database_query:
           remove_attributes: ["tool.arguments"]
-      
+
       # Attribute transformations
       transformations:
         - field: "user.email"
           operation: "hash"
         - field: "team_id"
           operation: "uppercase"
-      
+
       # Conditional attributes
       conditions:
         - when: "tool.name == \"sensitive_operation\""
           add:
             audit_required: true
             compliance_level: "high"
-      
+
       # Global removal list
       remove_attributes:
         - "internal_debug_info"

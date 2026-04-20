@@ -34,7 +34,7 @@ plugins:
         region: "us-east-1"
         team: "platform"
         deployment: "k8s-cluster-1"
-      
+
       # Per-tool attribute overrides
       tool_overrides:
         weather_api:
@@ -45,7 +45,7 @@ plugins:
           attributes:
             service: "database"
           remove_attributes: ["tool.arguments"]  # Remove sensitive data
-      
+
       # Attribute transformations
       transformations:
         - field: "user.email"
@@ -56,14 +56,14 @@ plugins:
           operation: "truncate"
           params:
             max_length: 100
-      
+
       # Conditional attributes based on context
       conditions:
         - when: "tool.name == \"sensitive_operation\""
           add:
             audit_required: true
             compliance_level: "high"
-      
+
       # Global attribute removal list
       remove_attributes:
         - "internal_debug_info"
