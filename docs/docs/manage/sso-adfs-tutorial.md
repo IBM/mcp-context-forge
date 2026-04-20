@@ -236,6 +236,66 @@ Expected response:
 2. Verify ADFS is configured to issue ID tokens for your client application
 3. Check ADFS relying party trust settings
 
+### Issue: ID Token Signature Verification Failed
+
+**Cause**: Gateway rejects ID tokens with signature verification errors.
+
+**Solution**: Ensure ADFS's JWKS endpoint is accessible and properly configured.
+
+The gateway cryptographically verifies ID token signatures using ADFS's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://adfs.ds.example.net/adfs/discovery/keys
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Issuer Mismatch**
+
+The ID token's `iss` claim must exactly match your ADFS issuer:
+
+```bash
+# Ensure exact match in configuration (no trailing slash)
+SSO_ADFS_ISSUER=https://adfs.ds.example.net/adfs
+
+# Common mistakes:
+# - https://adfs.ds.example.net/adfs/ (extra trailing slash)
+# - https://adfs.ds.example.net (missing /adfs path)
+```
+
+**3. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and ADFS servers have synchronized clocks:
+
+```bash
+# Check time on gateway server
+date -u  # Should match actual UTC time
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**4. Certificate Issues**
+
+ADFS uses Windows certificate store for signing. Ensure:
+- Token signing certificate is valid and not expired
+- Certificate chain is trusted by the gateway
+- For self-signed certificates in dev, configure trust appropriately
+
+**5. Network/Proxy Issues**
+
+If the gateway is behind a corporate proxy or firewall:
+
+```bash
+# Ensure outbound HTTPS access to:
+# - https://adfs.ds.example.net/adfs (issuer)
+# - https://adfs.ds.example.net/adfs/discovery/keys (JWKS endpoint)
+```
+
 ### Issue: User email is missing or incorrect
 
 **Cause**: ADFS may use different claim names for email.
