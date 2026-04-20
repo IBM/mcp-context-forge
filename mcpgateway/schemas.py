@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationError, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
