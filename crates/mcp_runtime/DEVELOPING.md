@@ -126,6 +126,36 @@ Add this when the change is close to shipping:
 make verify
 ```
 
+## GET /mcp Stream Relay (ADR-052)
+
+The Rust live-stream branch in `forward_transport_request` (`src/lib.rs`)
+relays Python's `GET /mcp` SSE stream byte-for-byte after parsing it back
+into typed `Event` frames. As of ADR-052, Python serves a spec-conformant
+SSE stream backed by a per-session event bus (Redis Pub/Sub + ring buffer in
+multi-node, in-process deque + `asyncio.Event` in single-node). The relay
+itself did not need code changes — it inherited the new behavior the moment
+Python stopped returning 405.
+
+What this means for development:
+
+- The `session_id.is_none()` 405 in the live-stream branch is spec-mandated
+  (GET requires a session id) and stays. Tests that assert on this 405 are
+  still valid.
+- For the GET-with-session path, the relay opens an upstream GET to Python's
+  `/mcp`, parses the resulting SSE byte stream, and re-emits each frame.
+  No Rust event-bus machinery needed; Python is the source of truth.
+- The Pub/Sub channel (`mcp:session:{sid}:events`) and event-store keys
+  (`mcpgw:eventstore:{sid}:*`) are owned by Python. Rust does not write to
+  them in v1. A future iteration could have Rust subscribe directly to skip
+  the Python hop, but the current relay is the simpler design and keeps the
+  fanout policy in one place.
+- `live_stream_core_enabled()` continues to gate this path; deployments
+  that want Python to serve the stream end-to-end (no Rust relay) leave
+  this disabled and let the request fall through to the Python proxy.
+
+When debugging GET-stream failures, check Python first — `make logs` for
+`ServerEventBus` lines reveals the chosen backend and any publish errors.
+
 ## Compose-Backed MCP Validation
 
 Rust-local tests are not enough for this runtime. You also need live validation

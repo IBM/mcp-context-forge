@@ -22,6 +22,7 @@ have no heavy dependencies.
 from __future__ import annotations
 
 # Standard
+import asyncio
 from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
@@ -6583,23 +6584,1233 @@ async def test_handle_streamable_http_get_returns_405_when_no_session_id(monkeyp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("header_name", [b"mcp-session-id", b"x-mcp-session-id"])
-async def test_handle_streamable_http_get_passes_through_with_session(monkeypatch, header_name):
-    """GET on /mcp with either Mcp-Session-Id alias reaches the SDK in stateful mode (#4205)."""
+async def test_handle_streamable_http_get_returns_sse_with_session(monkeypatch, header_name):
+    """GET on /mcp with a valid session opens the spec-defined SSE stream (ADR-052).
+
+    The SDK session manager is NOT consulted — the GET stream is served by the
+    gateway's own ``_handle_get_stream`` so server-initiated messages can be
+    fanned out via the per-session event bus.
+    """
+    # Reset the event bus singleton so a clean in-memory backend is used.
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    # ADR-052 / fix #1: production main.lifespan always inits the affinity
+    # singleton so the listener-claim dict is process-wide. The handler
+    # now 503s if the singleton is missing — mirror lifespan in the test.
+    init_session_affinity(enable_notifications=False)
+
     sdk = _CountingSessionManager()
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
 
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
     send, messages = _make_send_collector()
-    scope = _make_scope("/mcp", method="GET", headers=[(header_name, b"abc-123-valid-session")])
-    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(header_name, b"abc-123-valid-session"), (b"accept", b"text/event-stream")],
+    )
+
+    async def receive_with_disconnect():
+        # Let the SSE handler start, then signal client disconnect so the
+        # response generator unwinds cleanly.
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, receive_with_disconnect, send),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        pass  # Acceptable — the heartbeat loop keeps the stream alive
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called, "GET with session must NOT route to the SDK manager"
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts, "expected an http.response.start"
+    assert starts[0]["status"] == 200
+    headers = dict(starts[0]["headers"])
+    assert headers.get(b"content-type", b"").startswith(b"text/event-stream")
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_denies_non_owner_session(monkeypatch, caplog):
+    """ADR-052 / Codex P1: GET /mcp must enforce session ownership before opening SSE.
+
+    Without this gate, any authenticated caller who knows another user's
+    Mcp-Session-Id can subscribe to that session's server-initiated traffic
+    and pin the rightful owner out of the single-listener slot.
+    """
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    # The validate function returns deny when the session belongs to someone else.
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access",
+        AsyncMock(return_value=(False, 403, "Session access denied")),
+    )
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="session_denied")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"someone-elses-session"), (b"accept", b"text/event-stream")],
+    )
+
+    u_token = user_context_var.set({"email": "intruder@example.com", "is_authenticated": True, "is_admin": False, "teams": ["t1"]})
+    try:
+        with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+            await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    finally:
+        user_context_var.reset(u_token)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called, "SDK must not be reached on a denied GET"
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 403
+    assert counter._value.get() == before + 1
+    assert "session ownership check failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_denies_unknown_session(monkeypatch):
+    """ADR-052 / Codex P1: GET /mcp with a well-formed but nonexistent session id must 404.
+
+    Mirrors the POST behavior — without this, GET returns 200 SSE for any
+    session id the caller invents.
+    """
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access",
+        AsyncMock(return_value=(False, 404, "Session not found")),
+    )
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"made-up-session-id"), (b"accept", b"text/event-stream")],
+    )
+
+    u_token = user_context_var.set({"email": "user@example.com", "is_authenticated": True, "is_admin": False, "teams": ["t1"]})
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    finally:
+        user_context_var.reset(u_token)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 404
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_post_response_interception_validates_ownership(monkeypatch, caplog):
+    """Codex P1: response-interception path must validate session ownership before complete_request.
+
+    Without this gate, an authenticated caller who knows the victim's
+    Mcp-Session-Id plus a pending JSON-RPC ``id`` can POST a forged
+    response and complete_request returns 202 — the SDK's normal POST
+    auth would never get a chance to reject the cross-session forgery.
+    """
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    # Force interception path: notification service has a pending request for the victim's session.
+    fake_svc = MagicMock(spec=NotificationService)
+    fake_svc.has_pending_request = MagicMock(return_value=True)
+    fake_svc.complete_request = AsyncMock(side_effect=AssertionError("complete_request must NOT be reached on a denied POST"))
+    monkeypatch.setattr(
+        "mcpgateway.services.notification_service.get_notification_service",
+        lambda: fake_svc,
+    )
+
+    # Owner says caller doesn't own the session.
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access",
+        AsyncMock(return_value=(False, 403, "Session access denied")),
+    )
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","id":"victim-req-7","result":{"content":[]}}'
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[(b"mcp-session-id", b"victims-session"), (b"content-type", b"application/json")],
+    )
+    u_token = user_context_var.set({"email": "intruder@example.com", "is_authenticated": True, "is_admin": False, "teams": ["t1"]})
+    try:
+        with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+            await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+    finally:
+        user_context_var.reset(u_token)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called, "SDK must not be reached on a denied interception POST"
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 403, "interception path must 403 on ownership failure, not 202"
+    assert "interception" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_returns_405_when_feature_disabled(monkeypatch, caplog):
+    """ADR-052: ``mcp_get_stream_enabled=False`` keeps the 405 path even with a valid session.
+
+    Operator kill switch must override the spec-conformant SSE handler.
+    """
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="feature_disabled")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="GET", headers=[(b"mcp-session-id", b"abc-123-valid")])
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
     await wrapper.shutdown()
 
-    assert sdk.called
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 405
+    assert _allow_header(starts[0]) == "POST, DELETE"
+    assert counter._value.get() == before + 1
+    assert "mcp_get_stream_enabled=False" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_second_listener_returns_409(monkeypatch):
+    """ADR-052 single-listener invariant: a second concurrent GET on the same session 409s."""
+    # First-Party
+    from mcpgateway.services.session_affinity import get_session_affinity, init_session_affinity
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus
+
+    await reset_server_event_bus()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    # Pre-claim the listener slot using the singleton affinity service.
+    # First-Party
+    from mcpgateway.services.session_affinity import ListenerClaimResult  # pylint: disable=import-outside-toplevel
+
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+    sid = "abc-123-listener"
+    assert await affinity.claim_listener(sid, "incumbent-conn") is ListenerClaimResult.WON
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", sid.encode()), (b"accept", b"text/event-stream")],
+    )
+    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 409
+    headers = dict(starts[0]["headers"])
+    assert headers.get(b"retry-after") == b"1"
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_wrong_accept_returns_406(monkeypatch):
+    """ADR-052: GET /mcp without ``Accept: text/event-stream`` returns 406."""
+    # First-Party
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus
+
+    await reset_server_event_bus()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="not_acceptable")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"abc-123-wrong-accept"), (b"accept", b"application/json")],
+    )
+    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 406
+    assert counter._value.get() == before + 1
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_bus_unavailable_returns_503(monkeypatch):
+    """ADR-052: when the event bus raises after the listener is claimed, return 503 and release the claim."""
+    # First-Party
+    from mcpgateway.services.session_affinity import (
+        ListenerClaimResult,
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus
+
+    await reset_server_event_bus()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    sid = "sess-bus-down"
+
+    async def boom():
+        raise RuntimeError("simulated bus failure")
+
+    # Lazy-imported inside _handle_get_stream — patch the source module.
+    monkeypatch.setattr(
+        "mcpgateway.transports.server_event_bus.get_server_event_bus",
+        boom,
+    )
+    counter = tr.transport_get_rejected_counter.labels(outcome="bus_unavailable")
+    before = counter._value.get()
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", sid.encode()), (b"accept", b"text/event-stream")],
+    )
+    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 503
+    assert counter._value.get() == before + 1
+    # Listener claim must have been released so a follow-up GET can succeed.
+    assert await affinity.claim_listener(sid, "follow-up") is ListenerClaimResult.WON
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_falls_through_for_request_payloads():
+    """Response interceptor must not swallow JSON-RPC request payloads (id present + method present)."""
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post
+
+    svc = NotificationService()
+    body = b'{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{}}'
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-passthrough",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+    assert result.disconnected is False
+    assert result.body == body, "body must be preserved for SDK replay"
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_too_large_returns_prefix_for_replay(monkeypatch):
+    """Codex stop-hook regression: over-cap body must fall through to SDK, not 413.
+
+    Large legitimate sampling/createMessage responses can exceed
+    ``mcp_body_peek_max_bytes``. The peek path must return the buffered
+    prefix with ``too_large=True`` so the dispatch can replay-and-defer
+    to the SDK. Hard-rejecting with 413 would strand the upstream
+    ``RequestResponder`` AND drop a valid downstream response.
+    """
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    # Settings are pydantic-validated; patch via the module attribute path.
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_body_peek_max_bytes", 64)
+
+    svc = NotificationService()
+    chunks = [
+        ({"type": "http.request", "body": b"a" * 50, "more_body": True},),
+        ({"type": "http.request", "body": b"b" * 50, "more_body": True},),  # 100 > 64 cap → too_large
+        ({"type": "http.request", "body": b"c" * 50, "more_body": False},),
+    ]
+    idx = [0]
+
+    async def receive():
+        msg = chunks[idx[0]][0]
+        idx[0] += 1
+        return msg
+
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-large-response",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+    assert result.too_large is True
+    assert result.disconnected is False
+    assert result.body is not None, "must return prefix for SDK replay-and-defer"
+    # The over-cap path passes the cap-busting chunk through to the SDK
+    # *verbatim* via ``replay_tail`` instead of slicing it into ``body``.
+    # Slicing would copy the chunk into two new bytes objects and double
+    # peak memory — defeating the cap as a memory bound. ``body`` only
+    # holds the chunks accepted before the cap-busting one arrived.
+    assert result.body == b"a" * 50
+    # Chunk had more_body=True, so more chunks still need draining
+    # from the wire after the replay tail.
+    assert result.replay_tail_more_body is True
+    assert result.replay_tail == b"b" * 50
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_too_large_on_final_chunk_preserves_tail(monkeypatch):
+    """Edge case: the chunk that pushes over the cap is also the last chunk.
+
+    The cap still bounds ``body`` to ``mcp_body_peek_max_bytes`` and the
+    over-cap remainder is stashed in ``replay_tail`` with
+    ``replay_tail_more_body=False`` (no further chunks pending on the
+    original receive).
+    """
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_body_peek_max_bytes", 64)
+
+    svc = NotificationService()
+    chunks = [
+        ({"type": "http.request", "body": b"a" * 50, "more_body": True},),
+        ({"type": "http.request", "body": b"b" * 50, "more_body": False},),  # over cap AND final
+    ]
+    idx = [0]
+
+    async def receive():
+        msg = chunks[idx[0]][0]
+        idx[0] += 1
+        return msg
+
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-large-final",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+    assert result.too_large is True
+    assert result.body == b"a" * 50
+    assert result.replay_tail_more_body is False
+    assert result.replay_tail == b"b" * 50
+
+
+@pytest.mark.asyncio
+async def test_drain_request_body_does_not_double_buffer_oversize_chunk(monkeypatch):
+    """Codex P2 regression: a single multi-MB ASGI chunk must not be double-buffered.
+
+    uvicorn/h11 commonly hands the entire request body over in one
+    ``http.request`` event. The peek path must not slice that chunk
+    into ``body`` plus a remainder — slicing copies the chunk into two
+    new bytes objects and doubles peak memory, defeating the cap as a
+    memory bound. Instead, ``body`` stays at whatever was buffered
+    *before* the cap-busting chunk arrived (``b""`` here, since the
+    huge chunk is the first one), and the chunk is passed through
+    verbatim via ``replay_tail`` so the SDK still sees the full body.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _drain_request_body  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_body_peek_max_bytes", 1024)
+
+    huge = b"x" * (4 * 1024 * 1024)  # 4 MB single chunk
+    delivered = [{"type": "http.request", "body": huge, "more_body": False}]
+    idx = [0]
+
+    async def receive():
+        msg = delivered[idx[0]]
+        idx[0] += 1
+        return msg
+
+    result = await _drain_request_body(receive)
+    assert result.too_large is True
+    assert result.body == b"", "body must not absorb any bytes from the cap-busting chunk"
+    assert result.replay_tail is huge, "the original chunk must pass through verbatim, not via a slice copy"
+    assert result.replay_tail_more_body is False
+
+
+@pytest.mark.asyncio
+async def test_make_replay_receive_replays_prefix_tail_then_defers():
+    """Replay receive yields prefix, then truncated tail, then defers to downstream."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _make_replay_receive  # pylint: disable=import-outside-toplevel
+
+    downstream_chunks = [
+        {"type": "http.request", "body": b"WIRE", "more_body": False},
+    ]
+    idx = [0]
+
+    async def downstream_receive():
+        msg = downstream_chunks[idx[0]]
+        idx[0] += 1
+        return msg
+
+    replay = _make_replay_receive(
+        b"PREFIX",
+        downstream_receive,
+        replay_tail=b"TAIL",
+        replay_tail_more_body=True,
+    )
+
+    first = await replay()
+    assert first == {"type": "http.request", "body": b"PREFIX", "more_body": True}
+
+    second = await replay()
+    assert second == {"type": "http.request", "body": b"TAIL", "more_body": True}
+
+    third = await replay()
+    assert third == {"type": "http.request", "body": b"WIRE", "more_body": False}
+
+
+@pytest.mark.asyncio
+async def test_make_replay_receive_signals_complete_when_prefix_is_whole_body():
+    """No-truncation path keeps the existing fast-path semantics.
+
+    When the peek captured the full body, the replay yields a single
+    complete chunk and downstream receive only fires for later
+    disconnect signals.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _make_replay_receive  # pylint: disable=import-outside-toplevel
+
+    async def downstream_receive():
+        return {"type": "http.disconnect"}
+
+    replay = _make_replay_receive(b"WHOLE", downstream_receive)
+
+    first = await replay()
+    assert first == {"type": "http.request", "body": b"WHOLE", "more_body": False}
+
+    second = await replay()
+    assert second == {"type": "http.disconnect"}
+
+
+def test_accepts_event_stream_handles_q_values_and_case():
+    """Codex P3 regression: Accept parser must honour ``q=0`` and case-insensitive media types.
+
+    Substring matching gets both edges wrong: ``Text/Event-Stream`` is
+    rejected and ``text/event-stream;q=0`` is accepted.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _accepts_event_stream  # pylint: disable=import-outside-toplevel
+
+    # Permissive cases.
+    assert _accepts_event_stream("text/event-stream") is True
+    assert _accepts_event_stream("text/event-stream;charset=utf-8") is True
+    assert _accepts_event_stream("Text/Event-Stream") is True, "case-insensitive per RFC 7231"
+    assert _accepts_event_stream("text/event-stream;q=0.9") is True
+    assert _accepts_event_stream("application/json, text/event-stream") is True
+    assert _accepts_event_stream("*/*") is True
+    assert _accepts_event_stream("text/*") is True
+    assert _accepts_event_stream("") is True, "empty header → no preference"
+
+    # Rejection cases.
+    assert _accepts_event_stream("text/event-stream;q=0") is False, "q=0 means explicit refusal"
+    assert _accepts_event_stream("application/json") is False
+    assert _accepts_event_stream("text/html, application/xml") is False
+    assert _accepts_event_stream("*/*;q=0") is False, "wildcard with q=0 is still refusal"
+
+
+def test_bucket_method_label_caps_cardinality():
+    """Codex P2 regression: events-delivered metric label must come from a finite allowlist.
+
+    Without bucketing, ``method`` flows straight from upstream JSON-RPC
+    traffic and a buggy/malicious MCP server can explode Prometheus
+    cardinality. The allowlist bucket guarantees a bounded label set.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _bucket_method_label  # pylint: disable=import-outside-toplevel
+
+    # Known MCP methods round-trip verbatim.
+    assert _bucket_method_label("notifications/initialized") == "notifications/initialized"
+    assert _bucket_method_label("sampling/createMessage") == "sampling/createMessage"
+    assert _bucket_method_label("ping") == "ping"
+
+    # Unknown / arbitrary upstream methods fall into a single bucket.
+    assert _bucket_method_label("custom.attacker.method") == "other"
+    assert _bucket_method_label("notifications/custom_namespace") == "other"
+    assert _bucket_method_label("a" * 4096) == "other", "unbounded-length input must NOT pass through"
+
+    # Missing / non-string input falls into the explicit unknown bucket.
+    assert _bucket_method_label(None) == "unknown"
+    assert _bucket_method_label("") == "unknown"
+    assert _bucket_method_label(123) == "unknown"  # type: ignore[arg-type]
+
+
+def test_resolve_intercept_target_swallows_service_not_initialized():
+    """Early-boot path: NotificationService not initialized → return None, never raise.
+
+    Locks in the narrow ``except RuntimeError``: if a future change
+    started swallowing arbitrary exceptions here, it would silently
+    disable interception for every in-flight server-initiated
+    request response. The narrow catch is a deliberate guard.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _resolve_intercept_target  # pylint: disable=import-outside-toplevel
+    import mcpgateway.transports.streamablehttp_transport as transport_mod  # pylint: disable=import-outside-toplevel
+
+    # Bypass the cached module ref so the test patches the live import.
+    transport_mod._notification_service_module = None
+
+    def _raise_not_init():
+        raise RuntimeError("NotificationService not initialized")
+
+    with patch("mcpgateway.services.notification_service.get_notification_service", side_effect=_raise_not_init):
+        assert _resolve_intercept_target("POST", "sess-x") is None
+
+    # Non-RuntimeError exceptions must propagate (locking in the narrow catch).
+    def _raise_value():
+        raise ValueError("bug in has_pending_request")
+
+    with patch("mcpgateway.services.notification_service.get_notification_service", side_effect=_raise_value):
+        with pytest.raises(ValueError, match="bug in has_pending_request"):
+            _resolve_intercept_target("POST", "sess-x")
+
+
+def test_body_peek_result_invariant_validator_rejects_invalid_combinations():
+    """The __post_init__ validator must catch every combination its docstring promises.
+
+    The dataclass is the load-bearing safety net for the dispatch
+    helper's "body is None on fall-through is impossible" assumption.
+    A regression that quietly weakens any of these checks would let an
+    invalid result reach _dispatch_peek_outcome and cascade.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _BodyPeekResult  # pylint: disable=import-outside-toplevel
+
+    # body=None ⇒ disconnected=True
+    with pytest.raises(ValueError, match="body=None"):
+        _BodyPeekResult(body=None, intercepted=False, disconnected=False)
+
+    # body=None must not carry intercepted/too_large/replay_tail
+    with pytest.raises(ValueError, match="disconnected result"):
+        _BodyPeekResult(body=None, intercepted=False, disconnected=True, too_large=True)
+    with pytest.raises(ValueError, match="disconnected result"):
+        _BodyPeekResult(body=None, intercepted=True, disconnected=True)
+
+    # intercepted ⇒ NOT too_large
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _BodyPeekResult(body=b"x", intercepted=True, too_large=True, replay_tail=b"y")
+
+    # intercepted ⇒ no replay_tail (would be silently swallowed by 202 path)
+    with pytest.raises(ValueError, match="intercepted result must not carry replay_tail"):
+        _BodyPeekResult(body=b"x", intercepted=True, replay_tail=b"y")
+
+    # too_large ⇒ replay_tail non-empty
+    with pytest.raises(ValueError, match="too_large result must carry the replay_tail"):
+        _BodyPeekResult(body=b"x", intercepted=False, too_large=True, replay_tail=b"")
+
+    # replay_tail_more_body ⇒ replay_tail non-empty
+    with pytest.raises(ValueError, match="replay_tail_more_body=True requires"):
+        _BodyPeekResult(body=b"x", intercepted=False, replay_tail=b"", replay_tail_more_body=True)
+
+    # Valid shapes round-trip without raising
+    _BodyPeekResult(body=None, intercepted=False, disconnected=True)
+    _BodyPeekResult(body=b"hello", intercepted=False)
+    _BodyPeekResult(body=b"hello", intercepted=True)
+    _BodyPeekResult(body=b"prefix", intercepted=False, too_large=True, replay_tail=b"tail", replay_tail_more_body=True)
+
+
+def _make_chunked_receive(*chunks):
+    """Build an ASGI receive() that yields each chunk in turn."""
+    state = {"i": 0}
+
+    async def receive():
+        msg = chunks[state["i"]]
+        state["i"] += 1
+        return msg
+
+    return receive
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_intercepts_real_notification():
+    """A single-message JSON-RPC notification (no ``id``) → 202 short-circuit."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"notifications/initialized"}', "more_body": False},
+    )
+    result = await _maybe_short_circuit_notification(receive)
+    assert result.intercepted is True
+    assert result.disconnected is False
+    assert result.too_large is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_falls_through_for_request_with_id():
+    """A request (has ``id``) must NOT be intercepted — silently 202'ing it would strand the caller forever."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":"1","method":"tools/list"}', "more_body": False},
+    )
+    result = await _maybe_short_circuit_notification(receive)
+    assert result.intercepted is False
+    assert result.body is not None, "body must be returned for SDK replay"
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_falls_through_for_batch():
+    """A JSON-RPC batch array must NOT be short-circuited; the SDK handles batches."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'[{"jsonrpc":"2.0","method":"a"},{"jsonrpc":"2.0","method":"b"}]', "more_body": False},
+    )
+    result = await _maybe_short_circuit_notification(receive)
+    assert result.intercepted is False
+    assert result.body is not None
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_falls_through_for_malformed_json():
+    """A body that doesn't parse as JSON must NOT be intercepted."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b"not json at all }{[", "more_body": False},
+    )
+    result = await _maybe_short_circuit_notification(receive)
+    assert result.intercepted is False
+    assert result.body is not None
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_falls_through_when_too_large():
+    """Over-cap bodies must NOT be intercepted — fall through to SDK with the cap-busting chunk preserved."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    monkey_settings = tr.settings  # capture so we can restore
+    original_cap = monkey_settings.mcp_body_peek_max_bytes
+    monkey_settings.mcp_body_peek_max_bytes = 32
+    try:
+        receive = _make_chunked_receive(
+            {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"a"}' * 5, "more_body": False},
+        )
+        result = await _maybe_short_circuit_notification(receive)
+        assert result.intercepted is False
+        assert result.too_large is True
+        assert result.replay_tail, "cap-busting chunk preserved for SDK replay"
+    finally:
+        monkey_settings.mcp_body_peek_max_bytes = original_cap
+
+
+@pytest.mark.asyncio
+async def test_maybe_short_circuit_notification_returns_disconnected_on_client_drop():
+    """Client disconnect mid-body must NOT replay a truncated body to the SDK."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _maybe_short_circuit_notification  # pylint: disable=import-outside-toplevel
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"par', "more_body": True},
+        {"type": "http.disconnect"},
+    )
+    result = await _maybe_short_circuit_notification(receive)
+    assert result.disconnected is True
+    assert result.body is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_intercepts_held_responder(monkeypatch):
+    """Held server-initiated request → matched response → ``intercepted=True``.
+
+    Covers the transport-side dispatch path where the body-peek matches a
+    held responder via NotificationService.complete_request — no transport
+    test previously exercised the ``intercepted=True`` path (only the
+    fall-through and disconnect branches were covered).
+    """
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    svc = NotificationService()
+    monkeypatch.setattr(svc, "complete_request", AsyncMock(return_value=True))
+
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":"req-7","result":{"content":[]}}', "more_body": False},
+    )
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-intercept",
+        notification_service=svc,
+    )
+    assert result.intercepted is True
+    assert result.disconnected is False
+    assert result.too_large is False
+    svc.complete_request.assert_awaited_once()
+    args, _kwargs = svc.complete_request.await_args
+    assert args[0] == "sess-intercept"
+    assert args[1] == "req-7"
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_signals_disconnect_without_replay():
+    """ADR-052 (silent-failure fix): ``http.disconnect`` mid-body must NOT replay a truncated body."""
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post
+
+    svc = NotificationService()
+    chunks = [
+        ({"type": "http.request", "body": b'{"jsonrpc":"2.0","id":"1","resu', "more_body": True},),
+        ({"type": "http.disconnect"},),
+    ]
+    idx = [0]
+
+    async def receive():
+        msg = chunks[idx[0]][0]
+        idx[0] += 1
+        return msg
+
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-disconnect",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+    assert result.disconnected is True
+    assert result.body is None, "must NOT return truncated body for replay"
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_heartbeat_loss_closes_stream_then_reclaim_succeeds(monkeypatch):
+    """ADR-052: heartbeat-induced claim loss must close the SSE response so a second listener can re-claim.
+
+    Regression test for the single-listener invariant: if the heartbeat
+    loop reports the claim is no longer ours (Redis preemption, TTL
+    expiry, or sustained heartbeat failure), the active SSE stream
+    must close before another GET can take the slot. Otherwise the
+    original stream and a new claimant would coexist and both would
+    receive every server-initiated message.
+    """
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        ListenerClaimResult,
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+    # Tight TTL so the heartbeat fires inside the test window.
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_listener_ttl_seconds", 1)
+
+    sid = "sess-heartbeat-loss"
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", sid.encode()), (b"accept", b"text/event-stream")],
+    )
+
+    # Forcibly drop the listener claim from under the active GET.
+    # The heartbeat loop's next refresh attempt will see it's gone,
+    # tolerate the configured number of misses, then signal close.
+    async def kick_claim_out():
+        await asyncio.sleep(0.4)
+        # Simulate a Redis-side preemption: clear the in-memory dict
+        # outright. The original GET's connection_id is now orphaned.
+        affinity._listener_claims.clear()  # noqa: SLF001 — test preemption simulation
+
+    kicker = asyncio.create_task(kick_claim_out())
+
+    async def receive_keepalive():
+        # Hold the connection open longer than the heartbeat window so
+        # the heartbeat actually runs and detects the loss.
+        await asyncio.sleep(3.0)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, receive_keepalive, send),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await kicker
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    # After the original stream closed, a second client must be able to
+    # claim the now-vacated slot.
+    assert await affinity.claim_listener(sid, "second-client") is ListenerClaimResult.WON
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_replays_from_last_event_id(monkeypatch):
+    """ADR-052 resume: ``Last-Event-Id`` causes replay of buffered events on connect."""
+    # First-Party
+    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcpgateway.transports.server_event_bus import (
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    sid = "abc-123-resume"
+    bus = await get_server_event_bus()
+    eid_a = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/a")))
+    eid_b = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/b")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[
+            (b"mcp-session-id", sid.encode()),
+            (b"accept", b"text/event-stream"),
+            (b"last-event-id", eid_a.encode()),
+        ],
+    )
+
+    async def disconnect_after_replay():
+        # Hold the stream open just long enough for the replay events to flush
+        # through SSE serialization, then signal client disconnect.
+        await asyncio.sleep(0.2)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, disconnect_after_replay, send),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
     starts = [m for m in messages if m["type"] == "http.response.start"]
     assert starts and starts[0]["status"] == 200
+    body_chunks = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    # Replay must include eid_b but NOT eid_a (Last-Event-Id is exclusive).
+    assert eid_b.encode() in body_chunks
+    assert b"notifications/b" in body_chunks
+    assert eid_a.encode() not in body_chunks
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_closes_bus_subscription_on_disconnect(monkeypatch):
+    """ADR-052 cleanup: client disconnect must aclose() the bus subscription.
+
+    Without this, every cancelled GET stream leaks the per-listener
+    queue (in-memory) or the pubsub connection (Redis). The cleanup is
+    silenced behind try/except so a regression that drops the
+    aclose() call would be invisible — this test wraps the bus to
+    assert the call actually fires.
+    """
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    bus = await get_server_event_bus()
+    aclose_calls: list[str] = []
+
+    # Wrap the bus's subscribe() so we can intercept the async iterator's aclose.
+    original_subscribe = bus.subscribe
+
+    def wrapped_subscribe(session_id, *, last_event_id=None):
+        underlying = original_subscribe(session_id, last_event_id=last_event_id)
+
+        class _TrackingIter:
+            """Forwards iteration to the real bus iterator, records aclose."""
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return await underlying.__anext__()
+
+            async def aclose(self):
+                aclose_calls.append(session_id)
+                await underlying.aclose()
+
+        return _TrackingIter()
+
+    monkeypatch.setattr(bus, "subscribe", wrapped_subscribe)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-aclose-check"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_after_start():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, disconnect_after_start, send),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert aclose_calls == ["sid-aclose-check"], "bus_iter.aclose must fire exactly once on client disconnect"
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_get_preempt_then_reclaim_replays_gap_event(monkeypatch):
+    """ADR-052 fanout: an event published between preemption and reclaim must reach the next listener.
+
+    The single-listener invariant means at most one stream is live at a
+    time, but published events buffer in the bus's event store. A
+    second listener that resumes with ``Last-Event-Id`` must see events
+    that landed during the gap — otherwise multi-node fanout silently
+    loses messages whenever a heartbeat-loss preemption races with a
+    publish.
+    """
+    # First-Party
+    from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    sid = "sid-preempt-gap"
+    bus = await get_server_event_bus()
+    # Pre-existing event the first listener saw (we'll resume after this id).
+    eid_before = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/before")))
+
+    # Simulate a previous listener having held the slot, then losing it
+    # via heartbeat preemption. The transport's heartbeat-loss test
+    # already exercises that preemption path; here we just leave the
+    # claim slot vacant and publish a "gap" event before the second
+    # listener resumes.
+    eid_gap = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/gap")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[
+            (b"mcp-session-id", sid.encode()),
+            (b"accept", b"text/event-stream"),
+            (b"last-event-id", eid_before.encode()),
+        ],
+    )
+
+    async def disconnect_after_replay():
+        await asyncio.sleep(0.2)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, disconnect_after_replay, send),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    # Sanity: the in-memory backend assigned distinct event ids and the
+    # affinity slot is reusable for the next listener.
+    assert eid_before != eid_gap
+    assert affinity is not None  # singleton resolved cleanly
+    body_chunks = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    # The gap event published *between* the previous listener's last
+    # seen event and this listener's claim must replay through.
+    assert eid_gap.encode() in body_chunks, "gap event must reach the second listener via Last-Event-Id replay"
+    assert b"notifications/gap" in body_chunks
+    # The pre-resume event must NOT replay (Last-Event-Id is exclusive).
+    assert eid_before.encode() not in body_chunks
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_allows_authenticated_oauth_server_on_get(monkeypatch):
+    """Symmetric to the unauthenticated 401 case: a valid token on GET /mcp must reach the handler.
+
+    The unauthenticated 401 case is covered by
+    ``test_streamable_http_auth_rejects_unauthenticated_oauth_server_on_get``.
+    Without this symmetric check, a future change that gated GET on
+    OAuth incorrectly (e.g. checking method != "GET") would silently
+    block legitimate authenticated streams.
+    """
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": ["team1"],
+            "user": {"is_admin": False},
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = True
+
+    scope = _make_scope("/servers/abc123def/mcp", method="GET", headers=[(b"authorization", b"Bearer valid-token")])
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
+    assert result is True, "auth middleware must allow authenticated GET to oauth_enabled server"
+    assert called == [], "no error response should be sent"
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("is_authenticated") is True
 
 
 @pytest.mark.asyncio
@@ -14172,3 +15383,952 @@ class TestDirectProxyValidatesMeta:
         hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
         with pytest.raises(ValueError, match="maximum nesting depth"):
             _validate_meta_data(hidden_depth)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap closers for the ADR-052 GET /mcp stream and body-peek helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drain_request_body_translates_end_of_stream_to_disconnected():
+    """Lines 2865-2867: ASGI transport errors map to ``disconnected=True`` instead of propagating."""
+    # Third-Party
+    import anyio  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _drain_request_body  # pylint: disable=import-outside-toplevel
+
+    async def bad_receive():
+        raise anyio.EndOfStream()
+
+    result = await _drain_request_body(bad_receive)
+    assert result.disconnected is True
+    assert result.body is None
+
+
+@pytest.mark.asyncio
+async def test_drain_request_body_translates_closed_resource_error():
+    """Lines 2865-2867: ClosedResourceError also maps to a disconnected result."""
+    # Third-Party
+    import anyio  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _drain_request_body  # pylint: disable=import-outside-toplevel
+
+    async def bad_receive():
+        raise anyio.ClosedResourceError()
+
+    result = await _drain_request_body(bad_receive)
+    assert result.disconnected is True
+    assert result.body is None
+
+
+@pytest.mark.asyncio
+async def test_drain_request_body_translates_os_error():
+    """Lines 2865-2867: OSError from the underlying transport becomes a disconnected result."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _drain_request_body  # pylint: disable=import-outside-toplevel
+
+    async def bad_receive():
+        raise OSError("socket broken")
+
+    result = await _drain_request_body(bad_receive)
+    assert result.disconnected is True
+    assert result.body is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_invalid_json_falls_through():
+    """Lines 2902-2903: malformed JSON body must fall through, not crash."""
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    svc = NotificationService()
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b"not json at all", "more_body": False},
+    )
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-bad-json",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+    assert result.body == b"not json at all"
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_non_dict_payload_falls_through():
+    """Line 2907: top-level array (batch) payload must fall through."""
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    svc = NotificationService()
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'[{"id":"1","result":{}}]', "more_body": False},
+    )
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-batch",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_intercept_response_post_missing_result_and_error_falls_through():
+    """Line 2911: a dict with ``id`` but no ``result``/``error`` is not a JSON-RPC response."""
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _maybe_intercept_response_post  # pylint: disable=import-outside-toplevel
+
+    svc = NotificationService()
+    # Has `id` but no `result`/`error` and no `method` → falls through via the
+    # no-result/no-error guard.
+    receive = _make_chunked_receive(
+        {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":"1"}', "more_body": False},
+    )
+    result = await _maybe_intercept_response_post(
+        receive=receive,
+        mcp_session_id="sess-id-only",
+        notification_service=svc,
+    )
+    assert result.intercepted is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_peek_outcome_intercepted_emits_202():
+    """Lines 3112-3114: ``intercepted=True`` → 202 + HANDLED."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
+        _BodyPeekResult,
+        _PeekDispatchOutcome,
+        _dispatch_peek_outcome,
+    )
+
+    send, messages = _make_send_collector()
+
+    async def dummy_receive():
+        return {"type": "http.disconnect"}
+
+    peek = _BodyPeekResult(body=b"{}", intercepted=True)
+    outcome, _new_recv = await _dispatch_peek_outcome(
+        peek,
+        dummy_receive,
+        send,
+        accepted_body=b"{}",
+        log_label="t",
+        log_context="sess",
+    )
+    assert outcome is _PeekDispatchOutcome.HANDLED
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 202
+
+
+@pytest.mark.asyncio
+async def test_dispatch_peek_outcome_disconnected_returns_aborted(caplog):
+    """Lines 3118-3119: disconnected result logs and returns ABORTED without touching send."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
+        _BodyPeekResult,
+        _PeekDispatchOutcome,
+        _dispatch_peek_outcome,
+    )
+
+    send, messages = _make_send_collector()
+
+    async def dummy_receive():
+        return {"type": "http.disconnect"}
+
+    peek = _BodyPeekResult(body=None, intercepted=False, disconnected=True)
+    with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+        outcome, _new_recv = await _dispatch_peek_outcome(
+            peek,
+            dummy_receive,
+            send,
+            accepted_body=b"",
+            log_label="notification short-circuit",
+            log_context="/mcp",
+        )
+    assert outcome is _PeekDispatchOutcome.ABORTED
+    assert messages == []  # no response was sent
+    assert "aborted by client mid-body" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_peek_outcome_too_large_logs_and_falls_through(caplog):
+    """Line 3124: too_large result logs debug and falls through with a replay-wrapped receive."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
+        _BodyPeekResult,
+        _PeekDispatchOutcome,
+        _dispatch_peek_outcome,
+    )
+
+    send, _messages = _make_send_collector()
+
+    async def dummy_receive():
+        return {"type": "http.disconnect"}
+
+    peek = _BodyPeekResult(
+        body=b"prefix",
+        intercepted=False,
+        too_large=True,
+        replay_tail=b"tail",
+    )
+    with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+        outcome, new_recv = await _dispatch_peek_outcome(
+            peek,
+            dummy_receive,
+            send,
+            accepted_body=b"",
+            log_label="response interception",
+            log_context="sess-big",
+        )
+    assert outcome is _PeekDispatchOutcome.FALLTHROUGH
+    assert "exceeds peek cap" in caplog.text
+    first = await new_recv()
+    assert first["body"] == b"prefix"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_peek_outcome_body_none_on_fallthrough_raises_runtime_error(monkeypatch):
+    """Line 3126: the invariant guard raises ``RuntimeError`` when body is None on the fall-through path."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
+        _BodyPeekResult,
+        _dispatch_peek_outcome,
+    )
+
+    send, _messages = _make_send_collector()
+
+    async def dummy_receive():
+        return {"type": "http.disconnect"}
+
+    # Build a valid disconnected result, then bypass __post_init__ with
+    # object.__setattr__ to craft the impossible "body=None on fall-through"
+    # shape that the invariant guard must reject.
+    peek = _BodyPeekResult(body=None, intercepted=False, disconnected=True)
+    object.__setattr__(peek, "disconnected", False)
+    with pytest.raises(RuntimeError, match="_BodyPeekResult invariant violation"):
+        await _dispatch_peek_outcome(
+            peek,
+            dummy_receive,
+            send,
+            accepted_body=b"",
+            log_label="t",
+            log_context="x",
+        )
+
+
+def test_accepts_event_stream_skips_empty_entries_in_list():
+    """Line 3218: empty list entries in Accept header are skipped (trailing/double commas)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _accepts_event_stream  # pylint: disable=import-outside-toplevel
+
+    # Leading/trailing/double commas produce empty entries the parser must skip
+    # without tripping on the media_type.partition(";") step.
+    assert _accepts_event_stream(",text/event-stream") is True
+    assert _accepts_event_stream("text/event-stream,,application/json") is True
+    assert _accepts_event_stream(",,,") is False
+
+
+def test_accepts_event_stream_invalid_q_value_rejects():
+    """Lines 3230-3231: malformed q-value treated as 0 (explicit refusal)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _accepts_event_stream  # pylint: disable=import-outside-toplevel
+
+    # Non-numeric q value — per spec / defensive choice — treated as q=0 refusal.
+    assert _accepts_event_stream("text/event-stream;q=not-a-number") is False
+    # But a different media type with a busted q shouldn't save us.
+    assert _accepts_event_stream("application/json;q=xyz") is False
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_session_affinity_not_initialized_returns_503(monkeypatch, caplog):
+    """Lines 3315, 3320-3327: SessionAffinityNotInitializedError → 503."""
+    # First-Party
+    import mcpgateway.services.session_affinity as sa_mod  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    # Force the "not initialized" condition by clearing the singleton.
+    monkeypatch.setattr(sa_mod, "_mcp_session_pool", None, raising=False)
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="bus_unavailable")
+    before = counter._value.get()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sess-no-affinity"), (b"accept", b"text/event-stream")],
+    )
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        await _handle_get_stream(
+            scope=scope,
+            receive=_make_receive(b""),
+            send=send,
+            mcp_session_id="sess-no-affinity",
+            last_event_id=None,
+            accept="text/event-stream",
+        )
+
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 503
+    headers = dict(starts[0]["headers"])
+    assert headers.get(b"retry-after") == b"1"
+    assert counter._value.get() == before + 1
+    assert "SessionAffinity not initialized" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_claim_unavailable_returns_503(monkeypatch):
+    """Lines 3348-3354: ListenerClaimResult.UNAVAILABLE → 503 with retry hint."""
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        ListenerClaimResult,
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+    monkeypatch.setattr(
+        affinity,
+        "claim_listener",
+        AsyncMock(return_value=ListenerClaimResult.UNAVAILABLE),
+    )
+
+    counter = tr.transport_get_rejected_counter.labels(outcome="bus_unavailable")
+    before = counter._value.get()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sess-claim-unavail"), (b"accept", b"text/event-stream")],
+    )
+    await _handle_get_stream(
+        scope=scope,
+        receive=_make_receive(b""),
+        send=send,
+        mcp_session_id="sess-claim-unavail",
+        last_event_id=None,
+        accept="text/event-stream",
+    )
+    await reset_server_event_bus()
+
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 503
+    headers = dict(starts[0]["headers"])
+    assert headers.get(b"retry-after") == b"1"
+    assert counter._value.get() == before + 1
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_unreachable_claim_variant_triggers_assert_never(monkeypatch):
+    """Lines 3357-3358: a sentinel ListenerClaimResult the match does not handle trips ``assert_never``."""
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    # Return a sentinel that is none of {WON, CONFLICT, UNAVAILABLE}. The
+    # defensive ``case _ as _unreachable: assert_never(...)`` should raise.
+    monkeypatch.setattr(affinity, "claim_listener", AsyncMock(return_value="bogus-variant"))
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid"), (b"accept", b"text/event-stream")],
+    )
+    # assert_never raises some form of exception (AssertionError / TypeError
+    # depending on implementation); either way the handler must NOT silently
+    # fall through to return without emitting a response.
+    with pytest.raises(Exception):  # noqa: BLE001
+        await _handle_get_stream(
+            scope=scope,
+            receive=_make_receive(b""),
+            send=send,
+            mcp_session_id="sid",
+            last_event_id=None,
+            accept="text/event-stream",
+        )
+    await reset_server_event_bus()
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_event_gen_handles_backlog_overflow(monkeypatch, caplog):
+    """Line 3467: ListenerBacklogOverflow in event_gen logs info and exits cleanly."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        ListenerBacklogOverflow,
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    bus = await get_server_event_bus()
+
+    async def overflowing_subscribe(session_id, *, last_event_id=None):  # pylint: disable=unused-argument
+        # An async generator that immediately raises ListenerBacklogOverflow on
+        # first anext — exercises the dedicated except branch in event_gen.
+        if False:
+            yield  # pragma: no cover — keep this a valid async generator
+        raise ListenerBacklogOverflow(f"queue overflowed for session {session_id}")
+
+    monkeypatch.setattr(bus, "subscribe", overflowing_subscribe)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-overflow"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("INFO", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "backlog overflow" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_event_gen_handles_bus_backend_error(monkeypatch, caplog):
+    """Line 3472: BusBackendError in event_gen logs a warning and exits cleanly."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        BusBackendError,
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    bus = await get_server_event_bus()
+
+    async def failing_subscribe(session_id, *, last_event_id=None):  # pylint: disable=unused-argument
+        if False:
+            yield  # pragma: no cover
+        raise BusBackendError(f"backend dead for {session_id}")
+
+    monkeypatch.setattr(bus, "subscribe", failing_subscribe)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-backend-err"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "bus backend error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_event_gen_logs_unexpected_exception(monkeypatch, caplog):
+    """Line 3484: programming-error exceptions in event_gen log a warning with traceback."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    bus = await get_server_event_bus()
+
+    async def explosive_subscribe(session_id, *, last_event_id=None):  # pylint: disable=unused-argument
+        if False:
+            yield  # pragma: no cover
+        raise ValueError(f"boom for {session_id}")
+
+    monkeypatch.setattr(bus, "subscribe", explosive_subscribe)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-boom"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "exited unexpectedly" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_stop_async_iteration_ends_stream_cleanly(monkeypatch):
+    """Lines 3456-3457: StopAsyncIteration from the bus iterator ends the event generator cleanly."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        get_server_event_bus,
+        reset_server_event_bus,
+    )
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    bus = await get_server_event_bus()
+
+    # An async generator that yields zero events and immediately returns —
+    # the first anext raises StopAsyncIteration which the event_gen captures
+    # and treats as a clean end-of-stream.
+    async def empty_subscribe(session_id, *, last_event_id=None):  # pylint: disable=unused-argument
+        return
+        yield  # pragma: no cover — keeps the function an async generator
+
+    monkeypatch.setattr(bus, "subscribe", empty_subscribe)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-empty"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    # SSE 200 must have been opened before the empty generator exited.
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_heartbeat_success_resets_failure_counter(monkeypatch):
+    """Lines 3408-3409: a successful heartbeat clears ``consecutive_failures``."""
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    # Count how many times heartbeat_listener was invoked (to confirm the
+    # loop ran at least one successful iteration → reset-branch covered).
+    real_hb = affinity.heartbeat_listener
+    call_count = {"n": 0}
+
+    async def tracking_hb(session_id, conn_id):
+        call_count["n"] += 1
+        return await real_hb(session_id, conn_id)
+
+    monkeypatch.setattr(affinity, "heartbeat_listener", tracking_hb)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+    # Drive the heartbeat to fire inside the test window — TTL of 3 produces
+    # a 1s cadence (floored); hold the stream open slightly longer.
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_listener_ttl_seconds", 3)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-hb"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_after_heartbeat():
+        await asyncio.sleep(1.3)
+        return {"type": "http.disconnect"}
+
+    try:
+        await asyncio.wait_for(
+            wrapper.handle_streamable_http(scope, disconnect_after_heartbeat, send),
+            timeout=3.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert call_count["n"] >= 1, "heartbeat must have fired at least once to exercise the success branch"
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_release_listener_exception_is_logged(monkeypatch, caplog):
+    """Lines 3533-3534: release_listener raising during cleanup must be logged, not propagated."""
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
+        init_session_affinity,
+    )
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+    affinity = get_session_affinity()
+
+    async def boom_release(session_id, conn_id):  # pylint: disable=unused-argument
+        raise RuntimeError("simulated release failure")
+
+    monkeypatch.setattr(affinity, "release_listener", boom_release)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-release-fail"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "release_listener raised" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_gauge_dec_exception_is_logged(monkeypatch, caplog):
+    """Lines 3542-3543: Prometheus gauge decrement failures during cleanup are logged at debug."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    # Swap the module-level gauge for a fake whose dec() raises.
+    class _BrokenGauge:
+        def inc(self):
+            return None
+
+        def dec(self):
+            raise RuntimeError("prometheus broken")
+
+    monkeypatch.setattr(tr, "transport_get_active_listeners_gauge", _BrokenGauge())
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-gauge"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "gauge.dec raised" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_stream_heartbeat_task_drain_exception_is_logged(monkeypatch, caplog):
+    """Lines 3524-3525: a heartbeat-task failure during cleanup is logged, not propagated."""
+    # First-Party
+    import mcpgateway.transports.streamablehttp_transport as tr_mod  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    # Replace ``asyncio.create_task`` just for the heartbeat path so it returns
+    # a task that raises a non-CancelledError when awaited. We only intercept
+    # tasks whose name starts with "get-stream-heartbeat:" to avoid breaking
+    # the sse_starlette internal tasks.
+    real_create_task = asyncio.create_task
+
+    class _FailingTask:
+        def __init__(self):
+            self._cancelled = False
+
+        def cancel(self):
+            self._cancelled = True
+
+        def __await__(self):
+            async def _raise():
+                raise RuntimeError("hb drain fail")
+
+            return _raise().__await__()
+
+    def fake_create_task(coro, *args, name=None, **kwargs):
+        if name and name.startswith("get-stream-heartbeat:"):
+            # Ensure the real coroutine is still scheduled so the handler runs
+            # it (and we close it to avoid "coroutine never awaited" warnings),
+            # then return our fake task.
+            coro.close()
+            return _FailingTask()
+        return real_create_task(coro, *args, name=name, **kwargs)
+
+    monkeypatch.setattr(tr_mod.asyncio, "create_task", fake_create_task)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="GET",
+        headers=[(b"mcp-session-id", b"sid-hb-drain"), (b"accept", b"text/event-stream")],
+    )
+
+    async def disconnect_quickly():
+        await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+        try:
+            await asyncio.wait_for(
+                wrapper.handle_streamable_http(scope, disconnect_quickly, send),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+    assert "Heartbeat task drain raised" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_post_interception_allowed_intercepts_held_responder(monkeypatch):
+    """Lines 4270, 4275, 4283-4284: POST interception path when session access passes → HANDLED 202.
+
+    Covers the full happy-path inside the interception block: after
+    ``_validate_streamable_session_access`` allows the caller, the peek
+    completes and ``_dispatch_peek_outcome`` returns HANDLED (not
+    FALLTHROUGH), so the handler must early-return without touching the
+    SDK.
+    """
+    # First-Party
+    from mcpgateway.services.notification_service import NotificationService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    # Force interception path: has_pending_request=True, complete_request returns True.
+    fake_svc = MagicMock(spec=NotificationService)
+    fake_svc.has_pending_request = MagicMock(return_value=True)
+    fake_svc.complete_request = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "mcpgateway.services.notification_service.get_notification_service",
+        lambda: fake_svc,
+    )
+    # Owner check allows the caller.
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access",
+        AsyncMock(return_value=(True, 200, "")),
+    )
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","id":"req-x","result":{"content":[]}}'
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[(b"mcp-session-id", b"owned-session"), (b"content-type", b"application/json")],
+    )
+    u_token = user_context_var.set({"email": "owner@example.com", "is_authenticated": True, "is_admin": False, "teams": ["t1"]})
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+    finally:
+        user_context_var.reset(u_token)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called, "SDK must be skipped on HANDLED interception"
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 202
+    fake_svc.complete_request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_post_notification_short_circuit_returns_202(monkeypatch):
+    """Line 4319: short-circuit path on a notification POST without session id returns HANDLED 202."""
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+
+    await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
+
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_get_stream_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    # Notification body (no `id`) and no Mcp-Session-Id header → short-circuit path.
+    body = b'{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[(b"content-type", b"application/json")],
+    )
+    await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+    await wrapper.shutdown()
+    await reset_server_event_bus()
+
+    assert not sdk.called, "SDK must not be reached on a short-circuited notification"
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 202

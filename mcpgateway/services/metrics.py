@@ -131,16 +131,53 @@ oauth_verify_events_counter = Counter(
     ["outcome"],
 )
 
-# Streamable HTTP GET rejections (#4205). Clients that probe a passive SSE
-# stream before `initialize` (or against a stateless gateway) are 405'd with
+# Streamable HTTP GET rejections. Clients that probe a passive SSE stream
+# before `initialize` (or against a stateless gateway) are 405'd with
 # `Allow: POST, DELETE`. Outcome labels mirror the Rust runtime's counter
 # split so ops can distinguish client-side from deployment-config causes:
 #   no_session_id           — client didn't present `Mcp-Session-Id`
 #   stateful_disabled       — this gateway runs with `use_stateful_sessions=False`
+#   feature_disabled        — `mcp_get_stream_enabled=False` operator override
+#   not_acceptable          — client's `Accept` header doesn't allow `text/event-stream` (406)
+#   session_denied          — caller doesn't own the session id presented (403/404)
+#   listener_conflict       — another GET stream already holds the session's listener slot (409)
+#   bus_unavailable         — singleton/Redis unreachable; client should retry (503)
 transport_get_rejected_counter = Counter(
     "transport_get_rejected_total",
-    "GET /mcp 405 rejections by reason (no session anchor available)",
+    "GET /mcp rejections by reason",
     ["outcome"],
+)
+
+# ADR-052: Active GET /mcp listeners served by this worker. Gauge so ops can
+# correlate active streams with backlog / Redis pressure.
+transport_get_active_listeners_gauge = Gauge(
+    "transport_get_active_listeners",
+    "Active GET /mcp SSE streams currently held by this worker",
+)
+
+# ADR-052: Server-initiated events delivered to GET /mcp listeners by kind.
+transport_get_events_delivered_counter = Counter(
+    "transport_get_events_delivered_total",
+    "Server-initiated events delivered over GET /mcp by JSON-RPC method",
+    ["method"],
+)
+
+# ADR-052: Per-session bus listener-queue overflow events (subscriber too slow).
+# Operators alert on rate; without this counter the only signal was a
+# WARNING log line.
+server_event_bus_overflow_counter = Counter(
+    "server_event_bus_overflow_total",
+    "GET /mcp listener queue overflowed (subscriber drained too slowly)",
+)
+
+# ADR-052: Failed publish attempts on the server event bus (caller could not
+# enqueue a server-initiated message for the GET /mcp listener). Reason
+# label distinguishes backend-down (typed BusBackendError) from arbitrary
+# transport failures (catch-all). Operators can alert on rate per-reason.
+server_event_bus_publish_failed_counter = Counter(
+    "server_event_bus_publish_failed_total",
+    "Server-event-bus publish attempts that failed",
+    ["reason"],
 )
 
 
