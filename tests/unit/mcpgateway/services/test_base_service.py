@@ -131,11 +131,12 @@ class TestApplyAccessControl:
         return q
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_returns_query_unmodified(self, service, mock_db, query):
-        """When user_email=None and token_teams=None (admin bypass), return query as-is."""
+    async def test_admin_bypass_filters_private_resources(self, service, mock_db, query):
+        """When user_email=None and token_teams=None (admin bypass), filter out private resources."""
         result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None)
-        assert result is query
-        query.where.assert_not_called()
+        # Admin bypass now filters out private resources (security fix)
+        assert result == "filtered"
+        query.where.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_public_only_token_suppresses_owner_email(self, service, mock_db, query):
@@ -180,9 +181,11 @@ class TestApplyAccessControl:
 
     @pytest.mark.asyncio
     async def test_db_lookup_fallback_no_user_email(self, service, mock_db, query):
-        """When token_teams is None and user_email is None (admin bypass), return query unchanged."""
+        """When token_teams is None and user_email is None (admin bypass), filter out private resources."""
         result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None)
-        assert result is query
+        # Admin bypass now filters out private resources (security fix)
+        assert result == "filtered"
+        query.where.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

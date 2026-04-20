@@ -1466,6 +1466,130 @@ class TestPromptEndpoints:
         # After security fix: user_email is passed when token_teams is not set in request.state
         mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    async def test_get_prompt_admin_bypass_with_teams_none(self, mock_get):
+        """Test admin bypass path where is_admin=True and token_teams=None (lines 6451-6452)."""
+        # First-Party
+        from mcpgateway.main import get_prompt_no_args
+
+        # Mock the request to set token_teams=None in state
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.plugin_context_table = None
+        mock_request.state.plugin_global_context = None
+        mock_request.headers.get.return_value = None
+
+        # Create admin user dict
+        admin_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+        }
+
+        mock_db = MagicMock()
+        mock_get.return_value = {"name": "test", "template": "Hello"}
+
+        # Call the endpoint function directly
+        result = await get_prompt_no_args(
+            request=mock_request,
+            prompt_id="test",
+            db=mock_db,
+            user=admin_user
+        )
+
+        assert result == {"name": "test", "template": "Hello"}
+        # Admin bypass: both auth_user_email and auth_token_teams should be None
+        mock_get.assert_called_once_with(mock_db, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    async def test_get_prompt_with_args_admin_bypass(self, mock_get):
+        """Test admin bypass path in POST /prompts/{id} endpoint (lines 6373-6374)."""
+        # First-Party
+        from mcpgateway.main import get_prompt
+
+        # Mock the request to set token_teams=None in state
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.plugin_context_table = None
+        mock_request.state.plugin_global_context = None
+        mock_request.headers.get.return_value = None
+
+        # Create admin user dict
+        admin_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+        }
+
+        mock_db = MagicMock()
+        mock_get.return_value = {"name": "test", "template": "Hello {{name}}"}
+
+        # Call the endpoint function directly with args
+        result = await get_prompt(
+            request=mock_request,
+            prompt_id="test",
+            args={"name": "World"},
+            db=mock_db,
+            user=admin_user
+        )
+
+        assert result == {"name": "test", "template": "Hello {{name}}"}
+        # Admin bypass: both auth_user_email and auth_token_teams should be None
+        mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource")
+    async def test_read_resource_admin_bypass(self, mock_read):
+        """Test admin bypass path in GET /resources/{id} endpoint (lines 5839-5840)."""
+        # First-Party
+        from mcpgateway.main import read_resource
+
+        # Mock the request to set token_teams=None in state
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.plugin_context_table = None
+        mock_request.state.plugin_global_context = None
+        mock_request.headers.get.return_value = None
+
+        # Create admin user dict
+        admin_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+        }
+
+        mock_db = MagicMock()
+        # Return a ResourceContent-like object
+        from mcpgateway.common.models import ResourceContent
+        mock_read.return_value = ResourceContent(
+            type="resource",
+            id="test-resource",
+            uri="file://test.txt",
+            text="content"
+        )
+
+        # Call the endpoint function directly
+        result = await read_resource(
+            resource_id="test-resource",
+            request=mock_request,
+            db=mock_db,
+            user=admin_user
+        )
+
+        # The endpoint converts ResourceContent to dict via model_dump()
+        assert result == {
+            "type": "resource",
+            "id": "test-resource",
+            "uri": "file://test.txt",
+            "mime_type": None,
+            "text": "content",
+            "blob": None
+        }
+        # Admin bypass: both user and token_teams should be None
+        mock_read.assert_called_once()
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["user"] is None
+        assert call_kwargs["token_teams"] is None
+
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint_secondary(self, mock_update, test_client, auth_headers):
         """Test updating an existing prompt."""
@@ -1675,6 +1799,7 @@ class TestPromptEndpoints:
         assert response.status_code == 200
         # After security fix: user_email is passed when token_teams is not set in request.state
         mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
+
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):

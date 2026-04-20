@@ -6049,6 +6049,28 @@ class TestToolAccessAuthorization:
 
         # Even owner with public-only token is denied
         assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+    @pytest.mark.asyncio
+    async def test_get_tool_access_denied_raises_not_found(self, tool_service, mock_db):
+        """Test get_tool raises ToolNotFoundError when access is denied (line 3061)."""
+        # Create a private tool that exists but user doesn't have access
+        private_tool = MagicMock(spec=DbTool)
+        private_tool.id = "private-tool-1"
+        private_tool.visibility = "private"
+        private_tool.owner_email = "owner@test.com"
+        private_tool.team_id = "team-1"
+
+        mock_db.get.return_value = private_tool
+
+        # User without access tries to get the tool
+        with pytest.raises(ToolNotFoundError, match="Tool not found: private-tool-1"):
+            await tool_service.get_tool(
+                mock_db,
+                "private-tool-1",
+                requesting_user_email="other@test.com",
+                requesting_user_is_admin=False,
+                requesting_user_team_roles={"team-2": ["viewer"]}  # Different team
+            )
+
 
 
 class TestToolListingGracefulErrorHandling:
