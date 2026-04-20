@@ -90,6 +90,7 @@ dependencies = [
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
+    "gunicorn>=v25.3.0"
 ]
 
 # ----------------------------------------------------------------

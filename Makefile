@@ -348,7 +348,7 @@ check-env-dev:
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
-        js-build
+        js-build install
 
 ## --- JS build ----------------------------------------------------------------
 js-build:                        ## Install npm dependencies and build JS bundle with Vite
