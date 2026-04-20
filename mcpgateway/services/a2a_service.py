@@ -1686,6 +1686,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent by name or ID (UUID/UAID).
 
@@ -1704,6 +1705,7 @@ class A2AAgentService(BaseService):
                 `settings.uaid_max_federation_hops` are rejected to break
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
+            bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
 
         Returns:
             Agent response.
@@ -1763,6 +1765,7 @@ class A2AAgentService(BaseService):
                     user_email=user_email,
                     token_teams=token_teams,
                     hop_count=hop_count,
+                    bearer_token=bearer_token,
                 )
 
             # Found locally - continue with normal invocation
@@ -2119,6 +2122,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Invoke agent on remote gateway via UAID cross-gateway routing.
 
@@ -2133,6 +2137,7 @@ class A2AAgentService(BaseService):
                 `X-Contextforge-UAID-Hop` header). The outbound request
                 stamps `hop_count + 1` so the receiving gateway can
                 enforce `uaid_max_federation_hops`.
+            bearer_token: Bearer token to forward for RBAC enforcement on remote gateway
 
         Returns:
             Agent response from remote gateway
@@ -2271,39 +2276,43 @@ class A2AAgentService(BaseService):
             uaid_utils.stamp_hop(headers, hop_count)
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
-            #
-            # Current Behavior:
-            #   Cross-gateway HTTP calls (UAID-based routing) do NOT forward authentication
-            #   credentials. Remote gateways receive unauthenticated requests with no bearer
-            #   token or session context.
-            #
-            # Security Implications:
-            #   1. Remote Gateway MUST Authenticate: The target gateway MUST enforce its own
-            #      authentication layer (AUTH_REQUIRED=true). If disabled, public agents
-            #      are accessible without any authentication.
-            #
-            #   2. No Authorization Context: Remote gateway cannot enforce RBAC based on
-            #      originating user. All cross-gateway calls execute with target gateway's
-            #      public access level.
-            #
-            #   3. Trust Boundary: This gateway trusts the remote gateway's access control.
-            #      If remote gateway is compromised or misconfigured, this becomes a
-            #      security vector.
-            #
-            # Future Work (Roadmap):
-            #   - Bearer token forwarding (requires gateway-to-gateway trust establishment)
-            #   - Mutual TLS authentication (gateway certificates)
-            #   - Trusted gateway registry with signature verification
-            #   - Per-UAID access policies (allowlist/denylist)
-            #
-            # Current Mitigations:
-            #   - UAID_ALLOWED_DOMAINS: Restricts outbound calls to trusted domains
-            #   - Correlation ID logging: Enables cross-gateway request tracing
-            #   - Operator guidance: Documentation warns about unauthenticated cross-gateway calls
-            #
-            # Operators: Set UAID_ALLOWED_DOMAINS to a restrictive allowlist of trusted domains only.
+            # SECURITY: Bearer token forwarding for cross-gateway RBAC enforcement
             # ═══════════════════════════════════════════════════════════════════════════
+            # Forward bearer token to remote gateway for RBAC enforcement.
+            # If no token is available, request proceeds without Authorization header
+            # (remote gateway's AUTH_REQUIRED setting determines whether to accept).
+            #
+            # Security Considerations:
+            #   1. Token Trust: Forwarding assumes mutual trust between gateways.
+            #      Only route to domains in UAID_ALLOWED_DOMAINS.
+            #
+            #   2. Token Validation: Remote gateway MUST validate token signature
+            #      using shared JWT_SECRET_KEY or via JWKS endpoint.
+            #
+            #   3. Audit Trail: X-Contextforge-Source-* headers enable tracing
+            #      cross-gateway call chains for security investigations.
+            #
+            #   4. Token Lifecycle: Forwarded token retains original expiry.
+            #      If token expires mid-flight, remote gateway should reject.
+            #
+            # Future Enhancements:
+            #   - Mutual TLS authentication (gateway certificates)
+            #   - Token exchange protocol (gateway-specific tokens)
+            #   - Trusted gateway registry with signature verification
+            # ═══════════════════════════════════════════════════════════════════════════
+            if bearer_token:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+                # Add audit headers for tracing cross-gateway calls
+                gateway_id = getattr(settings, "gateway_id", "unknown")
+                headers["X-Contextforge-Source-Gateway"] = gateway_id
+                headers["X-Contextforge-Source-User"] = bearer_token  # Token for audit trail
+            else:
+                logger.warning(
+                    "Cross-gateway call without bearer token: %s. "
+                    "Remote gateway will receive unauthenticated request. "
+                    "RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
+                    uaid,
+                )
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()

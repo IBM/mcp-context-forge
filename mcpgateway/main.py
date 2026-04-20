@@ -4817,6 +4817,12 @@ async def invoke_a2a_agent(
         # and self-referential `endpoint_url` loops.
         hop_count = uaid_utils.read_hop_count(request.headers)
 
+        # Extract bearer token from Authorization header for cross-gateway forwarding
+        bearer_token = None
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4826,6 +4832,7 @@ async def invoke_a2a_agent(
             user_email=user_email,
             token_teams=token_teams,
             hop_count=hop_count,
+            bearer_token=bearer_token,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
