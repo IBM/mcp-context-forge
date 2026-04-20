@@ -1642,24 +1642,65 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         app.state.update_http_pool_metrics()
 
     # Initialize the session-affinity service (Redis-backed worker mapping,
-    # heartbeat, session-owner forwarding). Only needed when affinity is on.
-    # The upstream-session pooling concept that used to live here has moved
-    # to UpstreamSessionRegistry (see issue #4205).
-    if settings.mcpgateway_session_affinity_enabled:
-        # First-Party
-        from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
+    # heartbeat, session-owner forwarding). Cross-worker upstream
+    # ``ClientSession`` state lives in ``UpstreamSessionRegistry`` —
+    # SessionAffinity owns only the affinity layer.
+    # Always initialize SessionAffinity, regardless of
+    # ``mcpgateway_session_affinity_enabled``. The affinity flag controls
+    # cross-worker Redis routing; the GET /mcp listener-claim dict
+    # (ADR-052) is single-node bookkeeping that lives on the same instance
+    # and needs to be a process-wide singleton even with affinity off.
+    # Without the always-init, the GET handler would fall back to a fresh
+    # ``SessionAffinity()`` per request → each request gets its own
+    # ``_listener_claims`` dict → two concurrent GETs both win the claim
+    # and the single-listener invariant is broken in the default
+    # single-node deployment.
+    #
+    # The Redis-backed background tasks (heartbeat, RPC listener) are
+    # internally gated on the affinity flag, so always-init is safe.
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
 
-        init_session_affinity()
-        logger.info("MCP session pool initialized")
+    # Use enable_notifications=False here so we don't double-init the
+    # notification service — main.lifespan does that explicitly below.
+    init_session_affinity(enable_notifications=False)
+    logger.info(
+        "Session-affinity service initialized (affinity_enabled=%s)",
+        settings.mcpgateway_session_affinity_enabled,
+    )
 
     # Initialize the upstream session registry (#4205). 1:1 binding between a
     # downstream MCP session and its upstream session per gateway, replacing
     # the old identity-keyed sharing semantics. Always on — no feature flag.
+    #
+    # Wire a notification handler factory so server-initiated messages can be
+    # forwarded to GET /mcp listeners (ADR-052). The factory bakes
+    # downstream_session_id into the per-session handler closure.
     # First-Party
+    from mcpgateway.services.notification_service import init_notification_service  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.upstream_session_registry import init_upstream_session_registry  # pylint: disable=import-outside-toplevel
 
-    init_upstream_session_registry()
-    logger.info("Upstream session registry initialized")
+    _notification_svc = init_notification_service()
+    # Initialize the worker before any session is wired through it.
+    # Without this, list_changed notifications enqueue into a service
+    # whose `_process_refresh_queue` worker never runs and refreshes
+    # silently never fire. The gateway_service is wired here
+    # unconditionally — the affinity branch's
+    # `start_affinity_notification_service` only re-runs under affinity,
+    # and without this hand-off the single-node default would leave
+    # `_gateway_service is None` and drop every refresh.
+    await _notification_svc.initialize(gateway_service=gateway_service)
+
+    def _notification_handler_factory(url: str, gateway_id, *, downstream_session_id: str):  # type: ignore[no-untyped-def]
+        """Per-session message handler that routes upstream notifications and forwards server-initiated messages to the GET /mcp listener (ADR-052)."""
+        return _notification_svc.create_message_handler(
+            gateway_id or url,
+            url,
+            downstream_session_id=downstream_session_id,
+        )
+
+    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    logger.info("Upstream session registry initialized (notification fanout enabled)")
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
@@ -1762,9 +1803,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
-        # Start heartbeat, RPC listener, and notification service for multi-worker
-        # session affinity. The upstream-session-pool that used to live under
-        # this guard is gone (#4205); only the affinity layer remains here.
+        # Start heartbeat, RPC listener, and notification service for
+        # multi-worker session affinity. The upstream-session pool is
+        # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
+        # only the cross-worker affinity machinery is gated here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel

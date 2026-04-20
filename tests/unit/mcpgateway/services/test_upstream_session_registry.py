@@ -1181,15 +1181,15 @@ async def test_default_session_factory_passes_httpx_factory(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_default_session_factory_message_handler_factory_success(monkeypatch):
-    """A provided message_handler_factory is called with (url, gateway_id) and its result flows into ClientSession."""
+    """A provided message_handler_factory is called with (url, gateway_id, downstream_session_id) and its result flows into ClientSession."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
     sentinel_handler = object()
     factory_calls = []
 
-    def handler_factory(url, gateway_id):
-        factory_calls.append((url, gateway_id))
+    def handler_factory(url, gateway_id, *, downstream_session_id):
+        factory_calls.append((url, gateway_id, downstream_session_id))
         return sentinel_handler
 
     monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
@@ -1198,7 +1198,7 @@ async def test_default_session_factory_message_handler_factory_success(monkeypat
     req = _make_request(message_handler_factory=handler_factory)
     await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert factory_calls == [(req.url, req.gateway_id)]
+    assert factory_calls == [(req.url, req.gateway_id, req.downstream_session_id)]
     assert _FakeClientSessionCM.last_message_handler is sentinel_handler
 
 
@@ -1208,7 +1208,7 @@ async def test_default_session_factory_message_handler_factory_failure_is_logged
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
-    def bad_factory(_url, _gw):
+    def bad_factory(_url, _gw, *, downstream_session_id):  # pylint: disable=unused-argument
         raise ValueError("handler factory boom")
 
     monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))

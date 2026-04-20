@@ -4627,21 +4627,24 @@ async fn forward_transport_request(
         && accepts_sse(&incoming_headers)
         && !incoming_headers.contains_key("last-event-id")
     {
-        // #4205: Guard the live-stream relay with a 405 when we have no
+        // ADR-052: Guard the live-stream relay with a 405 when we have no
         // session to anchor a passive SSE stream to. Two branches land here:
         //   (a) session_core is disabled globally — Rust has no session
         //       infrastructure to validate against.
         //   (b) session_core is enabled but no valid session id was presented
         //       (neither `Mcp-Session-Id`/`x-mcp-session-id` header nor
         //       `session_id` query parameter).
-        // Without this gate, `handle_live_stream_transport_request` commits
-        // to a `text/event-stream` response before discovering the backend
-        // can't anchor the stream, producing the empty-stream cascade that
-        // times out strict MCP clients (the #4205 symptom). For GETs that
-        // don't enter this branch (live_stream_core disabled, or no SSE
-        // Accept), we let the request fall through to the Python transport
-        // bridge, which has its own 405 logic — Rust must not pre-empt that
-        // proxy path.
+        // The 405 is spec-mandated, not a workaround: per MCP Streamable HTTP
+        // ("Listening for messages from the server"), GET /mcp requires a
+        // session id. The Python transport bridge enforces the same rule.
+        //
+        // What changed in ADR-052: the GET-with-session path below now
+        // delivers real server-initiated messages (Python's GET handler
+        // returns a Pub/Sub-backed SSE stream). The Rust relay was always
+        // correctly designed; the empty-stream cascade that motivated the
+        // #4205 405 was a downstream symptom of Python returning 405 for
+        // *every* GET. With Python serving spec-conformant SSE, this relay
+        // passes events through unchanged.
         //
         // Why 405 rather than 404/400: the `/mcp` path exists and the
         // request is syntactically valid; 405 + `Allow: POST, DELETE` tells
@@ -4711,6 +4714,49 @@ async fn forward_transport_request(
             &uri,
             session_id.as_deref(),
         );
+    }
+
+    // Session-less DELETE: the MCP Streamable HTTP spec frames DELETE as
+    // "client-initiated termination — server MAY support, else 405". Without
+    // a session id there is nothing to terminate; the spec-conformant answers
+    // are 405 (this gateway does not honor the attempt) or 200/204 (treat as
+    // a no-op). We pick 405 to match the GET-without-session symmetry in
+    // this file and to give the client a clear `Allow` header.
+    //
+    // We probe the header (or query string) directly rather than the
+    // ``session_id`` variable above: that variable is only populated when
+    // Rust is validating sessions (``session_core_enabled``). In edge mode
+    // Python validates sessions, so a request with a real ``Mcp-Session-Id``
+    // header arrives here with ``session_id == None`` — and we still want
+    // to forward such DELETEs to Python rather than reject them. Without
+    // this branch DELETE without any session header falls through to the
+    // generic backend-forward path and the Python SDK returns 400
+    // "Missing session ID", which fails
+    // `test_delete_mcp_terminates_session_or_405`.
+    if method == reqwest::Method::DELETE
+        && runtime_session_id_from_request(&incoming_headers, &uri).is_none()
+    {
+        let mut response = json_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            json!({
+                "detail": "DELETE /mcp requires Mcp-Session-Id; without one there is no session to terminate."
+            }),
+        );
+        response.headers_mut().insert(
+            HeaderName::from_static("allow"),
+            HeaderValue::from_static("POST, GET, DELETE"),
+        );
+        inject_runtime_capability_headers(
+            &mut response,
+            &[
+                (SESSION_CORE_HEADER, state.session_core_enabled()),
+                (EVENT_STORE_HEADER, state.event_store_enabled()),
+                (RESUME_CORE_HEADER, state.resume_core_enabled()),
+                (LIVE_STREAM_CORE_HEADER, state.live_stream_core_enabled()),
+                (AFFINITY_CORE_HEADER, state.affinity_core_enabled()),
+            ],
+        );
+        return response;
     }
 
     if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
@@ -11279,6 +11325,11 @@ mod unit_tests {
         .await;
         assert_eq!(get_response.status(), StatusCode::OK);
 
+        // ADR-052: DELETE without a session id returns 405 directly without
+        // touching the backend (the spec frames DELETE as "client-initiated
+        // termination — server MAY support, else 405", and there is nothing
+        // to terminate without a session id). Verify the new contract; the
+        // backend should NOT receive a DELETE call.
         let delete_response = transport_delete_server_scoped(
             State(state),
             AxumPath("server-xyz".to_string()),
@@ -11287,15 +11338,22 @@ mod unit_tests {
             "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
         )
         .await;
-        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(delete_response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let allow = delete_response
+            .headers()
+            .get("allow")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            allow.contains("DELETE"),
+            "405 Allow header should advertise DELETE, got {allow:?}"
+        );
 
         let calls = calls.lock().expect("lock");
         assert_eq!(
             *calls,
-            vec![
-                ("GET".to_string(), Some("server-xyz".to_string())),
-                ("DELETE".to_string(), Some("server-xyz".to_string())),
-            ]
+            vec![("GET".to_string(), Some("server-xyz".to_string()))],
+            "session-less DELETE must not reach the backend (ADR-052)"
         );
     }
 

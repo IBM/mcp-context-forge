@@ -4641,6 +4641,12 @@ class TestLifespanAdvanced:
             def set(self):
                 self._set = True
 
+            def clear(self):
+                # ADR-052 added an early `await NotificationService.initialize()`
+                # in lifespan, which calls `self._shutdown_event.clear()`. The
+                # FakeEvent must answer it.
+                self._set = False
+
             async def wait(self):
                 self._set = True
                 return True
@@ -12152,8 +12158,16 @@ class TestRemainingCoverageGaps:
         log_aggregator.aggregate_all_components = MagicMock()
         monkeypatch.setattr(main_mod, "get_log_aggregator", MagicMock(return_value=log_aggregator))
 
-        # Force TimeoutError in wait_for and ensure the coroutine is closed to avoid warnings.
+        # Force TimeoutError only for the aggregation loop's wait (interval_seconds=60
+        # when window_minutes=0). Delegate every other wait_for (e.g. NotificationService's
+        # refresh-queue worker that uses timeout=1.0) to the real implementation; otherwise
+        # those loops spin without yielding and deadlock the event loop, since a synchronous
+        # TimeoutError-only fake never hits an await point.
+        real_wait_for = asyncio.wait_for
+
         async def fake_wait_for(awaitable, timeout=None):  # noqa: ANN001
+            if timeout != 60:
+                return await real_wait_for(awaitable, timeout=timeout)
             if hasattr(awaitable, "close"):
                 awaitable.close()
             raise asyncio.TimeoutError()
@@ -12252,6 +12266,104 @@ class TestRemainingCoverageGaps:
         async with main_mod.lifespan(main_mod.app):
             # Give the aggregation loop a chance to hit wait_for at least once.
             await asyncio.sleep(0.05)
+
+    async def test_lifespan_wires_notification_handler_factory(self, monkeypatch):
+        """Capture the factory passed to ``init_upstream_session_registry`` and invoke it.
+
+        The inline factory is only exercised when a new upstream session is wired,
+        so we capture it at init time and call it directly to cover the
+        ``create_message_handler`` hand-off.
+        """
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        def make_service():  # noqa: ANN001 - local test helper
+            service = MagicMock()
+            service.initialize = AsyncMock()
+            service.shutdown = AsyncMock()
+            return service
+
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+
+        monkeypatch.setattr(main_mod, "logging_service", make_service())
+        monkeypatch.setattr(main_mod.logging_service, "configure_uvicorn_after_startup", MagicMock())
+        for attr in (
+            "tool_service",
+            "resource_service",
+            "prompt_service",
+            "gateway_service",
+            "root_service",
+            "completion_service",
+            "sampling_handler",
+            "resource_cache",
+            "streamable_http_session",
+            "session_registry",
+            "export_service",
+            "import_service",
+        ):
+            monkeypatch.setattr(main_mod, attr, make_service())
+        monkeypatch.setattr(main_mod, "a2a_service", None)
+
+        monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+        monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+        monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+        subscriber = MagicMock()
+        subscriber.start = AsyncMock()
+        subscriber.stop = AsyncMock()
+        # First-Party
+        import mcpgateway.cache.registry_cache as registry_cache_mod
+
+        monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
+
+        sentinel_handler = MagicMock(name="message_handler")
+        notification_svc = MagicMock()
+        notification_svc.initialize = AsyncMock()
+        notification_svc.create_message_handler = MagicMock(return_value=sentinel_handler)
+        monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_svc))
+
+        captured = {}
+
+        def capture_registry(*, message_handler_factory):  # noqa: ANN001
+            captured["factory"] = message_handler_factory
+
+        monkeypatch.setattr(
+            "mcpgateway.services.upstream_session_registry.init_upstream_session_registry",
+            capture_registry,
+        )
+
+        async with main_mod.lifespan(main_mod.app):
+            factory = captured["factory"]
+            handler = factory("https://peer.example/mcp", "gw-1", downstream_session_id="sess-123")
+
+        assert handler is sentinel_handler
+        notification_svc.create_message_handler.assert_called_once_with(
+            "gw-1",
+            "https://peer.example/mcp",
+            downstream_session_id="sess-123",
+        )
+
+        # And the gateway_id-falsy branch: factory should fall back to the URL.
+        notification_svc.create_message_handler.reset_mock()
+        factory("https://peer.example/mcp", None, downstream_session_id="sess-456")
+        notification_svc.create_message_handler.assert_called_once_with(
+            "https://peer.example/mcp",
+            "https://peer.example/mcp",
+            downstream_session_id="sess-456",
+        )
 
     async def test_lifespan_reraises_unexpected_startup_error(self, monkeypatch):
         # First-Party

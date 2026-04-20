@@ -1648,7 +1648,7 @@ def test_init_session_affinity_with_notifications_enabled_wires_handler_factory(
     # Exercising the handler factory exposes it to coverage on
     # `default_handler_factory` closure.
     assert affinity._message_handler_factory is not None  # pylint: disable=protected-access
-    affinity._message_handler_factory("http://u", "gw-1")  # pylint: disable=protected-access
+    affinity._message_handler_factory("http://u", "gw-1", downstream_session_id="sess-test")  # pylint: disable=protected-access
     mock_notif_svc.create_message_handler.assert_called_once()
 
 
@@ -2260,3 +2260,377 @@ async def test_execute_forwarded_http_request_logs_debug_when_error_publish_also
         await affinity._execute_forwarded_http_request(request, _FailingPublishRedis())  # pylint: disable=protected-access
 
     assert any("Failed to publish error response" in rec.getMessage() for rec in caplog.records)
+
+
+# --------------------------------------------------------------------------
+# GET-stream listener claims (ADR-052)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_first_wins_second_loses(monkeypatch):
+    """Two GETs for the same session: first claim wins, second sees CONFLICT (ADR-052)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 30, raising=False)
+    affinity = SessionAffinity()
+    sid = "sess-listener-1"
+
+    assert await affinity.claim_listener(sid, "conn-A") is ListenerClaimResult.WON
+    assert await affinity.claim_listener(sid, "conn-B") is ListenerClaimResult.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_listener_heartbeat_refreshes_only_for_owner(monkeypatch):
+    """Heartbeat must succeed for the holder and fail for any other connection."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 30, raising=False)
+    affinity = SessionAffinity()
+    sid = "sess-listener-2"
+
+    await affinity.claim_listener(sid, "conn-owner")
+    assert await affinity.heartbeat_listener(sid, "conn-owner") is True
+    assert await affinity.heartbeat_listener(sid, "conn-intruder") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_release_only_owner_then_new_can_claim(monkeypatch):
+    """Release is owner-conditional; after release, a new connection can claim."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 30, raising=False)
+    affinity = SessionAffinity()
+    sid = "sess-listener-3"
+
+    await affinity.claim_listener(sid, "conn-A")
+    # Wrong connection-id can't release someone else's claim.
+    assert await affinity.release_listener(sid, "conn-other") is False
+    assert await affinity.claim_listener(sid, "conn-other") is ListenerClaimResult.CONFLICT
+    # Owner releases successfully and a new claim can land.
+    assert await affinity.release_listener(sid, "conn-A") is True
+    assert await affinity.claim_listener(sid, "conn-B") is ListenerClaimResult.WON
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_expires_with_ttl(monkeypatch):
+    """An expired in-memory claim is reclaimable without explicit release."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 0, raising=False)
+    affinity = SessionAffinity()
+    sid = "sess-listener-4"
+
+    assert await affinity.claim_listener(sid, "conn-old") is ListenerClaimResult.WON
+    # ttl=0 → claim expires immediately on the next purge sweep.
+    await asyncio.sleep(0.05)
+    assert await affinity.claim_listener(sid, "conn-new") is ListenerClaimResult.WON
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_concurrent_race_exactly_one_winner(monkeypatch):
+    """Concurrent claim_listener calls on the same session: exactly one returns WON.
+
+    Pins the in-memory backend's ``asyncio.Lock`` contract — accidentally
+    removing the lock would only break under load, which a sequential test
+    would never catch.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 30, raising=False)
+    affinity = SessionAffinity()
+    sid = "sess-race"
+
+    results = await asyncio.gather(
+        affinity.claim_listener(sid, "conn-A"),
+        affinity.claim_listener(sid, "conn-B"),
+        affinity.claim_listener(sid, "conn-C"),
+    )
+    won = [r for r in results if r is ListenerClaimResult.WON]
+    conflict = [r for r in results if r is ListenerClaimResult.CONFLICT]
+    assert len(won) == 1, f"expected exactly one WON, got {results}"
+    assert len(conflict) == 2, f"expected two CONFLICT, got {results}"
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_invalid_session_id_rejected(monkeypatch):
+    """Malformed session ids return UNAVAILABLE (defence-in-depth — caller shouldn't 409 a bad input)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "memory", raising=False)
+    affinity = SessionAffinity()
+
+    assert await affinity.claim_listener("bad/id!", "conn-X") is ListenerClaimResult.UNAVAILABLE
+    assert await affinity.heartbeat_listener("bad/id!", "conn-X") is False
+    assert await affinity.release_listener("bad/id!", "conn-X") is False
+
+
+def test_log_redis_listener_error_classifies_by_exception_type(caplog):
+    """Operator-facing log levels: transient/config/unknown classification matrix.
+
+    The classifier is the operator's only signal during a Redis incident
+    — a regression that conflated config errors with transient blips
+    would quietly mute the warning needed to spot credential rotations
+    or Lua script drift.
+    """
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
+
+    pytest.importorskip("redis")
+    # Third-Party
+    from redis import exceptions as redis_exc  # pylint: disable=import-outside-toplevel
+
+    sid = "sess-classify"
+
+    # Transient errors stay at debug — should NOT appear in WARNING capture.
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        SessionAffinity._log_redis_listener_error("claim", sid, redis_exc.ConnectionError("conn refused"))
+        SessionAffinity._log_redis_listener_error("heartbeat", sid, redis_exc.TimeoutError("redis timeout"))
+    assert "ConnectionError" not in caplog.text
+    assert "TimeoutError" not in caplog.text
+    caplog.clear()
+
+    # Config / protocol errors escalate to warning.
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        SessionAffinity._log_redis_listener_error("claim", sid, redis_exc.AuthenticationError("invalid creds"))
+        SessionAffinity._log_redis_listener_error("release", sid, redis_exc.ResponseError("WRONGTYPE"))
+        SessionAffinity._log_redis_listener_error("heartbeat", sid, redis_exc.NoScriptError("script unknown"))
+    assert "AuthenticationError" in caplog.text
+    assert "ResponseError" in caplog.text
+    assert "NoScriptError" in caplog.text
+    caplog.clear()
+
+    # Unknown / programming errors get warning + traceback.
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        SessionAffinity._log_redis_listener_error("claim", sid, OSError("unexpected"))
+    assert "OSError" in caplog.text or "unexpected" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Redis-backed listener-claim coverage. The earlier listener-claim tests
+# all use cache_type=memory; the Redis branches (the authoritative
+# multi-node path) had zero coverage. Stub out get_redis_client so we
+# exercise the SET-NX / Lua-eval call shapes without a real Redis.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_redis_won_when_set_nx_returns_true(monkeypatch):
+    """Redis SET NX returning truthy → WON."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr(settings, "mcp_get_stream_listener_ttl_seconds", 30, raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.set = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.claim_listener("sess-x", "conn-1") is ListenerClaimResult.WON
+    fake_redis.set.assert_awaited_once()
+    args, kwargs = fake_redis.set.call_args
+    assert kwargs.get("nx") is True
+    assert kwargs.get("ex") == 30
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_redis_conflict_when_set_nx_returns_false(monkeypatch):
+    """Redis SET NX returning falsy → CONFLICT (slot already held)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.set = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.claim_listener("sess-y", "conn-2") is ListenerClaimResult.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_redis_unavailable_when_client_missing(monkeypatch):
+    """``cache_type=redis`` but ``get_redis_client`` returns None → UNAVAILABLE."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
+
+    affinity = SessionAffinity()
+    assert await affinity.claim_listener("sess-z", "conn-3") is ListenerClaimResult.UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_listener_claim_redis_unavailable_when_set_raises(monkeypatch):
+    """Any exception from ``redis.set`` → UNAVAILABLE (NOT CONFLICT). Critical: 503 vs 409 split."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import ListenerClaimResult, SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.set = AsyncMock(side_effect=ConnectionError("redis down"))
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.claim_listener("sess-q", "conn-4") is ListenerClaimResult.UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_listener_heartbeat_redis_eval_round_trips(monkeypatch):
+    """Redis heartbeat eval returning 1 → True (still owner); 0 → False (lost)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.eval = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.heartbeat_listener("sess-h", "conn-1") is True
+
+    fake_redis.eval = AsyncMock(return_value=0)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+    assert await affinity.heartbeat_listener("sess-h", "conn-1") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_heartbeat_redis_returns_false_on_exception(monkeypatch):
+    """A heartbeat that raises returns False (caller closes the stream)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.eval = AsyncMock(side_effect=ConnectionError("redis down"))
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.heartbeat_listener("sess-h", "conn-1") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_release_redis_eval_round_trips(monkeypatch):
+    """Redis release eval returning 1 → True (released); 0 → False (not owner)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.eval = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.release_listener("sess-r", "conn-1") is True
+
+    fake_redis.eval = AsyncMock(return_value=0)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+    assert await affinity.release_listener("sess-r", "conn-1") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_release_redis_returns_false_on_exception(monkeypatch):
+    """A release that raises returns False (best-effort cleanup)."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+
+    fake_redis = MagicMock()
+    fake_redis.eval = AsyncMock(side_effect=ConnectionError("redis down"))
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    affinity = SessionAffinity()
+    assert await affinity.release_listener("sess-r", "conn-1") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_heartbeat_returns_false_when_redis_client_none(monkeypatch):
+    """``get_redis_client`` returning ``None`` short-circuits heartbeat to False."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
+
+    affinity = SessionAffinity()
+    assert await affinity.heartbeat_listener("sess-none", "conn-1") is False
+
+
+@pytest.mark.asyncio
+async def test_listener_release_returns_false_when_redis_client_none(monkeypatch):
+    """``get_redis_client`` returning ``None`` short-circuits release to False."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None))
+
+    affinity = SessionAffinity()
+    assert await affinity.release_listener("sess-none", "conn-1") is False
+
+
+def test_log_redis_listener_error_falls_back_when_redis_module_absent(monkeypatch, caplog):
+    """If the ``redis`` package is not importable, fall back to a plain warning.
+
+    This branch fires only on a degraded install where redis-py was removed
+    but cache_type=redis was left configured — an operator-visible edge case
+    that still needs to surface the original exception.
+    """
+    # Standard
+    import builtins
+    import sys
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "redis" and fromlist and "exceptions" in fromlist:
+            raise ImportError("redis not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setitem(sys.modules, "redis", None)
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    sid = "sess-noredis"
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        SessionAffinity._log_redis_listener_error("claim", sid, RuntimeError("boom"))
+    assert "Listener-claim" in caplog.text
+    assert sid in caplog.text
