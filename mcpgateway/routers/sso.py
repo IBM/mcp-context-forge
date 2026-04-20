@@ -219,8 +219,8 @@ async def initiate_sso_login(
     provider_id: str,
     request: Request,
     response: Response,
-    redirect_uri: str = Query(..., description="Callback URI after authentication"),
-    scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
+    redirect_uri: str = Query(..., max_length=2048, description="Callback URI after authentication"),
+    scopes: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_:. -]+$", description="Space-separated OAuth scopes"),
     db: Session = Depends(get_db),
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
@@ -297,10 +297,10 @@ async def initiate_sso_login(
 @sso_router.get("/callback/{provider_id}")
 async def handle_sso_callback(
     provider_id: str,
-    code: Optional[str] = Query(None, description="Authorization code from SSO provider"),
-    state: Optional[str] = Query(None, description="CSRF state parameter"),
-    error: Optional[str] = Query(None, description="OAuth error code"),
-    error_description: Optional[str] = Query(None, description="OAuth error description"),
+    code: Optional[str] = Query(None, max_length=512, pattern=r"^[a-zA-Z0-9_-]+$", description="Authorization code from SSO provider"),
+    state: Optional[str] = Query(None, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$", description="CSRF state parameter"),
+    error: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="OAuth error code"),
+    error_description: Optional[str] = Query(None, max_length=500, description="OAuth error description"),
     request: Request = None,
     response: Response = None,
     db: Session = Depends(get_db),
