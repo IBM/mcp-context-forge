@@ -626,6 +626,7 @@ class ObservabilityService:
             resource_type: Resource type
             resource_name: Resource name
             attributes: Additional attributes
+            context: Optional plugin context for custom attribute injection
 
         Yields:
             Span ID
@@ -718,6 +719,7 @@ class ObservabilityService:
             tool_name: Name of the tool being invoked
             arguments: Tool arguments (will be sanitized)
             integration_type: Integration type (MCP, REST, A2A, etc.)
+            context: Optional plugin context for custom attribute injection
 
         Yields:
             Tuple of (span_id, result_dict) - update result_dict with tool results
