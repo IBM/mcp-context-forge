@@ -1,0 +1,312 @@
+name: sql-sanitizer E2E
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+        types: [opened, synchronize, reopened]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: 1
+
+jobs:
+    sql-sanitizer-e2e:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: sql-sanitizer E2E
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        steps:
+            - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+              with:
+                  persist-credentials: false
+
+            - name: Install yq
+              run: |
+                sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+                sudo chmod +x /usr/local/bin/yq
+
+            - name: Setup Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+              with:
+                  enable-cache: true
+
+            - name: Update Gateway Config for SQL Sanitizer
+              run: |
+                CONFIG_FILE="plugins/config.yaml"
+
+                yq -i '
+                  (.plugins[] | select(.name == "SQLSanitizer") | .mode) = "enforce" |
+                  (.plugins[] | select(.name == "SQLSanitizer") | .config.fields) = ["sql", "query", "statement", "message"] |
+                  (.plugins[] | select(.name == "RetryWithBackoffPlugin") | .mode) = "disabled"
+                ' "$CONFIG_FILE"
+
+                echo "Config updated successfully:"
+                cat "$CONFIG_FILE" | grep -A 15 "SQLSanitizer"
+                cat "$CONFIG_FILE" | grep -A 15 "RetryWithBackoffPlugin"
+
+            - name: Cache uv virtual environment
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: .venv
+                  key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
+                  restore-keys: |
+                      venv-${{ runner.os }}-python-3.12-
+                      venv-${{ runner.os }}-
+
+            - name: Install Rust stable 1
+              run: |
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+                source $HOME/.cargo/env
+                rustc --version
+
+
+            - name: Install Rust stable 2
+              run: |
+                  rustup toolchain install stable
+                  rustup default stable
+
+            - name: Cache Cargo
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-sql-sanitizer-${{ hashFiles('Cargo.lock', 'crates/sql-sanitizer/Cargo.toml') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-sql-sanitizer-
+
+            - name: Generate JWT secret
+              run: |
+                  SECRET=$(openssl rand -base64 32)
+                  echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
+
+            - name: Start gateway
+              env:
+                  PLUGINS_ENABLED: true
+                  GUNICORN_WORKERS: 1
+                  MCPGATEWAY_UI_ENABLED: true
+                  MCPGATEWAY_ADMIN_API_ENABLED: true
+                  # Disabled: localhost-only test, no external requests
+                  SSRF_PROTECTION_ENABLED: false
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
+                  PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+              run: |
+                  make venv
+                  make install
+                  make stop-serve
+                  make serve &
+
+                  echo "Waiting for gateway to start..."
+                  for i in {1..60}; do
+                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
+                      echo "Gateway is up!"
+                      break
+                    fi
+                    echo "Waiting for port 4444 to open... (attempt $i)"
+                    sleep 4
+                  done
+
+                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    echo "ERROR: gateway failed to start"
+                    exit 1
+                  fi
+
+            - name: Generate JWT token
+              id: generate_jwt
+              env:
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+              run: |
+                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY" --admin --full-name "Admin")
+                  echo "::add-mask::$TOKEN"
+                  echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
+                  echo "JWT token generated successfully"
+
+            - name: Verify gateway is responding
+              run: |
+                  curl -sf -X GET http://localhost:4444/version \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -H "Content-Type: application/json"
+
+            - name: Verify plugins is responding
+              run: |
+                  curl -sf -X GET http://localhost:4444/admin/plugins/stats \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -H "Content-Type: application/json" | yq
+
+
+            - name: Build fast-test-server
+              working-directory: mcp-servers/rust/fast-test-server
+              run: |
+                  cargo build
+
+            - name: Start fast-test-server
+              run: |
+                  pkill -9 -f "fast-test-server" 2>/dev/null || true
+                  sleep 1
+
+                  nohup mcp-servers/rust/fast-test-server/target/debug/fast-test-server \
+                    > fast-test-server.log 2>&1 &
+                  echo $! > fast-test-server.pid
+
+                  echo "Waiting for fast-test-server..."
+                  for i in {1..30}; do
+                    if curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                      echo "fast-test-server is up!"
+                      break
+                    fi
+                    echo "Waiting for fast-test-server... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                    echo "ERROR: fast-test-server failed to start"
+                    cat fast-test-server.log
+                    exit 1
+                  fi
+                  echo "fast-test-server PID: $(cat fast-test-server.pid)"
+
+            - name: Register gateway and create virtual server
+              run: |
+                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
+
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                    echo "ERROR: fast-test-server is not running"
+                    cat fast-test-server.log
+                    exit 1
+                  fi
+
+                  # Register gateway
+                  echo "Registering fast_time gateway..."
+                  GATEWAY_RESPONSE=$(curl -s -X POST http://localhost:4444/gateways \
+                    -H "Authorization: Bearer $TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d '{
+                      "name": "fast_time",
+                      "url": "http://localhost:9080/mcp",
+                      "transport": "STREAMABLEHTTP"
+                    }')
+                  echo "Gateway response: $GATEWAY_RESPONSE"
+
+                  # Extract gateway ID (handle existing gateway)
+                  if echo "$GATEWAY_RESPONSE" | grep -q "already exists"; then
+                    echo "Gateway already exists, fetching existing ID..."
+                    GATEWAYS=$(curl -s http://localhost:4444/gateways \
+                      -H "Authorization: Bearer $TOKEN")
+                    GATEWAY_ID=$(echo "$GATEWAYS" | jq -r '.[] | select(.name=="fast_time") | .id')
+                  else
+                    GATEWAY_ID=$(echo "$GATEWAY_RESPONSE" | jq -r '.id')
+                  fi
+                  echo "Gateway ID: $GATEWAY_ID"
+
+                  # Wait for tools to sync
+                  echo "Waiting for tools to sync..."
+                  for i in {1..30}; do
+                    TOOLS=$(curl -s http://localhost:4444/tools \
+                      -H "Authorization: Bearer $TOKEN")
+                    TOOL_COUNT=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" '[.[] | select(.gatewayId==$gid)] | length')
+                    if [ "$TOOL_COUNT" -gt 0 ]; then
+                      echo "Found $TOOL_COUNT tools from fast_time gateway"
+                      echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" '[.[] | select(.gatewayId==$gid) | .name]'
+                      break
+                    fi
+                    echo "Waiting for tools to sync... (attempt $i)"
+                    sleep 2
+                  done
+
+                  TOOLS=$(curl -s http://localhost:4444/tools \
+                    -H "Authorization: Bearer $TOKEN")
+                  TOOL_IDS=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" -c '[.[] | select(.gatewayId==$gid) | .id]')
+                  echo "Tool IDs: $TOOL_IDS"
+
+                  if [ "$TOOL_IDS" = "[]" ] || [ -z "$TOOL_IDS" ]; then
+                    echo "ERROR: no tools synced from gateway"
+                    exit 1
+                  fi
+
+                  # Create virtual server
+                  echo "Creating virtual server..."
+                  SERVER_RESPONSE=$(curl -s -X POST http://localhost:4444/servers \
+                    -H "Authorization: Bearer $TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{
+                      \"server\": {
+                        \"id\": \"9779b6698cbd4b4995ee04a4fab38737\",
+                        \"name\": \"Fast Time Server\",
+                        \"description\": \"Virtual server exposing Fast Time MCP tools\",
+                        \"associated_tools\": $TOOL_IDS,
+                        \"associated_resources\": [],
+                        \"associated_prompts\": []
+                      }
+                    }")
+                  echo "Server response: $SERVER_RESPONSE"
+
+            - name: Local Node 22 Install
+              run: |
+                mkdir -p $GITHUB_WORKSPACE/node22
+                curl -fsSL https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz -o node22.tar.xz
+                tar -xJf node22.tar.xz --strip-components=1 -C $GITHUB_WORKSPACE/node22
+                $GITHUB_WORKSPACE/node22/bin/node -v
+
+            - name: Test sql-sanitizer
+              run: |
+                  export PATH="$GITHUB_WORKSPACE/node22/bin:$PATH"
+                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
+                  SERVER_ID=$(echo "9779b669-8cbd-4b49-95ee-04a4fab38737" | tr -d '-')
+                  URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
+
+                  echo "Running SQL Injection attack test..."
+
+                  # Execute the tool call via mcp-inspector
+                  RESPONSE=$(npx @modelcontextprotocol/inspector@0.21.1  \
+                    --cli "$URL" \
+                    --method tools/call \
+                    --tool-name fast-time-echo \
+                    --tool-arg message='DROP table asdf' \
+                    --header "Authorization: Bearer $TOKEN")
+
+                  echo "Gateway Response:"
+                  echo "$RESPONSE" | jq .
+
+                  # Verify the block logic:
+                  # 1. isError should be true
+                  # 2. text should mention SQLSanitizer
+                  IS_ERROR=$(echo "$RESPONSE" | jq -r '.isError')
+                  ERR_MSG=$(echo "$RESPONSE" | jq -r '.content[0].text')
+
+                  if [[ "$IS_ERROR" == "true" ]] && [[ "$ERR_MSG" == *"blocked by plugin SQLSanitizer"* ]]; then
+                    echo "Success: SQLSanitizer blocked the 'DROP' command."
+                  else
+                    echo "Failure: SQLSanitizer did not block the malicious command as expected."
+                    exit 1
+                  fi
+
+                  echo "All sql-sanitizer tests passed!"
+            - name: Upload logs on failure
+              if: failure()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: sql-sanitizer-test-logs
+                  path: |
+                      fast-test-server.log
+                      sql-sanitizer_output.json
+                      sql-sanitizer_test.log
+                  retention-days: 7
