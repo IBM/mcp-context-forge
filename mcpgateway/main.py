@@ -1401,6 +1401,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
+        # Validate UAID security configuration
+        validate_uaid_security_config()
+
         # Initialize the plugin manager factory whenever the YAML config is
         # available. We used to gate this on ``settings.plugins.enabled`` but
         # that broke runtime enable-from-disabled: a node that boots with the
@@ -1972,6 +1975,21 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
             logger.info("  • Enable SSL verification: SKIP_SSL_VERIFY=false")
 
         logger.info("=" * 60)
+
+
+def validate_uaid_security_config() -> None:
+    """Validate UAID security configuration at startup.
+
+    Logs ERROR if A2A enabled but UAID allowlist not configured,
+    alerting operators to security misconfiguration.
+    """
+    if settings.a2a_enabled:
+        if not settings.uaid_allowed_domains and not settings.uaid_allow_all_domains:
+            logger.error(
+                "🚨 SECURITY: UAID cross-gateway routing is DISABLED. "
+                "Configure UAID_ALLOWED_DOMAINS with trusted domains or set UAID_ALLOW_ALL_DOMAINS=true (unsafe for production). "
+                "Cross-gateway UAID calls will fail until allowlist is configured."
+            )
 
     logger.info("✅ Security validation completed")
 

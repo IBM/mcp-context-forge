@@ -385,3 +385,92 @@ class TestUAIDBearerTokenForwarding:
         # Assert
         assert any("Cross-gateway call without bearer token" in record.message for record in caplog.records)
         assert any("unauthenticated request" in record.message for record in caplog.records)
+
+
+class TestAuthenticationErrorHandling:
+    """Tests for authentication error handling in cross-gateway calls."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance for testing."""
+        return A2AAgentService()
+
+    async def test_401_unauthorized_error_handling(self, service, monkeypatch):
+        """
+        Test that 401 errors are handled with clear authentication failure message.
+
+        Given: Remote gateway returns 401 Unauthorized
+        When: _invoke_remote_agent is called
+        Then: Should raise A2AAgentError with message about JWT trust
+        """
+        # Third-Party
+        import httpx
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock httpx response with 401
+        async def mock_post(*args, **kwargs):
+            # First-Party
+            from unittest.mock import MagicMock
+
+            response = MagicMock()
+            response.status_code = 401
+            response.text = "Unauthorized"
+            response.content = b"Unauthorized"
+            return response
+
+        monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
+
+        # Act & Assert
+        with pytest.raises(
+            A2AAgentError,
+            match="Remote gateway rejected authentication.*Ensure both gateways trust the same JWT signing key",
+        ):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token="test-token",
+            )
+
+    async def test_403_forbidden_error_handling(self, service, monkeypatch):
+        """
+        Test that 403 errors are handled with clear authorization failure message.
+
+        Given: Remote gateway returns 403 Forbidden
+        When: _invoke_remote_agent is called
+        Then: Should raise A2AAgentError with message about insufficient permissions
+        """
+        # Third-Party
+        import httpx
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock httpx response with 403
+        async def mock_post(*args, **kwargs):
+            # First-Party
+            from unittest.mock import MagicMock
+
+            response = MagicMock()
+            response.status_code = 403
+            response.text = "Forbidden"
+            response.content = b"Forbidden"
+            return response
+
+        monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
+
+        # Act & Assert
+        with pytest.raises(
+            A2AAgentError,
+            match="Remote gateway rejected authorization.*Verify token has required team memberships or roles",
+        ):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token="test-token",
+            )

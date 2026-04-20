@@ -2433,6 +2433,60 @@ class A2AAgentService(BaseService):
 
                 return response
 
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Authentication and authorization error handling
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Provide clear diagnostics for authentication/authorization failures
+            # to help operators debug cross-gateway JWT trust issues.
+            if http_response.status_code == 401:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authentication failed: HTTP 401 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authentication failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthenticationError", "error_message": f"HTTP 401: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 401,
+                    },
+                )
+                raise A2AAgentError(
+                    f"Cross-gateway routing failed: Remote gateway rejected authentication (HTTP 401). "
+                    f"Ensure both gateways trust the same JWT signing key (JWT_SECRET_KEY) "
+                    f"or configure JWKS endpoint for token validation."
+                )
+
+            if http_response.status_code == 403:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authorization failed: HTTP 403 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authorization failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthorizationError", "error_message": f"HTTP 403: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 403,
+                    },
+                )
+                raise A2AAgentError(
+                    f"Cross-gateway routing failed: Remote gateway rejected authorization (HTTP 403). "
+                    f"Verify token has required team memberships or roles for the target agent/resource."
+                )
+
             # Capture the remote body for operator-side structured logging
             # (so failures can be diagnosed) but keep the body out of the
             # exception we raise to the caller: a cross-gateway response

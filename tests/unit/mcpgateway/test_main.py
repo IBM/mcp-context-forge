@@ -4952,3 +4952,57 @@ class TestTeamScopedListVisibility:
         call_kwargs = mock_service.list_agents.call_args.kwargs
         assert call_kwargs["team_id"] is None
         assert call_kwargs["token_teams"] == ["team-1"]
+
+
+# --------------------------------------------------------------------------- #
+# UAID Security Configuration Validation                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_startup_warns_when_uaid_allowlist_empty():
+    """Verify ERROR logged when A2A enabled but UAID allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        # Import and trigger the validation logic
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called
+        error_message = mock_logger.error.call_args[0][0]
+        assert "UAID cross-gateway routing is DISABLED" in error_message
+        assert "UAID_ALLOWED_DOMAINS" in error_message
+
+
+def test_startup_no_warning_when_allowlist_configured():
+    """Verify no warning when allowlist properly configured."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.a2a_enabled = True
+        mock_settings.uaid_allowed_domains = ["trusted.example.com"]
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
+
+
+def test_startup_no_warning_when_a2a_disabled():
+    """Verify no warning when A2A not enabled."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.a2a_enabled = False
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
