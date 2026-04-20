@@ -30,7 +30,7 @@ plugins:
         "resource_post_fetch",
       ]
     tags: ["observability", "telemetry", "opentelemetry", "spans", "attributes"]
-    mode: "enforce" # Set to "permissive" or "enforce" to activate
+    mode: "disabled" # Set to "permissive" or "enforce" to activate
     priority: 10 # Run early to set attributes before other plugins
     conditions: []
     config:
