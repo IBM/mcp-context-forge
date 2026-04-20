@@ -102,6 +102,55 @@ def _get_tool_lookup_cache():
     return _TOOL_LOOKUP_CACHE
 
 
+def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "operation") -> None:
+    """Validate that an endpoint URL's domain is allowed for UAID operations.
+
+    This enforces fail-closed domain allowlist security for UAID-enabled agents.
+    Empty allowlist blocks all external routing unless UAID_ALLOW_ALL_DOMAINS=true.
+
+    Args:
+        endpoint_url: The endpoint URL to validate (e.g., "https://agent.example.com/api")
+        operation_context: Description of operation for error messages (e.g., "registration", "invocation")
+
+    Raises:
+        ValueError: If domain is not in UAID_ALLOWED_DOMAINS or allowlist is empty
+
+    Security Note:
+        This validation prevents SSRF and unauthorized cross-gateway routing by requiring
+        explicit domain authorization. Bypassing this check via UAID_ALLOW_ALL_DOMAINS=true
+        is unsafe for production and should only be used in development/testing.
+    """
+    # Check if bypass flag is set (unsafe for production)
+    if getattr(settings, "uaid_allow_all_domains", False):
+        return  # Bypass validation (development/testing only)
+
+    # Get domain allowlist (fail-closed: empty list means no domains allowed)
+    allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+    if not allowed_domains:
+        raise ValueError(
+            f"UAID {operation_context} blocked for security: UAID_ALLOWED_DOMAINS is empty. "
+            f"Cannot use endpoint {endpoint_url!r} without explicit domain allowlist. "
+            f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains, "
+            f"or set UAID_ALLOW_ALL_DOMAINS=true for development (unsafe for production)."
+        )
+
+    # Extract domain from URL for validation
+    # Handle URLs with or without scheme
+    url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
+    parsed = urlparse(url_to_parse)
+    endpoint_domain = parsed.hostname or endpoint_url.split(":")[0]
+
+    # Validate against allowlist with subdomain matching
+    # "sub.example.com" matches "example.com", but "evilexample.com" does not
+    if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
+        raise ValueError(
+            f"UAID {operation_context} blocked: endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS. "
+            f"Endpoint: {endpoint_url!r}. "
+            f"Allowed domains: {allowed_domains!r}. "
+            f"Add the domain to UAID_ALLOWED_DOMAINS or set UAID_ALLOW_ALL_DOMAINS=true for development."
+        )
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -543,6 +592,14 @@ class A2AAgentService(BaseService):
                     from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
 
                     try:
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # SECURITY: Validate endpoint domain against UAID allowlist before registration
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # UAID-enabled agents with external endpoints must have their domain
+                        # explicitly authorized in UAID_ALLOWED_DOMAINS. This prevents registration
+                        # of agents that would bypass cross-gateway routing security.
+                        _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="registration")
+
                         uaid = generate_uaid(
                             registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                             name=agent_data.name,
@@ -1817,6 +1874,25 @@ class A2AAgentService(BaseService):
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
         agent_auth_query_params = agent.auth_query_params
+        agent_uaid = getattr(agent, "uaid", None)
+        agent_uaid_native_id = getattr(agent, "uaid_native_id", None)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Validate UAID endpoint domain before invocation
+        # ═══════════════════════════════════════════════════════════════════════════
+        # For locally-registered agents with UAID (cross-gateway capable agents),
+        # validate that the endpoint domain is in the allowlist BEFORE making the
+        # HTTP call. This prevents SSRF via locally-registered agents pointing to
+        # unauthorized external/internal endpoints.
+        #
+        # Use uaid_native_id (the canonical endpoint from UAID) if available,
+        # otherwise fall back to endpoint_url (for legacy/non-UAID agents).
+        if agent_uaid and agent_uaid_native_id:
+            try:
+                _validate_uaid_endpoint_domain(agent_uaid_native_id, operation_context="invocation")
+            except ValueError as e:
+                # Convert validation error to A2AAgentError for consistent error handling
+                raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {e}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
