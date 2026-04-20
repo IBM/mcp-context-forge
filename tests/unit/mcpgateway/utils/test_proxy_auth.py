@@ -43,6 +43,8 @@ class TestProxyAuthentication:
             proxy_user_header = "X-Authenticated-User"
             require_token_expiration = False
             docs_allow_basic_auth = False
+            require_user_in_db = True
+            platform_admin_email = "admin@example.com"
 
         return MockSettings()
 
@@ -112,10 +114,31 @@ class TestProxyAuthentication:
         mock_settings.trust_proxy_auth = True
         mock_settings.trust_proxy_auth_dangerously = True
         mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+        mock_request.state = Mock()
+
+        # Mock database user lookup
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.email = "proxy-user"
 
         with patch.object(vc, "settings", mock_settings):
-            result = await vc.require_auth(mock_request, None, None)
-            assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
+            with patch("mcpgateway.db.get_db") as mock_get_db:
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
+                    with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams:
+                        # Setup mocks
+                        mock_db = Mock()
+                        mock_get_db.return_value = iter([mock_db])
+                        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_resolve_teams.return_value = ["team1"]
+
+                        result = await vc.require_auth(mock_request, None, None)
+
+                        assert result["sub"] == "proxy-user"
+                        assert result["source"] == "proxy"
+                        assert result["token"] is None
+                        assert result["is_admin"] is False
+                        assert result["teams"] == ["team1"]
+                        assert result["email"] == "proxy-user"
 
     @pytest.mark.asyncio
     async def test_proxy_auth_without_header_raises_when_auth_required(self, mock_settings, mock_request):
@@ -153,10 +176,31 @@ class TestProxyAuthentication:
         mock_settings.trust_proxy_auth_dangerously = True
         mock_settings.proxy_user_header = "X-Remote-User"
         mock_request.headers = {"X-Remote-User": "custom-user"}
+        mock_request.state = Mock()
+
+        # Mock database user lookup
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.email = "custom-user"
 
         with patch.object(vc, "settings", mock_settings):
-            result = await vc.require_auth(mock_request, None, None)
-            assert result == {"sub": "custom-user", "source": "proxy", "token": None}
+            with patch("mcpgateway.db.get_db") as mock_get_db:
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
+                    with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams:
+                        # Setup mocks
+                        mock_db = Mock()
+                        mock_get_db.return_value = iter([mock_db])
+                        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_resolve_teams.return_value = ["team1"]
+
+                        result = await vc.require_auth(mock_request, None, None)
+
+                        assert result["sub"] == "custom-user"
+                        assert result["source"] == "proxy"
+                        assert result["token"] is None
+                        assert result["is_admin"] is False
+                        assert result["teams"] == ["team1"]
+                        assert result["email"] == "custom-user"
 
     @pytest.mark.asyncio
     async def test_jwt_auth_with_proxy_enabled(self, mock_settings, mock_request):
@@ -192,15 +236,90 @@ class TestProxyAuthentication:
         mock_settings.trust_proxy_auth = True
         mock_settings.trust_proxy_auth_dangerously = True
         mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+        mock_request.state = Mock()
 
         # Create a valid JWT token
         token = jwt.encode({"sub": "jwt-user"}, mock_settings.jwt_secret_key, algorithm="HS256")
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
+        # Mock database user lookup
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.email = "proxy-user"
+
         with patch.object(vc, "settings", mock_settings):
-            # When MCP client auth is disabled, proxy takes precedence
-            result = await vc.require_auth(mock_request, creds, None)
-            assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
+            with patch("mcpgateway.db.get_db") as mock_get_db:
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
+                    with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams:
+                        # Setup mocks
+                        mock_db = Mock()
+                        mock_get_db.return_value = iter([mock_db])
+                        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_resolve_teams.return_value = ["team1"]
+
+                        # When MCP client auth is disabled, proxy takes precedence
+                        result = await vc.require_auth(mock_request, creds, None)
+
+                        assert result["sub"] == "proxy-user"
+                        assert result["source"] == "proxy"
+                        assert result["token"] is None
+                        assert result["is_admin"] is False
+                        assert result["teams"] == ["team1"]
+                        assert result["email"] == "proxy-user"
+
+    @pytest.mark.asyncio
+    async def test_proxy_auth_platform_admin_bootstrap(self, mock_settings, mock_request):
+        """Test proxy authentication with platform admin bootstrap when user not in DB."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_settings.require_user_in_db = False
+        mock_settings.platform_admin_email = "admin@example.com"
+        mock_request.headers = {"X-Authenticated-User": "admin@example.com"}
+        mock_request.state = Mock()
+
+        with patch.object(vc, "settings", mock_settings):
+            with patch("mcpgateway.db.get_db") as mock_get_db:
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
+                    # Setup mocks - user NOT found in DB
+                    mock_db = Mock()
+                    mock_get_db.return_value = iter([mock_db])
+                    mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=None)
+
+                    result = await vc.require_auth(mock_request, None, None)
+
+                    # Should bootstrap platform admin
+                    assert result["sub"] == "admin@example.com"
+                    assert result["source"] == "proxy"
+                    assert result["token"] is None
+                    assert result["is_admin"] is True
+                    assert result["teams"] is None  # Admin bypass
+                    assert result["email"] == "admin@example.com"
+
+    @pytest.mark.asyncio
+    async def test_proxy_auth_user_not_found_raises_401(self, mock_settings, mock_request):
+        """Test proxy authentication raises 401 when user not in DB and not platform admin."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_settings.require_user_in_db = True
+        mock_settings.platform_admin_email = "admin@example.com"
+        mock_request.headers = {"X-Authenticated-User": "unknown-user@example.com"}
+        mock_request.state = Mock()
+
+        with patch.object(vc, "settings", mock_settings):
+            with patch("mcpgateway.db.get_db") as mock_get_db:
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
+                    # Setup mocks - user NOT found in DB
+                    mock_db = Mock()
+                    mock_get_db.return_value = iter([mock_db])
+                    mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=None)
+
+                    with pytest.raises(HTTPException) as exc_info:
+                        await vc.require_auth(mock_request, None, None)
+
+                    assert exc_info.value.status_code == 401
+                    assert "User not found in database" in exc_info.value.detail
 
 
 class TestRBACProxyAuthentication:

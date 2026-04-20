@@ -486,7 +486,52 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
-                return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
+                # First-Party
+                from mcpgateway.auth import _resolve_teams_from_db
+                from mcpgateway.db import get_db
+                from mcpgateway.services.email_auth_service import EmailAuthService
+
+                # Query database for user info
+                db = next(get_db())
+                try:
+                    auth_service = EmailAuthService(db)
+                    user_info = await auth_service.get_user_by_email(proxy_user)
+
+                    if user_info:
+                        # Resolve teams from DB (returns None for admin bypass, [] for no teams, or list of team IDs)
+                        token_teams = await _resolve_teams_from_db(proxy_user, user_info)
+                        is_admin = user_info.is_admin
+
+                        # Build enriched payload similar to session tokens
+                        payload = {
+                            "sub": proxy_user,
+                            "source": "proxy",
+                            "token": None,
+                            "is_admin": is_admin,
+                            "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
+                            "email": proxy_user,
+                        }
+
+                        # Cache in request state for downstream use (same pattern as JWT tokens)
+                        request.state._jwt_verified_payload = (None, payload)
+
+                        return payload
+                    else:
+                        # User not in DB - handle based on REQUIRE_USER_IN_DB setting
+                        platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                        if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                            # Platform admin bootstrap
+                            payload = {"sub": proxy_user, "source": "proxy", "token": None, "is_admin": True, "teams": None, "email": proxy_user}  # Admin bypass
+                            request.state._jwt_verified_payload = (None, payload)
+                            return payload
+                        else:
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="User not found in database",
+                                headers={"WWW-Authenticate": "Bearer"},
+                            )
+                finally:
+                    db.close()
             # No proxy header - check auth_required (matches RBAC/WebSocket behavior)
             if settings.auth_required:
                 raise HTTPException(
