@@ -1408,3 +1408,71 @@ def test_uaid_allow_all_domains_can_be_enabled():
     """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
     settings = Settings(uaid_allow_all_domains=True, _env_file=None)
     assert settings.uaid_allow_all_domains is True
+
+
+# UAID Domain Allowlist Validation Tests
+def test_uaid_allowed_domains_rejects_localhost():
+    """Verify validator rejects localhost in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["example.com", "localhost"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_127_0_0_1():
+    """Verify validator rejects 127.0.0.1 in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["127.0.0.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local():
+    """Verify validator rejects link-local addresses (169.254.x.x)."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_private_ips():
+    """Verify validator rejects private IP ranges."""
+    # Test various private IP ranges
+    private_ips = ["10.0.0.1", "192.168.1.1", "172.16.0.1"]
+    for ip in private_ips:
+        with pytest.raises(ValueError, match="private IP range"):
+            Settings(uaid_allowed_domains=[ip], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_whitespace():
+    """Verify validator rejects domains with whitespace."""
+    with pytest.raises(ValueError, match="contains whitespace"):
+        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_domains():
+    """Verify validator accepts valid public domain names."""
+    valid_domains = ["example.com", "gateway.acme.org", "api.partner.io"]
+    settings = Settings(uaid_allowed_domains=valid_domains, _env_file=None)
+    assert settings.uaid_allowed_domains == valid_domains
+
+
+def test_uaid_allowed_domains_accepts_empty_list():
+    """Verify validator accepts empty list (fail-closed default)."""
+    settings = Settings(uaid_allowed_domains=[], _env_file=None)
+    assert settings.uaid_allowed_domains == []
+
+
+def test_uaid_config_warns_on_contradictory_settings(caplog):
+    """Verify warning when both allow_all and allowlist are set."""
+    import logging
+
+    # Capture warnings from the config logger
+    with caplog.at_level(logging.WARNING, logger='mcpgateway.config'):
+        settings = Settings(
+            uaid_allow_all_domains=True,
+            uaid_allowed_domains=["example.com"],
+            _env_file=None
+        )
+
+    # Should create settings successfully but log warning
+    assert settings.uaid_allow_all_domains is True
+    assert settings.uaid_allowed_domains == ["example.com"]
+
+    # Check warning was logged in config module
+    assert any("Configuration conflict" in record.message for record in caplog.records), \
+        f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"

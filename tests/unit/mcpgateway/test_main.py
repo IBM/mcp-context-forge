@@ -5006,3 +5006,42 @@ def test_startup_no_warning_when_a2a_disabled():
 
         # Verify no ERROR logged
         assert not mock_logger.error.called
+
+
+def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
+    """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, \
+         patch("mcpgateway.main.settings") as mock_settings, \
+         patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should raise RuntimeError in strict mode
+        with pytest.raises(RuntimeError, match="Gateway startup aborted"):
+            validate_uaid_security_config()
+
+        # Verify ERROR was still logged before raising
+        assert mock_logger.error.called
+
+
+def test_startup_succeeds_with_uaid_require_allowlist_false():
+    """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
+    with patch("mcpgateway.main.logger") as mock_logger, \
+         patch("mcpgateway.main.settings") as mock_settings, \
+         patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should NOT raise, just log ERROR
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called

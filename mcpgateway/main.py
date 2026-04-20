@@ -36,6 +36,7 @@ import hashlib
 import html
 import json
 import logging
+import os
 import re
 import signal
 import sys
@@ -1980,16 +1981,41 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
 def validate_uaid_security_config() -> None:
     """Validate UAID security configuration at startup.
 
-    Logs ERROR if A2A enabled but UAID allowlist not configured,
-    alerting operators to security misconfiguration.
+    Behavior:
+    - Logs ERROR if A2A enabled but UAID allowlist not configured
+    - Fails startup if UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true (strict mode)
+
+    Design Decision (Issue #4236, Task #5):
+    Default behavior is ERROR logging (non-blocking) to maintain backward compatibility
+    and avoid breaking existing deployments. Operators can opt into fail-fast behavior
+    via UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true for stricter security posture.
+
+    Rationale:
+    - ERROR logging: Visible in logs, doesn't break deployments
+    - Fail-fast (opt-in): Best for production, catches misconfig early
+    - Not implemented: Admin UI banner (requires UI work, not always enabled)
+
+    Raises:
+        RuntimeError: If allowlist misconfigured and strict mode enabled
     """
     if settings.mcpgateway_a2a_enabled:
         if not settings.uaid_allowed_domains and not settings.uaid_allow_all_domains:
-            logger.error(
+            error_msg = (
                 "🚨 SECURITY: UAID cross-gateway routing is DISABLED. "
                 "Configure UAID_ALLOWED_DOMAINS with trusted domains or set UAID_ALLOW_ALL_DOMAINS=true (unsafe for production). "
                 "Cross-gateway UAID calls will fail until allowlist is configured."
             )
+
+            logger.error(error_msg)
+
+            # Check for strict mode (fail-fast on misconfiguration)
+            require_allowlist = os.getenv("UAID_REQUIRE_ALLOWLIST_ON_STARTUP", "false").lower() == "true"
+            if require_allowlist:
+                raise RuntimeError(
+                    f"{error_msg}\n\n"
+                    "Gateway startup aborted due to UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true. "
+                    "Fix configuration or set UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false to allow startup with ERROR log only."
+                )
 
     logger.info("✅ Security validation completed")
 

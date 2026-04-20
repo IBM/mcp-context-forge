@@ -263,7 +263,7 @@ class TestUAIDBearerTokenForwarding:
         """
         Test that audit headers are included for tracing cross-gateway calls.
 
-        Given: A bearer token is provided
+        Given: A bearer token and user_email are provided
         When: _invoke_remote_agent is called
         Then: Should include X-Contextforge-Source-Gateway and X-Contextforge-Source-User headers
         """
@@ -274,6 +274,7 @@ class TestUAIDBearerTokenForwarding:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
         test_token = "test-bearer-token-12345"
+        test_email = "user@example.com"
 
         captured_headers = {}
 
@@ -295,6 +296,7 @@ class TestUAIDBearerTokenForwarding:
             parameters={"test": "data"},
             interaction_type="request",
             bearer_token=test_token,
+            user_email=test_email,
         )
 
         # Assert
@@ -302,8 +304,66 @@ class TestUAIDBearerTokenForwarding:
         # Gateway ID defaults to "unknown" if not configured
         assert captured_headers["X-Contextforge-Source-Gateway"] == "unknown"
         assert "X-Contextforge-Source-User" in captured_headers
-        # Token value should be in Source-User header for audit trail
-        assert test_token in captured_headers["X-Contextforge-Source-User"]
+        # SECURITY: User email should be in Source-User header, NOT the bearer token
+        assert captured_headers["X-Contextforge-Source-User"] == test_email
+
+    async def test_bearer_token_not_leaked_in_audit_header(self, service, monkeypatch):
+        """
+        SECURITY TEST: Verify bearer token is NOT leaked in X-Contextforge-Source-User header.
+
+        Given: A bearer token and user_email are provided
+        When: _invoke_remote_agent is called
+        Then: X-Contextforge-Source-User should contain user_email, NOT the bearer token
+        Rationale: Prevents credential leakage in logs/proxies that may capture headers
+        """
+        # Third-Party
+        import httpx
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        test_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sensitive-jwt-payload"
+        test_email = "user@example.com"
+
+        captured_headers = {}
+
+        async def mock_post(*args, **kwargs):
+            # First-Party
+            from unittest.mock import MagicMock
+
+            captured_headers.update(kwargs.get("headers", {}))
+            response = MagicMock()
+            response.status_code = 200
+            response.json.return_value = {"result": "success"}
+            return response
+
+        monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
+
+        # Act
+        await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+            bearer_token=test_token,
+            user_email=test_email,
+        )
+
+        # Assert - CRITICAL SECURITY CHECK
+        # The bearer token must ONLY appear in the Authorization header
+        assert captured_headers["Authorization"] == f"Bearer {test_token}"
+
+        # The X-Contextforge-Source-User header must contain the email, NOT the token
+        assert "X-Contextforge-Source-User" in captured_headers
+        source_user = captured_headers["X-Contextforge-Source-User"]
+        assert source_user == test_email, f"Expected email '{test_email}', got '{source_user}'"
+
+        # Explicitly verify token is NOT in the audit header
+        assert test_token not in source_user, "SECURITY VIOLATION: Bearer token leaked in X-Contextforge-Source-User header!"
+
+        # Verify token doesn't appear in ANY non-Authorization header
+        for header_name, header_value in captured_headers.items():
+            if header_name != "Authorization":
+                assert test_token not in str(header_value), f"SECURITY VIOLATION: Token found in {header_name} header!"
 
     async def test_no_token_proceeds_without_auth_header(self, service, monkeypatch):
         """

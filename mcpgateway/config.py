@@ -779,6 +779,72 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator("uaid_allowed_domains")
+    @classmethod
+    def validate_uaid_allowed_domains(cls, v: List[str]) -> List[str]:
+        """Validate UAID domain allowlist for security.
+
+        Rejects:
+        - localhost, 127.0.0.1 (loopback addresses)
+        - 169.254.x.x (link-local addresses)
+        - Internal IP ranges that should not be in production allowlists
+
+        Args:
+            v: List of allowed domain names
+
+        Returns:
+            Validated domain list
+
+        Raises:
+            ValueError: If any domain is obviously internal/unsafe
+        """
+        if not v:
+            # Empty list is valid (fail-closed default)
+            return v
+
+        invalid_domains = []
+        for domain in v:
+            domain_lower = domain.lower()
+            # Check for localhost variants
+            if domain_lower in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+                invalid_domains.append((domain, "loopback address"))
+            # Check for link-local
+            elif domain_lower.startswith("169.254."):
+                invalid_domains.append((domain, "link-local address"))
+            # Check for private IP ranges (commonly misconfigured)
+            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.3", "192.168.")):
+                invalid_domains.append((domain, "private IP range"))
+            # Check for obviously invalid patterns
+            elif " " in domain or "\t" in domain or "\n" in domain:
+                invalid_domains.append((domain, "contains whitespace"))
+
+        if invalid_domains:
+            error_msgs = [f"'{d}' ({reason})" for d, reason in invalid_domains]
+            raise ValueError(f"Invalid domains in UAID_ALLOWED_DOMAINS: {', '.join(error_msgs)}. Use public DNS names only.")
+
+        return v
+
+    @model_validator(mode="after")
+    def validate_uaid_config_consistency(self) -> Self:
+        """Validate UAID configuration for contradictory settings.
+
+        Warns about:
+        - uaid_allow_all_domains=True AND non-empty allowlist (contradictory)
+
+        Returns:
+            Self for chaining
+
+        Note:
+            Uses logger.warning instead of raising to avoid breaking existing configs
+        """
+        if self.uaid_allow_all_domains and self.uaid_allowed_domains:
+            logger.warning(
+                "⚠️  Configuration conflict: UAID_ALLOW_ALL_DOMAINS=true bypasses the configured UAID_ALLOWED_DOMAINS list. "
+                "The allowlist will be ignored. Either disable UAID_ALLOW_ALL_DOMAINS or remove UAID_ALLOWED_DOMAINS."
+            )
+
+        return self
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")

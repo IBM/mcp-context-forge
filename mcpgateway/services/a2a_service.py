@@ -2286,29 +2286,9 @@ class A2AAgentService(BaseService):
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Fail-closed domain allowlist enforcement
             # ═══════════════════════════════════════════════════════════════════════════
-            # Cross-gateway routing MUST be explicitly authorized via UAID_ALLOWED_DOMAINS.
-            # Empty/None allowlist means "no destinations are trusted" → block all routing.
-            # This fail-closed design prevents accidental exposure via misconfiguration.
-            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
-            if not allowed_domains:
-                raise ValueError(
-                    f"Cross-gateway routing blocked for security: UAID_ALLOWED_DOMAINS is empty. "
-                    f"Cannot route to {endpoint!r} without explicit domain allowlist. "
-                    f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains."
-                )
-
-            # Security: Validate endpoint against domain allowlist
-            # Use proper subdomain matching: require exact match OR proper subdomain prefix
-            # Extract just the domain part (without port) for allowlist checking
-            # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
-            # If endpoint doesn't start with scheme, add https:// for parsing
-            url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
-            parsed = urlparse(url_to_parse)
-            endpoint_domain = parsed.hostname or endpoint.split(":")[0]
-
-            # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
-            if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
-                raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
+            # Validate endpoint against UAID_ALLOWED_DOMAINS using centralized validation
+            # This enforces fail-closed security and respects UAID_ALLOW_ALL_DOMAINS bypass flag
+            _validate_uaid_endpoint_domain(endpoint, operation_context="cross-gateway routing")
 
             # Construct URL based on protocol (endpoint is now validated).
             # ContextForge-to-ContextForge federation: target the receiving
@@ -2381,7 +2361,9 @@ class A2AAgentService(BaseService):
                 # Add audit headers for tracing cross-gateway calls
                 gateway_id = getattr(settings, "gateway_id", "unknown")
                 headers["X-Contextforge-Source-Gateway"] = gateway_id
-                headers["X-Contextforge-Source-User"] = bearer_token  # Token for audit trail
+                # Include user email for audit trail (never include token in non-auth headers)
+                if user_email:
+                    headers["X-Contextforge-Source-User"] = user_email
             else:
                 logger.warning(
                     "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",

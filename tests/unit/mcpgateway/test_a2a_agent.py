@@ -44,6 +44,15 @@ def mock_logging_services():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_uaid_settings(monkeypatch):
+    """Mock UAID security settings to bypass validation in tests."""
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_max_federation_hops", 5)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_default_timeout", 30)
+
+
 class TestUserInputForA2AAgentTest:
     """Test suite for Issue #840 - Part 1: A2A agent test endpoint lacks user input field.
 
