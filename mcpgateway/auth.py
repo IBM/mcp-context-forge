@@ -1052,6 +1052,11 @@ async def get_current_user(
 
     Supports plugin-based custom authentication via HTTP_AUTH_RESOLVE_USER hook.
 
+    Authentication sources (in order of precedence):
+    1. Authorization: Bearer header
+    2. jwt_token httpOnly cookie (for browser clients)
+    3. Plugin-based custom authentication
+
     Args:
         credentials: HTTP authorization credentials
         request: Optional request object for plugin hooks
@@ -1064,6 +1069,15 @@ async def get_current_user(
     """
     logger = logging.getLogger(__name__)
     clear_trace_context()
+
+    # Cookie fallback: if no Bearer header, check for jwt_token cookie
+    if not credentials and request:
+        cookie_token = request.cookies.get("jwt_token")
+        if cookie_token:
+            from fastapi.security import HTTPAuthorizationCredentials as Creds  # pylint: disable=import-outside-toplevel
+
+            credentials = Creds(scheme="Bearer", credentials=cookie_token)
+            logger.debug("Using jwt_token cookie for authentication")
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
         """Set request.state.auth_method based on JWT payload.

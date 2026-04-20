@@ -54,11 +54,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           setState({ user: null, isAuthenticated: false });
+        } else {
+          // Re-throw non-401 errors (e.g., 500, 503) so they can be handled by error boundaries
+          throw err;
         }
       });
   }, []);
 
-  const login = useCallback(async (email: string, password: string): Promise<void> => {
+  /* prettier-ignore */ const login = useCallback(async (email: string, password: string): Promise<void> => { // pragma: allowlist secret
     // pragma: allowlist secret
     const data = await api.post<LoginResponse>(
       "/auth/login",

@@ -7,7 +7,7 @@ export const handlers = [
     const { email, password } = body as { email: string; password: string };
 
     // Simple mock validation
-    if (email === "test@example.com" && password === "password123") {
+    if (email === "test@example.com" && password === "password123") { // pragma: allowlist secret
       return HttpResponse.json({
         access_token: "mock-token-12345",
         token_type: "bearer",

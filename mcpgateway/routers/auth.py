@@ -183,7 +183,7 @@ async def login(login_request: LoginRequest, request: Request, response: Respons
         # Optionally set httpOnly cookie for browser clients
         if login_request.set_cookie:
             set_auth_cookie(response, access_token, remember_me=False)
-            logger.debug(f"Set httpOnly cookie for user: {email}")
+            logger.debug("Set httpOnly cookie for user: %s", email)
 
         logger.info(f"User {email} authenticated successfully")
 
@@ -202,7 +202,37 @@ async def login(login_request: LoginRequest, request: Request, response: Respons
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
+@auth_router.get("/me", response_model=EmailUserResponse)
+async def get_current_user_info(request: Request, db: Session = Depends(get_db)):
+    """Get current authenticated user information.
+
+    This endpoint returns the authenticated user's profile information.
+    Requires a valid JWT token (either in Authorization header or jwt_token cookie).
+
+    Returns:
+        EmailUserResponse: Current user information
+
+    Raises:
+        HTTPException: If authentication fails (401)
+    """
+    # Import here to avoid circular dependency
+    from mcpgateway.auth import get_current_user  # pylint: disable=import-outside-toplevel
+
+    user = await get_current_user(request=request)
+    return EmailUserResponse.from_email_user(user)
+
+
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response):
-    """Clear authentication cookie and end session."""
+async def logout(response: Response, request: Request, db: Session = Depends(get_db)):
+    """Clear authentication cookie and end session.
+
+    Note: This endpoint clears the browser cookie but does not perform server-side
+    token revocation. The JWT remains valid until its natural expiry time. This is
+    an intentional design decision to avoid the overhead of maintaining a revocation
+    list for short-lived session tokens (1 hour default expiry).
+
+    For security-critical applications requiring immediate token invalidation,
+    consider implementing server-side revocation by storing the token's JTI in
+    the TokenRevocation table.
+    """
     clear_auth_cookie(response)

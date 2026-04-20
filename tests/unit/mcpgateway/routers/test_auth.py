@@ -344,6 +344,75 @@ class TestLogin:
             mock_set_cookie.assert_not_called()
 
 
+class TestGetCurrentUserInfo:
+    """Tests for /auth/me endpoint."""
+
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock email user."""
+        user = MagicMock()
+        user.email = "test@example.com"
+        user.full_name = "Test User"
+        user.is_active = True
+        user.is_admin = False
+        user.auth_provider = "local"
+        user.email_verified_at = None
+        user.password_change_required = False
+        return user
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_info_success(self, mock_user):
+        """Test successful retrieval of current user info."""
+        from mcpgateway.routers.auth import get_current_user_info
+
+        mock_request = MagicMock()
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.auth.get_current_user", new_callable=AsyncMock) as mock_get_user:
+            mock_get_user.return_value = mock_user
+
+            response = await get_current_user_info(mock_request, mock_db)
+
+            assert response.email == "test@example.com"
+            assert response.full_name == "Test User"
+            assert response.is_active is True
+            assert response.is_admin is False
+            mock_get_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_info_unauthenticated(self):
+        """Test /auth/me with no authentication raises 401."""
+        from mcpgateway.routers.auth import get_current_user_info
+
+        mock_request = MagicMock()
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.auth.get_current_user", new_callable=AsyncMock) as mock_get_user:
+            mock_get_user.side_effect = HTTPException(status_code=401, detail="Authentication required")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user_info(mock_request, mock_db)
+
+            assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_info_with_cookie(self, mock_user):
+        """Test /auth/me works with cookie authentication."""
+        from mcpgateway.routers.auth import get_current_user_info
+
+        mock_request = MagicMock()
+        mock_request.cookies.get.return_value = "jwt_token_from_cookie"
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.auth.get_current_user", new_callable=AsyncMock) as mock_get_user:
+            mock_get_user.return_value = mock_user
+
+            response = await get_current_user_info(mock_request, mock_db)
+
+            assert response.email == "test@example.com"
+            mock_get_user.assert_called_once_with(request=mock_request)
+
+
 class TestLogout:
     """Tests for logout endpoint."""
 
@@ -351,9 +420,11 @@ class TestLogout:
     async def test_logout_clears_cookie(self):
         """Test logout clears httpOnly cookie."""
         mock_response = MagicMock()
+        mock_request = MagicMock()
+        mock_db = MagicMock()
 
         with patch("mcpgateway.routers.auth.clear_auth_cookie") as mock_clear_cookie:
-            result = await logout(mock_response)
+            result = await logout(mock_response, mock_request, mock_db)
 
             assert result is None
             mock_clear_cookie.assert_called_once_with(mock_response)

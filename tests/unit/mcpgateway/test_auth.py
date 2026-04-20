@@ -102,6 +102,87 @@ class TestGetCurrentUser:
         assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}
 
     @pytest.mark.asyncio
+    async def test_cookie_fallback_when_no_bearer_header(self):
+        """Test that jwt_token cookie is used when no Authorization header is present."""
+        # Mock request with cookie
+        mock_request = MagicMock()
+        mock_request.cookies.get.return_value = "cookie_jwt_token"
+        mock_request.state = SimpleNamespace()
+
+        jwt_payload = {
+            "sub": "cookie@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "cookie-jti-123",
+        }
+
+        mock_user = EmailUser(
+            email="cookie@example.com",
+            password_hash="hash",
+            full_name="Cookie User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                    user = await get_current_user(credentials=None, request=mock_request)
+
+                    assert user.email == "cookie@example.com"
+                    mock_request.cookies.get.assert_called_once_with("jwt_token")
+
+    @pytest.mark.asyncio
+    async def test_bearer_header_takes_precedence_over_cookie(self):
+        """Test that Authorization: Bearer header is used even when cookie is present."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="header_jwt_token")  # pragma: allowlist secret
+
+        # Mock request with cookie (should be ignored)
+        mock_request = MagicMock()
+        mock_request.cookies.get.return_value = "cookie_jwt_token"
+        mock_request.state = SimpleNamespace()
+
+        jwt_payload = {
+            "sub": "header@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "header-jti-123",
+        }
+
+        mock_user = EmailUser(
+            email="header@example.com",
+            password_hash="hash",
+            full_name="Header User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                    user = await get_current_user(credentials=credentials, request=mock_request)
+
+                    assert user.email == "header@example.com"
+                    # Cookie should not be checked when Bearer header is present
+                    mock_request.cookies.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_credentials_and_no_cookie_raises_401(self):
+        """Test that missing both credentials and cookie raises 401."""
+        mock_request = MagicMock()
+        mock_request.cookies.get.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(credentials=None, request=mock_request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Authentication required"
+
+    @pytest.mark.asyncio
     async def test_valid_jwt_token_returns_user(self):
         """Test successful authentication with valid JWT token."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
