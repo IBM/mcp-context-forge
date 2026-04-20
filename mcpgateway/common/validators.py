@@ -57,7 +57,7 @@ import re
 import shlex
 import socket
 from typing import Any, Dict, Iterable, List, Optional, Pattern
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 import uuid
 
 # First-Party
@@ -965,6 +965,9 @@ class SecurityValidator:
         if len(value) > cls.MAX_URL_LENGTH:
             raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
 
+        # Decode value for security checks
+        decoded_value = unquote(value)
+
         # Check allowed schemes
         allowed_schemes = cls.ALLOWED_URL_SCHEMES
         if not any(value.lower().startswith(scheme.lower()) for scheme in allowed_schemes):
@@ -972,7 +975,7 @@ class SecurityValidator:
 
         # Block dangerous URL patterns (uses precompiled regex list)
         for pattern in _DANGEROUS_URL_PATTERNS:
-            if pattern.search(value):
+            if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
         # Block IPv6 URLs (URLs with square brackets)
@@ -984,11 +987,11 @@ class SecurityValidator:
             raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
 
         # Check for CRLF injection
-        if "\r" in value or "\n" in value:
+        if "\r" in decoded_value or "\n" in decoded_value:
             raise ValueError(f"{field_name} contains line breaks which are not allowed")
 
         # Check for spaces in domain
-        if " " in value.split("?", maxsplit=1)[0]:  # Check only in the URL part, not query string
+        if " " in decoded_value.split("?", maxsplit=1)[0]:  # Check only in the URL part, not query string
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
         # Basic URL structure validation
@@ -1022,10 +1025,10 @@ class SecurityValidator:
                 raise ValueError(f"{field_name} contains credentials which are not allowed")
 
             # Check for XSS patterns in the entire URL
-            if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+            if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
 
-            if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
+            if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains script patterns that may cause security issues")
 
         except ValueError:
