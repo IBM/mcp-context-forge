@@ -12,7 +12,6 @@ and their hooks without repetitive code.
 """
 
 # Standard
-import importlib.util
 from typing import Any
 
 # Third-Party
@@ -36,14 +35,6 @@ from mcpgateway.plugins.framework import (
 )
 
 CONFIG_PATH = "./tests/unit/mcpgateway/plugins/fixtures/configs/init_hooks_plugins_test.yaml"
-
-
-def _module_available(kind: str) -> bool:
-    """Return whether the plugin's defining module is importable."""
-    if "." not in kind:
-        return True
-    module_name = kind.rsplit(".", 1)[0]
-    return importlib.util.find_spec(module_name) is not None
 
 
 # Hook type mapping from string to enum
@@ -111,8 +102,6 @@ def load_plugin_configs(include_disabled: bool = False) -> list[dict[str, Any]]:
     if not include_disabled:
         # Filter out disabled plugins
         plugins = [p for p in plugins if p.get("mode", "permissive") != "disabled"]
-
-    plugins = [p for p in plugins if _module_available(p.get("kind", ""))]
 
     return plugins
 
