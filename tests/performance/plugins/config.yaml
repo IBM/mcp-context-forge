@@ -44,7 +44,7 @@ plugins:
       day_first: false
       year_first: false
 
-  # Numbers
+      # Numbers
       enable_numbers: true
       decimal_detection: auto  # auto|comma|dot
 
