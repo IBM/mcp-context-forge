@@ -3919,7 +3919,28 @@ class ToolService(BaseService):
         # plugin invocation enforces the requirement locally with an actionable error.
         oauth_authcode_no_db_token = False
 
-        if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+        # Per-user personal credentials always take priority over
+        # gateway-level OAuth tokens.
+        user_credential_headers = None
+        if has_gateway and app_user_email and gateway_id_str:
+            try:
+                from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
+
+                with fresh_db_session() as cred_db:
+                    cred_service = CredentialStorageService(cred_db)
+                    cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
+                    if cred_record:
+                        cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
+                        if cred_value:
+                            user_credential_headers = CredentialStorageService.build_auth_headers(
+                                cred_record.credential_type, cred_value, gateway_auth_type
+                            )
+            except Exception as e:
+                logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
+
+        if user_credential_headers:
+            headers = user_credential_headers
+        elif has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
             grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
             if grant_type == "authorization_code":
                 try:
@@ -3957,28 +3978,8 @@ class ToolService(BaseService):
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
-            # Check for per-user personal credentials before falling back to shared gateway auth
-            user_credential_headers = None
-            if has_gateway and app_user_email and gateway_id_str:
-                try:
-                    from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
-
-                    with fresh_db_session() as cred_db:
-                        cred_service = CredentialStorageService(cred_db)
-                        cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
-                        if cred_record:
-                            cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
-                            if cred_value:
-                                user_credential_headers = CredentialStorageService.build_auth_headers(
-                                    cred_record.credential_type, cred_value, gateway_auth_type
-                                )
-                except Exception as e:
-                    logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
-
-            if user_credential_headers:
-                headers = user_credential_headers
-            else:
-                headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            # No per-user credentials and no OAuth — fall back to shared gateway auth
+            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
         if request_headers:
             headers = compute_passthrough_headers_cached(
@@ -5071,7 +5072,28 @@ class ToolService(BaseService):
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
-                    if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+                    # Per-user personal credentials always take priority over
+                    # gateway-level OAuth tokens.
+                    user_credential_headers = None
+                    if has_gateway and app_user_email and gateway_id_str:
+                        try:
+                            from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
+
+                            with fresh_db_session() as cred_db:
+                                cred_service = CredentialStorageService(cred_db)
+                                cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
+                                if cred_record:
+                                    cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
+                                    if cred_value:
+                                        user_credential_headers = CredentialStorageService.build_auth_headers(
+                                            cred_record.credential_type, cred_value, gateway_auth_type
+                                        )
+                        except Exception as e:
+                            logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
+
+                    if user_credential_headers:
+                        headers = user_credential_headers
+                    elif has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
@@ -5118,28 +5140,8 @@ class ToolService(BaseService):
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        # Check for per-user personal credentials before falling back to shared gateway auth
-                        user_credential_headers = None
-                        if has_gateway and app_user_email and gateway_id_str:
-                            try:
-                                from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
-
-                                with fresh_db_session() as cred_db:
-                                    cred_service = CredentialStorageService(cred_db)
-                                    cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
-                                    if cred_record:
-                                        cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
-                                        if cred_value:
-                                            user_credential_headers = CredentialStorageService.build_auth_headers(
-                                                cred_record.credential_type, cred_value, gateway_auth_type
-                                            )
-                            except Exception as e:
-                                logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
-
-                        if user_credential_headers:
-                            headers = user_credential_headers
-                        else:
-                            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        # No per-user credentials and no OAuth — fall back to shared gateway auth
+                        headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
