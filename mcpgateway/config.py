@@ -731,8 +731,8 @@ class Settings(BaseSettings):
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
-    max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
-    account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
+    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=60, description="Account lockout duration in minutes")
     account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
     failed_login_min_response_ms: int = Field(default=250, description="Minimum response duration for failed login attempts to reduce timing side channels")
 
