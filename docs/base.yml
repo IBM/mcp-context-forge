@@ -54,6 +54,10 @@ theme:
 
 # Extra links as icons at the bottom of the page
 extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/IBM/mcp-context-forge

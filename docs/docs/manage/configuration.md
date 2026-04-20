@@ -4,6 +4,56 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ---
 
+## ⚠️ New in 1.0.0-RC3
+
+**Breaking Changes:** Several security defaults have been strengthened in RC3. Review these changes before upgrading:
+
+### Changed Defaults
+
+| Variable | 0.9.x Default | 1.0.0-RC3 Default | Impact |
+|----------|---------------|-------------------|--------|
+| `SSRF_ALLOW_LOCALHOST` | `true` | `false` | Blocks connections to localhost/127.0.0.1 |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | `false` | Blocks RFC1918 private networks (10.x, 172.16.x, 192.168.x) |
+| `SSRF_DNS_FAIL_CLOSED` | `false` | `true` | Rejects requests when DNS resolution fails |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | `true` (implicit) | `false` | WebSocket relay disabled by default |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | `true` (implicit) | `false` | Reverse proxy disabled by default |
+| `PROTECT_ALL_ADMINS` | N/A | `true` | Prevents admin demotion/deactivation via API/UI |
+
+### New Variables
+
+**SSRF Protection:**
+- `SSRF_ALLOWED_NETWORKS` - Explicit CIDR allowlist when private networks are blocked
+
+**Transport Feature Flags:**
+- `MCPGATEWAY_WS_RELAY_ENABLED` - Must be explicitly enabled for WebSocket relay
+- `MCPGATEWAY_REVERSE_PROXY_ENABLED` - Must be explicitly enabled for reverse proxy
+
+**SSO/OAuth:**
+- `SSO_GENERIC_JWKS_URI` - JWKS endpoint for ID token signature verification
+- `SSO_KEYCLOAK_PUBLIC_BASE_URL` - Public-facing Keycloak URL for issuer mismatch fix
+
+**Team Governance:**
+- `ALLOW_TEAM_CREATION` - Control user ability to create organizational teams
+- `ALLOW_TEAM_JOIN_REQUESTS` - Control join request functionality
+- `ALLOW_TEAM_INVITATIONS` - Control team invitation functionality
+- `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` - Require email verification for invites
+- `PERSONAL_TEAM_PREFIX` - Customize personal team naming
+- `AUTO_CREATE_PERSONAL_TEAMS` - Control automatic personal team creation
+
+**Database Connection Pool:**
+- `DB_POOL_SIZE` - Connection pool size (default: 200)
+- `DB_MAX_OVERFLOW` - Extra connections beyond pool (default: 10)
+
+**Observability:**
+- `LANGFUSE_OTEL_ENDPOINT` - Langfuse OTLP/HTTP endpoint override
+- `LANGFUSE_PUBLIC_KEY` - Langfuse project public key
+- `LANGFUSE_SECRET_KEY` - Langfuse project secret key
+- `LANGFUSE_OTEL_AUTH` - Base64-encoded OTLP auth override
+
+**See Also:** [Upgrade Guide to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md) for detailed migration instructions.
+
+---
+
 ## 🔐 Required: Change Before Use
 
 These variables have insecure defaults and **must be changed** before production deployment:

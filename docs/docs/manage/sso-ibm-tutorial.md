@@ -366,6 +366,67 @@ curl https://[tenant-name].verify.ibm.com/oidc/endpoint/default/.well-known/open
 # Look for "issuer" field in response
 ```
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure IBM Security Verify's JWKS endpoint is accessible and properly configured
+
+The gateway cryptographically verifies ID token signatures using IBM Security Verify's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://[tenant-name].verify.ibm.com/oidc/endpoint/default/jwks
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Issuer Mismatch**
+
+The ID token's `iss` claim must exactly match your IBM Security Verify issuer:
+
+```bash
+# Check discovery endpoint for issuer
+curl https://[tenant-name].verify.ibm.com/oidc/endpoint/default/.well-known/openid-configuration | jq '.issuer'
+
+# Ensure exact match in configuration
+SSO_IBM_VERIFY_ISSUER=https://[tenant-name].verify.ibm.com/oidc/endpoint/default
+```
+
+**3. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and IBM Security Verify servers have synchronized clocks:
+
+```bash
+# Check time on gateway server
+date -u  # Should match actual UTC time
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**4. Custom Endpoint Configuration**
+
+If using a custom OIDC endpoint (not `/default`), ensure the issuer matches:
+
+```bash
+# Custom endpoint format: https://[tenant].verify.ibm.com/oidc/endpoint/[custom-name]
+# Verify in IBM Security Verify Admin Console:
+# Applications → Your App → Sign-on → Discovery endpoint
+```
+
+**5. Network/Proxy Issues**
+
+If the gateway is behind a corporate proxy or firewall:
+
+```bash
+# Ensure outbound HTTPS access to:
+# - https://[tenant-name].verify.ibm.com (issuer and JWKS)
+# - https://[tenant-name].verify.ibm.com/oidc/endpoint/default/jwks (JWKS endpoint)
+```
+
 ### MFA Not Working
 
 **Problem**: Multi-factor authentication not triggered

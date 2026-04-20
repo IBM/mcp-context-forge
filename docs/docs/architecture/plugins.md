@@ -260,6 +260,13 @@ The `conditions` array contains objects that specify when plugins should execute
 
 The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution.
 
+!!! warning "Breaking Change in 1.0.0-RC3"
+    Plugin condition evaluation logic changed from pure OR to hybrid AND/OR in version 1.0.0-RC3. If you're upgrading from 0.9.x, review your plugin configurations to ensure they work as expected with the new evaluation model.
+
+    **Migration Guide:** See [Plugin Condition Migration Guide](MIGRATION-PLUGIN-CONDITIONS.md) for detailed migration instructions and validation scripts.
+
+
+
 #### Evaluation Logic
 
 **Behavior:**
