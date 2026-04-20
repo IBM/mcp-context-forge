@@ -70,7 +70,6 @@ ITERATIONS = 1000  # Number of iterations per hook
 # These ship in the [plugins] extra; if any are missing, the perf script skips
 # cleanly rather than failing inside PluginManager initialization.
 REQUIRED_CPEX_PACKAGES = (
-    "cpex_pii_filter",
     "cpex_rate_limiter",
     "cpex_retry_with_backoff",
     "cpex_secrets_detection",

@@ -523,7 +523,6 @@ async def test_plugin_manager_async_concurrency():
         (
             "plugins/config.yaml",
             {
-                "PIIFilterPlugin",
                 "RateLimiterPlugin",
                 "URLReputationPlugin",
                 "RetryWithBackoffPlugin",
@@ -534,7 +533,6 @@ async def test_plugin_manager_async_concurrency():
         (
             "plugins/config-pii-guardian-policy.yaml",
             {
-                "PIIFilterPlugin",
                 "RateLimiterPlugin",
                 "URLReputationPlugin",
                 "RetryWithBackoffPlugin",
@@ -577,7 +575,6 @@ async def test_manager_initializes_packaged_plugins_from_shipped_configs(tmp_pat
         tool_post_refs = manager._registry.get_hook_refs_for_hook(ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
         resource_pre_refs = manager._registry.get_hook_refs_for_hook(ResourceHookType.RESOURCE_PRE_FETCH)  # pylint: disable=protected-access
 
-        assert "PIIFilterPlugin" in {ref.plugin_ref.name for ref in prompt_pre_refs}
         assert "RetryWithBackoffPlugin" in {ref.plugin_ref.name for ref in tool_post_refs}
         assert "EncodedExfilDetector" in {ref.plugin_ref.name for ref in tool_post_refs}
         assert "URLReputationPlugin" in {ref.plugin_ref.name for ref in resource_pre_refs}
