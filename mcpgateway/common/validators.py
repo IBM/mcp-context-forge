@@ -1391,13 +1391,13 @@ class SecurityValidator:
         # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
         ip_addresses: list = []
         try:
-            # Try to parse as IP address directly
-            ip_addresses = [ipaddress.ip_address(hostname)]
+            # Try to parse as IP address directly (use normalized hostname)
+            ip_addresses = [ipaddress.ip_address(hostname_normalized)]
         except ValueError:
             # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
             try:
-                # getaddrinfo returns all A/AAAA records
-                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                # getaddrinfo returns all A/AAAA records (use normalized hostname)
+                addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
                 for _, _, _, _, sockaddr in addr_info:
                     try:
                         ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
@@ -1450,6 +1450,65 @@ class SecurityValidator:
 
                     if not allowed_private:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+
+    @classmethod
+    def validate_host_allowlist(cls, hostname: str, allowed_patterns: List[str], field_name: str = "URL") -> None:
+        """Validate hostname against allowlist patterns.
+
+        Args:
+            hostname (str): Hostname to validate (e.g., "api.example.com")
+            allowed_patterns (List[str]): List of allowed patterns. Supports:
+                - Exact matches: "api.example.com"
+                - Wildcard subdomains: "*.example.com" matches "api.example.com", "test.example.com"
+                - Empty list: skip validation (no allowlist enforced)
+            field_name (str): Name of field being validated (for error messages)
+
+        Raises:
+            ValueError: If hostname doesn't match any allowed pattern
+
+        Examples:
+            Exact match:
+
+            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['api.example.com'])
+
+            Wildcard match:
+
+            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['*.example.com'])
+            >>> SecurityValidator.validate_host_allowlist('test.api.example.com', ['*.example.com'])
+
+            No match:
+
+            >>> SecurityValidator.validate_host_allowlist('evil.com', ['*.example.com'])
+            Traceback (most recent call last):
+                ...
+            ValueError: URL hostname 'evil.com' not in allowlist
+
+            Empty allowlist (always passes):
+
+            >>> SecurityValidator.validate_host_allowlist('any.host.com', [])
+        """
+        # Empty allowlist = no enforcement
+        if not allowed_patterns:
+            return
+
+        # Normalize hostname: lowercase, strip trailing dots
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        for pattern in allowed_patterns:
+            pattern_normalized = pattern.lower().rstrip(".")
+
+            # Exact match
+            if hostname_normalized == pattern_normalized:
+                return
+
+            # Wildcard subdomain match (*.example.com)
+            if pattern_normalized.startswith("*."):
+                base_domain = pattern_normalized[2:]  # Remove "*."
+                # Match if hostname ends with .base_domain or equals base_domain
+                if hostname_normalized == base_domain or hostname_normalized.endswith(f".{base_domain}"):
+                    return
+
+        raise ValueError(f"{field_name} hostname '{hostname}' not in allowlist")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

@@ -718,6 +718,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    gateway_test_allowed_hosts: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowlist of host patterns for the /admin/gateways/test endpoint. When non-empty, "
+            "only URLs matching these patterns are allowed. Patterns support wildcards (e.g., "
+            "'*.example.com', 'api.example.com'). Empty list = use standard SSRF blocking only. "
+            "Recommended: populate with approved gateway hostnames to prevent SSRF abuse."
+        ),
+    )
+
     # UAID Cross-Gateway Routing Security
     uaid_allowed_domains: List[str] = Field(
         default_factory=list,

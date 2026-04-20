@@ -2188,6 +2188,143 @@ class TestSensitiveLoggingRegressions:
         assert "Sensitive variable interpolation" in result.stderr
 
 
+class TestGatewayTestEndpointSecurity:
+    """Security tests for /admin/gateways/test endpoint (ICACF-15)."""
+
+    def test_trailing_dot_fqdn_normalization(self):
+        """Test that trailing-dot FQDN bypass is prevented via normalization."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Ensure SSRF protection is enabled and strict for this test
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            # Trailing dot should be normalized and matched against blocklist
+            blocked_with_trailing_dot = [
+                "http://metadata.google.internal./",
+                "http://169.254.169.254./",
+                "http://METADATA.GOOGLE.INTERNAL./",
+            ]
+
+            for url in blocked_with_trailing_dot:
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator.validate_url(url, "Gateway test URL")
+                assert "blocked" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                logger.debug(f"Trailing-dot URL blocked: {url}")
+
+    def test_allowlist_exact_match(self):
+        """Test allowlist validation with exact hostname match."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["api.example.com", "test.example.com"]
+
+        # Should pass
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("test.example.com", allowed_patterns)
+
+        # Should fail
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evil.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+    def test_allowlist_wildcard_match(self):
+        """Test allowlist validation with wildcard subdomain patterns."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["*.example.com"]
+
+        # Should pass - subdomains
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("test.api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+
+        # Should fail - different domain
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.org", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evilexample.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+    def test_allowlist_trailing_dot_normalization(self):
+        """Test that trailing dots are normalized in allowlist matching."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["api.example.com"]
+
+        # Trailing dot on hostname should be normalized and match
+        SecurityValidator.validate_host_allowlist("api.example.com.", allowed_patterns)
+
+        # Trailing dot on pattern should also work
+        allowed_patterns_with_dot = ["api.example.com."]
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns_with_dot)
+        SecurityValidator.validate_host_allowlist("api.example.com.", allowed_patterns_with_dot)
+
+    def test_allowlist_case_insensitive(self):
+        """Test that allowlist matching is case-insensitive."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["API.Example.COM"]
+
+        # Different cases should all match
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("Api.Example.Com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("API.EXAMPLE.COM", allowed_patterns)
+
+    def test_allowlist_empty_allows_all(self):
+        """Test that empty allowlist skips validation (backwards compatible)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        empty_allowlist = []
+
+        # Any hostname should pass with empty allowlist
+        SecurityValidator.validate_host_allowlist("any.host.com", empty_allowlist)
+        SecurityValidator.validate_host_allowlist("evil.com", empty_allowlist)
+        SecurityValidator.validate_host_allowlist("127.0.0.1", empty_allowlist)
+
+    def test_private_ips_blocked_unconditionally(self):
+        """Test that private IPs are blocked regardless of allowlist."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # RFC 1918 private ranges should be blocked by SSRF protection when configured
+        private_ips = [
+            "http://192.168.1.1/",
+            "http://10.0.0.1/",
+            "http://172.16.0.1/",
+        ]
+
+        # Ensure SSRF protection is enabled and private networks are blocked
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            with patch.object(settings, "ssrf_allow_private_networks", False):
+                for url in private_ips:
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url(url, "Gateway test URL")
+                    # Should be blocked by SSRF protection
+                    assert "private" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                    logger.debug(f"Private IP URL blocked: {url} - {exc_info.value}")
+
+    def test_loopback_blocked_unconditionally(self):
+        """Test that loopback addresses are blocked."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        loopback_urls = [
+            "http://127.0.0.1/",
+            "http://127.0.0.2/",
+            "http://localhost/",
+        ]
+
+        # Ensure SSRF protection is enabled and localhost is blocked
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            with patch.object(settings, "ssrf_allow_localhost", False):
+                for url in loopback_urls:
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url(url, "Gateway test URL")
+                    assert "localhost" in str(exc_info.value).lower() or "loopback" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                    logger.debug(f"Loopback URL blocked: {url} - {exc_info.value}")
+
+
 if __name__ == "__main__":
     # Run tests with pytest
     pytest.main([__file__, "-v", "--tb=short", "-s"])  # -s to see print statements

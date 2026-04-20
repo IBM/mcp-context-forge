@@ -14019,6 +14019,18 @@ async def admin_test_gateway(
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
+    # Enforce allowlist if configured
+    try:
+        from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+        parsed_url = urlparse(validated_base_url)
+        if parsed_url.hostname:
+            SecurityValidator.validate_host_allowlist(parsed_url.hostname, settings.gateway_test_allowed_hosts, "Gateway test URL")
+    except ValueError as e:
+        LOGGER.warning("Gateway test hostname not in allowlist for %s: %s", request.base_url, e)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+
     full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
     LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
