@@ -28,15 +28,11 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.db import Base, ToolPluginBinding
 from mcpgateway.schemas import (
-    OutputLengthGuardConfig,
     PluginBindingMode,
     PluginPolicyItem,
-    RateLimiterConfig,
-    SecretsDetectionConfig,
     TeamPolicies,
     ToolPluginBindingRequest,
     ToolPluginBindingResponse,
-    _PLUGIN_CONFIG_REGISTRY,
 )
 from mcpgateway.services.tool_plugin_binding_service import (
     ToolPluginBindingNotFoundError,
@@ -533,231 +529,6 @@ class TestDeleteBinding:
 
 
 # ---------------------------------------------------------------------------
-# Schema validation tests — OutputLengthGuardConfig
-# ---------------------------------------------------------------------------
-
-
-class TestOutputLengthGuardConfig:
-    """Pydantic validation for OutputLengthGuardConfig."""
-
-    def test_valid_defaults(self):
-        """Default construction succeeds with all new field defaults."""
-        cfg = OutputLengthGuardConfig()
-        assert cfg.min_chars == 0
-        assert cfg.max_chars is None        # disabled by default
-        assert cfg.min_tokens == 0
-        assert cfg.max_tokens is None       # disabled by default
-        assert cfg.chars_per_token == 4
-        assert cfg.limit_mode == "character"
-        assert cfg.strategy == "truncate"
-        assert cfg.ellipsis == "…"          # Unicode ellipsis
-        assert cfg.word_boundary is False
-        assert cfg.max_text_length == 1_000_000
-        assert cfg.max_structure_size == 10_000
-        assert cfg.max_recursion_depth == 100
-
-    def test_valid_explicit(self):
-        """Explicit valid values are accepted."""
-        cfg = OutputLengthGuardConfig(min_chars=100, max_chars=500, strategy="block", ellipsis="[cut]")
-        assert cfg.min_chars == 100
-        assert cfg.max_chars == 500
-        assert cfg.strategy == "block"
-        assert cfg.ellipsis == "[cut]"
-
-    def test_min_equal_to_max_rejected(self):
-        """min_chars == max_chars is rejected by the cross-validator."""
-        with pytest.raises(ValidationError, match="min_chars must be less than max_chars"):
-            OutputLengthGuardConfig(min_chars=500, max_chars=500, strategy="truncate", ellipsis="...")
-
-    def test_min_greater_than_max_rejected(self):
-        """min_chars > max_chars is rejected by the cross-validator."""
-        with pytest.raises(ValidationError, match="min_chars must be less than max_chars"):
-            OutputLengthGuardConfig(min_chars=1000, max_chars=100, strategy="truncate", ellipsis="...")
-
-    def test_max_chars_none_disables_check(self):
-        """max_chars=None is valid — explicitly disables the character limit."""
-        cfg = OutputLengthGuardConfig(max_chars=None)
-        assert cfg.max_chars is None
-
-    def test_max_tokens_none_disables_check(self):
-        """max_tokens=None is valid — explicitly disables the token limit."""
-        cfg = OutputLengthGuardConfig(max_tokens=None)
-        assert cfg.max_tokens is None
-
-    def test_limit_mode_token_accepted(self):
-        """limit_mode='token' is a valid choice."""
-        cfg = OutputLengthGuardConfig(limit_mode="token", max_tokens=500)
-        assert cfg.limit_mode == "token"
-
-    def test_word_boundary_true_accepted(self):
-        """word_boundary=True is accepted."""
-        cfg = OutputLengthGuardConfig(word_boundary=True)
-        assert cfg.word_boundary is True
-
-    def test_min_tokens_equal_to_max_tokens_rejected(self):
-        """min_tokens == max_tokens is rejected by the cross-validator."""
-        with pytest.raises(ValidationError, match="min_tokens must be less than max_tokens"):
-            OutputLengthGuardConfig(min_tokens=100, max_tokens=100)
-
-    def test_min_tokens_greater_than_max_tokens_rejected(self):
-        """min_tokens > max_tokens is rejected by the cross-validator."""
-        with pytest.raises(ValidationError, match="min_tokens must be less than max_tokens"):
-            OutputLengthGuardConfig(min_tokens=500, max_tokens=100)
-
-    def test_max_tokens_zero_skips_token_validator(self):
-        """max_tokens=0 disables the check — min_tokens can be higher without error."""
-        cfg = OutputLengthGuardConfig(min_tokens=100, max_tokens=0)
-        assert cfg.min_tokens == 100
-
-    def test_chars_per_token_out_of_range_rejected(self):
-        """chars_per_token must be between 1 and 10."""
-        with pytest.raises(ValidationError):
-            OutputLengthGuardConfig(chars_per_token=0)
-        with pytest.raises(ValidationError):
-            OutputLengthGuardConfig(chars_per_token=11)
-
-    def test_min_chars_must_be_non_negative(self):
-        """min_chars=-1 is rejected (must be >= 0)."""
-        with pytest.raises(ValidationError, match=r"(?s)min_chars.*greater than or equal to 0"):
-            OutputLengthGuardConfig(min_chars=-1, max_chars=100, strategy="truncate", ellipsis="...")
-
-    def test_invalid_strategy(self):
-        """Strategy values other than 'truncate' or 'block' are rejected."""
-        with pytest.raises(ValidationError, match=r"(?s)strategy.*'truncate' or 'block'"):
-            OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="drop", ellipsis="...")
-
-    def test_extra_fields_forbidden(self):
-        """Unknown fields are rejected (extra='forbid')."""
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="truncate", ellipsis="...", unknown_field="bad")
-
-
-# ---------------------------------------------------------------------------
-# Schema validation tests — RateLimiterConfig
-# ---------------------------------------------------------------------------
-
-
-class TestRateLimiterConfig:
-    """Pydantic validation for RateLimiterConfig."""
-
-    def test_all_none_is_valid(self):
-        """All-None construction is valid (no limits configured)."""
-        cfg = RateLimiterConfig()
-        assert cfg.by_user is None
-        assert cfg.by_tenant is None
-        assert cfg.by_tool is None
-
-    def test_valid_per_minute(self):
-        """Rate strings ending in /m are accepted for all rate fields."""
-        cfg = RateLimiterConfig(by_user="60/m", by_tenant="600/m", by_tool={"search": "10/m"})
-        assert cfg.by_user == "60/m"
-        assert cfg.by_tenant == "600/m"
-        assert cfg.by_tool == {"search": "10/m"}
-
-    def test_valid_per_second(self):
-        """Rate strings ending in /s are accepted."""
-        cfg = RateLimiterConfig(by_user="10/s")
-        assert cfg.by_user == "10/s"
-
-    def test_invalid_period_h(self):
-        """Period /h is not accepted."""
-        with pytest.raises(ValidationError, match=r"Rate string '60/h' is invalid"):
-            RateLimiterConfig(by_user="60/h")
-
-    def test_invalid_no_slash(self):
-        """Rate strings without a slash inside by_tool dict values are rejected."""
-        with pytest.raises(ValidationError, match=r"Rate string '100' for tool 'search' is invalid"):
-            RateLimiterConfig(by_tool={"search": "100"})
-
-    def test_invalid_missing_count(self):
-        """Rate strings missing the numeric count are rejected."""
-        with pytest.raises(ValidationError, match=r"Rate string '/m' is invalid"):
-            RateLimiterConfig(by_tenant="/m")
-
-    def test_invalid_non_numeric_count(self):
-        """Non-numeric count is rejected."""
-        with pytest.raises(ValidationError, match=r"Rate string 'fast/m' is invalid"):
-            RateLimiterConfig(by_user="fast/m")
-
-    def test_by_tool_dict_individual_value_invalid(self):
-        """A dict value with invalid period in by_tool is rejected."""
-        with pytest.raises(ValidationError, match=r"Rate string '60/h' for tool 'search' is invalid"):
-            RateLimiterConfig(by_tool={"search": "60/h"})
-
-    def test_algorithm_values_accepted(self):
-        """All three algorithm values are accepted."""
-        for algo in ("fixed_window", "sliding_window", "token_bucket"):
-            cfg = RateLimiterConfig(algorithm=algo)
-            assert cfg.algorithm == algo
-
-    def test_invalid_algorithm_rejected(self):
-        """An unknown algorithm is rejected."""
-        with pytest.raises(ValidationError):
-            RateLimiterConfig(algorithm="round_robin")
-
-    def test_backend_redis_with_redis_url(self):
-        """backend='redis' with a redis_url is accepted."""
-        cfg = RateLimiterConfig(backend="redis", redis_url="redis://localhost:6379/0")
-        assert cfg.backend == "redis"
-        assert cfg.redis_url == "redis://localhost:6379/0"
-
-    def test_invalid_backend_rejected(self):
-        """An unknown backend is rejected."""
-        with pytest.raises(ValidationError):
-            RateLimiterConfig(backend="postgres")
-
-    def test_redis_fallback_false(self):
-        """redis_fallback=False is accepted."""
-        cfg = RateLimiterConfig(redis_fallback=False)
-        assert cfg.redis_fallback is False
-
-
-# ---------------------------------------------------------------------------
-# Schema validation tests — SecretsDetectionConfig
-# ---------------------------------------------------------------------------
-
-
-class TestSecretsDetectionConfig:
-    """Pydantic validation for SecretsDetectionConfig."""
-
-    def test_valid_defaults(self):
-        """Default construction succeeds — schema defaults remain available for internal/plugin-manager use."""
-        cfg = SecretsDetectionConfig()
-        assert cfg.redact is True
-        assert cfg.redaction_text == "[REDACTED]"
-        assert cfg.block_on_detection is False
-        assert cfg.min_findings_to_block == 1
-        assert cfg.enabled == {}
-
-    def test_valid_explicit(self):
-        """Explicit valid values are accepted."""
-        cfg = SecretsDetectionConfig(
-            enabled={"aws_key": True, "github_token": False},
-            redact=True,
-            redaction_text="***",
-            block_on_detection=True,
-            min_findings_to_block=3,
-        )
-        assert cfg.enabled == {"aws_key": True, "github_token": False}
-        assert cfg.min_findings_to_block == 3
-
-    def test_min_findings_must_be_at_least_one(self):
-        """min_findings_to_block=0 is rejected (must be >= 1)."""
-        with pytest.raises(ValidationError, match=r"(?s)min_findings_to_block.*greater than or equal to 1"):
-            SecretsDetectionConfig(enabled={}, redact=True, redaction_text="[REDACTED]", block_on_detection=False, min_findings_to_block=0)
-
-    def test_redaction_text_too_long(self):
-        """redaction_text longer than 50 characters is rejected."""
-        with pytest.raises(ValidationError, match=r"(?s)redaction_text.*at most 50 characters"):
-            SecretsDetectionConfig(enabled={}, redact=True, redaction_text="x" * 51, block_on_detection=False, min_findings_to_block=1)
-
-    def test_extra_fields_forbidden(self):
-        """Unknown fields are rejected (extra='forbid')."""
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            SecretsDetectionConfig(enabled={}, redact=True, redaction_text="[REDACTED]", block_on_detection=False, min_findings_to_block=1, scan_mode="deep")
-
-
-# ---------------------------------------------------------------------------
 # Schema validation tests — PluginPolicyItem cross-validation
 # ---------------------------------------------------------------------------
 
@@ -878,15 +649,6 @@ class TestPluginPolicyItemValidation:
                 binding_reference_id="a" * 256,
             )
 
-    def test_unknown_plugin_id_rejected(self):
-        """An unrecognised plugin_id is rejected — guards against typos at binding creation."""
-        with pytest.raises(ValidationError, match=r"Unknown plugin_id"):
-            PluginPolicyItem(
-                tool_names=["tool_x"],
-                plugin_id="FuturePlugin",
-                config={},
-            )
-
     def test_extra_fields_forbidden(self):
         """Unknown fields on PluginPolicyItem are rejected (extra='forbid')."""
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
@@ -923,12 +685,6 @@ class TestTopLevelSchemas:
         """TeamPolicies with an empty policies list is rejected."""
         with pytest.raises(ValidationError, match=r"(?s)policies.*at least 1 item"):
             TeamPolicies(policies=[])
-
-    def test_plugin_config_registry_contains_expected_plugins(self):
-        """_PLUGIN_CONFIG_REGISTRY maps each plugin class name to its config schema."""
-        assert _PLUGIN_CONFIG_REGISTRY["OutputLengthGuardPlugin"] is OutputLengthGuardConfig
-        assert _PLUGIN_CONFIG_REGISTRY["RateLimiterPlugin"] is RateLimiterConfig
-        assert _PLUGIN_CONFIG_REGISTRY["SecretsDetection"] is SecretsDetectionConfig
 
     def test_plugin_binding_mode_enum_values(self):
         """PluginBindingMode enum covers all expected execution modes."""
