@@ -79,6 +79,14 @@ class SpanAttributeCustomizerPlugin(Plugin):
 
         return attributes
 
+    def _get_attribute_mapping(self) -> Dict[str, str]:
+        """Get attribute name mapping for renaming.
+
+        Returns:
+            Dictionary mapping old attribute names to new names.
+        """
+        return dict(self.cfg.attribute_mapping)
+
     def _evaluate_condition(self, condition: str, tool_name: Optional[str], context: PluginContext) -> bool:
         """Evaluate a condition expression.
 
@@ -164,14 +172,18 @@ class SpanAttributeCustomizerPlugin(Plugin):
         """
         custom_attrs = self._compute_attributes(payload.name, context)
         removal_list = self._get_removal_list(payload.name)
+        attribute_mapping = self._get_attribute_mapping()
 
         # Store in context for observability service
         context.global_context.state["custom_span_attributes"] = custom_attrs
         context.global_context.state["remove_span_attributes"] = removal_list
+        context.global_context.state["span_attribute_mapping"] = attribute_mapping
 
         logger.debug(f"Added {len(custom_attrs)} custom attributes for tool '{payload.name}'")
+        if attribute_mapping:
+            logger.debug(f"Configured {len(attribute_mapping)} attribute name mappings")
 
-        return ToolPreInvokeResult(metadata={"span_customizer": {"attributes_added": len(custom_attrs)}})
+        return ToolPreInvokeResult(metadata={"span_customizer": {"attributes_added": len(custom_attrs), "mappings_configured": len(attribute_mapping)}})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Add result-based attributes after tool execution.

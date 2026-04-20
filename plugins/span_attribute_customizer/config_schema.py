@@ -50,3 +50,9 @@ class SpanAttributeCustomizerConfig(BaseModel):
 
     # Global removal list
     remove_attributes: List[str] = Field(default_factory=list, description="Attributes to remove from all spans")
+
+    # Attribute name mapping (renaming)
+    attribute_mapping: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Map attribute names to new names (e.g., 'tool.name' -> 'controls.artifact.name')"
+    )

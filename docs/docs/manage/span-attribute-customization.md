@@ -4,13 +4,14 @@ The SpanAttributeCustomizer plugin allows you to customize OpenTelemetry span at
 
 ## Overview
 
-The plugin provides five core capabilities:
+The plugin provides six core capabilities:
 
-1. **Global Attributes** - Add attributes to all spans
-2. **Per-Tool Overrides** - Customize attributes for specific tools
-3. **Attribute Transformations** - Hash, uppercase, lowercase, or truncate values
-4. **Conditional Attributes** - Add attributes based on runtime conditions
-5. **Attribute Removal** - Remove sensitive attributes for privacy/compliance
+1. **Attribute Name Mapping** - Rename span attribute keys for compliance/standards
+2. **Global Attributes** - Add attributes to all spans
+3. **Per-Tool Overrides** - Customize attributes for specific tools
+4. **Attribute Transformations** - Hash, uppercase, lowercase, or truncate values
+5. **Conditional Attributes** - Add attributes based on runtime conditions
+6. **Attribute Removal** - Remove sensitive attributes for privacy/compliance
 
 ## Quick Start
 
@@ -47,6 +48,56 @@ make serve
 ```
 
 ## Configuration Options
+
+### Attribute Name Mapping
+
+Rename span attribute keys to match compliance or organizational standards:
+
+```yaml
+config:
+  attribute_mapping:
+    # Rename plugin span attributes
+    "plugin.name": "controls.artifact.name"
+    "plugin.uuid": "controls.artifact.id"
+    "plugin.mode": "controls.enforcement.mode"
+    "plugin.priority": "controls.execution.priority"
+    "plugin.timeout": "controls.execution.timeout"
+
+    # Rename tool span attributes
+    "tool.name": "service.component.name"
+    "tool.arguments": "service.component.inputs"
+```
+
+**Use Cases:**
+- **Compliance**: Match security/audit naming standards (e.g., NIST, ISO)
+- **Organizational Standards**: Align with internal naming conventions
+- **Multi-System Integration**: Normalize attributes across different observability platforms
+
+**How It Works:**
+1. Mapping is applied to ALL spans (tools, resources, plugins)
+2. Original attribute names are replaced with mapped names
+3. Unmapped attributes retain their original names
+4. Works alongside other features (custom attributes, removals, transformations)
+
+**Example Result:**
+
+Before mapping:
+```json
+{
+  "plugin.name": "PIIFilterPlugin",
+  "plugin.mode": "enforce",
+  "tool.name": "weather_api"
+}
+```
+
+After mapping:
+```json
+{
+  "controls.artifact.name": "PIIFilterPlugin",
+  "controls.enforcement.mode": "enforce",
+  "service.component.name": "weather_api"
+}
+```
 
 ### Global Attributes
 

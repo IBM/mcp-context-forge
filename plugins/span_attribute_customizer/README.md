@@ -8,6 +8,7 @@ This plugin allows you to customize span attributes at various lifecycle points 
 
 ## Features
 
+- **Attribute Name Mapping**: Rename span attribute keys for compliance/organizational standards
 - **Global Attributes**: Add attributes to all spans
 - **Per-Tool Overrides**: Customize attributes for specific tools
 - **Attribute Transformations**: Hash, uppercase, lowercase, or truncate attribute values
@@ -61,6 +62,44 @@ plugins:
 ```
 
 ## Configuration Options
+
+### Attribute Name Mapping
+
+Rename span attribute keys to match your compliance or organizational naming standards:
+
+```yaml
+attribute_mapping:
+  # Rename plugin span attributes
+  "plugin.name": "controls.artifact.name"
+  "plugin.uuid": "controls.artifact.id"
+  "plugin.mode": "controls.enforcement.mode"
+  "plugin.priority": "controls.execution.priority"
+
+  # Rename tool span attributes
+  "tool.name": "service.component.name"
+  "tool.arguments": "service.component.inputs"
+```
+
+**Key Points:**
+- Applies to ALL spans (tools, resources, plugins)
+- Original names are replaced with mapped names
+- Unmapped attributes keep their original names
+- Works alongside all other features
+
+**Example:**
+```yaml
+# Before mapping
+{
+  "plugin.name": "PIIFilter",
+  "plugin.mode": "enforce"
+}
+
+# After mapping
+{
+  "controls.artifact.name": "PIIFilter",
+  "controls.enforcement.mode": "enforce"
+}
+```
 
 ### Global Attributes
 
