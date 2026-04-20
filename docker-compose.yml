@@ -440,11 +440,18 @@ services:
       # - SSRF_DNS_FAIL_CLOSED=true
       # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16"]
 
-      # Uncomment to enable stateful sessions for Streamable HTTP transport
-      # - USE_STATEFUL_SESSIONS=true
+      # Required for the GET /mcp server-to-client SSE stream (ADR-052).
+      # Without this, GET /mcp returns 405 because the gateway has no event
+      # store to anchor a stream against.
+      - USE_STATEFUL_SESSIONS=true
 
-      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
-      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+      # Required for cross-worker routing in the multi-replica testing-up
+      # config. The GET stream itself doesn't need affinity (Pub/Sub fans out
+      # to any node), but the POST that carries a downstream's response to a
+      # server-initiated request must reach the worker holding the upstream
+      # RequestResponder — which is what affinity routes for. ADR-052 §
+      # "Why we skip affinity for GET" explains the asymmetry.
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
 
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true

@@ -31,7 +31,7 @@ from enum import Enum
 import logging
 import time
 from types import MappingProxyType
-from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, Protocol
 
 # Third-Party
 import anyio
@@ -71,26 +71,44 @@ HttpxClientFactory = Callable[
     httpx.AsyncClient,
 ]
 
-# Factory building a per-session MCP message handler. Optional; if absent, no
-# handler is wired and server-initiated messages will be dropped.
-MessageHandlerFactory = Callable[
-    [str, Optional[str]],  # (url, gateway_id)
-    Callable[
-        [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
-        Any,
-    ],
+# Type alias for the per-session message handler that the SDK ClientSession
+# calls into. Receives ServerNotification, ServerRequest responders, or Exceptions.
+MessageHandler = Callable[
+    [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+    Any,
 ]
+
+
+class MessageHandlerFactory(Protocol):
+    """Build a per-session MCP message handler.
+
+    Optional. If absent, no handler is wired and server-initiated messages
+    will be dropped. The ``downstream_session_id`` is keyword-only so any
+    future positional additions can't accidentally shuffle existing args.
+
+    The handler closure uses ``downstream_session_id`` to forward
+    server-initiated messages to the correct GET /mcp listener.
+    """
+
+    def __call__(
+        self,
+        url: str,
+        gateway_id: Optional[str],
+        *,
+        downstream_session_id: str,
+    ) -> MessageHandler:
+        """Build the per-session message handler. See class docstring."""
+
 
 # Factory for constructing an upstream MCP session.
 #
-# Return shape is ``(ClientSession, _unused)``. The second slot is vestigial —
-# the owner task attaches ``_cf_owner_task`` and ``_cf_shutdown_event`` onto
-# the ClientSession object itself, so ``_create_session()`` ignores the second
-# return value. Kept in the signature because (a) fake factories in the test
-# suite mirror the shape and (b) collapsing to a single return is a breaking
-# change for any downstream overrides — safe to do in the same commit that
-# replaces the attribute-smuggling convention with a typed handle (separate
-# follow-up).
+# Return shape is ``(ClientSession, _unused)``. The second slot is
+# vestigial — the owner task attaches ``_cf_owner_task`` and
+# ``_cf_shutdown_event`` onto the ClientSession object itself, so
+# ``_create_session()`` ignores the second return value. The shape is
+# kept stable here because fake factories in the test suite and any
+# downstream overrides mirror it. Issue #4344 tracks replacing the
+# attribute-smuggling with a typed handle and collapsing the tuple.
 #
 # Defaults to the real MCP transports; tests inject a fake so no network is
 # touched.
@@ -334,7 +352,11 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                 message_handler = None
                 if req.message_handler_factory is not None:
                     try:
-                        message_handler = req.message_handler_factory(req.url, req.gateway_id)
+                        message_handler = req.message_handler_factory(
+                            req.url,
+                            req.gateway_id,
+                            downstream_session_id=req.downstream_session_id,
+                        )
                     except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
                         logger.warning(
                             "Failed to build message handler for %s: %s",

@@ -6,20 +6,26 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
 Description:
-    MCP Notification Service for handling server notifications with debounced
-    gateway refresh. Provides centralized notification handling for MCP sessions
-    including tools/list_changed, resources/list_changed, and prompts/list_changed.
+    Centralized handler for MCP server-to-gateway notifications AND the
+    server-to-client fanout surface introduced by ADR-052 (GET /mcp stream).
+    Connects upstream ``ClientSession`` message-handler callbacks to the
+    per-session event bus and to the worker-local request-correlation dict
+    that lets downstream POSTs resolve held ``RequestResponder`` instances.
 
-    Key Features:
-    - Debounced refresh to prevent notification storms
-    - Flag merging during debounce (notifications within window merge their refresh flags)
-    - Per-gateway refresh locking to prevent concurrent refresh races
-    - Per-gateway refresh tracking with capability awareness
-    - Compatible with SessionAffinity for pooled session notification handling
-    - Per-gateway session isolation ensures correct notification attribution
-    - Supports tools, resources, and prompts list_changed notifications
-
-    Capable of handling other tasks as well like cancellation, progress notifications, etc. (to be implemented here)
+    Responsibilities:
+    - Debounced gateway refresh triggered by ``tools/resources/prompts
+      list_changed`` notifications (with flag merging during the debounce
+      window, per-gateway refresh lock, capability-aware filtering).
+    - ``ServerNotification`` fanout to the GET /mcp event bus so
+      downstream clients on the SSE stream see the notification.
+    - ``ServerRequest`` correlation (``_forward_request_to_stream`` +
+      ``complete_request``) for sampling / elicitation / roots-list —
+      registers the responder under ``(session_id, request_id)``, spawns
+      a holder task, publishes the envelope, and waits for a downstream
+      POST to resolve it. Timeout is per-task via ``wait_for``; there is
+      no background sweeper.
+    - Bounded ``shutdown`` that drains holder tasks within a configurable
+      timeout and cancels any stragglers.
 
 Usage:
     ```python
@@ -96,6 +102,37 @@ class GatewayCapabilities:
     tools_list_changed: bool = False
     resources_list_changed: bool = False
     prompts_list_changed: bool = False
+
+
+def _record_publish_failure(
+    downstream_session_id: str,
+    request_id: str,
+    *,
+    reason: str,
+    exc: BaseException,
+    counter: Any,
+) -> None:
+    """Increment the publish-failure counter and log the failure at the correct level.
+
+    Shared between ``_forward_request_to_stream`` (request fanout) and
+    ``_forward_notification_to_stream`` (notification fanout) so a
+    sustained Redis outage moves both metrics identically and
+    operators get the same traceback treatment regardless of which
+    publish path fired.
+    """
+    try:
+        counter.labels(reason=reason).inc()
+    except Exception as metric_exc:  # noqa: BLE001 — metric failures must not crash the publish path
+        logger.debug("publish-failed counter raised: %s", metric_exc)
+    log_method = logger.warning if reason == "backend_unavailable" else logger.error
+    log_method(
+        "Failed to publish server-initiated message %s/%s (%s): %s — cancelling responder",
+        downstream_session_id,
+        request_id,
+        reason,
+        exc,
+        exc_info=exc if reason == "transport_error" else None,
+    )
 
 
 def _empty_notification_type_set() -> Set[NotificationType]:
@@ -193,6 +230,19 @@ class NotificationService:
         self._refreshes_triggered = 0
         self._refreshes_failed = 0
 
+        # Server-initiated request correlation (ADR-052). Worker-local: the
+        # POST carrying the response is affinity-routed to the worker that
+        # holds the upstream RequestResponder, so a process-local dict is
+        # sufficient — no Redis dispatch table needed. Key:
+        # (downstream_session_id, request_id). Value: future the holder task
+        # awaits; the response payload is set when the downstream POST lands.
+        self._pending_requests: Dict[tuple[str, str], asyncio.Future[Any]] = {}
+        self._pending_lock = asyncio.Lock()
+        self._pending_request_ttl_seconds: float = 60.0
+        self._pending_holder_tasks: Set[asyncio.Task[None]] = set()
+        # Bounded shutdown drain — see shutdown() docstring rationale.
+        self._shutdown_drain_timeout_seconds: float = 5.0
+
     async def initialize(self, gateway_service: Optional["GatewayService"] = None) -> None:
         """Initialize the notification service and start background worker.
 
@@ -214,6 +264,15 @@ class NotificationService:
         if gateway_service:
             self._gateway_service = gateway_service
 
+        # Idempotent: two init paths can call this — `main.lifespan` runs
+        # it once for the single-node case, and (when affinity is on)
+        # `start_affinity_notification_service` re-runs it later with the
+        # gateway_service set. Refresh the reference but don't double-spawn
+        # the worker — that would leak the first task and produce duplicate refreshes.
+        if self._worker_task is not None and not self._worker_task.done():
+            logger.debug("NotificationService already initialized; refreshing gateway_service ref only")
+            return
+
         self._shutdown_event.clear()
         self._worker_task = asyncio.create_task(self._process_refresh_queue())
         logger.info("NotificationService initialized with debounce=%ss", self.debounce_seconds)
@@ -232,8 +291,44 @@ class NotificationService:
         """
         self._gateway_service = gateway_service
 
+    @staticmethod
+    async def _safe_cancel(
+        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+        downstream_session_id: str,
+        request_id: str,
+    ) -> None:
+        """Wrap ``responder.cancel()`` so its exceptions never escape the holder task.
+
+        ``RequestResponder.cancel()`` sends a cancellation *error response*
+        back through the upstream session (``ErrorData(code=0,
+        message="Request cancelled")``, not a JSON-RPC notification) and
+        can raise on a broken transport (``BrokenResourceError``,
+        ``ClosedResourceError``, etc). If those exceptions escape, the
+        holder-task done-callback logs them as a generic
+        ``exited with exception`` line — losing the cancel-vs-respond
+        context that an operator needs to tell "downstream never
+        responded" apart from "upstream session already torn down".
+        Catching and logging here produces a specific cancel-site log
+        line and lets the holder task finish its normal return path.
+        """
+        try:
+            await responder.cancel()
+        except Exception as exc:  # noqa: BLE001 — by design; logged + swallowed
+            logger.warning(
+                "responder.cancel() raised for %s/%s: %s",
+                downstream_session_id,
+                request_id,
+                exc,
+            )
+
     async def shutdown(self) -> None:
         """Shutdown the notification service and cleanup resources.
+
+        Cancels the refresh-queue worker AND any in-flight server-initiated
+        request holder tasks (ADR-052). Without the holder cleanup, every
+        held responder would sit in ``wait_for(60s)`` past process shutdown,
+        keeping the upstream MCP session's responder context manager alive
+        and leaking tasks.
 
         Example:
             >>> import asyncio
@@ -254,6 +349,36 @@ class NotificationService:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+
+        # Cancel and drain holder tasks. Snapshot the set first because each
+        # task's done-callback mutates `_pending_holder_tasks` on completion.
+        # Bounded wait — each holder's ``responder.__exit__`` sends a
+        # cancellation notification through the upstream session, which is
+        # the very thing that may be hung. Don't block shutdown forever.
+        holders = list(self._pending_holder_tasks)
+        for task in holders:
+            task.cancel()
+        if holders:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*holders, return_exceptions=True),
+                    timeout=self._shutdown_drain_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "NotificationService.shutdown: %d holder tasks did not drain within %ss; abandoning",
+                    sum(1 for t in holders if not t.done()),
+                    self._shutdown_drain_timeout_seconds,
+                )
+        self._pending_holder_tasks.clear()
+
+        # Drop any remaining pending entries so a late `complete_request`
+        # call after shutdown doesn't hang on a future nobody is awaiting.
+        async with self._pending_lock:
+            for key, future in list(self._pending_requests.items()):
+                if not future.done():
+                    future.cancel()
+                self._pending_requests.pop(key, None)
 
         self._gateway_capabilities.clear()
         self._last_refresh_enqueued.clear()
@@ -346,15 +471,24 @@ class NotificationService:
         self,
         gateway_id: str,
         gateway_url: Optional[str] = None,
+        *,
+        downstream_session_id: Optional[str] = None,
     ) -> MessageHandlerCallback:
         """Create a message handler callback for a specific gateway.
 
         Returns a callback suitable for passing to ClientSession's message_handler
-        parameter. The handler routes notifications to this service for processing.
+        parameter. The handler routes notifications to this service for processing
+        AND, when ``downstream_session_id`` is provided, forwards
+        ``ServerNotification`` envelopes to the GET /mcp listener for that
+        session via the server event bus (ADR-052).
 
         Args:
             gateway_id: The gateway ID this handler is for.
             gateway_url: Optional URL for logging context.
+            downstream_session_id: Downstream MCP session id (the
+                ``Mcp-Session-Id`` from the client). When provided,
+                server-initiated notifications are published to the GET
+                stream for this session.
 
         Returns:
             Async callable suitable for ClientSession message_handler.
@@ -374,14 +508,479 @@ class NotificationService:
             Args:
                 message: The message received from the server.
             """
-            # Only process ServerNotification objects
             if isinstance(message, mcp_types.ServerNotification):
+                # Internal handling: list-changed → debounced refresh.
                 await self._handle_notification(gateway_id, message, gateway_url)
+                # Spec-defined fanout: forward the envelope to the GET /mcp
+                # listener for this downstream session, if a listener exists.
+                if downstream_session_id is not None:
+                    await self._forward_notification_to_stream(downstream_session_id, message)
+            elif isinstance(message, RequestResponder):
+                if downstream_session_id is not None:
+                    await self._forward_request_to_stream(downstream_session_id, message)
+                # If no downstream session is wired the responder will be
+                # auto-cancelled when the message handler returns and the SDK
+                # cleans up; we deliberately do nothing in that path.
             elif isinstance(message, Exception):
                 logger.warning("Received exception from MCP server %s: %s", gateway_id, message)
-            # RequestResponder messages are handled by the session itself
 
         return message_handler
+
+    async def _forward_request_to_stream(
+        self,
+        downstream_session_id: str,
+        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+    ) -> None:
+        """Forward a server-initiated request to the GET /mcp listener and hold the responder.
+
+        We register a future in the worker-local pending dict, publish the
+        JSON-RPC request envelope on the event bus, and spawn a holder task
+        that enters the responder's context manager and awaits the future.
+        When the downstream client POSTs back the response, ``complete_request``
+        sets the future and the holder relays it to the responder.
+
+        Failure to forward (no event bus, no listener, etc.) cancels the
+        responder so the upstream session sees a clean error rather than
+        hanging.
+
+        Args:
+            downstream_session_id: Target downstream MCP session id.
+            responder: The SDK ``RequestResponder`` to hold open until the
+                downstream client replies.
+        """
+        try:
+            # First-Party
+            from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
+            from mcp.types import JSONRPCMessage, JSONRPCRequest  # pylint: disable=import-outside-toplevel
+        except ImportError as exc:  # pragma: no cover
+            logger.debug("Server event bus unavailable, cancelling responder: %s", exc)
+            with responder:
+                await responder.cancel()
+            return
+
+        # Third-Party
+        from pydantic import ValidationError  # pylint: disable=import-outside-toplevel
+
+        request_id = str(responder.request_id)
+        # Build the JSON-RPC request envelope from the SDK's typed request.
+        # The narrow catch lets shape-drift bugs (AttributeError when
+        # ``responder.request`` loses ``root``, ValidationError from
+        # ``model_dump``, TypeError from a typed-args mismatch) surface
+        # with a traceback instead of being smuggled into a generic
+        # warning. ``exc_info`` preserves the stack — operators chasing
+        # "envelope build failed" otherwise have nothing to file a bug
+        # against.
+        try:
+            inner = responder.request.root if hasattr(responder.request, "root") else responder.request
+            payload = inner.model_dump(by_alias=True, exclude_none=True)
+        except (AttributeError, ValidationError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failed to build request payload for %s/%s: %s",
+                downstream_session_id,
+                request_id,
+                exc,
+                exc_info=exc,
+            )
+            with responder:
+                await responder.cancel()
+            return
+        # JSON-RPC requires a non-empty ``method``. Defense-in-depth:
+        # if upstream ever hands us a request without one, log and
+        # cancel rather than publishing a malformed wire frame.
+        method = payload.get("method")
+        if not isinstance(method, str) or not method:
+            logger.warning(
+                "Refusing to publish server-initiated request %s/%s with empty method (payload shape: %r)",
+                downstream_session_id,
+                request_id,
+                sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+            )
+            with responder:
+                await responder.cancel()
+            return
+        envelope = JSONRPCMessage(
+            JSONRPCRequest(
+                jsonrpc="2.0",
+                id=responder.request_id,
+                method=method,
+                params=payload.get("params"),
+            )
+        )
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        key = (downstream_session_id, request_id)
+
+        # Order: register pending → spawn holder → publish (with cleanup
+        # on failure). The reverse order (publish first) loses fast
+        # downstream responses in multi-node: node A publishes, the
+        # listener on node B delivers to the client, the client POSTs the
+        # response back, and node A's complete_request finds an empty
+        # pending dict because the register hadn't happened yet. With
+        # this order, complete_request can match the response as soon as
+        # it arrives. The holder uses ``wait_for(future)`` and tolerates
+        # being cancelled by the publish-failure cleanup below — that
+        # race is benign (just one extra cancel call).
+        async with self._pending_lock:
+            # Upstream is supposed to issue unique JSON-RPC ids per session,
+            # but we've seen reuse occur during reconnect / recovery. When
+            # it does, the prior in-flight request gets silently cancelled
+            # by this defensive replace — log loudly so the protocol
+            # violation has a forensic trail (operators looking at timed-out
+            # responder errors otherwise have no way to tell "downstream
+            # never replied" apart from "we cancelled it because of id reuse").
+            existing = self._pending_requests.pop(key, None)
+            if existing is not None and not existing.done():
+                logger.warning(
+                    "Server-initiated request id collision for %s/%s — upstream reused id; cancelling prior pending future (likely an upstream protocol violation)",
+                    downstream_session_id,
+                    request_id,
+                )
+                existing.cancel()
+            self._pending_requests[key] = future
+
+        async def hold() -> None:
+            """Hold the responder open until ``future`` resolves or the TTL elapses."""
+            primary_exc: Optional[BaseException] = None
+            try:
+                try:
+                    with responder:
+                        try:
+                            response_payload = await asyncio.wait_for(
+                                future,
+                                timeout=self._pending_request_ttl_seconds,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.info(
+                                "Server-initiated request %s/%s timed out; cancelling",
+                                downstream_session_id,
+                                request_id,
+                            )
+                            await self._safe_cancel(responder, downstream_session_id, request_id)
+                            return
+                        except asyncio.CancelledError as exc:
+                            # Track the primary failure so we can detect
+                            # if responder.__exit__ shadows it on the way
+                            # out. Without this, the done-callback would
+                            # log the wrong cause and operators would
+                            # chase a teardown error instead of the real
+                            # cancellation.
+                            primary_exc = exc
+                            await self._safe_cancel(responder, downstream_session_id, request_id)
+                            raise
+                        try:
+                            await self._respond_with_payload(responder, response_payload)
+                        except Exception as respond_exc:  # noqa: BLE001 — surface the failure, don't crash the task silently
+                            logger.warning(
+                                "responder.respond() raised for %s/%s: %s",
+                                downstream_session_id,
+                                request_id,
+                                respond_exc,
+                            )
+                except BaseException as exc:
+                    if primary_exc is not None and exc is not primary_exc:
+                        logger.warning(
+                            "responder.__exit__ raised %s for %s/%s, shadowing primary %s — operator should investigate teardown failure",
+                            type(exc).__name__,
+                            downstream_session_id,
+                            request_id,
+                            type(primary_exc).__name__,
+                        )
+                    raise
+            finally:
+                async with self._pending_lock:
+                    if self._pending_requests.get(key) is future:
+                        self._pending_requests.pop(key, None)
+
+        def _on_holder_done(t: "asyncio.Task[None]") -> None:
+            """Discard the holder task and log any exception that escaped.
+
+            asyncio's "Task exception was never retrieved" warning at GC
+            time is unreliable; this captures the failure into the
+            standard logger immediately.
+            """
+            self._pending_holder_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.warning(
+                    "Request-holder task for %s/%s exited with exception: %s",
+                    downstream_session_id,
+                    request_id,
+                    exc,
+                    exc_info=exc,
+                )
+
+        task = asyncio.create_task(hold(), name=f"request-holder:{downstream_session_id[:8]}:{request_id}")
+        self._pending_holder_tasks.add(task)
+        task.add_done_callback(_on_holder_done)
+
+        # Separate try blocks for the two distinct failure modes:
+        #
+        #   (a) ``get_server_event_bus()`` — bus singleton construction
+        #       or config resolution. A RuntimeError or BusBackendError
+        #       here is expected when Redis is unavailable; anything
+        #       else is a programming error and should propagate with a
+        #       traceback in the done-callback rather than being
+        #       bucketed as a publish failure.
+        #
+        #   (b) ``bus.publish()`` — the actual wire call. Typed
+        #       ``BusBackendError`` is a retryable Redis outage;
+        #       ``ConnectionError`` / ``OSError`` are transient
+        #       transport failures. Narrow both so real bugs in the
+        #       publish path propagate instead of being classified as
+        #       "transport_error".
+        # First-Party
+        from mcpgateway.services.metrics import server_event_bus_publish_failed_counter  # pylint: disable=import-outside-toplevel
+        from mcpgateway.transports.server_event_bus import BusBackendError  # pylint: disable=import-outside-toplevel
+
+        try:
+            bus = await get_server_event_bus()
+        except (RuntimeError, BusBackendError) as exc:
+            _record_publish_failure(
+                downstream_session_id,
+                request_id,
+                reason="backend_unavailable",
+                exc=exc,
+                counter=server_event_bus_publish_failed_counter,
+            )
+            if not future.done():
+                future.cancel()
+            return
+        try:
+            await bus.publish(downstream_session_id, envelope)
+        except (BusBackendError, ConnectionError, OSError) as exc:
+            reason = "backend_unavailable" if isinstance(exc, BusBackendError) else "transport_error"
+            _record_publish_failure(
+                downstream_session_id,
+                request_id,
+                reason=reason,
+                exc=exc,
+                counter=server_event_bus_publish_failed_counter,
+            )
+            if not future.done():
+                future.cancel()
+
+    @staticmethod
+    async def _respond_with_payload(
+        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+        payload: Dict[str, Any],
+    ) -> None:
+        """Translate a downstream JSON-RPC response payload into ``responder.respond()``.
+
+        Args:
+            responder: The held SDK responder.
+            payload: Parsed JSON-RPC envelope from the downstream POST.
+        """
+        # Third-Party
+        from pydantic import ValidationError  # pylint: disable=import-outside-toplevel
+
+        if "error" in payload and payload["error"] is not None:
+            try:
+                error = mcp_types.ErrorData.model_validate(payload["error"])
+            except ValidationError as exc:
+                # Substituting INTERNAL_ERROR silently strips the original
+                # error context — operators would only see a generic
+                # message and have no way to trace what the downstream
+                # actually said. Log at warning + include the raw payload
+                # at debug so the trail isn't lost.
+                logger.warning(
+                    "Downstream error payload failed validation; substituting INTERNAL_ERROR: %s",
+                    exc,
+                )
+                logger.debug("Original error payload: %r", payload.get("error"))
+                error = mcp_types.ErrorData(
+                    code=mcp_types.INTERNAL_ERROR,
+                    message="Malformed error from downstream",
+                    data=None,
+                )
+            await responder.respond(error)
+            return
+        try:
+            result = mcp_types.ClientResult.model_validate(payload.get("result") or {})
+        except ValidationError as exc:
+            logger.warning("Could not validate downstream result, sending error: %s", exc)
+            await responder.respond(
+                mcp_types.ErrorData(
+                    code=mcp_types.INTERNAL_ERROR,
+                    message=f"Downstream returned an unrecognized result: {exc}",
+                    data=None,
+                )
+            )
+            return
+        await responder.respond(result)
+
+    def has_pending_request(self, downstream_session_id: str) -> bool:
+        """Return True if any server-initiated request is awaiting a response.
+
+        Cheap O(n) scan over a dict that is normally empty or has a handful
+        of entries — used by the POST handler to decide whether to peek at
+        the request body for response interception. No lock taken: stale
+        reads are acceptable here. A stale-missing entry (returns ``False``
+        when one was just registered) means the POST falls through to the
+        SDK; the held responder TTLs out and the client retries — no data
+        loss. A stale-present entry (returns ``True`` when no entry
+        actually matches by id) costs one wasted body-buffer plus an SDK
+        replay, with no functional harm.
+
+        Args:
+            downstream_session_id: The session whose pending requests are
+                being checked.
+
+        Returns:
+            True if there is at least one pending server-initiated request
+            for this session.
+        """
+        # Snapshot via tuple() so a concurrent _forward_request_to_stream /
+        # complete_request / shutdown that mutates the dict during our
+        # scan can't trigger ``RuntimeError: dictionary changed size
+        # during iteration``. The docstring above commits to lock-free
+        # reads; this is the cheapest way to keep that promise honest
+        # for the dict's typical "handful of entries" size.
+        return any(sid == downstream_session_id for sid, _ in tuple(self._pending_requests))
+
+    async def complete_request(
+        self,
+        downstream_session_id: str,
+        request_id: str,
+        payload: Dict[str, Any],
+    ) -> bool:
+        """Resolve a held server-initiated request with the downstream's response payload.
+
+        Args:
+            downstream_session_id: The session the response arrived on.
+            request_id: JSON-RPC id of the response.
+            payload: Full JSON-RPC envelope (must include ``result`` or
+                ``error``).
+
+        Returns:
+            True if a held request was matched and its future resolved,
+            False otherwise (the POST handler then falls through to the
+            normal SDK path).
+        """
+        key = (downstream_session_id, str(request_id))
+        async with self._pending_lock:
+            future = self._pending_requests.get(key)
+            if future is None:
+                # No holder for this id — common case (downstream
+                # responded after the holder TTL'd, or the id never had
+                # a holder because the request was dispatched the
+                # legacy SDK way).
+                logger.debug(
+                    "complete_request: no pending holder for %s/%s",
+                    downstream_session_id,
+                    request_id,
+                )
+                return False
+            if future.done():
+                # done() covers "already resolved" and "cancelled by
+                # shutdown between the get() and our set_result()". We
+                # check inside the lock so concurrent shutdown can't
+                # cancel between this check and the set_result below.
+                # Distinct from the no-holder case because the SDK
+                # fall-through here will 4xx/5xx with no responder
+                # waiting; operators chasing those errors need the
+                # breadcrumb to tie them back to the cancelled holder.
+                logger.debug(
+                    "complete_request: holder for %s/%s already done (cancelled by shutdown or duplicate response); SDK fall-through will surface as 4xx",
+                    downstream_session_id,
+                    request_id,
+                )
+                return False
+            future.set_result(payload)
+        return True
+
+    async def _forward_notification_to_stream(
+        self,
+        downstream_session_id: str,
+        notification: mcp_types.ServerNotification,
+    ) -> None:
+        """Publish a server-initiated notification to the GET /mcp event bus.
+
+        Failure here must not break upstream message processing — the bus is
+        best-effort delivery, not a transactional path. We log at debug
+        level when no listener is wired (common during tests / single-process
+        boot before the bus singleton is created).
+
+        Args:
+            downstream_session_id: Target downstream session id.
+            notification: The ServerNotification envelope from the upstream
+                MCP session.
+        """
+        try:
+            # First-Party
+            from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
+            from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
+        except ImportError as exc:  # pragma: no cover — dependency presence is invariant in this codebase
+            logger.debug("Server event bus unavailable, dropping notification: %s", exc)
+            return
+        # Third-Party
+        from pydantic import ValidationError  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.services.metrics import server_event_bus_publish_failed_counter  # pylint: disable=import-outside-toplevel
+        from mcpgateway.transports.server_event_bus import BusBackendError  # pylint: disable=import-outside-toplevel
+
+        # Envelope-build first (narrow catch) so shape-drift bugs surface
+        # with a traceback rather than being bucketed as a publish
+        # failure.
+        try:
+            # ServerNotification.root is the underlying typed notification
+            # (e.g. ToolsListChangedNotification). We re-wrap as a
+            # JSON-RPC envelope so the SSE listener can serialize it
+            # without knowing about MCP's typed-union shape.
+            inner = notification.root
+            payload = inner.model_dump(by_alias=True, exclude_none=True)
+        except (AttributeError, ValidationError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failed to build notification payload for %s: %s",
+                downstream_session_id,
+                exc,
+                exc_info=exc,
+            )
+            return
+        method = payload.get("method")
+        if not isinstance(method, str) or not method:
+            # Defense-in-depth: publishing a notification with an empty
+            # ``method`` would put a malformed JSON-RPC frame on the wire.
+            logger.warning(
+                "Refusing to publish server-initiated notification to %s with empty method (payload shape: %r)",
+                downstream_session_id,
+                sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+            )
+            return
+        envelope = JSONRPCMessage(
+            JSONRPCNotification(
+                jsonrpc="2.0",
+                method=method,
+                params=payload.get("params"),
+            )
+        )
+        # Separate try for bus-get vs publish so a ``get_server_event_bus``
+        # programming bug doesn't get bucketed as ``transport_error``.
+        try:
+            bus = await get_server_event_bus()
+        except (RuntimeError, BusBackendError) as exc:
+            _record_publish_failure(
+                downstream_session_id,
+                f"notif/{method}",
+                reason="backend_unavailable",
+                exc=exc,
+                counter=server_event_bus_publish_failed_counter,
+            )
+            return
+        try:
+            await bus.publish(downstream_session_id, envelope)
+        except (BusBackendError, ConnectionError, OSError) as exc:
+            reason = "backend_unavailable" if isinstance(exc, BusBackendError) else "transport_error"
+            _record_publish_failure(
+                downstream_session_id,
+                f"notif/{method}",
+                reason=reason,
+                exc=exc,
+                counter=server_event_bus_publish_failed_counter,
+            )
 
     async def _handle_notification(
         self,
