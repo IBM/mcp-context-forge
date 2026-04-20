@@ -348,7 +348,7 @@ check-env-dev:
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
-        js-build install
+        js-build
 
 ## --- JS build ----------------------------------------------------------------
 js-build:                        ## Install npm dependencies and build JS bundle with Vite
@@ -359,7 +359,7 @@ js-build:                        ## Install npm dependencies and build JS bundle
 	fi
 
 ## --- Primary servers ---------------------------------------------------------
-serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
+serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
