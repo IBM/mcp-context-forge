@@ -2202,27 +2202,32 @@ class A2AAgentService(BaseService):
             except Exception as parse_error:
                 raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
 
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Fail-closed domain allowlist enforcement
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Cross-gateway routing MUST be explicitly authorized via UAID_ALLOWED_DOMAINS.
+            # Empty/None allowlist means "no destinations are trusted" → block all routing.
+            # This fail-closed design prevents accidental exposure via misconfiguration.
+            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if not allowed_domains:
+                raise ValueError(
+                    f"Cross-gateway routing blocked for security: UAID_ALLOWED_DOMAINS is empty. "
+                    f"Cannot route to {endpoint!r} without explicit domain allowlist. "
+                    f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains."
+                )
+
             # Security: Validate endpoint against domain allowlist
             # Use proper subdomain matching: require exact match OR proper subdomain prefix
-            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
-            if allowed_domains:
-                # Extract just the domain part (without port) for allowlist checking
-                # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
-                # If endpoint doesn't start with scheme, add https:// for parsing
-                url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
-                parsed = urlparse(url_to_parse)
-                endpoint_domain = parsed.hostname or endpoint.split(":")[0]
+            # Extract just the domain part (without port) for allowlist checking
+            # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
+            # If endpoint doesn't start with scheme, add https:// for parsing
+            url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
+            parsed = urlparse(url_to_parse)
+            endpoint_domain = parsed.hostname or endpoint.split(":")[0]
 
-                # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
-                if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
-                    raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
-            else:
-                # WARNING: Empty allowlist permits arbitrary cross-gateway routing
-                # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
-                logger.warning(
-                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint!r} without domain validation. "
-                    "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
-                )
+            # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
+            if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
+                raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
 
             # Construct URL based on protocol (endpoint is now validated).
             # ContextForge-to-ContextForge federation: target the receiving

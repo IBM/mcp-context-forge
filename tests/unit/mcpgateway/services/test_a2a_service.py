@@ -5459,7 +5459,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5484,7 +5484,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5512,7 +5512,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*HTTP 500"):
             await service._invoke_remote_agent(
@@ -5561,7 +5561,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*Network error"):
             await service._invoke_remote_agent(
@@ -5616,7 +5616,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         # Capture structured_logger.log calls so we can assert the
         # decode path fires the distinct `CrossGatewayDecodeError` event
@@ -5685,7 +5685,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5718,7 +5718,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5845,34 +5845,20 @@ class TestCrossGatewayRoutingCoverage:
             )
 
     async def test_invoke_remote_agent_ssrf_internal_ip_empty_allowlist(self, service, monkeypatch):
-        """Test internal IP routing when allowlist is empty (unsafe default)."""
-        # When UAID_ALLOWED_DOMAINS is empty, internal IPs are technically allowed
-        # This documents the unsafe default behavior - operators must configure allowlist
+        """Test internal IP routing is blocked when allowlist is empty (fail-closed)."""
+        # When UAID_ALLOWED_DOMAINS is empty, all cross-gateway routing is blocked
+        # This is fail-closed behavior - operators must explicitly configure allowlist
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
 
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "allowed"}
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        async def mock_get_http_client():
-            return mock_client
-
-        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])  # Empty allowlist
 
-        # With empty allowlist, the call succeeds (unsafe behavior)
-        result = await service._invoke_remote_agent(
-            uaid=uaid,
-            parameters={"test": "data"},
-            interaction_type="request",
-        )
-
-        assert result == {"result": "allowed"}
-        # Verify the internal IP was used in the URL
-        call_args = mock_client.post.call_args
-        assert "127.0.0.1" in call_args[0][0]
+        # With empty allowlist, the call is blocked (fail-closed behavior)
+        with pytest.raises(A2AAgentError, match="UAID_ALLOWED_DOMAINS is empty"):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
 
     async def test_invoke_remote_agent_ssrf_internal_ip_blocked_by_allowlist(self, service):
         """Test internal IP routing is blocked when allowlist is configured (safe behavior)."""
@@ -5964,7 +5950,7 @@ async def test_invoke_agent_cross_gateway_routing_http_error(module_service, mod
     monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
 
     # Allow all domains (empty list means no restrictions)
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
     # Mock HTTP client to return 500 error.  The service now reads
     # `.text` for the (redacted, operator-only) error log body, so the
@@ -6088,7 +6074,7 @@ async def test_invoke_remote_agent_unsupported_protocol(module_service, monkeypa
     uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=grpc;nativeId=grpc.example.com"
 
     # Mock settings
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
 
     # Should raise A2AAgentError (ValueError is caught and re-raised)
     with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed"):
@@ -6115,7 +6101,7 @@ async def test_invoke_remote_agent_no_correlation_id(module_service, monkeypatch
         return mock_client
 
     monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
     # Mock get_correlation_id to return None
     monkeypatch.setattr("mcpgateway.services.a2a_service.get_correlation_id", lambda: None)
 
