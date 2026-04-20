@@ -9651,3 +9651,90 @@ class TestInvokeToolLookupLogic:
             # Even though user_email matches owner, public-only token should deny access
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+
+
+# ---------------------------------------------------------------------------
+# tenant_id population in GlobalContext (#4343)
+# ---------------------------------------------------------------------------
+
+
+class TestGlobalContextTenantId:
+    """Verify that GlobalContext.tenant_id is populated from the tool's team_id."""
+
+    def test_build_rust_plugin_context_populates_tenant_id_from_tool_payload(self):
+        """_build_rust_tool_hook_global_context sets tenant_id when tool_payload has team_id."""
+        from mcpgateway.plugins.framework.models import GlobalContext
+
+        svc = ToolService.__new__(ToolService)
+        svc._pydantic_tool_from_payload = MagicMock(return_value=None)
+        svc._pydantic_gateway_from_payload = MagicMock(return_value=None)
+
+        ctx = svc._build_rust_tool_hook_global_context(
+            app_user_email="alice@test.com",
+            server_id="srv-1",
+            tool_gateway_id="gw-1",
+            plugin_global_context=None,
+            tool_payload={"team_id": "team-abc", "name": "my-tool"},
+            gateway_payload=None,
+        )
+
+        assert ctx.tenant_id == "team-abc"
+
+    def test_build_rust_plugin_context_tenant_id_none_when_no_team(self):
+        """tenant_id stays None when tool_payload has no team_id."""
+        from mcpgateway.plugins.framework.models import GlobalContext
+
+        svc = ToolService.__new__(ToolService)
+        svc._pydantic_tool_from_payload = MagicMock(return_value=None)
+        svc._pydantic_gateway_from_payload = MagicMock(return_value=None)
+
+        ctx = svc._build_rust_tool_hook_global_context(
+            app_user_email="alice@test.com",
+            server_id="srv-1",
+            tool_gateway_id="gw-1",
+            plugin_global_context=None,
+            tool_payload={"name": "my-tool"},
+            gateway_payload=None,
+        )
+
+        assert ctx.tenant_id is None
+
+    def test_build_rust_plugin_context_propagates_tenant_id_to_existing_context(self):
+        """When reusing middleware context, tenant_id is populated if missing."""
+        from mcpgateway.plugins.framework.models import GlobalContext
+
+        svc = ToolService.__new__(ToolService)
+        svc._pydantic_tool_from_payload = MagicMock(return_value=None)
+        svc._pydantic_gateway_from_payload = MagicMock(return_value=None)
+
+        existing_ctx = GlobalContext(request_id="req-1", server_id="srv-1", tenant_id=None)
+        ctx = svc._build_rust_tool_hook_global_context(
+            app_user_email="alice@test.com",
+            server_id="srv-1",
+            tool_gateway_id="gw-1",
+            plugin_global_context=existing_ctx,
+            tool_payload={"team_id": "team-xyz", "name": "my-tool"},
+            gateway_payload=None,
+        )
+
+        assert ctx.tenant_id == "team-xyz"
+
+    def test_build_rust_plugin_context_does_not_overwrite_existing_tenant_id(self):
+        """When reusing middleware context that already has tenant_id, don't overwrite."""
+        from mcpgateway.plugins.framework.models import GlobalContext
+
+        svc = ToolService.__new__(ToolService)
+        svc._pydantic_tool_from_payload = MagicMock(return_value=None)
+        svc._pydantic_gateway_from_payload = MagicMock(return_value=None)
+
+        existing_ctx = GlobalContext(request_id="req-1", server_id="srv-1", tenant_id="already-set")
+        ctx = svc._build_rust_tool_hook_global_context(
+            app_user_email="alice@test.com",
+            server_id="srv-1",
+            tool_gateway_id="gw-1",
+            plugin_global_context=existing_ctx,
+            tool_payload={"team_id": "team-xyz", "name": "my-tool"},
+            gateway_payload=None,
+        )
+
+        assert ctx.tenant_id == "already-set"
