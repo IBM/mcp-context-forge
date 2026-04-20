@@ -11,8 +11,7 @@ Tests cover:
     - get_config_from_db: unrecognised format returns None
     - get_config_from_db: unknown team / no bindings returns None
     - get_config_from_db: bindings translated to PluginConfigOverride list
-    - get_config_from_db: unknown plugin_id is skipped (forward-compat guard)
-    - get_config_from_db: all bindings have unknown plugin_ids → returns None
+    - get_config_from_db: unknown plugin_id is passed through to the framework
     - reload_plugin_context: no-op when plugins disabled or factory is None
     - reload_plugin_context: delegates to factory.reload_tenant when factory exists
 """
@@ -38,7 +37,6 @@ from mcpgateway.plugins.gateway_plugin_manager import (
 from mcpgateway.plugins.framework.models import PluginMode
 from mcpgateway.schemas import (
     PluginBindingMode,
-    PluginId,
     PluginPolicyItem,
     TeamPolicies,
     ToolPluginBindingRequest,
@@ -148,7 +146,7 @@ class TestGetConfigFromDb:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["my_tool"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
                             priority=42,
                             config={**_OLG, "max_chars": 500},
@@ -171,12 +169,17 @@ class TestGetConfigFromDb:
         assert o.config == {**_OLG, "max_chars": 500}
 
     @pytest.mark.asyncio
-    async def test_unknown_plugin_id_is_skipped(self, db_session):
-        """A binding with an unknown plugin_id is silently skipped (forward-compat)."""
+    async def test_unknown_plugin_id_passed_through(self, db_session):
+        """A binding with an unrecognised plugin_id is passed to the framework as-is.
+
+        CF no longer skips unknown plugin names — the framework decides what to
+        do with them.  This allows new plugins added to cpex to be used without
+        a CF code change.
+        """
         from mcpgateway.db import ToolPluginBinding, utc_now
         import uuid
 
-        # Insert a row with a plugin_id not present in PLUGIN_ID_TO_NAME
+        # Insert a row with a plugin_id not in the registry (simulates a future plugin)
         row = ToolPluginBinding(
             id=uuid.uuid4().hex,
             team_id="team-x",
@@ -195,8 +198,10 @@ class TestGetConfigFromDb:
 
         factory = _make_factory(db_session)
         result = await factory.get_config_from_db(make_context_id("team-x", "t"))
-        # The unknown plugin is skipped and no known plugins remain → None
-        assert result is None
+        # Unknown plugin is passed through — framework will ignore it if unrecognised
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].name == "FUTURE_PLUGIN_NOT_YET_KNOWN"
 
     @pytest.mark.asyncio
     async def test_wildcard_binding_returned(self, db_session):
@@ -208,7 +213,7 @@ class TestGetConfigFromDb:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.RATE_LIMITER,
+                            plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=5,
                             config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
