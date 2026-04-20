@@ -733,7 +733,23 @@ class Settings(BaseSettings):
         default_factory=list,
         description=(
             "Domain allowlist for UAID cross-gateway routing. When not empty, only UAIDs with endpoints "
-            "ending in these domains will be allowed for cross-gateway routing. Empty list = allow all domains."
+            "ending in these domains will be allowed for cross-gateway routing. "
+            "Empty list = DENY all cross-gateway routing (fail-closed, secure default)."
+        ),
+    )
+
+    uaid_allow_all_domains: bool = Field(
+        default=False,
+        description=(
+            "DANGEROUS: Allow UAID cross-gateway routing to any domain. " "This bypasses domain allowlist validation and should NEVER be used in production. " "Only enable for development/testing."
+        ),
+    )
+
+    uaid_forward_auth: bool = Field(
+        default=True,
+        description=(
+            "Forward bearer tokens in cross-gateway UAID calls for RBAC enforcement on remote gateways. "
+            "Requires both gateways to trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO)."
         ),
     )
 

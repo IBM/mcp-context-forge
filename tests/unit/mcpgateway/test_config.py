@@ -1387,3 +1387,24 @@ def test_hot_server_check_interval_property():
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
+
+
+# --------------------------------------------------------------------------- #
+#                    UAID Security Configuration                               #
+# --------------------------------------------------------------------------- #
+def test_uaid_allow_all_domains_defaults_false():
+    """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_allow_all_domains is False
+
+
+def test_uaid_forward_auth_defaults_true():
+    """Verify UAID_FORWARD_AUTH defaults to True (auth forwarding enabled)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_forward_auth is True
+
+
+def test_uaid_allow_all_domains_can_be_enabled():
+    """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
+    settings = Settings(uaid_allow_all_domains=True, _env_file=None)
+    assert settings.uaid_allow_all_domains is True
