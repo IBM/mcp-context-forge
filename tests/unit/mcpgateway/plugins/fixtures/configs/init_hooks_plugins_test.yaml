@@ -55,6 +55,41 @@ plugins:
       # Field overrides: customize per key pattern
       field_overrides: []
 
+  # PII Filter Plugin - Run first with highest priority for security
+  - name: "PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
+    description: "Detects and masks Personally Identifiable Information"
+    version: "0.1.0"
+    author: "Mihai Criveti"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
+    mode: "permissive"  # enforce | permissive | disabled
+    priority: 50  # Lower number = higher priority (runs first)
+    conditions:
+      - prompts: []  # Empty list = apply to all prompts
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # PII Detection Settings
+      detect_ssn: true
+      detect_credit_card: true
+      detect_email: true
+      detect_phone: false
+      detect_ip_address: false  # Disabled for development
+      detect_aws_keys: true
+      detect_api_keys: true
+      # Masking Settings
+      default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
+      redaction_text: "[PII_REDACTED]"
+      # Behavior Settings
+      block_on_detection: false  # Set to true for strict compliance
+      log_detections: true
+      include_detection_details: true
+      # Whitelist common test values
+      whitelist_patterns:
+        - "test@example.com"
+        - "555-555-5555"
+
   # Self-contained Search Replace Plugin
   - name: "ReplaceBadWordsPlugin"
     kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
@@ -600,6 +635,33 @@ plugins:
       strip_comments: true
       require_parameterization: false
       block_on_violation: true
+
+  # Secrets Detection - regex-based detector for common secrets/keys
+  - name: "SecretsDetection"
+    kind: "cpex_secrets_detection.SecretsDetectionPlugin"
+    description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
+    version: "0.1.0"
+    author: "ContextForge"
+    hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
+    tags: ["security", "secrets", "dlp"]
+    # mode: "permissive"
+    mode: "permissive"
+    priority: 51
+    conditions: []
+    config:
+      enabled:
+        aws_access_key_id: true
+        aws_secret_access_key: true
+        google_api_key: true
+        slack_token: true
+        private_key_block: true
+        jwt_like: true
+        hex_secret_32: true
+        base64_24: true
+      redact: false
+      redaction_text: "***REDACTED***"
+      block_on_detection: true
+      min_findings_to_block: 1
 
   # Header Injector - add custom headers for resource fetch
   - name: "HeaderInjector"
