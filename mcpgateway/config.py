@@ -1905,6 +1905,28 @@ class Settings(BaseSettings):
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
+    # GET /mcp server-to-client stream (ADR-052)
+    # When True, GET /mcp returns an SSE stream that delivers server-initiated
+    # JSON-RPC messages (notifications and server-initiated requests) for the
+    # session identified by Mcp-Session-Id. Requires use_stateful_sessions=True.
+    # Backend (Redis vs in-memory) follows cache_type — see ADR-052 for the
+    # single-node vs multi-node fallback contract.
+    mcp_get_stream_enabled: bool = True
+    # TTL for the per-session listener claim. Refreshed by heartbeat while the
+    # GET handler holds the connection; expires shortly after disconnect so a
+    # client can reconnect without operator intervention.
+    mcp_get_stream_listener_ttl_seconds: int = 30
+    # Soft cap (bytes) on how much the body-peek helpers will buffer
+    # before stopping the peek and falling through to the SDK's
+    # streaming receive path. The request is NEVER rejected — the
+    # cap only bounds peek-path memory. Bare-uvicorn deployments
+    # without an upstream nginx have no other body cap; the body-peek
+    # path runs on every POST that has a pending request or hits a
+    # no-session MCP path. 4 MiB matches typical RPC payload sizes
+    # and stops trickle attacks dead without stranding legitimate
+    # large ``sampling/createMessage`` responses.
+    mcp_body_peek_max_bytes: int = 4 * 1024 * 1024
+
     # Development
     dev_mode: bool = False
     reload: bool = False

@@ -4,12 +4,11 @@
 Keeps each downstream MCP session (identified by its ``Mcp-Session-Id``)
 pinned to one gateway worker across the horizontal-scale deployment, so
 the worker-local ``UpstreamSessionRegistry`` can serve subsequent calls
-without rebuilding upstream state. The upstream ClientSession pooling
-that used to live in this file is gone — see
-``mcpgateway.services.upstream_session_registry`` for the 1:1 replacement
-(issue #4205).
+without rebuilding upstream state. Per-worker upstream ``ClientSession``
+state lives in ``mcpgateway.services.upstream_session_registry``; this
+module owns the cross-worker affinity layer only.
 
-What survives here:
+Surface:
 
 * Redis-backed ``(downstream_session_id, url, transport, gateway_id)`` →
   owning-worker mapping so any worker can look up who owns a session.
@@ -31,24 +30,24 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from enum import Enum
 import hashlib
 import logging
 import os
 import re
 import socket
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 import uuid
 
 # Third-Party
 import httpx
-from mcp.shared.session import RequestResponder
-import mcp.types as mcp_types
 import orjson
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.services.upstream_session_registry import MessageHandlerFactory  # re-exported as the single source of truth
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 
 # Shared session-id validation (downstream MCP session IDs used for affinity).
@@ -64,16 +63,37 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 logger = logging.getLogger(__name__)
 
 
-# Type alias for message handler factory.
-# Factory that creates message handlers given URL and optional gateway_id.
-# The handler receives ServerNotification, ServerRequest responders, or Exceptions.
-MessageHandlerFactory = Callable[
-    [str, Optional[str]],  # (url, gateway_id)
-    Callable[
-        [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
-        Any,  # Coroutine
-    ],
-]
+class SessionAffinityNotInitializedError(RuntimeError):
+    """Raised when ``get_session_affinity()`` is called before ``init_session_affinity()``.
+
+    Subclasses ``RuntimeError`` for backwards compatibility with callers
+    that still write ``except RuntimeError``. The dedicated type lets the
+    GET handler distinguish "service genuinely not initialized" from
+    "any random RuntimeError" — the former is recoverable in single-node
+    mode (transient instance) but must fail closed in Redis multi-node
+    where the cross-process invariant matters.
+
+    Named distinctly from ``upstream_session_registry``'s
+    ``RegistryNotInitializedError`` so a caller can't accidentally
+    silence one service's "not initialized" path by catching the other
+    via the wrong import.
+    """
+
+
+class ListenerClaimResult(Enum):
+    """Outcome of a GET-stream listener claim attempt (ADR-052).
+
+    The tri-state lets the GET handler distinguish "another client holds
+    this session's listener slot" (409 Conflict) from "the storage backing
+    the claim is unavailable" (503 Service Unavailable). A boolean shape
+    would force clients to tight-loop on 409 during a Redis outage since
+    503 is the retryable signal — see ADR-052 § "Single-node vs.
+    multi-node fallback contract".
+    """
+
+    WON = "won"
+    CONFLICT = "conflict"
+    UNAVAILABLE = "unavailable"
 
 
 class SessionAffinity:
@@ -118,6 +138,15 @@ class SessionAffinity:
         self._forwarded_request_failures = 0
         self._forwarded_request_timeouts = 0
 
+        # GET-stream listener claims (ADR-052). Single-node fallback when
+        # cache_type != "redis"; in multi-node the Redis key is authoritative
+        # and this dict is unused. Tuple is (connection_id, expires_at).
+        # Tracked for extraction into a SessionPresence service in #4334 —
+        # this is presence state, not affinity, but lives here today
+        # because both layers share the singleton lifecycle.
+        self._listener_claims: Dict[str, tuple[str, float]] = {}
+        self._listener_lock = asyncio.Lock()
+
     @staticmethod
     def is_valid_mcp_session_id(session_id: str) -> bool:
         """Validate downstream MCP session ID format for affinity.
@@ -161,6 +190,11 @@ class SessionAffinity:
     def _session_owner_key(mcp_session_id: str) -> str:
         """Return Redis key for session ownership tracking."""
         return f"mcpgw:pool_owner:{mcp_session_id}"
+
+    @staticmethod
+    def _listener_claim_key(mcp_session_id: str) -> str:
+        """Return Redis key for the GET-stream listener claim (ADR-052)."""
+        return f"mcp:session:{mcp_session_id}:listener"
 
     def _worker_heartbeat_key(self) -> str:
         """Redis key for this worker's heartbeat."""
@@ -338,6 +372,216 @@ class SessionAffinity:
             logger.debug("Invalid mcp_session_id for owner cleanup, skipping")
             return
         await self._cleanup_session_owner(mcp_session_id)
+
+    # ------------------------------------------------------------------
+    # GET-stream listener claims (ADR-052)
+    #
+    # Public surface:
+    #   - claim_listener → ListenerClaimResult (Won / Conflict / Unavailable)
+    #   - heartbeat_listener → bool (True = still owner, False = lost)
+    #   - release_listener → bool (True = released, False = not owner / expired)
+    #
+    # The tri-state result on claim is the key: Redis-down (Unavailable) and
+    # someone-else-has-it (Conflict) are different conditions and the GET
+    # handler responds 503 vs 409 accordingly. ADR-052 calls this out.
+    #
+    # The MCP spec mandates one server→client SSE stream per session. The
+    # claim is held by whichever node accepts the GET; cross-node uniqueness
+    # uses a Redis SET NX, single-node uses an in-process dict + lock. Same
+    # API both ways.
+    # ------------------------------------------------------------------
+
+    # Lua: heartbeat (refresh TTL) only if the caller still owns the claim.
+    _HEARTBEAT_LISTENER_LUA = "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('EXPIRE', KEYS[1], ARGV[2]) return 1 else return 0 end"
+    # Lua: release only if the caller still owns the claim.
+    _RELEASE_LISTENER_LUA = "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) return 1 else return 0 end"
+
+    @staticmethod
+    def _log_redis_listener_error(operation: str, mcp_session_id: str, exc: BaseException) -> None:
+        """Log a Redis listener-claim failure at the appropriate level.
+
+        Transient connection issues (``ConnectionError``, ``TimeoutError``,
+        ``BusyLoadingError``) are routine and noisy — keep them at debug
+        so production isn't flooded during a brief Redis blip. Auth and
+        protocol errors (``AuthenticationError``, ``ResponseError``,
+        ``DataError``) signal config drift or a Lua script regression
+        that operators must see — log at warning. Anything else
+        (``OSError``, programming errors) gets warning + traceback.
+        """
+        # Lazy import — redis is only required when cache_type=redis.
+        try:
+            # Third-Party
+            from redis import exceptions as redis_exc  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            logger.warning("Listener-%s: %s for %s", operation, exc, mcp_session_id, exc_info=exc)
+            return
+        # Order matters: AuthenticationError subclasses ConnectionError in
+        # redis-py, so the config/protocol bucket has to win the isinstance
+        # check before the transient bucket; otherwise a credentials
+        # rotation gets silently logged at debug.
+        if isinstance(exc, (redis_exc.AuthenticationError, redis_exc.ResponseError, redis_exc.DataError, redis_exc.NoScriptError)):
+            logger.warning(
+                "Listener-%s Redis configuration/protocol failure for %s: %s (%s)",
+                operation,
+                mcp_session_id,
+                exc,
+                type(exc).__name__,
+            )
+            return
+        if isinstance(exc, (redis_exc.ConnectionError, redis_exc.TimeoutError, redis_exc.BusyLoadingError)):
+            logger.debug(
+                "Listener-%s Redis transient failure for %s: %s",
+                operation,
+                mcp_session_id,
+                exc,
+            )
+            return
+        logger.warning(
+            "Listener-%s Redis call failed for %s: %s",
+            operation,
+            mcp_session_id,
+            exc,
+            exc_info=exc,
+        )
+
+    async def claim_listener(self, mcp_session_id: str, connection_id: str) -> "ListenerClaimResult":
+        """Claim the single GET /mcp listener slot for a session.
+
+        Args:
+            mcp_session_id: Downstream MCP session id.
+            connection_id: Stable identifier for the GET connection trying
+                to claim — also the value to present to ``heartbeat_listener``
+                and ``release_listener``.
+
+        Returns:
+            ``ListenerClaimResult.WON`` — the caller now holds the claim.
+            ``ListenerClaimResult.CONFLICT`` — another listener already
+            holds it (caller should respond 409).
+            ``ListenerClaimResult.UNAVAILABLE`` — Redis-mode storage failed
+            (Redis configured but unreachable, eval errored, etc.) — the
+            caller should respond 503 because the single-listener invariant
+            cannot be enforced. Also returned for invalid session ids,
+            since callers shouldn't 409 a malformed input.
+        """
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return ListenerClaimResult.UNAVAILABLE
+        ttl = settings.mcp_get_stream_listener_ttl_seconds
+        # Multi-node: Redis SET NX EX is the authority.
+        if settings.cache_type == "redis":
+            try:
+                # First-Party
+                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+                redis = await get_redis_client()
+                if redis is None:
+                    # cache_type=redis but no client — configuration drift or
+                    # startup race. Treat as unavailable, not conflict.
+                    return ListenerClaimResult.UNAVAILABLE
+                key = self._listener_claim_key(mcp_session_id)
+                won = bool(await redis.set(key, connection_id, nx=True, ex=ttl))
+                return ListenerClaimResult.WON if won else ListenerClaimResult.CONFLICT
+            except Exception as exc:
+                # Redis configured but unreachable / eval failed. Surface
+                # explicitly so the GET handler returns 503 (per ADR-052),
+                # not 409 — the previous boolean return collapsed both.
+                self._log_redis_listener_error("claim", mcp_session_id, exc)
+                return ListenerClaimResult.UNAVAILABLE
+        # Single-node: in-process dict guarded by lock gives the same atomicity.
+        async with self._listener_lock:
+            self._purge_expired_listener_claims_locked()
+            existing = self._listener_claims.get(mcp_session_id)
+            if existing is not None:
+                return ListenerClaimResult.CONFLICT
+            self._listener_claims[mcp_session_id] = (connection_id, time.time() + ttl)
+            return ListenerClaimResult.WON
+
+    async def heartbeat_listener(self, mcp_session_id: str, connection_id: str) -> bool:
+        """Refresh a held listener claim.
+
+        Args:
+            mcp_session_id: Downstream MCP session id.
+            connection_id: The connection id presented at ``claim_listener``.
+
+        Returns:
+            True if the heartbeat refreshed the TTL, False if the claim no
+            longer belongs to ``connection_id`` (caller should close the
+            stream).
+        """
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return False
+        ttl = settings.mcp_get_stream_listener_ttl_seconds
+        if settings.cache_type == "redis":
+            try:
+                # First-Party
+                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+                redis = await get_redis_client()
+                if redis is None:
+                    return False
+                key = self._listener_claim_key(mcp_session_id)
+                result = await redis.eval(self._HEARTBEAT_LISTENER_LUA, 1, key, connection_id, ttl)
+                return bool(result)
+            except Exception as exc:
+                self._log_redis_listener_error("heartbeat", mcp_session_id, exc)
+                return False
+        async with self._listener_lock:
+            # Purge expired claims so a stale entry whose TTL elapsed
+            # without a release call (worker crashed mid-stream, etc.)
+            # doesn't read as "still owned by us" — without this purge
+            # the .get() below would return a tuple whose connection_id
+            # match still hits even though the slot is logically free.
+            self._purge_expired_listener_claims_locked()
+            existing = self._listener_claims.get(mcp_session_id)
+            if existing is None or existing[0] != connection_id:
+                return False
+            self._listener_claims[mcp_session_id] = (connection_id, time.time() + ttl)
+            return True
+
+    async def release_listener(self, mcp_session_id: str, connection_id: str) -> bool:
+        """Release a held listener claim. No-op if the caller no longer owns it.
+
+        Args:
+            mcp_session_id: Downstream MCP session id.
+            connection_id: The connection id presented at ``claim_listener``.
+
+        Returns:
+            True if the claim was released by this call, False if it had
+            already expired or belonged to someone else.
+        """
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return False
+        if settings.cache_type == "redis":
+            try:
+                # First-Party
+                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+                redis = await get_redis_client()
+                if redis is None:
+                    return False
+                key = self._listener_claim_key(mcp_session_id)
+                result = await redis.eval(self._RELEASE_LISTENER_LUA, 1, key, connection_id)
+                return bool(result)
+            except Exception as exc:
+                self._log_redis_listener_error("release", mcp_session_id, exc)
+                return False
+        async with self._listener_lock:
+            # Same purge rationale as ``heartbeat_listener``: an
+            # expired-but-undeleted entry whose connection_id matches
+            # ours would otherwise return ``True`` from this release
+            # call as if a real claim was dropped.
+            self._purge_expired_listener_claims_locked()
+            existing = self._listener_claims.get(mcp_session_id)
+            if existing is None or existing[0] != connection_id:
+                return False
+            self._listener_claims.pop(mcp_session_id, None)
+            return True
+
+    def _purge_expired_listener_claims_locked(self) -> None:
+        """Drop expired in-memory listener claims. Caller holds ``_listener_lock``."""
+        now = time.time()
+        expired = [sid for sid, (_, exp) in self._listener_claims.items() if exp <= now]
+        for sid in expired:
+            self._listener_claims.pop(sid, None)
 
     async def close_all(self) -> None:
         """Stop background tasks and clear affinity state. Call at shutdown."""
@@ -921,10 +1165,14 @@ def get_session_affinity() -> SessionAffinity:
     """Return the global session-affinity service instance.
 
     Raises:
-        RuntimeError: If the service has not been initialized.
+        SessionAffinityNotInitializedError: If ``init_session_affinity()``
+            has not yet been called. Subclasses ``RuntimeError`` so
+            callers that catch the base class still work, but narrow
+            consumers (like the GET handler) use the dedicated type to
+            distinguish "not initialized" from other runtime errors.
     """
     if _mcp_session_pool is None:
-        raise RuntimeError("Session-affinity service not initialized. Call init_session_affinity() first.")
+        raise SessionAffinityNotInitializedError("Session-affinity service not initialized. Call init_session_affinity() first.")
     return _mcp_session_pool
 
 
@@ -959,9 +1207,9 @@ def init_session_affinity(
 
         notification_svc = init_notification_service(debounce_seconds=notification_debounce_seconds)
 
-        def default_handler_factory(url: str, gateway_id: Optional[str]):
-            """Create a message handler that routes MCP notifications to the notification service."""
-            return notification_svc.create_message_handler(gateway_id or url, url)
+        def default_handler_factory(url: str, gateway_id: Optional[str], *, downstream_session_id: str):
+            """Create a message handler that routes MCP notifications and forwards server-initiated messages to the GET /mcp listener (ADR-052)."""
+            return notification_svc.create_message_handler(gateway_id or url, url, downstream_session_id=downstream_session_id)
 
         effective_handler_factory = default_handler_factory
         logger.info("MCP notification service created (debounce=%ss)", notification_debounce_seconds)
