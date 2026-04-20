@@ -85,8 +85,20 @@ class BaseService(ABC):
             Query with visibility WHERE clauses applied, or unmodified
             when admin bypass is granted.
         """
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return query
+        # Admin bypass: respect PR #4341's invariant that admin bypass NEVER reveals
+        # another user's private rows. Anonymous bypass (no email) sees public + team
+        # only; DB-resolved admin sessions additionally see their OWN private rows.
+        # Matches the pattern in a2a_service._visible_agent_ids.
+        model_cls = self._visibility_model_cls
+        if user_email is None and token_teams is None:
+            return query.where(model_cls.visibility != "private")
+        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+            return query.where(
+                or_(
+                    model_cls.visibility != "private",
+                    and_(model_cls.visibility == "private", model_cls.owner_email == user_email),
+                )
+            )
 
         effective_teams: List[str] = []
         if token_teams is not None:

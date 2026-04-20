@@ -5926,13 +5926,27 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
     try:
-        # Extract user email and admin status for authorization
+        # Extract user email and token teams for authorization
         user_email = get_user_email(user)
         is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
 
-        # Admin bypass: pass user=None to trigger unrestricted access
-        # Non-admin: pass user_email and let service look up teams
-        auth_user_email = None if is_admin else user_email
+        # Check if token_teams exists in request.state (set by auth middleware)
+        # Use a sentinel to distinguish "not set" from "set to None"
+        _UNSET = object()
+        token_teams = getattr(request.state, "token_teams", _UNSET)
+
+        # Determine authorization parameters based on token configuration
+        # Admin with teams=None: admin bypass (public + team access, NOT private)
+        # Admin with teams=[...]: team-scoped access (can see own private resources)
+        # Non-admin or token_teams not set: use user_email for owner checks
+        if is_admin and token_teams is None:
+            # Admin bypass: unrestricted access to public and team resources
+            auth_user_email = None
+            auth_token_teams = None
+        else:
+            # Team-scoped, non-admin, or token_teams not set: normal access control
+            auth_user_email = user_email
+            auth_token_teams = None if token_teams is _UNSET else token_teams
 
         # Call service with context for plugin support
         content = await resource_service.read_resource(
@@ -5941,7 +5955,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             request_id=request_id,
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -6459,14 +6473,27 @@ async def get_prompt(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, admin status, and server_id for authorization
+    # Extract user email, token teams, and server_id for authorization
     user_email = get_user_email(user)
     is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
     server_id = request.headers.get("X-Server-ID")
 
-    # Admin bypass: pass user=None to trigger unrestricted access
-    # Non-admin: pass user_email and let service look up teams
-    auth_user_email = None if is_admin else user_email
+    # Check if token_teams exists in request.state (set by auth middleware)
+    _UNSET = object()
+    token_teams = getattr(request.state, "token_teams", _UNSET)
+
+    # Determine authorization parameters based on token configuration
+    # Admin with teams=None: admin bypass (public + team access, NOT private)
+    # Admin with teams=[...]: team-scoped access (can see own private resources)
+    # Non-admin or token_teams not set: use user_email for owner checks
+    if is_admin and token_teams is None:
+        # Admin bypass: unrestricted access to public and team resources
+        auth_user_email = None
+        auth_token_teams = None
+    else:
+        # Team-scoped, non-admin, or token_teams not set: normal access control
+        auth_user_email = user_email
+        auth_token_teams = None if token_teams is _UNSET else token_teams
 
     try:
         PromptExecuteArgs(args=args)
@@ -6476,7 +6503,7 @@ async def get_prompt(
             args,
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -6524,14 +6551,27 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, admin status, and server_id for authorization
+    # Extract user email, token teams, and server_id for authorization
     user_email = get_user_email(user)
     is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
     server_id = request.headers.get("X-Server-ID")
 
-    # Admin bypass: pass user=None to trigger unrestricted access
-    # Non-admin: pass user_email and let service look up teams
-    auth_user_email = None if is_admin else user_email
+    # Check if token_teams exists in request.state (set by auth middleware)
+    _UNSET = object()
+    token_teams = getattr(request.state, "token_teams", _UNSET)
+
+    # Determine authorization parameters based on token configuration
+    # Admin with teams=None: admin bypass (public + team access, NOT private)
+    # Admin with teams=[...]: team-scoped access (can see own private resources)
+    # Non-admin or token_teams not set: use user_email for owner checks
+    if is_admin and token_teams is None:
+        # Admin bypass: unrestricted access to public and team resources
+        auth_user_email = None
+        auth_token_teams = None
+    else:
+        # Team-scoped, non-admin, or token_teams not set: normal access control
+        auth_user_email = user_email
+        auth_token_teams = None if token_teams is _UNSET else token_teams
 
     try:
         return await prompt_service.get_prompt(
@@ -6540,7 +6580,7 @@ async def get_prompt_no_args(
             {},
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )

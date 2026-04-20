@@ -1085,8 +1085,13 @@ class ResourceService(BaseService):
         if visibility == "public":
             return True
 
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return True
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+            return visibility != "private" or resource_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public resources
         if not user_email:

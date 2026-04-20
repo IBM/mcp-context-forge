@@ -239,8 +239,8 @@ class TestToolAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, tool_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, tool_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         tool_payload = {
             "id": "tool-123",
             "visibility": "private",
@@ -249,7 +249,21 @@ class TestToolAccessChecks:
         }
 
         # Admin bypass: both user_email and token_teams are None
+        # Private resources are NEVER accessible via admin bypass
         result = await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, tool_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        team_tool_payload = {
+            "id": "tool-123",
+            "visibility": "team",
+            "owner_email": "owner@example.com",
+            "team_id": "team-abc",
+        }
+        result = await tool_service._check_tool_access(mock_db, team_tool_payload, user_email=None, token_teams=None)
         assert result is True
 
     @pytest.mark.asyncio
@@ -322,10 +336,19 @@ class TestResourceAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, resource_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, resource_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com", team_id="team-abc")
 
+        # Private resources are NEVER accessible via admin bypass
+        result = await resource_service._check_resource_access(mock_db, mock_resource, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, resource_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        mock_resource = create_mock_resource(visibility="team", owner_email="owner@example.com", team_id="team-abc")
         result = await resource_service._check_resource_access(mock_db, mock_resource, user_email=None, token_teams=None)
         assert result is True
 
@@ -384,10 +407,19 @@ class TestPromptAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, prompt_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, prompt_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com", team_id="team-abc")
 
+        # Private resources are NEVER accessible via admin bypass
+        result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, prompt_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        mock_prompt = create_mock_prompt(visibility="team", owner_email="owner@example.com", team_id="team-abc")
         result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email=None, token_teams=None)
         assert result is True
 
@@ -480,9 +512,33 @@ class TestInvokeToolAuthorization:
         assert result.content[0].text is not None
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_admin_bypass_works(self, tool_service, mock_db):
-        """Admin with unrestricted token can execute any tool."""
+    async def test_invoke_tool_admin_bypass_denied_for_private(self, tool_service, mock_db):
+        """Admin bypass cannot execute private tools (security requirement)."""
         mock_tool = create_mock_tool(visibility="private", owner_email="secret@example.com", team_id="secret-team")
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
+        mock_db.execute = Mock(return_value=mock_scalar)
+
+        # Admin bypass: user_email=None and token_teams=None
+        # Should raise ToolNotFoundError because private tools are not accessible via admin bypass
+        with pytest.raises(ToolNotFoundError) as exc_info:
+            await tool_service.invoke_tool(
+                mock_db,
+                "test_tool",
+                {},
+                user_email=None,
+                token_teams=None,
+            )
+
+        assert "Tool not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_admin_bypass_works_for_team_tools(self, tool_service, mock_db):
+        """Admin with unrestricted token can execute team-visible tools."""
+        mock_tool = create_mock_tool(visibility="team", owner_email="owner@example.com", team_id="team-a")
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
@@ -508,6 +564,7 @@ class TestInvokeToolAuthorization:
             )
 
         assert result is not None
+        assert result.content[0].text is not None
 
 
 class TestServerScoping:

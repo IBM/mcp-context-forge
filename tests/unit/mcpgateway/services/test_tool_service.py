@@ -5966,12 +5966,20 @@ class TestToolAccessAuthorization:
         assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
-    async def test_check_tool_access_admin_bypass(self, tool_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
+    async def test_check_tool_access_admin_bypass_denied_for_private(self, tool_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
 
-        # Admin bypass: both None = unrestricted access
-        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is True
+        # Admin bypass: both None, but private resources are NEVER accessible via admin bypass
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_bypass_grants_team_access(self, tool_service, mock_db):
+        """Admin bypass grants access to team resources."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Admin bypass: both None = access to team resources
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
     async def test_check_tool_access_database_admin_bypass(self, tool_service, mock_db):
@@ -7102,8 +7110,13 @@ class TestToolServiceHelpers:
         public_payload = {"visibility": "public"}
         assert await service._check_tool_access(MagicMock(), public_payload, None, []) is True
 
+        # Admin bypass does NOT grant access to private resources (security requirement)
         private_payload = {"visibility": "private"}
-        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is True
+        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is False
+
+        # Admin bypass DOES grant access to team resources
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, None, None) is True
 
     @pytest.mark.asyncio
     async def test_check_tool_access_denies_without_user_or_public_only_token(self):

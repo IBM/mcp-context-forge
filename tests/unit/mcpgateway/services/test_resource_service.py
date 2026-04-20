@@ -3157,12 +3157,20 @@ class TestResourceAccessAuthorization:
         assert await resource_service._check_resource_access(mock_db, public_resource, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
-    async def test_check_resource_access_admin_bypass(self, resource_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
+    async def test_check_resource_access_admin_bypass_denied_for_private(self, resource_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
 
-        # Admin bypass: both None = unrestricted access
-        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is True
+        # Admin bypass: both None, but private resources are NEVER accessible via admin bypass
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_bypass_grants_team_access(self, resource_service, mock_db):
+        """Admin bypass grants access to team resources."""
+        team_resource = self._create_mock_resource(visibility="team", owner_email="owner@test.com", team_id="team-abc")
+
+        # Admin bypass: both None = access to team resources
+        assert await resource_service._check_resource_access(mock_db, team_resource, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
     async def test_check_resource_access_database_admin_bypass(self, resource_service, mock_db):

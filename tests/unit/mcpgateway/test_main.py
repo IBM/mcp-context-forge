@@ -1463,7 +1463,8 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
+        # After security fix: user_email is passed when token_teams is not set in request.state
+        mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint_secondary(self, mock_update, test_client, auth_headers):
@@ -1672,7 +1673,8 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
+        # After security fix: user_email is passed when token_teams is not set in request.state
+        mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
