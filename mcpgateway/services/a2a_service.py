@@ -2308,9 +2308,7 @@ class A2AAgentService(BaseService):
                 headers["X-Contextforge-Source-User"] = bearer_token  # Token for audit trail
             else:
                 logger.warning(
-                    "Cross-gateway call without bearer token: %s. "
-                    "Remote gateway will receive unauthenticated request. "
-                    "RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
+                    "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
                     uaid,
                 )
 
@@ -2458,9 +2456,9 @@ class A2AAgentService(BaseService):
                     },
                 )
                 raise A2AAgentError(
-                    f"Cross-gateway routing failed: Remote gateway rejected authentication (HTTP 401). "
-                    f"Ensure both gateways trust the same JWT signing key (JWT_SECRET_KEY) "
-                    f"or configure JWKS endpoint for token validation."
+                    "Cross-gateway routing failed: Remote gateway rejected authentication (HTTP 401). "
+                    "Ensure both gateways trust the same JWT signing key (JWT_SECRET_KEY) "
+                    "or configure JWKS endpoint for token validation."
                 )
 
             if http_response.status_code == 403:
@@ -2483,8 +2481,7 @@ class A2AAgentService(BaseService):
                     },
                 )
                 raise A2AAgentError(
-                    f"Cross-gateway routing failed: Remote gateway rejected authorization (HTTP 403). "
-                    f"Verify token has required team memberships or roles for the target agent/resource."
+                    "Cross-gateway routing failed: Remote gateway rejected authorization (HTTP 403). Verify token has required team memberships or roles for the target agent/resource."
                 )
 
             # Capture the remote body for operator-side structured logging

@@ -1983,7 +1983,7 @@ def validate_uaid_security_config() -> None:
     Logs ERROR if A2A enabled but UAID allowlist not configured,
     alerting operators to security misconfiguration.
     """
-    if settings.a2a_enabled:
+    if settings.mcpgateway_a2a_enabled:
         if not settings.uaid_allowed_domains and not settings.uaid_allow_all_domains:
             logger.error(
                 "🚨 SECURITY: UAID cross-gateway routing is DISABLED. "

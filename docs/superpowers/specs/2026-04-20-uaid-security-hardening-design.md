@@ -1,9 +1,9 @@
 # UAID Cross-Gateway Security Hardening - Design Document
 
-**Issue:** #4236  
-**Date:** 2026-04-20  
-**Status:** Approved  
-**Timeline:** Production ready in 1 week  
+**Issue:** #4236
+**Date:** 2026-04-20
+**Status:** Approved
+**Timeline:** Production ready in 1 week
 **PR Strategy:** PR #1 (Critical Security Fixes) - this document covers auth forwarding + fail-closed default. Observability (#4236 section 3) deferred to future PR.
 
 ## Overview

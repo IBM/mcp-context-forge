@@ -4962,7 +4962,7 @@ class TestTeamScopedListVisibility:
 def test_startup_warns_when_uaid_allowlist_empty():
     """Verify ERROR logged when A2A enabled but UAID allowlist empty."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
-        mock_settings.a2a_enabled = True
+        mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
 
@@ -4981,7 +4981,7 @@ def test_startup_warns_when_uaid_allowlist_empty():
 def test_startup_no_warning_when_allowlist_configured():
     """Verify no warning when allowlist properly configured."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
-        mock_settings.a2a_enabled = True
+        mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = ["trusted.example.com"]
         mock_settings.uaid_allow_all_domains = False
 
@@ -4996,7 +4996,7 @@ def test_startup_no_warning_when_allowlist_configured():
 def test_startup_no_warning_when_a2a_disabled():
     """Verify no warning when A2A not enabled."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
-        mock_settings.a2a_enabled = False
+        mock_settings.mcpgateway_a2a_enabled = False
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
 
