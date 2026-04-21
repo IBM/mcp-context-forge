@@ -1,256 +1,317 @@
 # Benchmark Suite
 
-Use the benchmark suite when you want repeatable, scenario-driven benchmark runs
-against the Docker/Compose stack from a Rust-native runner, console, and load
-driver.
+The benchmark suite runs scenario-driven benchmarks against the real local
+container stack. It covers validation, smoke runs, longer comparison runs,
+report regeneration, and scenario generation from the TUI.
 
-The committed scenarios cover three main benchmark shapes:
+The suite is built from three Rust crates:
 
-- smoke-oriented validation runs
-  Fast sanity validation only. Do not use their numbers for performance claims.
-- end-to-end runtime comparisons through `nginx`
-  Authenticated runs that measure gateway behavior under representative load.
-- MCP prompt/resource/tool-heavy comparisons
-  Scenarios that exercise MCP prompt, resource, and tool paths through
-  `/servers/{server_id}/mcp`.
+- `crates/contextforge_benchmark_runner/`: runner and report generation
+- `crates/contextforge_benchmark_console/`: ratatui launcher and scenario generator
+- `crates/contextforge_goose/`: load driver
 
-## What It Runs
+Committed scenarios live in:
 
-Each scenario runs against the real containerized testing stack:
-
-- PostgreSQL
-- Redis
-- PgBouncer
-- gateway
-- nginx
-- optional multi-gateway topologies behind `nginx`
-- `contextforge_goose` as the load driver
-- optional `perf`, `flamegraph`, and other Rust-friendly profiling tools in a
-  separate profiling pass
-
-The runner is:
-
-```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml --
-```
-
-Committed scenarios now live in:
-
-```bash
+```text
 crates/contextforge_benchmark_runner/assets/scenarios/
 ```
 
-The benchmark launcher now lives in:
+## What It Can Do
 
-```bash
-crates/contextforge_benchmark_console/
-```
+Current features in the suite:
 
-The Goose driver now lives in:
+- run against the real Compose stack with `PostgreSQL`, `Redis`, `PgBouncer`,
+  `gateway`, and `nginx`
+- run single-gateway and multi-gateway topologies
+- route load through ingress with `nginx`
+- enable plugins during setup
+- build benchmark images with or without Rust plugin artifacts
+- run Goose-driven request mixes against REST and MCP-style paths
+- save per-scenario artifacts and aggregate comparison reports
+- regenerate reports from a saved run directory
+- compare a saved run again without rerunning the benchmark
+- generate scenario templates from the TUI
 
-```bash
-crates/contextforge_goose/
-```
+## Requirements
 
-## Quick Start
+Run the suite from the repository root.
 
-Open the interactive launcher:
+You need:
+
+- Docker with the Compose plugin available as `docker compose`
+- a working Rust toolchain for `cargo run`
+- permission to build local container images
+
+The runner auto-detects Docker and builds the benchmark images it needs. You do
+not need a separate manual image build step for the normal runner workflow.
+
+## Fastest Start
+
+Launch the TUI:
 
 ```bash
 make benchmark
 ```
 
-Inside the launcher you can choose:
+This opens the benchmark console. The current actions are:
 
 - `Run`
 - `Validate`
 - `Smoke`
-- `Check Runtime`
+- `Check`
 - `List`
 - `Report`
 - `Compare`
 - `Generate`
 
-The `Generate` action opens a template builder that saves a new scenario file
-under `crates/contextforge_benchmark_runner/assets/scenarios/`. It fills in the important fields in
-the UI and writes a full TOML template containing all supported sections and
-keys, including commented optional settings for advanced tuning.
+`Generate` opens the built-in scenario template builder and writes a TOML file
+under `crates/contextforge_benchmark_runner/assets/scenarios/`.
 
-Build the benchmark image expected by scenarios with `rebuild_policy = "never"`:
+## CLI Workflow
 
-```bash
-make container-build CONTAINER_FILE=crates/contextforge_benchmark_runner/assets/Containerfile ENABLE_RUST_BUILD=1 ENABLE_PROFILING_BUILD=1 CONTAINER_RUNTIME=podman
-```
-
-Validate the suite:
+The direct runner command is:
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- validate --scenario rust-mcp-runtime-300
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml --
 ```
 
-Run the smoke suite:
+### List Available Suites
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- list
 ```
 
-Run the suite:
+This prints the committed scenario names, for example:
+
+- `admin-plugins-300`
+- `baseline-300`
+- `multi-gateway-smoke`
+- `rust-mcp-runtime-300`
+
+### Validate a Scenario
+
+Validation checks and renders the scenario without running load:
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario rust-mcp-runtime-300
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- validate --scenario multi-gateway-smoke
 ```
 
-The TUI discovers committed scenarios automatically from
-`crates/contextforge_benchmark_runner/assets/scenarios/`.
+On the current branch this wrote:
 
-## Scenario Contract
+```text
+reports/benchmarks/multi-gateway-smoke_20260421_132840
+```
 
-Supported sections are:
+Use validation first when you are editing a scenario and want a cheap check.
 
-- `[suite]`
+### Run a Smoke Benchmark
+
+Smoke mode is the fastest real end-to-end path. It starts the stack and runs
+the scenario with smoke settings:
+
+```bash
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario admin-plugins-300 --smoke
+```
+
+Use this before longer runs. It exercises the real stack and produces the same
+artifact shape as a full run.
+
+On the current branch this completed successfully and wrote:
+
+```text
+reports/benchmarks/admin-plugins-300_20260421_132928
+```
+
+### Run with the Scenario's Full Load
+
+To use the scenario's committed load settings, run the same command without
+`--smoke`:
+
+```text
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario <scenario-name>
+```
+
+### Regenerate Reports from a Saved Run
+
+```bash
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/multi-gateway-smoke_20260421_132840
+```
+
+### Rebuild the Comparison Output for a Saved Run
+
+```bash
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/multi-gateway-smoke_20260421_132840
+```
+
+### `check-runtime`
+
+The runner has a `check-runtime` command for setup diagnostics:
+
+```text
+cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- check-runtime --scenario <scenario-name> --smoke
+```
+
+Current note: on April 21, 2026, `check-runtime --scenario multi-gateway-smoke
+--smoke` still failed in this checkout because the Compose graph in that path
+referenced an undefined `gateway` service. Use `validate` or `run` for current
+multi-gateway verification until that path is fixed.
+
+## Scenario File Structure
+
+Each suite file is TOML with this top-level shape:
+
+- `[suite]`: suite metadata and report settings
+- `[defaults.*]`: shared defaults for all scenarios in the file
+- `[[scenario]]`: one or more scenario entries
+- `[scenario.*]`: per-scenario overrides
+
+Main sections in use today:
+
 - `[defaults.setup]`
 - `[defaults.build]`
 - `[defaults.runtime]`
 - `[defaults.topology]`
 - `[defaults.gateway]`
 - `[defaults.load]`
-- `[defaults.load.env]`
 - `[defaults.measurement]`
-- `[defaults.requests]`
 - `[defaults.profiling]`
 - `[defaults.execution]`
 - `[[scenario]]`
+- `[scenario.build]`
 - `[scenario.runtime]`
 - `[scenario.topology]`
 - `[scenario.load]`
-- `[scenario.requests]`
+- `[scenario.profiling]`
 - `[scenario.execution]`
 
-Unknown keys are currently ignored unless the runner checks them explicitly, so
-scenario authors should treat validation as shape checking for supported fields
-rather than strict unknown-key rejection.
+## Fields That Matter Most
 
-## Important Fields
+### Setup and Build
 
-- `load.target_service = "nginx" | "gateway"`
-  Use `nginx` for realistic end-to-end benchmarking. Use `gateway` only for
-  direct app-path microbenchmarks.
-- `topology.mode = "single_gateway" | "multi_gateway"`
-  `single_gateway` preserves the existing direct gateway model. `multi_gateway`
-  clones the base `gateway` compose service into `gateway-1..N` behind ingress.
-- `topology.gateway_count`
-  Number of gateway nodes to synthesize in `multi_gateway` mode.
-- `topology.ingress_enabled`, `topology.ingress_service`
-  In v1, multi-gateway runs must keep ingress enabled and must target that
-  ingress service from the load driver.
-- `topology.shared_services`
-  V1 supports a single shared `["postgres", "redis", "pgbouncer"]` tier only.
-- `execution.retry_enabled`, `execution.max_attempts`
-  Control per-scenario retries.
+- `setup.plugins_enabled`
+  Turns plugin-aware setup on.
+- `build.rust_plugins`
+  Builds and installs Rust plugin artifacts into the benchmark image.
+- `build.container_file`
+  Containerfile used for the benchmark image build.
+- `build.image_name`, `build.image_tag`
+  Local image naming for the scenario.
+- `build.rebuild_policy`
+  Current supported values are `never`, `missing`, and `always`.
+
+### Runtime and Gateway
+
+- `runtime.http_server`
+  Current scenarios use `gunicorn`.
+- `runtime.transport_type`
+  Current generator support is `streamablehttp`, `sse`, or `websocket`.
+- `gateway.environment`
+  Extra gateway env vars applied to the benchmark containers.
+
+### Load and Measurement
+
+- `load.users`, `load.spawn_rate`, `load.run_time`, `load.request_count`
+  Main load shape controls.
+- `load.target_service`
+  Usually `nginx` for realistic end-to-end benchmarking.
+- `load.workload.*`
+  Endpoint mix, weights, and fallback endpoint.
+- `measurement.warmup_seconds`, `measure_seconds`, `cooldown_seconds`
+  Windows used when summarizing results.
+
+### Execution and Profiling
+
+- `execution.retry_enabled`, `max_attempts`
+  Per-scenario retry behavior.
 - `execution.capture_logs`
-  Persist service logs on failed runs.
-- `measurement.*`
-  Warmup, measurement, and cooldown are applied to Goose history when building
-  the aggregated summary.
-- `profiling.tools`
-  Use Rust-native profiling tools such as `perf`, `flamegraph`, and
-  `process_stats`.
+  Saves service logs on failures.
+- `execution.save_raw_results`
+  Keeps raw benchmark artifacts.
+- `execution.reuse_stack`
+  Reuses the stack across scenarios in the same suite when possible.
+- `profiling.enabled`, `profiling.tools`, `profiling.duration_seconds`
+  Controls the optional profiling pass.
+
+### Baseline Comparison
+
 - `suite.baseline_run`
-  Optional path to a prior `run_summary.json` used for threshold-based
-comparison output.
+  Optional path to an earlier run summary for threshold-based comparisons.
 
-## Multi-Gateway Example
+## Multi-Gateway Topology
 
-Use this shape when you want realistic horizontal gateway scaling with the
-shared database and cache tier still enabled:
+The suite now supports real multi-gateway benchmark topologies with one ingress
+and multiple gateway nodes behind it.
+
+Current model:
+
+- one ingress endpoint: `nginx`
+- multiple synthesized gateway services: `gateway-1`, `gateway-2`, and so on
+- one shared backing tier: `postgres`, `redis`, `pgbouncer`
+- benchmark traffic goes through ingress
+
+The committed smoke example is:
+
+```text
+crates/contextforge_benchmark_runner/assets/scenarios/multi-gateway-smoke.toml
+```
+
+Core topology fields:
 
 ```toml
 [defaults.topology]
 mode = "multi_gateway"
-gateway_count = 3
+gateway_count = 2
 ingress_enabled = true
 ingress_service = "nginx"
 shared_services = ["postgres", "redis", "pgbouncer"]
 gateway_base_service = "gateway"
 gateway_name_prefix = "gateway"
-
-[defaults.load]
-target_service = "nginx"
-
-[[scenario]]
-name = "gunicorn-multi-gateway-smoke"
-
-[[scenario.topology.gateway_override]]
-index = 2
-
-[scenario.topology.gateway_override.environment]
-LOG_LEVEL = "DEBUG"
 ```
 
-Current v1 limits:
+Per-node overrides are supported with `[[scenario.topology.gateway_override]]`.
+In v1 they are limited to env, labels, and ports.
 
-- benchmark traffic goes through ingress only; direct node-targeted benchmarking
-  is rejected in `multi_gateway` mode
-- `PostgreSQL`, `Redis`, and `PgBouncer` stay singleton shared services; the
-  runner does not build clustered backing services yet
-- per-node overrides are limited to env, labels, and ports; they are not
-  independent full build/runtime blocks
+Current limits:
 
-## Request Mixes
+- multi-gateway runs must use `ingress_service = "nginx"`
+- multi-gateway runs must target ingress, not a direct gateway node
+- `postgres`, `redis`, and `pgbouncer` are shared singleton services, not
+  clustered services
 
-The Rust Goose driver in `crates/contextforge_goose/` uses real request
-families:
+## Reports and Artifacts
 
-- health checks
-- admin plugin UI
-- REST discovery (`/servers`, `/resources`, `/prompts`)
-- MCP JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
-- MCP JSON-RPC prompt/resource/tool calls from payload fixtures in
-  `crates/contextforge_benchmark_runner/assets/payloads/`
-
-This means the committed scenario mixes now hit real prompt/resource/tool and
-REST discovery code paths over the transports named in the scenario files, not
-just health or admin endpoints.
-
-## Reporting
-
-Runs write to:
+Runs write under:
 
 ```text
-reports/benchmarks/<profile>_<timestamp>/
+reports/benchmarks/<suite>_<timestamp>/
 ```
 
-Start here:
+Important files:
 
-- `scenario_comparison_report.html`
-- `scenario_comparison_report.json`
-- `scenario_comparison_report.md`
 - `run_summary.json`
 - `run_summary.md`
+- `scenario_comparison_report.json`
+- `scenario_comparison_report.md`
+- `scenario_comparison_report.html`
 - `comparison_matrix.json`
-- `scenarios/<scenario>/summary.json`
+- `scenarios/<scenario-name>/summary.json`
 
-Key reporting behaviors:
+The reports include:
 
-- unified report combines scenario metrics, pairwise deltas, fairness checks,
-  recommendations, and artifact links when files exist
-- validation mode marks metrics as omitted instead of emitting fake zero deltas
-- comparison output shows `changed_dimensions` so intentional runtime changes do
-  not look like fairness failures
-- plugin timing is merged from per-process artifacts
-- run metadata captures git SHA, runtime, compose version, and host facts
-- optional `baseline_comparison.json` is written when `suite.baseline_run` is set
+- per-scenario status and metrics
+- pairwise comparisons
+- changed-dimension reporting for fair comparisons
+- topology metadata, including multi-gateway details
+- links to captured artifacts when present
 
-## Report Regeneration
+## Good Working Routine
 
-Re-render a saved run:
+Use this order:
 
-```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
-```
-
-Rebuild comparisons for a saved run:
-
-```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
-```
+1. `make benchmark` if you want the TUI or generator.
+2. `... -- list` to find the scenario name.
+3. `... -- validate --scenario <name>` after editing a scenario.
+4. `... -- run --scenario <name> --smoke` for a fast real run.
+5. repeat without `--smoke` when the smoke run looks good.
+6. use `regenerate-report` or `compare-run` on saved output instead of rerunning
+   the stack when you only need report changes.
