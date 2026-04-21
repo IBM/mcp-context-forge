@@ -296,7 +296,7 @@ impl RuntimeConfig {
 mod tests {
     use super::{ListenTarget, RuntimeConfig};
     use clap::Parser;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     fn config_from<I, T>(args: I) -> RuntimeConfig
     where
