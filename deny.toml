@@ -17,6 +17,11 @@ ignore = [
 multiple-versions = "warn"
 wildcards = "deny"
 deny = []
+# Allow getrandom duplicates: transitive dependencies (old crypto crates, hickory-resolver, uuid)
+# require incompatible versions. Fixing requires major dependency updates.
+skip = [
+    { name = "getrandom" },
+]
 
 [licenses]
 # Keep this allowlist broad on purpose. It represents the IBM-approved license
