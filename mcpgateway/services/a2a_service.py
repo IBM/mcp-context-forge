@@ -2357,7 +2357,7 @@ class A2AAgentService(BaseService):
             #   - Token exchange protocol (gateway-specific tokens)
             #   - Trusted gateway registry with signature verification
             # ═══════════════════════════════════════════════════════════════════════════
-            if bearer_token:
+            if bearer_token and settings.uaid_forward_auth:
                 headers["Authorization"] = f"Bearer {bearer_token}"
                 # Add audit headers for tracing cross-gateway calls
                 gateway_id = getattr(settings, "gateway_id", "unknown")
@@ -2366,10 +2366,16 @@ class A2AAgentService(BaseService):
                 if user_email:
                     headers["X-Contextforge-Source-User"] = user_email
             else:
-                logger.warning(
-                    "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
-                    uaid,
-                )
+                if bearer_token and not settings.uaid_forward_auth:
+                    logger.info(
+                        "UAID_FORWARD_AUTH disabled: not forwarding bearer token for cross-gateway call to %s. Remote gateway will receive unauthenticated request.",
+                        uaid,
+                    )
+                else:
+                    logger.warning(
+                        "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
+                        uaid,
+                    )
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()
