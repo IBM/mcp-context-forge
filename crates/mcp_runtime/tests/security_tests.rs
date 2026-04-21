@@ -513,7 +513,7 @@ async fn test_blocks_credentials_username_password() {
     let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
     let result = validator
-        .validate_url("https://user:password@example.com/", "test")
+        .validate_url("https://user:password@example.com/", "test") // pragma: allowlist secret
         .await;
 
     assert!(

@@ -901,7 +901,7 @@ mod tests {
         let validator = UrlValidator::from_config(&config).unwrap();
 
         let result = validator
-            .validate_url("https://user:pass@example.com/", "test")
+            .validate_url("https://user:pass@example.com/", "test") // pragma: allowlist secret
             .await;
         assert!(matches!(
             result,
