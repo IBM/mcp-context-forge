@@ -400,7 +400,7 @@ class Settings(BaseSettings):
     )
     experimental_rust_validation_middleware_enabled: bool = Field(
         default=False,
-        description="Enable the experimental in-process Rust validator for recursive validation middleware JSON checks",
+        description="Enable the experimental in-process Rust accelerator for validation middleware parameter checks, JSON validation, resource-path validation, and response sanitization",
     )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")

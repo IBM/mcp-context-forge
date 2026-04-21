@@ -354,17 +354,33 @@ fn validate_json_bytes_streaming(
 ) -> PyResult<Option<(String, String)>> {
     let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
     deserializer.disable_recursion_limit();
-    let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
+    let streaming_result = {
+        let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
 
-    match (ValueSeed {
-        validator,
-        depth: 0,
-        key_context: None,
-        list_item_context: false,
-    })
-    .deserialize(deserializer)
-    {
-        Ok(()) => Ok(None),
+        (ValueSeed {
+            validator,
+            depth: 0,
+            key_context: None,
+            list_item_context: false,
+        })
+        .deserialize(deserializer)
+    };
+
+    match streaming_result {
+        Ok(()) => match deserializer.end() {
+            Ok(()) => Ok(None),
+            Err(error) => match parse_stream_stop(error) {
+                StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
+                StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "JSON payload exceeds maximum supported nesting depth",
+                )),
+                StreamStop::InvalidJson(message) => {
+                    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Request body contains invalid JSON: {message}"
+                    )))
+                }
+            },
+        },
         Err(error) => match parse_stream_stop(error) {
             StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
             StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -605,15 +621,18 @@ impl CompiledValidator {
         validate_json_bytes_streaming(raw_body, self)
     }
 
-    #[pyo3(signature = (parameters, content_type, raw_body=None))]
+    #[pyo3(signature = (parameters, content_type, raw_body=None, skip_parameter_validation=false))]
     fn validate_http_request(
         &self,
         parameters: Vec<(String, String)>,
         content_type: &str,
         #[gen_stub(override_type(type_repr = "bytes | None"))] raw_body: Option<&[u8]>,
+        skip_parameter_validation: bool,
     ) -> PyResult<Option<(String, String)>> {
-        if let Some(result) = self.validate_parameters(parameters) {
-            return Ok(Some(result));
+        if !skip_parameter_validation {
+            if let Some(result) = self.validate_parameters(parameters) {
+                return Ok(Some(result));
+            }
         }
 
         if content_type.starts_with("application/json") {
@@ -802,6 +821,30 @@ mod tests {
             .validate_json_bytes(b"{\"name\":\"\xC3\xA9\"}")
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn validate_json_bytes_rejects_trailing_garbage() {
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: Vec::new(),
+            max_path_depth: 1024,
+        };
+
+        let err = validator
+            .validate_json_bytes(br#"{"name":"safe"} trailing"#)
+            .unwrap_err();
+
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
     }
 
     #[test]
@@ -1000,6 +1043,7 @@ mod tests {
                 vec![("query".to_owned(), "<script>".to_owned())],
                 "application/json",
                 Some(br#"{"name":"safe"}"#),
+                false,
             )
             .unwrap();
 
@@ -1019,6 +1063,7 @@ mod tests {
                 vec![("query".to_owned(), "safe".to_owned())],
                 "text/plain",
                 Some(br#"<script>"#),
+                false,
             )
             .unwrap();
 
@@ -1044,6 +1089,7 @@ mod tests {
                 vec![("query".to_owned(), "safe".to_owned())],
                 "application/json",
                 Some(br#"{"name":"<script>"}"#),
+                false,
             )
             .unwrap();
 

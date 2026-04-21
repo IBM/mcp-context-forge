@@ -18,7 +18,7 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Optional: enable the Rust JSON validation extension after `make rust-validation-install`
+# Optional: enable the Rust validation middleware accelerator after `make rust-validation-install`
 EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=false
 
 # Enable validation middleware (default: false)
@@ -58,7 +58,7 @@ make rust-validation-install
 EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=true
 ```
 
-Enable this only after the Rust extension is installed into the active virtual environment. If the extension is unavailable, the middleware falls back to the Python validator for standard validation failures.
+Enable this only after the Rust extension is installed into the active virtual environment. This flag accelerates validation middleware parameter checks, JSON validation, resource-path validation, and response sanitization. If the extension is unavailable, the middleware falls back to the Python validator for standard validation failures.
 
 #### Phase 1: Log-Only Mode (Dev/Staging)
 ```bash
