@@ -9,8 +9,8 @@ use chrono::Utc;
 use serde_json::{Value, json};
 
 use crate::lib_parts::{
-    build_goose_command, ensure_benchmark_image, run_compose, slug, wait_for_gateway_health,
-    wait_for_service, write_compose_override,
+    build_goose_command, ensure_benchmark_image, ensure_nginx_image, run_compose, slug,
+    wait_for_gateway_health, wait_for_service, write_compose_override,
 };
 use crate::{CommandSpec, ResolvedScenario, RuntimeChoice, log_progress};
 
@@ -149,6 +149,9 @@ pub(crate) fn start_stack(
     scenario_dir: &Path,
 ) -> Result<(Vec<String>, String)> {
     let image_name = ensure_benchmark_image(root, runtime, scenario)?;
+    if scenario.uses_ingress() && scenario.ingress_service_name() == "nginx" {
+        ensure_nginx_image(root, runtime)?;
+    }
     let project = format!("bench-{}-{}", slug(&scenario.name), Utc::now().timestamp());
     let override_path = write_compose_override(root, scenario, scenario_dir, &image_name)?;
     let compose = compose_args(runtime, &project, &override_path);

@@ -543,6 +543,18 @@ volumes: {}
             .iter()
             .any(|value| value == "LOG_LEVEL=DEBUG")
     );
+    for expected in [
+        "EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=false",
+        "EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED=false",
+        "EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED=true",
+    ] {
+        assert!(
+            yaml_strings(gateway_1.get("environment"))
+                .iter()
+                .any(|value| value == expected),
+            "missing gateway env override {expected}"
+        );
+    }
     assert_eq!(
         gateway_2
             .get("labels")

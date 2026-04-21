@@ -12,8 +12,8 @@ ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
 WORKDIR /build
 
-RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        mkdir -p /build/rust-wheels; \
+RUN mkdir -p /build/rust-wheels \
+    && if [ "$ENABLE_RUST" != "true" ]; then \
         exit 0; \
     fi
 
@@ -21,13 +21,13 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
     fi
 
-COPY plugins_rust/ /build/plugins_rust/
+COPY plugins/ /build/plugins/
 
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         if [ -f "${CARGO_HOME}/env" ]; then . "${CARGO_HOME}/env"; fi \
         && mkdir -p /build/rust-wheels \
         && /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin \
-        && for plugin_dir in /build/plugins_rust/*/; do \
+        && for plugin_dir in /build/plugins/external/*/; do \
             if [ -f "$plugin_dir/Cargo.toml" ] && [ -f "$plugin_dir/pyproject.toml" ]; then \
                 /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --manifest-path "$plugin_dir/Cargo.toml" --out /build/rust-wheels || exit 1; \
             fi; \

@@ -17,6 +17,6 @@ pub(crate) use reporting::{
 };
 pub(crate) use runtime::build_goose_command;
 pub(crate) use runtime_orchestration::{
-    benchmark_token, ensure_benchmark_image, run_compose, wait_for_gateway_health,
+    benchmark_token, ensure_benchmark_image, ensure_nginx_image, run_compose, wait_for_gateway_health,
     wait_for_service, write_compose_override,
 };

@@ -89,6 +89,30 @@ pub(crate) fn ensure_benchmark_image(
     Ok(image_name)
 }
 
+pub(crate) fn ensure_nginx_image(root: &Path, runtime: &RuntimeChoice) -> Result<()> {
+    let image_name = "mcpgateway/nginx-cache:latest";
+    let dockerfile = root.join("infra/nginx/Dockerfile");
+    let context_dir = root.join("infra/nginx");
+    if !dockerfile.exists() {
+        bail!("missing nginx dockerfile at '{}'", dockerfile.display());
+    }
+
+    log_progress(format!("Building ingress image {image_name}"));
+    let status = Command::new(&runtime.engine)
+        .current_dir(root)
+        .arg("build")
+        .arg("-f")
+        .arg(&dockerfile)
+        .arg("-t")
+        .arg(image_name)
+        .arg(&context_dir)
+        .status()?;
+    if !status.success() {
+        bail!("failed to build ingress image '{image_name}'");
+    }
+    Ok(())
+}
+
 pub(crate) fn write_compose_override(
     root: &Path,
     scenario: &ResolvedScenario,
@@ -492,10 +516,14 @@ fn gateway_environment(scenario: &ResolvedScenario) -> BTreeMap<String, String> 
         "EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED",
         "EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED",
         "EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED",
+        "EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED",
+        "EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED",
     ] {
         env.entry(key.to_string())
             .or_insert_with(|| "false".to_string());
     }
+    env.entry("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED".to_string())
+        .or_insert_with(|| "true".to_string());
     env.extend(scenario.gateway.environment.clone());
     env
 }
