@@ -8,9 +8,10 @@ Design goals:
 - Bounded index growth: event_id index entries expire with the stream TTL.
 """
 
-# Standard
+# Future
 from __future__ import annotations
 
+# Standard
 import logging
 from typing import AsyncIterator, Optional, TYPE_CHECKING
 import uuid

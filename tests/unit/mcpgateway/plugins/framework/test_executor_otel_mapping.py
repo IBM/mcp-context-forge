@@ -31,7 +31,7 @@ async def test_executor_otel_attribute_mapping_applied():
         "contextforge.runtime": "platform.runtime",
     }
     context = PluginContext(global_context=global_context)
-    
+
     # Create a mock plugin that returns success
     mock_plugin = MagicMock()
     mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
@@ -40,7 +40,7 @@ async def test_executor_otel_attribute_mapping_applied():
         violation=None,
         metadata={}
     ))
-    
+
     # Create plugin config and hook ref
     plugin_config = PluginConfig(
         name="TestPlugin",
@@ -48,7 +48,7 @@ async def test_executor_otel_attribute_mapping_applied():
         hooks=[ToolHookType.TOOL_PRE_INVOKE],
         priority=10,
     )
-    
+
     plugin_ref = MagicMock(
         uuid="test-uuid",
         mode=MagicMock(value="enforce"),
@@ -57,42 +57,42 @@ async def test_executor_otel_attribute_mapping_applied():
         config=plugin_config,
     )
     plugin_ref.name = "TestPlugin"
-    
+
     hook_ref = HookRef(
         hook=ToolHookType.TOOL_PRE_INVOKE,
         plugin_ref=plugin_ref,
     )
-    
+
     # Track OTEL span attributes
     captured_otel_attrs = {}
-    
+
     def mock_create_span(name, attributes):
         captured_otel_attrs.update(attributes)
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=mock_span)
         mock_span.__exit__ = MagicMock(return_value=False)
         return mock_span
-    
+
     # Create executor and execute
     with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
-        
+
         await executor._execute_with_timeout(hook_ref, payload, context)
-        
+
         # Verify OTEL attributes were mapped (lines 478-482 executed)
         assert len(captured_otel_attrs) > 0
-        
+
         # Check that mapping was applied
         assert "controls.artifact.name" in captured_otel_attrs
         assert captured_otel_attrs["controls.artifact.name"] == "TestPlugin"
-        
+
         assert "controls.hook.type" in captured_otel_attrs
         assert captured_otel_attrs["controls.hook.type"] == ToolHookType.TOOL_PRE_INVOKE
-        
+
         assert "platform.runtime" in captured_otel_attrs
         assert captured_otel_attrs["platform.runtime"] == "python"
-        
+
         # Verify original names are gone
         assert "plugin.name" not in captured_otel_attrs
         assert "plugin.hook.type" not in captured_otel_attrs
@@ -106,7 +106,7 @@ async def test_executor_otel_no_mapping_when_empty():
     global_context = GlobalContext(request_id="test-123")
     global_context.state["span_attribute_mapping"] = {}
     context = PluginContext(global_context=global_context)
-    
+
     # Create mock plugin
     mock_plugin = MagicMock()
     mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
@@ -115,14 +115,14 @@ async def test_executor_otel_no_mapping_when_empty():
         violation=None,
         metadata={}
     ))
-    
+
     plugin_config = PluginConfig(
         name="TestPlugin",
         kind="test",
         hooks=[ToolHookType.TOOL_PRE_INVOKE],
         priority=10,
     )
-    
+
     plugin_ref = MagicMock(
         uuid="test-uuid",
         mode=MagicMock(value="enforce"),
@@ -131,27 +131,27 @@ async def test_executor_otel_no_mapping_when_empty():
         config=plugin_config,
     )
     plugin_ref.name = "TestPlugin"
-    
+
     hook_ref = HookRef(
         hook=ToolHookType.TOOL_PRE_INVOKE,
         plugin_ref=plugin_ref,
     )
-    
+
     captured_otel_attrs = {}
-    
+
     def mock_create_span(name, attributes):
         captured_otel_attrs.update(attributes)
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=mock_span)
         mock_span.__exit__ = MagicMock(return_value=False)
         return mock_span
-    
+
     with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
-        
+
         await executor._execute_with_timeout(hook_ref, payload, context)
-        
+
         # Verify original attribute names remain
         assert "plugin.name" in captured_otel_attrs
         assert captured_otel_attrs["plugin.name"] == "TestPlugin"
@@ -163,7 +163,7 @@ async def test_executor_otel_no_mapping_when_missing():
     # Setup context WITHOUT mapping
     global_context = GlobalContext(request_id="test-123")
     context = PluginContext(global_context=global_context)
-    
+
     mock_plugin = MagicMock()
     mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
         continue_processing=True,
@@ -171,14 +171,14 @@ async def test_executor_otel_no_mapping_when_missing():
         violation=None,
         metadata={}
     ))
-    
+
     plugin_config = PluginConfig(
         name="TestPlugin",
         kind="test",
         hooks=[ToolHookType.TOOL_PRE_INVOKE],
         priority=10,
     )
-    
+
     plugin_ref = MagicMock(
         uuid="test-uuid",
         mode=MagicMock(value="enforce"),
@@ -187,27 +187,27 @@ async def test_executor_otel_no_mapping_when_missing():
         config=plugin_config,
     )
     plugin_ref.name = "TestPlugin"
-    
+
     hook_ref = HookRef(
         hook=ToolHookType.TOOL_PRE_INVOKE,
         plugin_ref=plugin_ref,
     )
-    
+
     captured_otel_attrs = {}
-    
+
     def mock_create_span(name, attributes):
         captured_otel_attrs.update(attributes)
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=mock_span)
         mock_span.__exit__ = MagicMock(return_value=False)
         return mock_span
-    
+
     with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
-        
+
         await executor._execute_with_timeout(hook_ref, payload, context)
-        
+
         # Verify original attribute names remain
         assert "plugin.name" in captured_otel_attrs
         assert "contextforge.runtime" in captured_otel_attrs

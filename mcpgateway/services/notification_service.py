@@ -549,9 +549,11 @@ class NotificationService:
                 downstream client replies.
         """
         try:
+            # Third-Party
+            from mcp.types import JSONRPCMessage, JSONRPCRequest  # pylint: disable=import-outside-toplevel
+
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
-            from mcp.types import JSONRPCMessage, JSONRPCRequest  # pylint: disable=import-outside-toplevel
         except ImportError as exc:  # pragma: no cover
             logger.debug("Server event bus unavailable, cancelling responder: %s", exc)
             with responder:
@@ -909,9 +911,11 @@ class NotificationService:
                 MCP session.
         """
         try:
+            # Third-Party
+            from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
+
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
-            from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
         except ImportError as exc:  # pragma: no cover — dependency presence is invariant in this codebase
             logger.debug("Server event bus unavailable, dropping notification: %s", exc)
             return

@@ -22,12 +22,7 @@ plugins:
     description: "Customizes OpenTelemetry span attributes for enhanced observability and compliance"
     version: "1.0.0"
     author: "ContextForge Team"
-    hooks:
-      [
-        "tool_pre_invoke",
-        "resource_pre_fetch",
-        "resource_post_fetch",
-      ]
+    hooks: ["tool_pre_invoke", "resource_pre_fetch", "resource_post_fetch"]
     tags: ["observability", "telemetry", "opentelemetry", "spans", "attributes"]
     mode: "disabled" # Set to "permissive" or "enforce" to activate
     priority: 10 # Run early to set attributes before other plugins
