@@ -2188,11 +2188,12 @@ Disallow: /
         if value in (None, ""):
             return None
 
+        field_name = info.field_name or "experimental_rust_runtime_uds"
         uds_path = Path(value).expanduser()
         if not uds_path.is_absolute():
-            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+            raise ValueError(f"{field_name} must be an absolute path")
         if not uds_path.parent.exists():
-            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+            raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
         return str(uds_path)
 
     # -------------------------------

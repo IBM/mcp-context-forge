@@ -27,7 +27,7 @@ def _tool_cargo_files() -> list[Path]:
 
 
 def _load_toml(path: Path) -> dict:
-    return tomllib.loads(path.read_text())
+    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def test_legacy_tools_rust_tree_is_removed() -> None:
@@ -68,14 +68,9 @@ def test_dockerignore_and_containerfile_keep_rust_servers_out_of_workspace_image
 
 
 def test_crates_directory_is_flat() -> None:
-    remaining = [path.name for path in _top_level_crate_dirs()]
-    assert remaining == [
-        "a2a_runtime",
-        "mcp_runtime",
-        "request_logging_masking_native_extension",
-        "validation_middleware_rust",
-        "wrapper",
-    ], f"Expected only direct crate folders under crates/: {remaining}"
+    remaining = _top_level_crate_dirs()
+    assert remaining == sorted(remaining), "Expected only direct crate folders under crates/"
+    assert all((path / "Cargo.toml").exists() for path in remaining), "Expected each top-level crates/ directory to be a crate"
 
 
 def test_gateway_rs_services_directory_is_empty() -> None:

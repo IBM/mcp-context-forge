@@ -587,6 +587,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.PAGINATION_INCLUDE_LINKS | string | `"true"` |  |
 | mcpContextForge.config.PAGINATION_BASE_URL | string | `""` |  |
 | mcpContextForge.config.EXPERIMENTAL_VALIDATE_IO | string | `"false"` |  |
+| mcpContextForge.config.EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` | enable the experimental Rust JSON validation extension (requires `make rust-validation-install`) |
 | mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |

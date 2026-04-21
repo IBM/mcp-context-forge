@@ -8605,7 +8605,6 @@ rust-install: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Insta
 		echo "  Installing $$crate..."; \
 		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
 	done
-	@$(MAKE) rust-validation-install
 	@echo "✅ All maturin crates installed"
 
 rust-build: rust-ensure-deps            ## Build Rust workspace (release)
@@ -8652,7 +8651,6 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 	@echo "✅ Rust lint passed"
 
 rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
-	@$(MAKE) rust-validation-test
 	@echo "✅ Rust check passed"
 
 rust-validation-install: rust-ensure-deps  ## Build and install the Rust validation extension into the active venv
@@ -8663,6 +8661,8 @@ rust-validation-install: rust-ensure-deps  ## Build and install the Rust validat
 rust-validation-test: rust-ensure-deps  ## Run tests for the Rust validation extension crate
 	@echo "🧪 Testing Rust validation extension..."
 	@cargo test --manifest-path crates/validation_middleware_rust/Cargo.toml
+	@$(MAKE) rust-validation-install
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pytest -q tests/unit/mcpgateway/middleware/test_validation_middleware.py -k real_rust_extension_when_installed"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."

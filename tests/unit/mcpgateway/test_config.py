@@ -1201,14 +1201,14 @@ def test_experimental_rust_a2a_runtime_uds_accepts_absolute_path(tmp_path: Path)
 
 def test_experimental_rust_a2a_runtime_uds_rejects_relative_path():
     """The Rust A2A runtime UDS path must be absolute."""
-    with pytest.raises(ValueError, match="must be an absolute path"):
+    with pytest.raises(ValueError, match="experimental_rust_a2a_runtime_uds must be an absolute path"):
         Settings(experimental_rust_a2a_runtime_uds="relative.sock", _env_file=None)
 
 
 def test_experimental_rust_a2a_runtime_uds_rejects_missing_parent(tmp_path: Path):
     """The Rust A2A runtime UDS parent directory must already exist."""
     missing_parent = tmp_path / "missing" / "contextforge-a2a-rust.sock"
-    with pytest.raises(ValueError, match="parent directory does not exist"):
+    with pytest.raises(ValueError, match="experimental_rust_a2a_runtime_uds parent directory does not exist"):
         Settings(experimental_rust_a2a_runtime_uds=str(missing_parent), _env_file=None)
 
 

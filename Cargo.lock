@@ -4030,7 +4030,6 @@ dependencies = [
 name = "validation_middleware_rust"
 version = "1.0.0-BETA-3"
 dependencies = [
- "once_cell",
  "pyo3",
  "pyo3-stub-gen",
  "regex",

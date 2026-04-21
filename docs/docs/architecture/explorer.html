@@ -2987,7 +2987,7 @@ const COMPONENTS = [
     desc:"JSON schema validation for request bodies with detailed error responses.",
         details:"Input validation and output sanitization preventing path traversal, XSS, and injection attacks.",
     exports:["ValidationMiddleware", "is_path_traversal"],
-    config:["EXPERIMENTAL_VALIDATE_IO", "VALIDATION_STRICT"],
+    config:["EXPERIMENTAL_VALIDATE_IO", "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED", "VALIDATION_STRICT"],
     tags:["validation","json-schema","errors"], connections:[] },
   { id:"mw_token_usage", name:"Token Usage", category:"middleware", group:"observability",
     path:"mcpgateway/middleware/token_usage_middleware.py",

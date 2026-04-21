@@ -153,7 +153,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         if self._rust_validate_http_request is not None and is_json_body:
             try:
-                result = self._validate_request_with_rust([], content_type, body)
+                result = self._validate_request_with_rust(parameters_to_validate, content_type, body)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
@@ -360,6 +360,13 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                     result = self._validate_json_data_with_python(item, depth + 1)
                     if result is not None:
                         return result
+        elif isinstance(data, str):
+            if len(data) > settings.max_param_length:
+                return "payload", "max_length"
+            for pattern in self.dangerous_patterns:
+                if pattern.search(data):
+                    return "payload", "dangerous_pattern"
+
         return None
 
     def _raise_validation_failure(self, key: str, error_type: str):
