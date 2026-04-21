@@ -6,7 +6,7 @@ plugin_dirs:
 plugin_settings:
   parallel_execution_within_band: true
   plugin_timeout: 120
-  fail_on_plugin_error: false
+  fail_on_plugin_error: true  # CRITICAL: Fail tests when plugin errors occur
   enable_plugin_api: true
   plugin_health_check_interval: 120
   include_user_info: false
@@ -19,7 +19,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "e2e", "test"]
-    mode: "permissive"
+    mode: "enforce"  # CRITICAL: Raise errors on plugin failures (was "permissive")
     priority: 50
     conditions:
       - prompts: []

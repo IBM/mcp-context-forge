@@ -21,7 +21,7 @@ import uuid
 import httpx
 import pytest
 
-from tests.e2e.mcp_test_helpers import BASE_URL, skip_no_gateway
+from tests.e2e.helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -196,15 +196,20 @@ def _wait_for_tool_sync(client: httpx.Client, *, timeout_seconds: int = 30) -> l
 
 @pytest.fixture(scope="session")
 def plugin_test_config() -> dict[str, str]:
-    """Environment contract for the live plugin E2E stack."""
+    """Environment contract for the live plugin E2E stack.
+
+    When running against Docker (test-e2e-plugins-docker), these environment
+    variables are set inside the container, not on the host. We use defaults
+    that match the Docker configuration in docker-compose.plugin-e2e.yml.
+    """
     plugin_name = os.getenv("E2E_PLUGIN_UNDER_TEST", "pii_filter")
     plugin_kind = os.getenv("E2E_PLUGIN_KIND", "cpex_pii_filter.pii_filter.PIIFilterPlugin")
     return {
         "plugin_name": plugin_name,
         "plugin_kind": plugin_kind,
-        "plugins_enabled": os.getenv("PLUGINS_ENABLED", ""),
-        "plugins_config_file": os.getenv("PLUGINS_CONFIG_FILE", ""),
-        "observability_enabled": os.getenv("OBSERVABILITY_ENABLED", ""),
+        "plugins_enabled": os.getenv("PLUGINS_ENABLED", "true"),
+        "plugins_config_file": os.getenv("PLUGINS_CONFIG_FILE", "tests/plugins/test_e2e_config.yaml"),
+        "observability_enabled": os.getenv("OBSERVABILITY_ENABLED", "true"),
     }
 
 
@@ -235,7 +240,7 @@ def admin_client() -> Generator[httpx.Client, None, None]:
                 if auth_response.status_code in (200, 403):
                     yield client
                     return
-                
+
                 # 401 means token is invalid - this is a critical error, not just wrong URL
                 if auth_response.status_code == 401:
                     last_error = f"{candidate} auth probe returned 401 Unauthorized. Token may be invalid or expired. Response: {auth_response.text[:200]}"
@@ -335,9 +340,9 @@ def plugin_user(admin_client: httpx.Client, plugin_team: dict[str, Any]) -> Gene
 @pytest.fixture(scope="module")
 def plugin_server(admin_client: httpx.Client, plugin_team: dict[str, Any], request: pytest.FixtureRequest) -> Generator[dict[str, Any], None, None]:
     """Create a virtual server bound to a self-provisioned REST tool and team prompt.
-    
+
     This fixture can be customized via indirect parametrization:
-    
+
     Example:
         @pytest.mark.parametrize("plugin_server", [
             {
@@ -352,7 +357,7 @@ def plugin_server(admin_client: httpx.Client, plugin_team: dict[str, Any], reque
     params = getattr(request, "param", {}) if hasattr(request, "param") else {}
     tool_config = params.get("tool", {})
     prompt_config = params.get("prompt", {})
-    
+
     # Tool configuration with defaults
     tool_name = tool_config.get("name", f"{E2E_PLUGIN_PREFIX}-tool-{uuid.uuid4().hex[:8]}")
     tool_url = tool_config.get("url", "https://postman-echo.com/post")
@@ -366,7 +371,7 @@ def plugin_server(admin_client: httpx.Client, plugin_team: dict[str, Any], reque
         },
         "additionalProperties": True,
     })
-    
+
     tool = _request_json(
         admin_client,
         "POST",
@@ -394,7 +399,7 @@ def plugin_server(admin_client: httpx.Client, plugin_team: dict[str, Any], reque
         {"name": "user_input", "description": "Primary user input"},
         {"name": "secondary_input", "description": "Secondary user input"},
     ])
-    
+
     prompt = _request_json(
         admin_client,
         "POST",
@@ -437,7 +442,7 @@ def plugin_server(admin_client: httpx.Client, plugin_team: dict[str, Any], reque
         "prompt_name": prompt["name"],
         "team_id": plugin_team["id"],
     }
-    
+
     # No cleanup - test database will be reset between test runs
     # Cleanup causes race condition with async metrics buffer service
 
@@ -546,10 +551,10 @@ def plugin_assertions() -> dict[str, Any]:
 @pytest.fixture
 def plugin_config_factory(admin_client: httpx.Client, plugin_team: dict[str, Any]) -> Callable:
     """Factory for creating plugin configurations dynamically.
-    
+
     This allows tests to specify plugin settings without hardcoding them in conftest.
     Each plugin test file can define its own plugin configuration.
-    
+
     Example:
         def test_my_plugin(plugin_config_factory):
             config = plugin_config_factory(
@@ -569,7 +574,7 @@ def plugin_config_factory(admin_client: httpx.Client, plugin_team: dict[str, Any
     ) -> dict[str, Any]:
         """
         Create a plugin configuration for E2E testing.
-        
+
         Args:
             plugin_name: Plugin identifier
             plugin_kind: Python import path (e.g., "cpex_pii_filter.PIIFilterPlugin")
@@ -577,10 +582,10 @@ def plugin_config_factory(admin_client: httpx.Client, plugin_team: dict[str, Any
             config: Plugin-specific configuration dict
             mode: "enforce" | "permissive" | "disabled"
             priority: Plugin execution priority (default: 100)
-            
+
         Returns:
             Dict with plugin metadata for test assertions
-            
+
         Note:
             This currently returns metadata only. In the future, this could
             POST to /admin/plugins or update PLUGINS_CONFIG_FILE dynamically.
@@ -603,9 +608,9 @@ def plugin_config_factory(admin_client: httpx.Client, plugin_team: dict[str, Any
 @pytest.fixture
 def query_observability_traces(admin_client: httpx.Client) -> Callable:
     """Query observability traces to verify plugin execution.
-    
+
     Returns a function that queries traces by various criteria.
-    
+
     Example:
         traces = query_observability_traces(
             resource_type="tool",
@@ -622,16 +627,16 @@ def query_observability_traces(admin_client: httpx.Client) -> Callable:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Query observability traces and filter by span attributes.
-        
+
         Note: The /observability/traces API doesn't support resource_type/resource_name
         filtering directly. We fetch traces and filter client-side by examining spans.
-        
+
         Args:
             resource_type: Filter by resource type (tool, prompt, resource)
             resource_name: Filter by resource name
             span_name: Filter by span name (e.g., "plugin_execution")
             limit: Maximum number of traces to return
-            
+
         Returns:
             List of trace dictionaries that contain matching spans
         """
@@ -647,7 +652,7 @@ def query_observability_traces(admin_client: httpx.Client) -> Callable:
                     all_traces = data.get("traces", data.get("data", []))
                 else:
                     return []
-                
+
                 # Client-side filtering by span attributes
                 filtered_traces = []
                 for trace in all_traces:
@@ -655,36 +660,36 @@ def query_observability_traces(admin_client: httpx.Client) -> Callable:
                     spans = trace.get("spans", [])
                     if not spans and "data" in trace:
                         spans = trace["data"].get("spans", [])
-                    
+
                     # Check if any span matches our filters
                     has_match = False
                     for span in spans:
                         if not isinstance(span, dict):
                             continue
-                        
+
                         # Check resource_type filter
                         if resource_type and span.get("resource_type") != resource_type:
                             continue
-                        
+
                         # Check resource_name filter
                         if resource_name and span.get("resource_name") != resource_name:
                             continue
-                        
+
                         # Check span_name filter
                         if span_name and span_name.lower() not in span.get("name", "").lower():
                             continue
-                        
+
                         # All filters passed
                         has_match = True
                         break
-                    
+
                     if has_match:
                         filtered_traces.append(trace)
                         if len(filtered_traces) >= limit:
                             break
-                
+
                 return filtered_traces
-                
+
             elif response.status_code == 403:
                 logger.warning(
                     "Observability API returned 403 Forbidden. "
@@ -707,16 +712,16 @@ def query_observability_traces(admin_client: httpx.Client) -> Callable:
         except Exception as e:
             logger.warning("Failed to query observability traces: %s", e)
             return []
-    
+
     return _query
 
 
 @pytest.fixture
 def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
     """Verify that a plugin actually executed by checking observability traces.
-    
+
     Returns a function that checks for plugin-related spans in traces.
-    
+
     Example:
         executed = verify_plugin_execution(
             resource_name="my-tool",
@@ -731,13 +736,13 @@ def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
         hook_type: str | None = None,
     ) -> bool:
         """Verify plugin execution via observability traces.
-        
+
         Args:
             resource_name: Name of the resource (tool/prompt) that was invoked
             resource_type: Type of resource (tool, prompt, resource)
             plugin_name: Optional plugin name to verify
             hook_type: Optional hook type (pre_invoke, post_invoke, etc.)
-            
+
         Returns:
             True if plugin execution was found in traces
         """
@@ -746,17 +751,17 @@ def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
             resource_name=resource_name,
             limit=50
         )
-        
+
         if not traces:
             return False
-            
+
         # Look for plugin-related spans
         for trace in traces:
             spans = trace.get("spans", [])
             for span in spans:
                 span_name = span.get("name", "").lower()
                 attributes = span.get("attributes", {})
-                
+
                 # Check for plugin execution indicators
                 if "plugin" in span_name:
                     if plugin_name and plugin_name.lower() not in span_name:
@@ -764,7 +769,7 @@ def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
                     if hook_type and hook_type.lower() not in span_name:
                         continue
                     return True
-                    
+
                 # Check attributes for plugin info
                 if attributes.get("plugin_name") or attributes.get("hook_type"):
                     if plugin_name and attributes.get("plugin_name") != plugin_name:
@@ -772,7 +777,7 @@ def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
                     if hook_type and attributes.get("hook_type") != hook_type:
                         continue
                     return True
-        
+
         return False
-    
+
     return _verify
