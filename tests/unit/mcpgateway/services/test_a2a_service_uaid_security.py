@@ -584,3 +584,120 @@ class TestAuthenticationErrorHandling:
                 interaction_type="request",
                 bearer_token="test-token",
             )
+
+class TestBearerTokenForwardingGracefulDegradation:
+    """Tests for bearer token forwarding graceful degradation."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance for testing."""
+        return A2AAgentService()
+
+    async def test_cross_gateway_call_without_bearer_token_proceeds_unauthenticated(self, service, monkeypatch, caplog):
+        """
+        Test that cross-gateway calls proceed without bearer token when not available.
+
+        Given: A cross-gateway UAID call with no bearer_token provided
+        When: _invoke_remote_agent is called without bearer_token parameter
+        Then: Should proceed with HTTP call, log warning, and not raise exception
+        """
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock HTTP client response
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            # Capture headers to verify Authorization is not present
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act - call without bearer_token (simulates auth middleware failure)
+        with caplog.at_level(logging.WARNING):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token=None,  # Explicitly None - auth middleware didn't extract token
+            )
+
+        # Assert
+        assert result == {"result": "success"}
+        # Verify no Authorization header was sent
+        assert "Authorization" not in captured_headers, "Should not include Authorization header when bearer_token is None"
+        # Verify warning was logged about missing token
+        assert any("Cross-gateway call without bearer token" in record.message for record in caplog.records)
+        assert any("Remote gateway will receive unauthenticated request" in record.message for record in caplog.records)
+
+    async def test_cross_gateway_call_with_forward_auth_disabled_logs_info(self, service, monkeypatch, caplog):
+        """
+        Test that disabling UAID_FORWARD_AUTH logs info instead of warning.
+
+        Given: UAID_FORWARD_AUTH=false and bearer_token is available
+        When: _invoke_remote_agent is called
+        Then: Should log INFO (not WARNING) about forwarding being disabled
+        """
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", False)  # Disabled
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        # Mock HTTP response
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act - call with bearer_token but forwarding disabled
+        with caplog.at_level(logging.INFO):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token="test-token-123",  # Token available but forwarding disabled
+            )
+
+        # Assert
+        assert result == {"result": "success"}
+        # Verify token was NOT forwarded
+        assert "Authorization" not in captured_headers, "Should not forward token when UAID_FORWARD_AUTH=false"
+        # Verify INFO log about forwarding being disabled
+        assert any("UAID_FORWARD_AUTH disabled" in record.message for record in caplog.records)
+        assert any("not forwarding bearer token" in record.message for record in caplog.records)
