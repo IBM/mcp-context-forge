@@ -9,7 +9,9 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::lib_parts::{slug, uses_a2a_fixture, uses_fast_time_fixture, write_text};
-use crate::{DEFAULT_OUTPUT_ROOT, ResolvedScenario, RuntimeChoice, log_progress};
+use crate::{
+    DEFAULT_OUTPUT_ROOT, GatewayNodeOverride, ResolvedScenario, RuntimeChoice, log_progress,
+};
 
 pub(crate) fn ensure_benchmark_image(
     root: &Path,
@@ -113,21 +115,19 @@ pub(crate) fn write_compose_override(
         .cloned()
         .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
-    let mut selected = vec!["postgres", "redis", "pgbouncer", "gateway"];
-    if scenario.load.target_service != "gateway" {
-        selected.push("nginx");
-    }
+    let shared_services = scenario.shared_service_names();
+    let gateway_services = scenario.gateway_service_names();
+    let base_gateway_service = if scenario.topology.gateway_base_service.trim().is_empty() {
+        "gateway".to_string()
+    } else {
+        scenario.topology.gateway_base_service.clone()
+    };
+    let ingress_service = scenario.ingress_service_name();
     if uses_fast_time_fixture(scenario) {
-        selected.push("fast_time_server");
-        selected.push("register_fast_time");
+        // kept below
     }
-    if uses_a2a_fixture(scenario) {
-        selected.push("a2a_echo_agent");
-        selected.push("register_a2a_echo");
-    }
-
     let mut services = serde_yaml::Mapping::new();
-    for name in selected {
+    for name in &shared_services {
         let mut service = base_services
             .get(yaml_key(name))
             .and_then(serde_yaml::Value::as_mapping)
@@ -144,9 +144,7 @@ pub(crate) fn write_compose_override(
                 }
             }))?,
         );
-        if !matches!(name, "gateway" | "nginx") {
-            service.remove(yaml_key("ports"));
-        }
+        service.remove(yaml_key("ports"));
         if let Some(volumes) = service.get(yaml_key("volumes")).cloned() {
             let normalized = yaml_strings(Some(&volumes))
                 .into_iter()
@@ -154,45 +152,163 @@ pub(crate) fn write_compose_override(
                 .collect::<Vec<_>>();
             service.insert(yaml_key("volumes"), serde_yaml::to_value(normalized)?);
         }
-        if name == "gateway" {
-            service.insert(
-                yaml_key("image"),
-                serde_yaml::Value::String(image_name.to_string()),
-            );
-            if scenario.load.target_service == "gateway" {
-                service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["14444:4444"])?);
-            } else {
-                service.remove(yaml_key("ports"));
+        services.insert(yaml_key(name), serde_yaml::Value::Mapping(service));
+    }
+
+    let base_gateway = base_services
+        .get(yaml_key(&base_gateway_service))
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned()
+        .ok_or_else(|| anyhow!("missing compose service '{base_gateway_service}'"))?;
+    for gateway_service in &gateway_services {
+        let mut service = base_gateway.clone();
+        service.remove(yaml_key("profiles"));
+        service.remove(yaml_key("build"));
+        service.insert(
+            yaml_key("deploy"),
+            serde_yaml::to_value(json!({
+                "resources": {
+                    "limits": {"cpus": "1"},
+                    "reservations": {"cpus": "0.25"}
+                }
+            }))?,
+        );
+        if let Some(volumes) = service.get(yaml_key("volumes")).cloned() {
+            let normalized = yaml_strings(Some(&volumes))
+                .into_iter()
+                .map(|entry| normalize_volume_entry(root, &entry))
+                .collect::<Vec<_>>();
+            service.insert(yaml_key("volumes"), serde_yaml::to_value(normalized)?);
+        }
+        service.insert(
+            yaml_key("image"),
+            serde_yaml::Value::String(image_name.to_string()),
+        );
+        if scenario.uses_multi_gateway_topology()
+            || scenario.load.target_service != base_gateway_service
+        {
+            service.remove(yaml_key("ports"));
+        } else {
+            service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["14444:4444"])?);
+        }
+        service.insert(
+            yaml_key("cap_add"),
+            serde_yaml::to_value(vec!["SYS_PTRACE"])?,
+        );
+        service.insert(
+            yaml_key("security_opt"),
+            serde_yaml::to_value(vec!["seccomp:unconfined"])?,
+        );
+        let mut volumes_list = yaml_strings(service.get(yaml_key("volumes")));
+        volumes_list.push(format!(
+            "{}:/mnt/bench",
+            scenario_dir
+                .canonicalize()
+                .unwrap_or_else(|_| scenario_dir.to_path_buf())
+                .display()
+        ));
+        service.insert(yaml_key("volumes"), serde_yaml::to_value(volumes_list)?);
+        let mut env = gateway_environment(scenario);
+        if let Some(override_config) = gateway_override_for(scenario, gateway_service) {
+            env.extend(override_config.environment.clone());
+        }
+        service.insert(
+            yaml_key("environment"),
+            serde_yaml::to_value(merge_environment(
+                service.get(yaml_key("environment")),
+                &env,
+            ))?,
+        );
+        if let Some(override_config) = gateway_override_for(scenario, gateway_service) {
+            if !override_config.ports.is_empty() && !scenario.uses_multi_gateway_topology() {
+                service.insert(
+                    yaml_key("ports"),
+                    serde_yaml::to_value(override_config.ports.clone())?,
+                );
             }
-            service.insert(
-                yaml_key("cap_add"),
-                serde_yaml::to_value(vec!["SYS_PTRACE"])?,
-            );
-            service.insert(
-                yaml_key("security_opt"),
-                serde_yaml::to_value(vec!["seccomp:unconfined"])?,
-            );
+            if !override_config.labels.is_empty() {
+                service.insert(
+                    yaml_key("labels"),
+                    serde_yaml::to_value(merge_mapping(
+                        service.get(yaml_key("labels")),
+                        &override_config.labels,
+                    ))?,
+                );
+            }
+        }
+        services.insert(
+            yaml_key(gateway_service),
+            serde_yaml::Value::Mapping(service),
+        );
+    }
+
+    if scenario.uses_ingress() {
+        let mut service = base_services
+            .get(yaml_key(&ingress_service))
+            .and_then(serde_yaml::Value::as_mapping)
+            .cloned()
+            .ok_or_else(|| anyhow!("missing compose service '{ingress_service}'"))?;
+        service.remove(yaml_key("profiles"));
+        service.remove(yaml_key("build"));
+        service.insert(
+            yaml_key("deploy"),
+            serde_yaml::to_value(json!({
+                "resources": {
+                    "limits": {"cpus": "1"},
+                    "reservations": {"cpus": "0.25"}
+                }
+            }))?,
+        );
+        if let Some(volumes) = service.get(yaml_key("volumes")).cloned() {
+            let normalized = yaml_strings(Some(&volumes))
+                .into_iter()
+                .map(|entry| normalize_volume_entry(root, &entry))
+                .collect::<Vec<_>>();
+            service.insert(yaml_key("volumes"), serde_yaml::to_value(normalized)?);
+        }
+        if scenario.uses_multi_gateway_topology() {
+            let nginx_config = write_nginx_topology_config(root, scenario)?;
             let mut volumes_list = yaml_strings(service.get(yaml_key("volumes")));
+            volumes_list.retain(|entry| !entry.contains("/etc/nginx/nginx.conf"));
             volumes_list.push(format!(
-                "{}:/mnt/bench",
-                scenario_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| scenario_dir.to_path_buf())
-                    .display()
+                "{}:/etc/nginx/nginx.conf:ro",
+                nginx_config.display()
             ));
             service.insert(yaml_key("volumes"), serde_yaml::to_value(volumes_list)?);
-            service.insert(
-                yaml_key("environment"),
-                serde_yaml::to_value(merge_environment(
-                    service.get(yaml_key("environment")),
-                    &gateway_environment(scenario),
-                ))?,
-            );
         }
-        if name == "nginx" {
+        service.insert(
+            yaml_key("depends_on"),
+            serde_yaml::to_value(
+                gateway_services
+                    .iter()
+                    .map(|name| (name, json!({ "condition": "service_healthy" })))
+                    .collect::<BTreeMap<_, _>>(),
+            )?,
+        );
+        if ingress_service == "nginx" {
             service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["18080:80"])?);
         }
-        services.insert(yaml_key(name), serde_yaml::Value::Mapping(service));
+        services.insert(
+            yaml_key(&ingress_service),
+            serde_yaml::Value::Mapping(service),
+        );
+    }
+
+    if uses_fast_time_fixture(scenario) {
+        for name in ["fast_time_server", "register_fast_time"] {
+            services.insert(
+                yaml_key(name),
+                serde_yaml::Value::Mapping(clone_aux_service(root, &base_services, name)?),
+            );
+        }
+    }
+    if uses_a2a_fixture(scenario) {
+        for name in ["a2a_echo_agent", "register_a2a_echo"] {
+            services.insert(
+                yaml_key(name),
+                serde_yaml::Value::Mapping(clone_aux_service(root, &base_services, name)?),
+            );
+        }
     }
 
     let mut root_map = serde_yaml::Mapping::new();
@@ -204,6 +320,29 @@ pub(crate) fn write_compose_override(
     let override_path = path.join(format!("{}_compose.yml", slug(&scenario.name)));
     write_text(&override_path, &serde_yaml::to_string(&root_map)?)?;
     Ok(override_path)
+}
+
+fn clone_aux_service(
+    root: &Path,
+    base_services: &serde_yaml::Mapping,
+    name: &str,
+) -> Result<serde_yaml::Mapping> {
+    let mut service = base_services
+        .get(yaml_key(name))
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned()
+        .ok_or_else(|| anyhow!("missing compose service '{name}'"))?;
+    service.remove(yaml_key("profiles"));
+    service.remove(yaml_key("build"));
+    service.remove(yaml_key("ports"));
+    if let Some(volumes) = service.get(yaml_key("volumes")).cloned() {
+        let normalized = yaml_strings(Some(&volumes))
+            .into_iter()
+            .map(|entry| normalize_volume_entry(root, &entry))
+            .collect::<Vec<_>>();
+        service.insert(yaml_key("volumes"), serde_yaml::to_value(normalized)?);
+    }
+    Ok(service)
 }
 
 pub(crate) fn yaml_strings(value: Option<&serde_yaml::Value>) -> Vec<String> {
@@ -236,6 +375,22 @@ fn merge_environment(
         .into_iter()
         .map(|(key, value)| format!("{key}={value}"))
         .collect()
+}
+
+fn merge_mapping(
+    existing: Option<&serde_yaml::Value>,
+    overrides: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut merged = BTreeMap::new();
+    if let Some(mapping) = existing.and_then(serde_yaml::Value::as_mapping) {
+        for (key, value) in mapping {
+            if let (Some(key), Some(value)) = (key.as_str(), value.as_str()) {
+                merged.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    merged.extend(overrides.clone());
+    merged
 }
 
 fn normalize_volume_entry(root: &Path, entry: &str) -> String {
@@ -345,6 +500,85 @@ fn gateway_environment(scenario: &ResolvedScenario) -> BTreeMap<String, String> 
     env
 }
 
+fn gateway_override_for<'a>(
+    scenario: &'a ResolvedScenario,
+    gateway_service: &str,
+) -> Option<&'a GatewayNodeOverride> {
+    scenario.topology.gateway_override.iter().find(|item| {
+        if !item.name.trim().is_empty() {
+            item.name == gateway_service
+        } else if let Some(index) = item.index {
+            scenario
+                .gateway_service_names()
+                .get(index as usize - 1)
+                .map(|name| name == gateway_service)
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    })
+}
+
+fn write_nginx_topology_config(root: &Path, scenario: &ResolvedScenario) -> Result<PathBuf> {
+    let source = root.join("infra/nginx/nginx.conf");
+    let mut raw = fs::read_to_string(&source)?;
+    let gateway_upstream = build_upstream_block(
+        "benchmark_gateway_backend",
+        &scenario.gateway_service_names(),
+        4444,
+        false,
+    );
+    let transport_upstream = build_upstream_block(
+        "benchmark_mcp_transport_backend",
+        &scenario.gateway_service_names(),
+        8787,
+        false,
+    );
+    let fallback_upstream = build_upstream_block(
+        "benchmark_mcp_transport_fallback",
+        &scenario.gateway_service_names(),
+        4444,
+        false,
+    );
+    let a2a_upstream =
+        build_upstream_block("a2a_backend", &scenario.gateway_service_names(), 8788, true);
+    raw = raw.replace(
+        "map \"\" $gateway_backend_url {\n        default \"http://gateway:4444\";\n    }\n\n    map \"\" $mcp_transport_backend_url {\n        default \"http://gateway:8787\";\n    }\n\n    map \"\" $mcp_transport_fallback_url {\n        default \"http://gateway:4444\";\n    }\n\n    # A2A HTTP API: prefer Rust sidecar when enabled, fallback to Python gateway.\n    # Mirrors the MCP transport pattern above.\n    upstream a2a_backend {\n        least_conn;\n        server gateway:8788 max_fails=0;\n        server gateway:4444 max_fails=0 backup;\n        keepalive 512;\n        keepalive_requests 100000;\n        keepalive_timeout 60s;\n    }\n",
+        &format!(
+            "map \"\" $gateway_backend_url {{\n        default \"http://benchmark_gateway_backend\";\n    }}\n\n    map \"\" $mcp_transport_backend_url {{\n        default \"http://benchmark_mcp_transport_backend\";\n    }}\n\n    map \"\" $mcp_transport_fallback_url {{\n        default \"http://benchmark_mcp_transport_fallback\";\n    }}\n\n{gateway_upstream}\n\n{transport_upstream}\n\n{fallback_upstream}\n\n    # A2A HTTP API: prefer Rust sidecar when enabled, fallback to Python gateway.\n    # Mirrors the MCP transport pattern above.\n{a2a_upstream}\n"
+        ),
+    );
+    let path = root
+        .join(DEFAULT_OUTPUT_ROOT)
+        .join("_runtime_staging")
+        .join(format!("{}_nginx.conf", slug(&scenario.name)));
+    write_text(&path, &raw)?;
+    Ok(path)
+}
+
+fn build_upstream_block(
+    name: &str,
+    gateways: &[String],
+    port: u16,
+    backup_fallback: bool,
+) -> String {
+    let mut lines = vec![
+        format!("    upstream {name} {{"),
+        "        least_conn;".to_string(),
+    ];
+    for gateway in gateways {
+        lines.push(format!("        server {gateway}:{port} max_fails=0;"));
+        if backup_fallback {
+            lines.push(format!("        server {gateway}:4444 max_fails=0 backup;"));
+        }
+    }
+    lines.push("        keepalive 512;".to_string());
+    lines.push("        keepalive_requests 100000;".to_string());
+    lines.push("        keepalive_timeout 60s;".to_string());
+    lines.push("    }".to_string());
+    lines.join("\n")
+}
+
 fn yaml_key(value: &str) -> serde_yaml::Value {
     serde_yaml::Value::String(value.to_string())
 }
@@ -412,13 +646,17 @@ pub(crate) fn wait_for_service(
     bail!("timed out waiting for compose service '{service}'")
 }
 
-pub(crate) fn wait_for_gateway_health(compose_args: &[String], timeout_secs: u64) -> Result<bool> {
+pub(crate) fn wait_for_gateway_health(
+    compose_args: &[String],
+    service: &str,
+    timeout_secs: u64,
+) -> Result<bool> {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let script = "python3 - <<'PY'\nimport json, sys, urllib.request\ntry:\n resp=urllib.request.urlopen('http://127.0.0.1:4444/health',timeout=2)\n payload=json.loads(resp.read())\n sys.exit(0 if payload.get('status')=='healthy' else 1)\nexcept Exception:\n sys.exit(1)\nPY";
     while Instant::now() < deadline {
         let output = Command::new(&compose_args[0])
             .args(&compose_args[1..])
-            .args(["exec", "-T", "gateway", "sh", "-lc", script])
+            .args(["exec", "-T", service, "sh", "-lc", script])
             .output()?;
         if output.status.success() {
             return Ok(true);
@@ -432,11 +670,11 @@ pub(crate) fn benchmark_token_command() -> String {
     "python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --full-name 'Benchmark Admin' --exp 10080 --secret \"${JWT_SECRET_KEY}\" --algo HS256".to_string()
 }
 
-pub(crate) fn benchmark_token(compose_args: &[String]) -> Result<String> {
+pub(crate) fn benchmark_token(compose_args: &[String], service: &str) -> Result<String> {
     let command = benchmark_token_command();
     let output = Command::new(&compose_args[0])
         .args(&compose_args[1..])
-        .args(["exec", "-T", "gateway", "sh", "-lc", &command])
+        .args(["exec", "-T", service, "sh", "-lc", &command])
         .output()?;
     if !output.status.success() {
         bail!("failed to mint benchmark token");

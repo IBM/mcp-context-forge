@@ -381,6 +381,7 @@ volumes: {}
         setup: SetupConfig::default(),
         build: BuildConfig::default(),
         runtime: RuntimeConfig::default(),
+        topology: TopologyConfig::default(),
         gateway: GatewayConfig::default(),
         load: LoadConfig {
             target_service: "nginx".to_string(),
@@ -420,6 +421,245 @@ volumes: {}
 }
 
 #[test]
+fn multi_gateway_override_generates_gateway_fleet_and_ingress_upstreams() {
+    let tempdir = std::env::temp_dir().join("benchmark-runner-compose-multi-gateway");
+    let _ = std::fs::remove_dir_all(&tempdir);
+    std::fs::create_dir_all(tempdir.join("reports/benchmarks/test-scenario")).unwrap();
+    std::fs::create_dir_all(tempdir.join("infra/nginx")).unwrap();
+    std::fs::write(
+        tempdir.join("docker-compose.yml"),
+        r#"
+services:
+  postgres:
+    image: postgres:16
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+  pgbouncer:
+    image: edoburu/pgbouncer
+    ports: ["6432:6432"]
+  gateway:
+    image: mcpgateway/test:latest
+    environment:
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
+      - LOG_LEVEL=INFO
+    ports: ["4444:4444"]
+  nginx:
+    image: nginx:latest
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ["8080:80"]
+networks: {}
+volumes: {}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tempdir.join("infra/nginx/nginx.conf"),
+        std::fs::read_to_string(fixture_repo_root().join("infra/nginx/nginx.conf")).unwrap(),
+    )
+    .unwrap();
+
+    let scenario_dir = tempdir.join("reports/benchmarks/test-scenario");
+    let scenario = ResolvedScenario {
+        name: "multi-gateway".to_string(),
+        description: String::new(),
+        scenario_type: String::new(),
+        setup: SetupConfig::default(),
+        build: BuildConfig::default(),
+        runtime: RuntimeConfig::default(),
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 3,
+            ingress_enabled: true,
+            gateway_override: vec![GatewayNodeOverride {
+                index: Some(2),
+                environment: [("LOG_LEVEL".to_string(), "DEBUG".to_string())]
+                    .into_iter()
+                    .collect(),
+                labels: [("bench.node".to_string(), "two".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..GatewayNodeOverride::default()
+            }],
+            ..TopologyConfig::default()
+        },
+        gateway: GatewayConfig::default(),
+        load: LoadConfig {
+            target_service: "nginx".to_string(),
+            ..LoadConfig::default()
+        },
+        measurement: MeasurementConfig::default(),
+        profiling: ProfilingConfig::default(),
+        execution: ExecutionConfig::default(),
+        requests: RequestsConfig::default(),
+    };
+
+    let override_path =
+        write_compose_override(&tempdir, &scenario, &scenario_dir, "mcpgateway/test:latest")
+            .unwrap();
+    let raw = std::fs::read_to_string(&override_path).unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+    let services = parsed
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    for service in [
+        "postgres",
+        "redis",
+        "pgbouncer",
+        "nginx",
+        "gateway-1",
+        "gateway-2",
+        "gateway-3",
+    ] {
+        assert!(services.contains_key(&serde_yaml::Value::String(service.to_string())));
+    }
+    let gateway_1 = services
+        .get(serde_yaml::Value::String("gateway-1".to_string()))
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    let gateway_2 = services
+        .get(serde_yaml::Value::String("gateway-2".to_string()))
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    let nginx = services
+        .get(serde_yaml::Value::String("nginx".to_string()))
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+
+    assert!(gateway_1.get("ports").is_none());
+    assert!(gateway_2.get("ports").is_none());
+    assert_eq!(
+        yaml_strings(nginx.get("ports")),
+        vec!["18080:80".to_string()]
+    );
+    assert!(
+        yaml_strings(gateway_2.get("environment"))
+            .iter()
+            .any(|value| value == "LOG_LEVEL=DEBUG")
+    );
+    assert_eq!(
+        gateway_2
+            .get("labels")
+            .and_then(serde_yaml::Value::as_mapping)
+            .and_then(|labels| labels.get(&serde_yaml::Value::String("bench.node".to_string())))
+            .and_then(serde_yaml::Value::as_str),
+        Some("two")
+    );
+
+    let nginx_mount = yaml_strings(nginx.get("volumes"))
+        .into_iter()
+        .find(|entry| entry.contains("/etc/nginx/nginx.conf"))
+        .unwrap();
+    let generated_config = Path::new(nginx_mount.split(':').next().unwrap());
+    let config_raw = std::fs::read_to_string(generated_config).unwrap();
+    assert!(config_raw.contains("upstream benchmark_gateway_backend"));
+    assert!(config_raw.contains("server gateway-1:4444 max_fails=0;"));
+    assert!(config_raw.contains("server gateway-2:4444 max_fails=0;"));
+    assert!(config_raw.contains("server gateway-3:4444 max_fails=0;"));
+
+    let _ = std::fs::remove_dir_all(&tempdir);
+}
+
+#[test]
+fn load_suite_resolves_multi_gateway_defaults_and_validates_targeting() {
+    let tempdir = std::env::temp_dir().join("benchmark-runner-topology-suite");
+    let _ = std::fs::remove_dir_all(&tempdir);
+    std::fs::create_dir_all(tempdir.join("crates/contextforge_benchmark_runner/assets/scenarios"))
+        .unwrap();
+    std::fs::write(
+        tempdir.join("crates/contextforge_benchmark_runner/assets/scenarios/multi.toml"),
+        r#"
+[suite]
+name = "multi"
+
+[defaults.build]
+container_file = "crates/contextforge_benchmark_runner/assets/Containerfile"
+
+[defaults.load]
+driver = "contextforge_goose"
+target_service = "nginx"
+
+[defaults.topology]
+mode = "multi_gateway"
+gateway_count = 2
+ingress_enabled = true
+
+[[scenario]]
+name = "multi-gateway"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tempdir.join("crates/contextforge_benchmark_runner/assets")).unwrap();
+    std::fs::write(
+        tempdir.join("crates/contextforge_benchmark_runner/assets/Containerfile"),
+        "FROM scratch\n",
+    )
+    .unwrap();
+
+    let suite = load_suite(&tempdir, "multi", false).unwrap();
+    let scenario = &suite.scenarios[0];
+    assert_eq!(scenario.topology.mode, "multi_gateway");
+    assert_eq!(scenario.topology.gateway_count, 2);
+    assert_eq!(
+        scenario.gateway_service_names(),
+        vec!["gateway-1", "gateway-2"]
+    );
+    assert_eq!(scenario.bootstrap_gateway_service(), "gateway-1");
+
+    let invalid = ResolvedScenario {
+        load: LoadConfig {
+            target_service: "gateway".to_string(),
+            ..scenario.load.clone()
+        },
+        ..scenario.clone()
+    };
+    let error = validate_scenario(&tempdir, &invalid)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("must target ingress service"));
+
+    let _ = std::fs::remove_dir_all(&tempdir);
+}
+
+#[test]
+fn validate_scenario_rejects_invalid_multi_gateway_topology() {
+    let scenario = ResolvedScenario {
+        name: "bad".to_string(),
+        description: String::new(),
+        scenario_type: String::new(),
+        setup: SetupConfig::default(),
+        build: BuildConfig::default(),
+        runtime: RuntimeConfig::default(),
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 1,
+            ingress_enabled: false,
+            ..TopologyConfig::default()
+        },
+        gateway: GatewayConfig::default(),
+        load: LoadConfig {
+            driver: DEFAULT_GOSE_BIN.to_string(),
+            target_service: "gateway".to_string(),
+            ..LoadConfig::default()
+        },
+        measurement: MeasurementConfig::default(),
+        profiling: ProfilingConfig::default(),
+        execution: ExecutionConfig::default(),
+        requests: RequestsConfig::default(),
+    };
+    let error = validate_scenario(fixture_repo_root(), &scenario)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("gateway_count >= 2") || error.contains("ingress_enabled"));
+}
+
+#[test]
 fn comparison_report_tracks_changed_dimensions() {
     let left = ScenarioSummary {
         scenario: "left".to_string(),
@@ -431,6 +671,11 @@ fn comparison_report_tracks_changed_dimensions() {
         setup: SetupConfig {
             auth_mode: "jwt".to_string(),
             ..SetupConfig::default()
+        },
+        topology: TopologyConfig {
+            mode: "single_gateway".to_string(),
+            gateway_count: 1,
+            ..TopologyConfig::default()
         },
         load: LoadConfig {
             driver: DEFAULT_GOSE_BIN.to_string(),
@@ -449,6 +694,12 @@ fn comparison_report_tracks_changed_dimensions() {
         setup: SetupConfig {
             auth_mode: "jwt".to_string(),
             ..SetupConfig::default()
+        },
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 3,
+            ingress_enabled: true,
+            ..TopologyConfig::default()
         },
         load: LoadConfig {
             driver: DEFAULT_GOSE_BIN.to_string(),
@@ -470,5 +721,12 @@ fn comparison_report_tracks_changed_dimensions() {
             .unwrap()
             .to_string()
             .contains("runtime.http_server")
+    );
+    assert!(
+        first
+            .get("changed_dimensions")
+            .unwrap()
+            .to_string()
+            .contains("topology.gateway_count")
     );
 }

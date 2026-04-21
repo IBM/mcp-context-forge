@@ -64,6 +64,15 @@ pub(crate) fn generator_section(key: &str) -> &'static str {
         | "uvicorn_log_level"
         | "uvicorn_dev_mode"
         | "scenario_runtime_snippet" => "Runtime",
+        "topology_mode"
+        | "gateway_count"
+        | "ingress_enabled"
+        | "ingress_service"
+        | "shared_services"
+        | "gateway_base_service"
+        | "gateway_name_prefix"
+        | "gateway_overrides"
+        | "scenario_topology_snippet" => "Topology",
         "trust_proxy_auth"
         | "disable_access_log"
         | "templates_auto_reload"
@@ -157,6 +166,14 @@ pub(crate) fn generator_config_path(key: &str) -> &'static str {
         "http_server" => "defaults.runtime.http_server",
         "runtime_host" => "defaults.runtime.host",
         "transport_type" => "defaults.runtime.transport_type",
+        "topology_mode" => "defaults.topology.mode",
+        "gateway_count" => "defaults.topology.gateway_count",
+        "ingress_enabled" => "defaults.topology.ingress_enabled",
+        "ingress_service" => "defaults.topology.ingress_service",
+        "shared_services" => "defaults.topology.shared_services",
+        "gateway_base_service" => "defaults.topology.gateway_base_service",
+        "gateway_name_prefix" => "defaults.topology.gateway_name_prefix",
+        "gateway_overrides" => "scenario.topology.gateway_override",
         "gunicorn_workers" => "defaults.runtime.gunicorn.workers",
         "gunicorn_timeout" => "defaults.runtime.gunicorn.timeout",
         "gunicorn_graceful_timeout" => "defaults.runtime.gunicorn.graceful_timeout",
@@ -245,6 +262,7 @@ pub(crate) fn generator_config_path(key: &str) -> &'static str {
         "scenario_setup_snippet" => "scenario.setup",
         "scenario_build_snippet" => "scenario.build",
         "scenario_runtime_snippet" => "scenario.runtime",
+        "scenario_topology_snippet" => "scenario.topology",
         "scenario_gateway_snippet" => "scenario.gateway",
         "scenario_load_snippet" => "scenario.load",
         "scenario_measurement_snippet" => "scenario.measurement",
@@ -264,6 +282,7 @@ pub(crate) fn generator_format_hint(key: &str) -> &'static str {
         "rebuild_policy" => "never, missing, or always",
         "http_server" => "gunicorn, granian, or uvicorn",
         "transport_type" => "streamablehttp, sse, or websocket",
+        "topology_mode" => "single_gateway or multi_gateway",
         "target_service" => "nginx or gateway",
         "continue_on_failure"
         | "save_intermediate_artifacts"
@@ -299,8 +318,10 @@ pub(crate) fn generator_format_hint(key: &str) -> &'static str {
         "tags" | "exclude_tags" | "enabled_groups" | "disabled_groups" | "enabled_endpoints"
         | "disabled_endpoints" | "enabled_tags" | "disabled_tags" | "profiling_tools"
         | "load_extra_args" => "comma-separated list",
+        "shared_services" => "comma-separated service names",
         "build_args"
         | "gateway_environment"
+        | "gateway_overrides"
         | "load_env"
         | "workload_endpoints"
         | "defaults_plugins_snippet"
@@ -341,6 +362,7 @@ pub(crate) fn generator_format_hint(key: &str) -> &'static str {
         | "uvicorn_timeout_keep_alive"
         | "uvicorn_limit_max_requests"
         | "request_count"
+        | "gateway_count"
         | "profiling_duration_seconds" => "integer number",
         "baseline_rps_drop_pct" | "baseline_p95_regression_pct" | "baseline_failure_increase" => {
             "numeric threshold"

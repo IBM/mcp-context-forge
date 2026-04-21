@@ -42,6 +42,13 @@ pub(crate) fn generator_visibility_note(key: &str) -> &'static str {
         "defaults_plugins_snippet" | "scenario_plugins_snippet" => {
             "Visible only when plugins_enabled is true."
         }
+        "gateway_count"
+        | "ingress_enabled"
+        | "ingress_service"
+        | "shared_services"
+        | "gateway_name_prefix"
+        | "gateway_overrides"
+        | "scenario_topology_snippet" => "Visible only when topology_mode is multi_gateway.",
         "workload_endpoints" => {
             "Visible once the workload area is in use. Keep it empty if you just want the preset selection and fallback endpoint."
         }
@@ -82,6 +89,16 @@ pub(crate) fn generator_example(key: &str) -> &'static str {
         "http_server" => "granian",
         "runtime_host" => "127.0.0.1",
         "transport_type" => "streamablehttp",
+        "topology_mode" => "multi_gateway",
+        "gateway_count" => "3",
+        "ingress_enabled" => "true",
+        "ingress_service" => "nginx",
+        "shared_services" => "postgres,redis,pgbouncer",
+        "gateway_base_service" => "gateway",
+        "gateway_name_prefix" => "gateway",
+        "gateway_overrides" => {
+            "index = 2 | [scenario.topology.gateway_override.environment] | LOG_LEVEL = \"DEBUG\""
+        }
         "gunicorn_workers" | "granian_workers" | "uvicorn_workers" => "12",
         "gunicorn_timeout" => "30",
         "gunicorn_graceful_timeout" => "30",
@@ -154,6 +171,7 @@ pub(crate) fn generator_example(key: &str) -> &'static str {
         "scenario_setup_snippet" => "plugins_enabled = true",
         "scenario_build_snippet" => "image_tag = \"benchmark-override\"",
         "scenario_runtime_snippet" => "http_server = \"granian\"",
+        "scenario_topology_snippet" => "gateway_count = 2 | ingress_enabled = true",
         "scenario_gateway_snippet" => "log_level = \"WARNING\"",
         "scenario_load_snippet" => "users = 100",
         "scenario_measurement_snippet" => "warmup_seconds = 10",

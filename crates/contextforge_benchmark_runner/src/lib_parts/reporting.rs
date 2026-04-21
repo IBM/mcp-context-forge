@@ -274,6 +274,11 @@ pub fn build_run_summary(suite: &SuiteMeta, summaries: &[ScenarioSummary]) -> Va
             "status": summary.status,
             "runtime": summary.runtime.http_server,
             "auth_mode": summary.setup.auth_mode,
+            "topology_mode": summary.topology.mode,
+            "gateway_count": summary.topology.gateway_count,
+            "ingress_enabled": summary.topology.ingress_enabled,
+            "shared_services": summary.topology.shared_services,
+            "gateway_override_count": summary.topology.gateway_override.len(),
         })).collect::<Vec<_>>()
     })
 }
@@ -321,6 +326,21 @@ fn changed_dimensions(left: &ScenarioSummary, right: &ScenarioSummary) -> Vec<St
     }
     if left.load.driver != right.load.driver {
         dimensions.push("load.driver".to_string());
+    }
+    if left.topology.mode != right.topology.mode {
+        dimensions.push("topology.mode".to_string());
+    }
+    if left.topology.gateway_count != right.topology.gateway_count {
+        dimensions.push("topology.gateway_count".to_string());
+    }
+    if left.topology.ingress_enabled != right.topology.ingress_enabled {
+        dimensions.push("topology.ingress_enabled".to_string());
+    }
+    if left.topology.shared_services != right.topology.shared_services {
+        dimensions.push("topology.shared_services".to_string());
+    }
+    if left.topology.gateway_override.len() != right.topology.gateway_override.len() {
+        dimensions.push("topology.gateway_override".to_string());
     }
     dimensions
 }

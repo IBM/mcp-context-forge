@@ -7,8 +7,9 @@ use toml::Value as TomlValue;
 use crate::lib_parts::benchmark_request_names;
 use crate::{
     BuildConfig, DEFAULT_GOSE_BIN, DEFAULT_SCENARIO_DIR, ExecutionConfig, GatewayConfig,
-    LoadConfig, MeasurementConfig, ProfilingConfig, RequestsConfig, ResolvedScenario,
-    ResolvedSuite, RuntimeConfig, ScenarioEntry, ScenarioTemplate, SetupConfig, SuiteDocument,
+    GatewayNodeOverride, LoadConfig, MeasurementConfig, ProfilingConfig, RequestsConfig,
+    ResolvedScenario, ResolvedSuite, RuntimeConfig, ScenarioEntry, ScenarioTemplate, SetupConfig,
+    SuiteDocument, TopologyConfig,
 };
 
 pub fn repo_root() -> Result<PathBuf> {
@@ -92,6 +93,8 @@ fn merge_scenario(
     merge_build(&mut build, &scenario.build);
     let mut runtime = defaults.runtime.clone();
     merge_runtime(&mut runtime, &scenario.runtime);
+    let mut topology = defaults.topology.clone();
+    merge_topology(&mut topology, &scenario.topology);
     let mut gateway = defaults.gateway.clone();
     merge_gateway(&mut gateway, &scenario.gateway);
     let mut measurement = defaults.measurement.clone();
@@ -110,6 +113,7 @@ fn merge_scenario(
         setup,
         build,
         runtime,
+        topology,
         gateway,
         load,
         measurement,
@@ -195,6 +199,33 @@ fn merge_gateway(base: &mut GatewayConfig, overlay: &GatewayConfig) {
         base.log_level = overlay.log_level.clone();
     }
     base.environment.extend(overlay.environment.clone());
+}
+
+fn merge_topology(base: &mut TopologyConfig, overlay: &TopologyConfig) {
+    if overlay.mode != TopologyConfig::default().mode {
+        base.mode = overlay.mode.clone();
+    }
+    if overlay.gateway_count != TopologyConfig::default().gateway_count {
+        base.gateway_count = overlay.gateway_count;
+    }
+    if overlay.ingress_enabled {
+        base.ingress_enabled = true;
+    }
+    if overlay.ingress_service != TopologyConfig::default().ingress_service {
+        base.ingress_service = overlay.ingress_service.clone();
+    }
+    if overlay.shared_services != TopologyConfig::default().shared_services {
+        base.shared_services = overlay.shared_services.clone();
+    }
+    if overlay.gateway_base_service != TopologyConfig::default().gateway_base_service {
+        base.gateway_base_service = overlay.gateway_base_service.clone();
+    }
+    if overlay.gateway_name_prefix != TopologyConfig::default().gateway_name_prefix {
+        base.gateway_name_prefix = overlay.gateway_name_prefix.clone();
+    }
+    if !overlay.gateway_override.is_empty() {
+        base.gateway_override = overlay.gateway_override.clone();
+    }
 }
 
 fn merge_load(base: &mut LoadConfig, overlay: &LoadConfig) {
@@ -397,6 +428,110 @@ pub fn validate_scenario(root: &Path, scenario: &ResolvedScenario) -> Result<()>
                 scenario.name,
                 endpoint
             );
+        }
+    }
+    validate_topology(scenario)?;
+    Ok(())
+}
+
+fn validate_topology(scenario: &ResolvedScenario) -> Result<()> {
+    match scenario.topology.mode.as_str() {
+        "single_gateway" => {}
+        "multi_gateway" => {
+            if scenario.topology.gateway_count < 2 {
+                bail!(
+                    "scenario '{}' must set topology.gateway_count >= 2 for multi_gateway mode",
+                    scenario.name
+                );
+            }
+            if !scenario.topology.ingress_enabled {
+                bail!(
+                    "scenario '{}' must enable topology.ingress_enabled for multi_gateway mode",
+                    scenario.name
+                );
+            }
+            if scenario.load.target_service != scenario.ingress_service_name() {
+                bail!(
+                    "scenario '{}' must target ingress service '{}' in multi_gateway mode; direct gateway targeting is not supported",
+                    scenario.name,
+                    scenario.ingress_service_name()
+                );
+            }
+        }
+        other => {
+            bail!(
+                "scenario '{}' uses unsupported topology.mode '{}'",
+                scenario.name,
+                other
+            );
+        }
+    }
+
+    let expected_shared = ["postgres", "redis", "pgbouncer"];
+    if scenario.shared_service_names() != expected_shared {
+        bail!(
+            "scenario '{}' uses unsupported topology.shared_services; v1 supports only {:?}",
+            scenario.name,
+            expected_shared
+        );
+    }
+    if scenario.topology.gateway_base_service.trim().is_empty() {
+        bail!(
+            "scenario '{}' must define topology.gateway_base_service",
+            scenario.name
+        );
+    }
+    if scenario.topology.ingress_service.trim().is_empty() {
+        bail!(
+            "scenario '{}' must define topology.ingress_service",
+            scenario.name
+        );
+    }
+    validate_gateway_overrides(scenario, &scenario.topology.gateway_override)?;
+    Ok(())
+}
+
+fn validate_gateway_overrides(
+    scenario: &ResolvedScenario,
+    overrides: &[GatewayNodeOverride],
+) -> Result<()> {
+    let gateway_names = scenario.gateway_service_names();
+    for item in overrides {
+        let resolved_name = if !item.name.trim().is_empty() {
+            item.name.clone()
+        } else if let Some(index) = item.index {
+            if index == 0 || index > gateway_names.len() as u32 {
+                bail!(
+                    "scenario '{}' topology.gateway_override index {} is out of range",
+                    scenario.name,
+                    index
+                );
+            }
+            gateway_names[index as usize - 1].clone()
+        } else {
+            bail!(
+                "scenario '{}' topology.gateway_override entries must set name or index",
+                scenario.name
+            );
+        };
+        if !gateway_names.contains(&resolved_name) {
+            bail!(
+                "scenario '{}' topology.gateway_override targets unknown gateway '{}'",
+                scenario.name,
+                resolved_name
+            );
+        }
+        if let Some(index) = item.index {
+            let expected = &gateway_names[index as usize - 1];
+            if !item.name.trim().is_empty() && item.name != *expected {
+                bail!(
+                    "scenario '{}' topology.gateway_override name '{}' does not match index {} ('{}')",
+                    scenario.name,
+                    item.name,
+                    index,
+                    expected
+                );
+            }
         }
     }
     Ok(())

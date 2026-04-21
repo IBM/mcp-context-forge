@@ -215,6 +215,35 @@ pub(crate) fn generate_template_toml(generator: &GeneratorState) -> String {
     );
 
     lines.push(String::new());
+    lines.push("[defaults.topology]".to_string());
+    push_string_line(&mut lines, "mode", generator.get("topology_mode"));
+    push_scalar_line(&mut lines, "gateway_count", generator.get("gateway_count"));
+    push_bool_line(
+        &mut lines,
+        "ingress_enabled",
+        generator.get("ingress_enabled"),
+    );
+    push_string_line(
+        &mut lines,
+        "ingress_service",
+        generator.get("ingress_service"),
+    );
+    lines.push(format!(
+        "shared_services = [{}]",
+        quoted_csv(generator.get("shared_services"))
+    ));
+    push_string_line(
+        &mut lines,
+        "gateway_base_service",
+        generator.get("gateway_base_service"),
+    );
+    push_string_line(
+        &mut lines,
+        "gateway_name_prefix",
+        generator.get("gateway_name_prefix"),
+    );
+
+    lines.push(String::new());
     lines.push("[defaults.gateway]".to_string());
     push_bool_line(
         &mut lines,
@@ -399,6 +428,23 @@ pub(crate) fn generate_template_toml(generator: &GeneratorState) -> String {
         "[scenario.runtime]",
         generator.get("scenario_runtime_snippet"),
     );
+    append_optional_block(
+        &mut lines,
+        "[scenario.topology]",
+        generator.get("scenario_topology_snippet"),
+    );
+    if generator.get("topology_mode") == "multi_gateway" {
+        lines.push("# Example node-specific overrides:".to_string());
+        lines.push("[[scenario.topology.gateway_override]]".to_string());
+        lines.push("index = 2".to_string());
+        lines.push("[scenario.topology.gateway_override.environment]".to_string());
+        lines.push("LOG_LEVEL = \"DEBUG\"".to_string());
+        append_optional_block(
+            &mut lines,
+            "[[scenario.topology.gateway_override]]",
+            generator.get("gateway_overrides"),
+        );
+    }
     append_optional_block(
         &mut lines,
         "[scenario.gateway]",

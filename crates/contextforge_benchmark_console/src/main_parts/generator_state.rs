@@ -47,6 +47,7 @@ impl GeneratorState {
             "Setup",
             "Build",
             "Runtime",
+            "Topology",
             "Gateway",
             "Load",
             "Measurement",
@@ -149,6 +150,7 @@ impl GeneratorState {
 
     pub(crate) fn is_visible(&self, key: &str) -> bool {
         let http_server = self.get("http_server");
+        let topology_mode = self.get("topology_mode");
         let profiling_enabled = self.get("profiling_enabled") == "true";
         let plugins_enabled = self.get("plugins_enabled") == "true";
         let workload_selection_present = !self.get("workload_selection").trim().is_empty()
@@ -189,6 +191,13 @@ impl GeneratorState {
             | "uvicorn_limit_max_requests"
             | "uvicorn_log_level"
             | "uvicorn_dev_mode" => http_server == "uvicorn",
+            "gateway_count"
+            | "ingress_enabled"
+            | "ingress_service"
+            | "shared_services"
+            | "gateway_name_prefix"
+            | "gateway_overrides"
+            | "scenario_topology_snippet" => topology_mode == "multi_gateway",
             "profiling_tools" | "profiling_duration_seconds" | "profiling_required" => {
                 profiling_enabled
             }

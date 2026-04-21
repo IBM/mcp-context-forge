@@ -61,6 +61,18 @@ pub(crate) fn generator_explanation(key: &str) -> &'static str {
         "transport_type" => {
             "Defines which gateway transport path the benchmark traffic should exercise."
         }
+        "topology_mode" => "Defines whether the scenario uses one gateway or a gateway fleet.",
+        "gateway_count" => "Defines how many gateway instances the runner should synthesize.",
+        "ingress_enabled" => "Defines whether an ingress service fronts the gateway nodes.",
+        "ingress_service" => "Defines which compose ingress service receives benchmark traffic.",
+        "shared_services" => "Defines which shared backing services stay enabled for the topology.",
+        "gateway_base_service" => {
+            "Defines which compose service acts as the source template for gateway nodes."
+        }
+        "gateway_name_prefix" => "Defines the generated service-name prefix for gateway nodes.",
+        "gateway_overrides" => {
+            "Defines per-node override blocks for environment, ports, or labels."
+        }
         "gunicorn_workers" => "Defines how many Gunicorn worker processes should be launched.",
         "gunicorn_timeout" => "Defines Gunicorn's timeout for slow requests and worker startup.",
         "gunicorn_graceful_timeout" => "Defines Gunicorn's graceful shutdown timeout.",
@@ -185,6 +197,9 @@ pub(crate) fn generator_explanation(key: &str) -> &'static str {
         "scenario_setup_snippet" => "Defines a raw setup override for the generated scenario.",
         "scenario_build_snippet" => "Defines a raw build override for the generated scenario.",
         "scenario_runtime_snippet" => "Defines a raw runtime override for the generated scenario.",
+        "scenario_topology_snippet" => {
+            "Defines a raw topology override for the generated scenario."
+        }
         "scenario_gateway_snippet" => "Defines a raw gateway override for the generated scenario.",
         "scenario_load_snippet" => "Defines a raw load override for the generated scenario.",
         "scenario_measurement_snippet" => {
@@ -272,6 +287,28 @@ pub(crate) fn generator_change_reason(key: &str) -> &'static str {
         }
         "transport_type" => {
             "Changing it changes which gateway transport path the load test exercises."
+        }
+        "topology_mode" => {
+            "Changing it changes whether the run is single-node or ingress-balanced across multiple gateway nodes."
+        }
+        "gateway_count" => "Changing it changes how many gateway containers the runner starts.",
+        "ingress_enabled" => {
+            "Changing it changes whether benchmark traffic goes through an ingress layer."
+        }
+        "ingress_service" => {
+            "Changing it changes which compose service acts as the benchmark ingress point."
+        }
+        "shared_services" => {
+            "Changing it changes which shared database and cache dependencies are present."
+        }
+        "gateway_base_service" => {
+            "Changing it changes which compose definition is cloned into gateway nodes."
+        }
+        "gateway_name_prefix" => {
+            "Changing it changes the generated gateway service names and override targets."
+        }
+        "gateway_overrides" => {
+            "Changing it changes node-specific environment, port, or label overrides in the generated TOML."
         }
         "gunicorn_workers" => "Changing it changes Gunicorn process concurrency.",
         "gunicorn_timeout" => {
@@ -410,6 +447,9 @@ pub(crate) fn generator_change_reason(key: &str) -> &'static str {
         }
         "scenario_runtime_snippet" => {
             "Changing it changes only the scenario-specific runtime override."
+        }
+        "scenario_topology_snippet" => {
+            "Changing it changes only the scenario-specific topology override."
         }
         "scenario_gateway_snippet" => {
             "Changing it changes only the scenario-specific gateway override."

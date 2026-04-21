@@ -152,29 +152,42 @@ pub(crate) fn start_stack(
     let project = format!("bench-{}-{}", slug(&scenario.name), Utc::now().timestamp());
     let override_path = write_compose_override(root, scenario, scenario_dir, &image_name)?;
     let compose = compose_args(runtime, &project, &override_path);
-    let mut services = vec!["postgres", "redis", "pgbouncer", "gateway"];
+    let shared_services = scenario.shared_service_names();
+    let gateway_services = scenario.gateway_service_names();
     if uses_fast_time_fixture(scenario) {
-        services.push("fast_time_server");
-        services.push("register_fast_time");
+        // handled below
     }
     if uses_a2a_fixture(scenario) {
-        services.push("a2a_echo_agent");
-        services.push("register_a2a_echo");
+        // handled below
     }
-    if scenario.load.target_service != "gateway" {
-        services.push("nginx");
-    }
-    for service in ["postgres", "redis", "pgbouncer", "gateway"] {
+    for service in &shared_services {
         log_progress(format!("Compose up: {service}"));
-        run_compose(root, &compose, &["up", "-d", "--no-build", service])?;
+        run_compose(
+            root,
+            &compose,
+            &["up", "-d", "--no-build", service.as_str()],
+        )?;
         log_progress(format!("Waiting for service health: {service}"));
         wait_for_service(runtime, &compose, service, 120)?;
     }
-    if !wait_for_gateway_health(&compose, 120)? {
-        bail!(
-            "gateway health check failed for scenario '{}'",
-            scenario.name
-        );
+    for service in &gateway_services {
+        log_progress(format!("Compose up: {service}"));
+        run_compose(
+            root,
+            &compose,
+            &["up", "-d", "--no-build", service.as_str()],
+        )?;
+        log_progress(format!("Waiting for service health: {service}"));
+        wait_for_service(runtime, &compose, service, 120)?;
+    }
+    for service in &gateway_services {
+        if !wait_for_gateway_health(&compose, service, 120)? {
+            bail!(
+                "gateway health check failed for scenario '{}' on service '{}'",
+                scenario.name,
+                service
+            );
+        }
     }
     if uses_fast_time_fixture(scenario) {
         log_progress("Compose up: fast_time_server");
@@ -208,11 +221,16 @@ pub(crate) fn start_stack(
             &["up", "-d", "--no-build", "register_a2a_echo"],
         )?;
     }
-    if scenario.load.target_service != "gateway" {
-        log_progress("Compose up: nginx");
-        run_compose(root, &compose, &["up", "-d", "--no-build", "nginx"])?;
-        log_progress("Waiting for service health: nginx");
-        wait_for_service(runtime, &compose, "nginx", 60)?;
+    if scenario.uses_ingress() {
+        let ingress = scenario.ingress_service_name();
+        log_progress(format!("Compose up: {ingress}"));
+        run_compose(
+            root,
+            &compose,
+            &["up", "-d", "--no-build", ingress.as_str()],
+        )?;
+        log_progress(format!("Waiting for service health: {ingress}"));
+        wait_for_service(runtime, &compose, &ingress, 60)?;
     }
     Ok((compose, project))
 }

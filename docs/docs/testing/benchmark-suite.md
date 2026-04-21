@@ -23,6 +23,7 @@ Each scenario runs against the real containerized testing stack:
 - PgBouncer
 - gateway
 - nginx
+- optional multi-gateway topologies behind `nginx`
 - `contextforge_goose` as the load driver
 - optional `perf`, `flamegraph`, and other Rust-friendly profiling tools in a
   separate profiling pass
@@ -110,6 +111,7 @@ Supported sections are:
 - `[defaults.setup]`
 - `[defaults.build]`
 - `[defaults.runtime]`
+- `[defaults.topology]`
 - `[defaults.gateway]`
 - `[defaults.load]`
 - `[defaults.load.env]`
@@ -119,6 +121,7 @@ Supported sections are:
 - `[defaults.execution]`
 - `[[scenario]]`
 - `[scenario.runtime]`
+- `[scenario.topology]`
 - `[scenario.load]`
 - `[scenario.requests]`
 - `[scenario.execution]`
@@ -132,6 +135,16 @@ rather than strict unknown-key rejection.
 - `load.target_service = "nginx" | "gateway"`
   Use `nginx` for realistic end-to-end benchmarking. Use `gateway` only for
   direct app-path microbenchmarks.
+- `topology.mode = "single_gateway" | "multi_gateway"`
+  `single_gateway` preserves the existing direct gateway model. `multi_gateway`
+  clones the base `gateway` compose service into `gateway-1..N` behind ingress.
+- `topology.gateway_count`
+  Number of gateway nodes to synthesize in `multi_gateway` mode.
+- `topology.ingress_enabled`, `topology.ingress_service`
+  In v1, multi-gateway runs must keep ingress enabled and must target that
+  ingress service from the load driver.
+- `topology.shared_services`
+  V1 supports a single shared `["postgres", "redis", "pgbouncer"]` tier only.
 - `execution.retry_enabled`, `execution.max_attempts`
   Control per-scenario retries.
 - `execution.capture_logs`
@@ -144,7 +157,44 @@ rather than strict unknown-key rejection.
   `process_stats`.
 - `suite.baseline_run`
   Optional path to a prior `run_summary.json` used for threshold-based
-  comparison output.
+comparison output.
+
+## Multi-Gateway Example
+
+Use this shape when you want realistic horizontal gateway scaling with the
+shared database and cache tier still enabled:
+
+```toml
+[defaults.topology]
+mode = "multi_gateway"
+gateway_count = 3
+ingress_enabled = true
+ingress_service = "nginx"
+shared_services = ["postgres", "redis", "pgbouncer"]
+gateway_base_service = "gateway"
+gateway_name_prefix = "gateway"
+
+[defaults.load]
+target_service = "nginx"
+
+[[scenario]]
+name = "gunicorn-multi-gateway-smoke"
+
+[[scenario.topology.gateway_override]]
+index = 2
+
+[scenario.topology.gateway_override.environment]
+LOG_LEVEL = "DEBUG"
+```
+
+Current v1 limits:
+
+- benchmark traffic goes through ingress only; direct node-targeted benchmarking
+  is rejected in `multi_gateway` mode
+- `PostgreSQL`, `Redis`, and `PgBouncer` stay singleton shared services; the
+  runner does not build clustered backing services yet
+- per-node overrides are limited to env, labels, and ports; they are not
+  independent full build/runtime blocks
 
 ## Request Mixes
 

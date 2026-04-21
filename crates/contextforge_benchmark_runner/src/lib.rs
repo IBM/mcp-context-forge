@@ -62,6 +62,8 @@ pub struct ScenarioTemplate {
     #[serde(default)]
     pub runtime: RuntimeConfig,
     #[serde(default)]
+    pub topology: TopologyConfig,
+    #[serde(default)]
     pub gateway: GatewayConfig,
     #[serde(default)]
     pub load: LoadConfig,
@@ -89,6 +91,8 @@ pub struct ScenarioEntry {
     pub build: BuildConfig,
     #[serde(default)]
     pub runtime: RuntimeConfig,
+    #[serde(default)]
+    pub topology: TopologyConfig,
     #[serde(default)]
     pub gateway: GatewayConfig,
     #[serde(default)]
@@ -187,6 +191,83 @@ pub struct GatewayConfig {
     pub trust_proxy_auth: bool, // pragma: allowlist secret
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopologyConfig {
+    #[serde(default = "default_topology_mode")]
+    pub mode: String,
+    #[serde(default = "default_gateway_count")]
+    pub gateway_count: u32,
+    #[serde(default)]
+    pub ingress_enabled: bool,
+    #[serde(default = "default_ingress_service")]
+    pub ingress_service: String,
+    #[serde(default = "default_shared_services")]
+    pub shared_services: Vec<String>,
+    #[serde(default = "default_gateway_base_service")]
+    pub gateway_base_service: String,
+    #[serde(default = "default_gateway_name_prefix")]
+    pub gateway_name_prefix: String,
+    #[serde(default)]
+    pub gateway_override: Vec<GatewayNodeOverride>,
+}
+
+impl Default for TopologyConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_topology_mode(),
+            gateway_count: default_gateway_count(),
+            ingress_enabled: false,
+            ingress_service: default_ingress_service(),
+            shared_services: default_shared_services(),
+            gateway_base_service: default_gateway_base_service(),
+            gateway_name_prefix: default_gateway_name_prefix(),
+            gateway_override: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct GatewayNodeOverride {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub index: Option<u32>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    #[serde(default)]
+    pub ports: Vec<String>,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+}
+
+fn default_topology_mode() -> String {
+    "single_gateway".to_string()
+}
+
+fn default_gateway_count() -> u32 {
+    1
+}
+
+fn default_ingress_service() -> String {
+    "nginx".to_string()
+}
+
+fn default_shared_services() -> Vec<String> {
+    vec![
+        "postgres".to_string(),
+        "redis".to_string(),
+        "pgbouncer".to_string(),
+    ]
+}
+
+fn default_gateway_base_service() -> String {
+    "gateway".to_string()
+}
+
+fn default_gateway_name_prefix() -> String {
+    "gateway".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -309,6 +390,7 @@ pub struct ResolvedScenario {
     pub setup: SetupConfig,
     pub build: BuildConfig,
     pub runtime: RuntimeConfig,
+    pub topology: TopologyConfig,
     pub gateway: GatewayConfig,
     pub load: LoadConfig,
     pub measurement: MeasurementConfig,
@@ -370,6 +452,7 @@ pub struct ScenarioSummary {
     pub status: String,
     pub setup: SetupConfig,
     pub runtime: RuntimeConfig,
+    pub topology: TopologyConfig,
     pub load: LoadConfig,
     pub measurement: MeasurementConfig,
     pub profiling: ProfilingConfig,
@@ -378,6 +461,60 @@ pub struct ScenarioSummary {
     pub flamegraph_run: Value,
     pub log_paths: Vec<String>,
     pub artifacts: BTreeMap<String, String>,
+}
+
+impl ResolvedScenario {
+    pub fn uses_multi_gateway_topology(&self) -> bool {
+        self.topology.mode == "multi_gateway"
+    }
+
+    pub fn shared_service_names(&self) -> Vec<String> {
+        if self.topology.shared_services.is_empty() {
+            default_shared_services()
+        } else {
+            self.topology.shared_services.clone()
+        }
+    }
+
+    pub fn gateway_service_names(&self) -> Vec<String> {
+        if self.uses_multi_gateway_topology() {
+            let prefix = if self.topology.gateway_name_prefix.trim().is_empty() {
+                default_gateway_name_prefix()
+            } else {
+                self.topology.gateway_name_prefix.clone()
+            };
+            (1..=self.topology.gateway_count)
+                .map(|index| format!("{prefix}-{index}"))
+                .collect()
+        } else {
+            vec![if self.topology.gateway_base_service.trim().is_empty() {
+                default_gateway_base_service()
+            } else {
+                self.topology.gateway_base_service.clone()
+            }]
+        }
+    }
+
+    pub fn bootstrap_gateway_service(&self) -> String {
+        self.gateway_service_names()
+            .into_iter()
+            .next()
+            .unwrap_or_else(default_gateway_base_service)
+    }
+
+    pub fn ingress_service_name(&self) -> String {
+        if self.topology.ingress_service.trim().is_empty() {
+            default_ingress_service()
+        } else {
+            self.topology.ingress_service.clone()
+        }
+    }
+
+    pub fn uses_ingress(&self) -> bool {
+        self.load.target_service != self.topology.gateway_base_service
+            || self.load.target_service == self.ingress_service_name()
+            || self.topology.ingress_enabled
+    }
 }
 
 mod lib_parts;

@@ -15,8 +15,8 @@ use crate::lib_parts::{
     wait_for_gateway_health, write_goose_stats_csv, write_json, write_text,
 };
 use crate::{
-    CommandSpec, DEFAULT_GOSE_BIN, LoadConfig, ResolvedScenario, ResolvedSuite, RuntimeChoice,
-    ScenarioSummary, SuiteMeta, log_progress,
+    CommandSpec, DEFAULT_GOSE_BIN, ResolvedScenario, ResolvedSuite, RuntimeChoice, ScenarioSummary,
+    SuiteMeta, log_progress,
 };
 
 pub fn detect_runtime() -> Result<RuntimeChoice> {
@@ -88,7 +88,7 @@ pub fn build_goose_command(
             "--root".to_string(),
             "--".to_string(),
             "--host".to_string(),
-            target_host(&scenario.load),
+            target_host(scenario),
             "--users".to_string(),
             scenario.load.users.unwrap_or(1).to_string(),
             "--hatch-rate".to_string(),
@@ -127,7 +127,7 @@ pub fn build_goose_command(
             "--release".to_string(),
             "--".to_string(),
             "--host".to_string(),
-            target_host(&scenario.load),
+            target_host(scenario),
             "--users".to_string(),
             scenario.load.users.unwrap_or(1).to_string(),
             "--hatch-rate".to_string(),
@@ -163,20 +163,24 @@ pub fn build_goose_command(
     CommandSpec { command, args, env }
 }
 
-fn target_host(load: &LoadConfig) -> String {
-    if let Some(host) = &load.host {
+fn target_host(scenario: &ResolvedScenario) -> String {
+    if let Some(host) = &scenario.load.host {
         return host.clone();
     }
-    if load.target_service == "gateway" {
+    if scenario.uses_multi_gateway_topology()
+        || scenario.load.target_service == scenario.ingress_service_name()
+    {
+        "http://127.0.0.1:18080".to_string()
+    } else if scenario.load.target_service == scenario.bootstrap_gateway_service() {
         "http://127.0.0.1:14444".to_string()
     } else {
-        "http://127.0.0.1:18080".to_string()
+        format!("http://{}", scenario.load.target_service)
     }
 }
 
 pub fn scenario_env(root: &Path, scenario: &ResolvedScenario) -> Result<BTreeMap<String, String>> {
     let mut env = BTreeMap::new();
-    env.insert("LOADTEST_HOST".to_string(), target_host(&scenario.load));
+    env.insert("LOADTEST_HOST".to_string(), target_host(scenario));
     env.insert(
         "LOADTEST_USERS".to_string(),
         scenario.load.users.unwrap_or(1).to_string(),
@@ -204,6 +208,14 @@ pub fn scenario_env(root: &Path, scenario: &ResolvedScenario) -> Result<BTreeMap
     env.insert(
         "BENCH_TARGET_SERVICE".to_string(),
         scenario.load.target_service.clone(),
+    );
+    env.insert(
+        "BENCH_GATEWAY_COUNT".to_string(),
+        scenario.topology.gateway_count.to_string(),
+    );
+    env.insert(
+        "BENCH_GATEWAY_SERVICES".to_string(),
+        scenario.gateway_service_names().join(","),
     );
     env.insert(
         "BENCH_REQUEST_PLAN".to_string(),
@@ -348,6 +360,7 @@ fn build_validation_summary(scenario: &ResolvedScenario) -> ScenarioSummary {
         status: "validated".to_string(),
         setup: scenario.setup.clone(),
         runtime: scenario.runtime.clone(),
+        topology: scenario.topology.clone(),
         load: scenario.load.clone(),
         measurement: scenario.measurement.clone(),
         profiling: scenario.profiling.clone(),
@@ -365,6 +378,7 @@ fn build_error_summary(scenario: &ResolvedScenario, error: &anyhow::Error) -> Sc
         status: "failed".to_string(),
         setup: scenario.setup.clone(),
         runtime: scenario.runtime.clone(),
+        topology: scenario.topology.clone(),
         load: scenario.load.clone(),
         measurement: scenario.measurement.clone(),
         profiling: scenario.profiling.clone(),
@@ -386,7 +400,8 @@ fn run_runtime_check(
     scenario_dir: &Path,
 ) -> Result<ScenarioSummary> {
     let (compose_args, _project) = start_stack(root, runtime, scenario, scenario_dir)?;
-    let health_ok = wait_for_gateway_health(&compose_args, 120)?;
+    let health_ok =
+        wait_for_gateway_health(&compose_args, &scenario.bootstrap_gateway_service(), 120)?;
     stop_stack(&compose_args);
     Ok(ScenarioSummary {
         scenario: scenario.name.clone(),
@@ -397,6 +412,7 @@ fn run_runtime_check(
         },
         setup: scenario.setup.clone(),
         runtime: scenario.runtime.clone(),
+        topology: scenario.topology.clone(),
         load: scenario.load.clone(),
         measurement: scenario.measurement.clone(),
         profiling: scenario.profiling.clone(),
@@ -417,7 +433,7 @@ fn execute_scenario(
     log_progress(format!("Starting stack for scenario '{}'", scenario.name));
     let (compose_args, _project) = start_stack(root, runtime, scenario, scenario_dir)?;
     let result = (|| -> Result<ScenarioSummary> {
-        let token = benchmark_token(&compose_args).ok();
+        let token = benchmark_token(&compose_args, &scenario.bootstrap_gateway_service()).ok();
         let artifact_prefix = "goose";
         let command = build_goose_command(root, scenario, scenario_dir, artifact_prefix, false);
         log_progress(format!(
@@ -461,6 +477,7 @@ fn execute_scenario(
             },
             setup: scenario.setup.clone(),
             runtime: scenario.runtime.clone(),
+            topology: scenario.topology.clone(),
             load: scenario.load.clone(),
             measurement: scenario.measurement.clone(),
             profiling: scenario.profiling.clone(),

@@ -336,6 +336,8 @@ fn generator_template_uses_rust_only_defaults() {
     let template = generate_template_toml(&generator);
 
     assert!(template.contains("driver = "));
+    assert!(template.contains("[defaults.topology]"));
+    assert!(template.contains("mode = \"single_gateway\""));
     assert!(template.contains("tools = [\"perf\", \"flamegraph\"]"));
     assert!(!template.contains("repo_url = "));
     assert!(!template.contains("git_ref = "));
@@ -345,10 +347,37 @@ fn generator_template_uses_rust_only_defaults() {
 #[test]
 fn generator_metadata_uses_rust_profiling_field_names() {
     assert_eq!(generator_section("driver"), "Load");
+    assert_eq!(generator_section("topology_mode"), "Topology");
+    assert_eq!(
+        generator_config_path("topology_mode"),
+        "defaults.topology.mode"
+    );
     assert_eq!(generator_config_path("driver"), "defaults.load.driver");
     assert!(generator_example("driver").contains("contextforge_goose"));
+    assert!(generator_example("topology_mode").contains("multi_gateway"));
     assert!(generator_example("profiling_tools").contains("perf,flamegraph"));
     assert!(generator_example("scenario_profiling_snippet").contains("perf"));
+}
+
+#[test]
+fn generator_multi_gateway_template_includes_override_example() {
+    let mut generator = GeneratorState::new();
+    generator
+        .fields
+        .iter_mut()
+        .find(|field| field.key == "topology_mode")
+        .unwrap()
+        .value = "multi_gateway".to_string();
+    generator
+        .fields
+        .iter_mut()
+        .find(|field| field.key == "ingress_enabled")
+        .unwrap()
+        .value = "true".to_string();
+    let template = generate_template_toml(&generator);
+
+    assert!(template.contains("[[scenario.topology.gateway_override]]"));
+    assert!(template.contains("LOG_LEVEL = \"DEBUG\""));
 }
 
 #[test]
