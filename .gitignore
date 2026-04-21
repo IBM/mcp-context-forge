@@ -278,6 +278,7 @@ mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/.vite/
 mcpgateway/static/app/
+mcpgateway/static/css/
 public/
 
 # Export & SBOM files
