@@ -14,12 +14,15 @@ rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
 
 [dependencies]
 async-stream = "0.3.6"
+async-trait = "0.1"
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
 clap.workspace = true
 deadpool-postgres = "0.14.1"
 futures-util.workspace = true
+hickory-resolver = "0.25.0"
+ipnetwork = "0.21.0"
 opentelemetry = "0.31.0"
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
@@ -47,7 +50,9 @@ uuid.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+serial_test = "3.2.0"
 tokio.workspace = true
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true
