@@ -571,20 +571,6 @@ mod tests {
         RuntimeConfig::try_parse_from(["test"]).expect("Failed to create test config")
     }
 
-    fn create_strict_config() -> UrlValidatorConfig {
-        UrlValidatorConfig {
-            enabled: true,
-            max_url_length: 2048,
-            blocked_networks: vec!["169.254.169.254/32".parse().unwrap()],
-            blocked_hosts: vec!["metadata.google.internal".to_string()],
-            allow_localhost: false,
-            allow_private_networks: false,
-            allowed_networks: vec![],
-            dns_fail_closed: true,
-            dns_cache_ttl: Duration::from_secs(300),
-        }
-    }
-
     #[tokio::test]
     async fn test_valid_public_url() {
         let mut responses = HashMap::new();
