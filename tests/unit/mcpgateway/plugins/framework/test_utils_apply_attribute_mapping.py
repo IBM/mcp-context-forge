@@ -18,9 +18,9 @@ class TestApplyAttributeMapping:
         """Test that empty mapping returns original attributes unchanged."""
         attributes = {"tool.name": "weather", "tool.version": "1.0"}
         mapping = {}
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result == attributes
         # Function returns same dict when mapping is empty (optimization)
 
@@ -28,18 +28,18 @@ class TestApplyAttributeMapping:
         """Test that None mapping returns original attributes unchanged."""
         attributes = {"tool.name": "weather", "tool.version": "1.0"}
         mapping = None
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result == attributes
 
     def test_single_attribute_mapping(self):
         """Test mapping a single attribute."""
         attributes = {"tool.name": "weather"}
         mapping = {"tool.name": "controls.artifact.name"}
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert "controls.artifact.name" in result
         assert result["controls.artifact.name"] == "weather"
         assert "tool.name" not in result
@@ -55,9 +55,9 @@ class TestApplyAttributeMapping:
             "tool.name": "controls.artifact.name",
             "tool.arguments": "controls.artifact.inputs"
         }
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result["controls.artifact.name"] == "weather"
         assert result["controls.artifact.inputs"] == '{"key": "value"}'
         assert result["tool.version"] == "1.0"  # Unmapped attribute preserved
@@ -72,9 +72,9 @@ class TestApplyAttributeMapping:
             "custom.field": "value"
         }
         mapping = {"tool.name": "controls.artifact.name"}
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result["controls.artifact.name"] == "weather"
         assert result["tool.version"] == "1.0"
         assert result["custom.field"] == "value"
@@ -89,9 +89,9 @@ class TestApplyAttributeMapping:
             "plugin.name": "controls.artifact.name",
             "plugin.hook.type": "controls.hook.type"
         }
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result["controls.artifact.name"] == "TestPlugin"
         assert result["controls.hook.type"] == "tool_pre_invoke"
 
@@ -111,9 +111,9 @@ class TestApplyAttributeMapping:
             "int_attr": "new.int",
             "bool_attr": "new.bool"
         }
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result["new.string"] == "value"
         assert result["new.int"] == 42
         assert result["new.bool"] is True
@@ -126,18 +126,18 @@ class TestApplyAttributeMapping:
         """Test empty attributes dict with non-empty mapping."""
         attributes = {}
         mapping = {"tool.name": "controls.artifact.name"}
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result == {}
 
     def test_mapping_to_same_name(self):
         """Test mapping an attribute to itself (no-op mapping)."""
         attributes = {"tool.name": "weather"}
         mapping = {"tool.name": "tool.name"}
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         assert result["tool.name"] == "weather"
 
     def test_multiple_attributes_to_same_target(self):
@@ -150,9 +150,9 @@ class TestApplyAttributeMapping:
             "tool.name": "controls.artifact.name",
             "plugin.name": "controls.artifact.name"
         }
-        
+
         result = apply_attribute_mapping(attributes, mapping)
-        
+
         # Last mapping wins
         assert result["controls.artifact.name"] == "TestPlugin"
         assert "tool.name" not in result
@@ -162,7 +162,7 @@ class TestApplyAttributeMapping:
         """Test the example from the function's docstring."""
         attrs = {"tool.name": "weather", "tool.version": "1.0"}
         mapping = {"tool.name": "controls.artifact.name"}
-        
+
         result = apply_attribute_mapping(attrs, mapping)
-        
+
         assert result == {'controls.artifact.name': 'weather', 'tool.version': '1.0'}

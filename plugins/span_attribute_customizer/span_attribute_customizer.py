@@ -21,8 +21,6 @@ from mcpgateway.plugins.framework import (
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
@@ -191,8 +189,6 @@ class SpanAttributeCustomizerPlugin(Plugin):
             logger.debug(f"Configured {len(attribute_mapping)} attribute name mappings")
 
         return ToolPreInvokeResult(metadata={"span_customizer": {"attributes_added": len(custom_attrs), "mappings_configured": len(attribute_mapping)}})
-
-
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Add custom attributes before resource fetch.
