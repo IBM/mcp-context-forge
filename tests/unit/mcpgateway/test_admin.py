@@ -19490,6 +19490,104 @@ class TestTemplateButtonGating:
         assert "editGateway" not in html
         assert "/delete" not in html
 
+    def test_gateways_oauth_authorize_visible_for_team_member(self, jinja_env):
+        """Team member (non-owner) can see Authorize button on OAuth team gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(
+            jinja_env, gw_data, current_user_email="member@example.com", user_team_roles={"team-1": "member"}
+        )
+        assert "Authorize" in html
+        assert "editGateway" not in html
+        assert "/delete" not in html
+
+    def test_gateways_oauth_authorize_visible_for_public_gateway(self, jinja_env):
+        """Any user can see Authorize button on public OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="anyone@example.com")
+        assert "Authorize" in html
+        assert "editGateway" not in html
+        assert "/delete" not in html
+
+    def test_gateways_oauth_authorize_visible_for_owner(self, jinja_env):
+        """Regression: owner still sees Authorize button on OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="owner@example.com")
+        assert "Authorize" in html
+        assert "editGateway" in html
+
+    def test_gateways_oauth_authorize_visible_for_admin(self, jinja_env):
+        """Regression: admin still sees Authorize button on OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="admin@example.com", is_admin=True)
+        assert "Authorize" in html
+        assert "editGateway" in html
+
+    def test_gateways_oauth_authorize_hidden_for_non_member_team_gateway(self, jinja_env):
+        """Non-member cannot see Authorize button on team OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="outsider@example.com")
+        assert "Authorize" not in html
+
     def test_servers_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editServer in HTML."""
         server_data = {
@@ -20816,7 +20914,7 @@ class TestAdminTokensPartialSearch:
             response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
             assert "password_mismatch" in response.headers["location"]
 
-        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"}))
+        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"})) # pragma: allowlist secret
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
