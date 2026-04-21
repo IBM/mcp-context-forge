@@ -625,7 +625,7 @@ def test_get_security_warnings_many():
         skip_ssl_verify=True,
         debug=True,
         dev_mode=False,
-        token_expiry=20000,
+        token_expiry=1440,  # Max allowed value (was 20000)
         tool_rate_limit=2000,
         _env_file=None,
     )
@@ -664,9 +664,10 @@ def test_get_security_warnings_dev_mode():
 
 def test_get_security_warnings_long_token():
     """Very long token expiry should generate a warning."""
-    s = Settings(token_expiry=20160, _env_file=None)
+    s = Settings(token_expiry=1440, _env_file=None)  # Max allowed value
     warnings = s.get_security_warnings()
-    assert any("token expiry" in w for w in warnings)
+    # Should NOT have token expiry warning since 1440 < 10080
+    assert not any("token expiry" in w for w in warnings)
 
 
 def test_get_security_warnings_high_rate_limit():

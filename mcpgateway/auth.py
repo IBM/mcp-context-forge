@@ -1594,6 +1594,49 @@ async def get_current_user(
                         detail="Token has been revoked",
                         headers={"WWW-Authenticate": "Bearer"},
                     )
+
+                # Check idle timeout if last_activity is present
+                last_activity_ts = payload.get("last_activity")
+                if last_activity_ts and settings.token_idle_timeout > 0:
+                    last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
+                    current_time = datetime.now(timezone.utc)
+                    idle_duration = current_time - last_activity
+                    max_idle = timedelta(minutes=settings.token_idle_timeout)
+
+                    if idle_duration > max_idle:
+                        # Revoke token due to idle timeout
+                        try:
+                            # First-Party
+                            from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
+
+                            blocklist_service = get_token_blocklist_service()
+                            exp_ts = payload.get("exp")
+                            token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc) if exp_ts else None
+
+                            blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity)
+                        except Exception as revoke_error:
+                            logger.warning(f"Failed to revoke idle token: {revoke_error}")
+
+                        logger.warning(
+                            f"Token exceeded idle timeout: jti={jti}, idle_minutes={idle_duration.total_seconds()/60:.1f}",
+                            extra={"security_event": "idle_timeout", "security_severity": "medium", "jti": jti, "user_id": email},
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=f"Token exceeded idle timeout ({settings.token_idle_timeout} minutes)",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Update activity timestamp for valid tokens
+                    try:
+                        # First-Party
+                        from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
+
+                        blocklist_service = get_token_blocklist_service()
+                        blocklist_service.update_activity(jti)
+                    except Exception as activity_error:
+                        logger.debug(f"Failed to update token activity: {activity_error}")
+
             except HTTPException:
                 raise
             except Exception as revoke_check_error:
