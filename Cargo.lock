@@ -534,6 +534,7 @@ name = "contextforge_mcp_runtime"
 version = "1.0.0-BETA-3"
 dependencies = [
  "async-stream",
+ "async-trait",
  "axum",
  "base64",
  "bytes",
