@@ -101,6 +101,28 @@ CONTAINER_CPUS   = 2
 # The -r flag for xargs is GNU-specific and will fail on macOS
 XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
 
+# -----------------------------------------------------------------------------
+#  Allow override of the image to be used in various docker compose
+#  up and down actions
+# -----------------------------------------------------------------------------
+ifndef IMAGE_LOCAL
+  # Base image name (without any prefix)
+  IMAGE_BASE := mcpgateway/mcpgateway
+  IMAGE_TAG := latest
+
+  # Handle runtime-specific image naming
+  ifeq ($(CONTAINER_RUNTIME),podman)
+    # Podman adds localhost/ prefix for local builds
+    IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  else
+    # Docker doesn't add prefix
+    IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  endif
+endif
 
 # =============================================================================
 # 📖 DYNAMIC HELP
@@ -1653,6 +1675,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@mkdir -p reports
+	@echo "   Using image $${IMAGE_LOCAL}"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
@@ -5152,22 +5175,6 @@ CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker ||
 
 print-runtime:
 	@echo Using container runtime: $(CONTAINER_RUNTIME)
-# Base image name (without any prefix)
-IMAGE_BASE := mcpgateway/mcpgateway
-IMAGE_TAG := latest
-
-# Handle runtime-specific image naming
-ifeq ($(CONTAINER_RUNTIME),podman)
-  # Podman adds localhost/ prefix for local builds
-  IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-else
-  # Docker doesn't add prefix
-  IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-endif
 
 print-image:
 	@echo "🐳 Container Runtime: $(CONTAINER_RUNTIME)"
