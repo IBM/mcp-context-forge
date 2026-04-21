@@ -4859,11 +4859,16 @@ async def invoke_a2a_agent(
         # and self-referential `endpoint_url` loops.
         hop_count = uaid_utils.read_hop_count(request.headers)
 
-        # Extract bearer token from Authorization header for cross-gateway forwarding
-        bearer_token = None
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.lower().startswith("bearer "):
-            bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+        # Extract bearer token for cross-gateway forwarding
+        # Prefer token extracted by auth middleware (validated and normalized)
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        # (e.g., when auth middleware is disabled or skipped for certain paths)
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
 
         return await a2a_service.invoke_agent(
             db,

@@ -138,7 +138,16 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
     # Handle URLs with or without scheme
     url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
     parsed = urlparse(url_to_parse)
-    endpoint_domain = parsed.hostname or endpoint_url.split(":", maxsplit=1)[0]
+
+    # Fallback for malformed URLs: handle IPv6 bracket notation and regular hostnames
+    if parsed.hostname:
+        endpoint_domain = parsed.hostname
+    elif endpoint_url.startswith("[") and "]" in endpoint_url:
+        # IPv6 with brackets: [::1]:8080 -> ::1
+        endpoint_domain = endpoint_url.split("]")[0][1:]
+    else:
+        # Regular hostname or IPv4: example.com:8080 -> example.com
+        endpoint_domain = endpoint_url.split("/")[0].rsplit(":", maxsplit=1)[0]
 
     # Validate against allowlist with subdomain matching
     # "sub.example.com" matches "example.com", but "evilexample.com" does not
@@ -2234,12 +2243,12 @@ class A2AAgentService(BaseService):
             logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY INFO: Log cross-gateway authentication model on first call
+            # SECURITY WARNING: Log cross-gateway authentication model on first call
             # ═══════════════════════════════════════════════════════════════════════════
             global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
             if not _cross_gateway_auth_warning_logged:
-                logger.info(
-                    "ℹ️  SECURITY: First cross-gateway UAID call detected. "
+                logger.warning(
+                    "⚠️  SECURITY: First cross-gateway UAID call detected. "
                     "Cross-gateway routing forwards bearer tokens when available for RBAC enforcement on remote gateways. "
                     "Both gateways must trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
                     "Calls without bearer tokens will be unauthenticated on the remote gateway. "

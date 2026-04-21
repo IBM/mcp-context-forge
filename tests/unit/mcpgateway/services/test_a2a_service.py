@@ -49,12 +49,16 @@ def mock_logging_services():
 
 
 @pytest.fixture(autouse=True)
-def mock_uaid_settings(monkeypatch):
-    """Mock UAID security settings to bypass validation in tests.
+def bypass_uaid_security_for_tests(monkeypatch):
+    """Bypass UAID security validation for non-security tests.
 
-    Without this, tests fail because UAID validation checks the allowlist,
-    which defaults to empty (fail-closed). We set allow_all=True for tests
-    to bypass this security check.
+    This fixture uses autouse=True to globally disable UAID security checks
+    for all tests in this file. This is necessary because most tests focus on
+    A2A agent functionality rather than security validation, and the fail-closed
+    default (empty UAID_ALLOWED_DOMAINS) would cause all tests to fail.
+
+    Security-focused tests (e.g., TestCrossGatewayRoutingCoverage) override
+    this fixture to re-enable security validation and test allowlist behavior.
 
     Uses monkeypatch instead of patch() to allow individual tests to override
     specific settings without conflicts.

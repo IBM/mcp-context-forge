@@ -749,7 +749,10 @@ class Settings(BaseSettings):
         default=True,
         description=(
             "Forward bearer tokens in cross-gateway UAID calls for RBAC enforcement on remote gateways. "
-            "Requires both gateways to trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO)."
+            "Requires both gateways to trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
+            "Disable only if you have an alternative cross-gateway authentication mechanism "
+            "(e.g., mutual TLS, gateway trust tokens, or pre-authenticated service accounts). "
+            "Default: True (recommended for most deployments)."
         ),
     )
 
