@@ -29,7 +29,7 @@ from mcpgateway.plugins import get_plugin_manager_factory, publish_binding_chang
 from mcpgateway.plugins.gateway_plugin_manager import CONTEXT_ID_SEPARATOR, make_context_id
 from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError, ToolPluginBindingService
+from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingForbiddenError, ToolPluginBindingNotFoundError, ToolPluginBindingService
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -208,6 +208,9 @@ async def delete_tool_plugin_bindings_by_reference(
 
     Returns the deleted records (empty list if none matched — not an error).
 
+    Non-admin callers may only delete bindings belonging to their own teams;
+    bindings on other teams are silently skipped.
+
     Args:
         binding_reference_id: The external reference ID whose bindings to delete.
         current_user_ctx: Authenticated user context.
@@ -221,7 +224,10 @@ async def delete_tool_plugin_bindings_by_reference(
         >>> asyncio.iscoroutinefunction(delete_tool_plugin_bindings_by_reference)
         True
     """
-    deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id)
+    is_admin: bool = current_user_ctx.get("is_admin", False)
+    user_teams: list = current_user_ctx.get("teams", []) or []
+    allowed_teams = None if is_admin else set(user_teams)
+    deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id, allowed_teams=allowed_teams)
     db.commit()
     await _invalidate_and_broadcast(deleted)
     return ToolPluginBindingListResponse(bindings=deleted, total=len(deleted))
@@ -253,6 +259,7 @@ async def delete_tool_plugin_binding(
         ToolPluginBindingResponse: The deleted binding record.
 
     Raises:
+        HTTPException: 403 if the caller is not a member of the binding's team.
         HTTPException: 404 if no binding with the given ID exists.
 
     Examples:
@@ -261,9 +268,14 @@ async def delete_tool_plugin_binding(
         True
     """
     try:
-        deleted = _service.delete_binding(db, binding_id)
+        is_admin: bool = current_user_ctx.get("is_admin", False)
+        user_teams: list = current_user_ctx.get("teams", []) or []
+        allowed_teams = None if is_admin else set(user_teams)
+        deleted = _service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
         db.commit()
         await _invalidate_and_broadcast([deleted])
         return deleted
     except ToolPluginBindingNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ToolPluginBindingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
