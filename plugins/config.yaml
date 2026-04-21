@@ -2,9 +2,9 @@
 
 # Plugin directories to scan
 plugin_dirs:
-  - "plugins/native"      # Built-in plugins
-  - "plugins/custom"      # Custom organization plugins
-  - "/etc/mcpgateway/plugins"  # System-wide plugins
+  - "plugins/native" # Built-in plugins
+  - "plugins/custom" # Custom organization plugins
+  - "/etc/mcpgateway/plugins" # System-wide plugins
 
 # Global plugin settings
 plugin_settings:
@@ -16,6 +16,28 @@ plugin_settings:
   include_user_info: false
 
 plugins:
+  # Span Attribute Customizer - customize OpenTelemetry span attributes
+  - name: "SpanAttributeCustomizer"
+    kind: "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin"
+    description: "Customizes OpenTelemetry span attributes for enhanced observability and compliance"
+    version: "1.0.0"
+    author: "ContextForge Team"
+    hooks: ["tool_pre_invoke", "resource_pre_fetch", "resource_post_fetch"]
+    tags: ["observability", "telemetry", "opentelemetry", "spans", "attributes"]
+    mode: "disabled" # Set to "permissive" or "enforce" to activate
+    priority: 10 # Run early to set attributes before other plugins
+    conditions: []
+    config:
+      # Attribute name mapping (renaming)
+      # Maps old attribute names to new names for plugin spans
+      # This allows customizing span attribute names for compliance or organizational standards
+      attribute_mapping:
+        "plugin.name": "controls.artifact.name"
+        "plugin.uuid": "controls.artifact.id"
+        "plugin.mode": "controls.enforcement.mode"
+        "plugin.priority": "controls.execution.priority"
+        "plugin.timeout": "controls.execution.timeout"
+
   # Argument Normalizer - stabilize inputs before anything else
   - name: "ArgumentNormalizer"
     kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"
@@ -42,7 +64,7 @@ plugins:
 
       # Casing
       enable_casing: false
-      case_strategy: "none"  # none|lower|upper|title
+      case_strategy: "none" # none|lower|upper|title
 
       # Dates
       enable_dates: true
@@ -51,7 +73,7 @@ plugins:
 
       # Numbers
       enable_numbers: true
-      decimal_detection: "auto"  # auto|comma|dot
+      decimal_detection: "auto" # auto|comma|dot
 
       # Field overrides: customize per key pattern
       field_overrides: []
@@ -62,26 +84,32 @@ plugins:
     description: "Detects and masks Personally Identifiable Information"
     version: "0.2.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    hooks:
+      [
+        "prompt_pre_fetch",
+        "prompt_post_fetch",
+        "tool_pre_invoke",
+        "tool_post_invoke",
+      ]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
-    priority: 50  # Lower number = higher priority (runs first)
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
+    priority: 50 # Lower number = higher priority (runs first)
     conditions:
-      - prompts: []  # Empty list = apply to all prompts
-        server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
+      - prompts: [] # Empty list = apply to all prompts
+        server_ids: [] # Apply to all servers
+        tenant_ids: [] # Apply to all tenants
     config:
       # PII Detection Settings
       detect_ssn: true
       detect_credit_card: true
       detect_email: true
       detect_phone: false
-      detect_ip_address: false  # Disabled for development
+      detect_ip_address: false # Disabled for development
       # Masking Settings
-      default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
+      default_mask_strategy: "partial" # redact | partial | hash | tokenize | remove
       redaction_text: "[PII_REDACTED]"
       # Behavior Settings
-      block_on_detection: false  # Set to true for strict compliance
+      block_on_detection: false # Set to true for strict compliance
       log_detections: true
       include_detection_details: true
       # Whitelist common test values
@@ -95,9 +123,15 @@ plugins:
     description: "A plugin for finding and replacing words."
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    hooks:
+      [
+        "prompt_pre_fetch",
+        "prompt_post_fetch",
+        "tool_pre_invoke",
+        "tool_post_invoke",
+      ]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "enforce"  # enforce | enforce_ignore_error | permissive | disabled
+    mode: "enforce" # enforce | enforce_ignore_error | permissive | disabled
     priority: 150
     # conditions:
     #   # Apply to specific tools/servers
@@ -119,13 +153,13 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers
       - prompts: ["test_prompt"]
-        server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
+        server_ids: [] # Apply to all servers
+        tenant_ids: [] # Apply to all tenants
     config:
       words:
         - innovative
@@ -138,11 +172,17 @@ plugins:
     description: "Demonstrates resource pre/post fetch hooks for filtering and validation"
     version: "1.0.0"
     author: "ContextForge Team"
-    hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
+    hooks:
+      [
+        "resource_pre_fetch",
+        "resource_post_fetch",
+        "prompt_post_fetch",
+        "tool_post_invoke",
+      ]
     tags: ["resource", "filter", "security", "example"]
-    mode: "disabled"  # Block resources that violate rules
+    mode: "disabled" # Block resources that violate rules
     priority: 75
-    conditions: []  # Apply to all resources
+    conditions: [] # Apply to all resources
     config:
       # Maximum content size in bytes (1MB)
       max_content_size: 1048576
@@ -178,7 +218,36 @@ plugins:
     priority: 119
     conditions: []
     config:
-      allowed_tags: ["a", "p", "div", "span", "strong", "em", "code", "pre", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td"]
+      allowed_tags:
+        [
+          "a",
+          "p",
+          "div",
+          "span",
+          "strong",
+          "em",
+          "code",
+          "pre",
+          "ul",
+          "ol",
+          "li",
+          "h1",
+          "h2",
+          "h3",
+          "h4",
+          "h5",
+          "h6",
+          "blockquote",
+          "img",
+          "br",
+          "hr",
+          "table",
+          "thead",
+          "tbody",
+          "tr",
+          "th",
+          "td",
+        ]
       allowed_attrs:
         "*": ["id", "class", "title", "alt"]
         a: ["href", "rel", "target"]
@@ -250,8 +319,8 @@ plugins:
     author: "Osher Elhadad"
     hooks: ["tool_pre_invoke"]
     tags: ["validation", "sparc", "altk", "static", "schema", "type-checking"]
-    mode: "disabled"  # Enable with "enforce" or "permissive"
-    priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
+    mode: "disabled" # Enable with "enforce" or "permissive"
+    priority: 65 # Run early, after argument normalizer (40) but before schema guard (110)
     conditions: []
     config:
       # Block tool execution when validation fails
@@ -316,7 +385,8 @@ plugins:
     priority: 65
     conditions: []
     config:
-      allowed_mime_types: ["text/plain", "text/markdown", "text/html", "application/json"]
+      allowed_mime_types:
+        ["text/plain", "text/markdown", "text/html", "application/json"]
       allowed_extensions: [".md", ".txt", ".html", ".json"]
 
   # Retry with exponential backoff — triggers real gateway re-invocation
@@ -371,7 +441,13 @@ plugins:
     description: "Integrates with VirusTotal v3 to check URLs/domains/IPs and local files"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
+    hooks:
+      [
+        "resource_pre_fetch",
+        "resource_post_fetch",
+        "prompt_post_fetch",
+        "tool_post_invoke",
+      ]
     tags: ["security", "threat"]
     mode: "disabled"
     priority: 61
@@ -438,28 +514,39 @@ plugins:
     version: "1.0.0"
     author: "ContextForge"
     hooks: ["tool_post_invoke"]
-    tags: ["guard", "length", "outputs", "truncate", "block", "mcp", "structured", "word-boundary", "tokens"]
-    mode: "disabled"  # use "enforce" with strategy: block for strict behavior
-    priority: 160  # run after other transformers
+    tags:
+      [
+        "guard",
+        "length",
+        "outputs",
+        "truncate",
+        "block",
+        "mcp",
+        "structured",
+        "word-boundary",
+        "tokens",
+      ]
+    mode: "disabled" # use "enforce" with strategy: block for strict behavior
+    priority: 160 # run after other transformers
     conditions: []
     config:
       # Output limits
-      min_chars: 0  # minimum character limit (0 disables)
-      max_chars: 15000  # maximum character limit (0 or null disables)
-      min_tokens: 0  # minimum allowed tokens (0 disables)
-      max_tokens: null  # maximum allowed tokens (null disables)
-      chars_per_token: 4  # characters per token ratio for estimation (1-10)
+      min_chars: 0 # minimum character limit (0 disables)
+      max_chars: 15000 # maximum character limit (0 or null disables)
+      min_tokens: 0 # minimum allowed tokens (0 disables)
+      max_tokens: null # maximum allowed tokens (null disables)
+      chars_per_token: 4 # characters per token ratio for estimation (1-10)
 
       # Behavior
-      limit_mode: "character"  # "character" or "token" - choose ONE enforcement method
-      strategy: "truncate"  # truncate | block
+      limit_mode: "character" # "character" or "token" - choose ONE enforcement method
+      strategy: "truncate" # truncate | block
       ellipsis: "…"
-      word_boundary: false  # true = truncate at word boundaries to avoid mid-word cuts
+      word_boundary: false # true = truncate at word boundaries to avoid mid-word cuts
 
       # Security limits (optional, defaults shown)
-      max_text_length: 1000000  # 1MB text limit
-      max_structure_size: 10000  # Maximum items in list/dict
-      max_recursion_depth: 100  # Maximum nesting depth
+      max_text_length: 1000000 # 1MB text limit
+      max_structure_size: 10000 # Maximum items in list/dict
+      max_recursion_depth: 100 # Maximum nesting depth
 
   # Summarizer - summarize long content via OpenAI
   - name: "Summarizer"
@@ -536,11 +623,11 @@ plugins:
     priority: 70
     conditions: []
     config:
-      error_rate_threshold: 0.7      # 70% failure rate before tripping (more forgiving)
-      window_seconds: 120            # 2-minute sliding window
-      min_calls: 10                  # Need 10 calls before evaluating error rate
-      consecutive_failure_threshold: 8  # 8 consecutive failures to trip
-      cooldown_seconds: 15           # Quick 15s recovery for faster testing
+      error_rate_threshold: 0.7 # 70% failure rate before tripping (more forgiving)
+      window_seconds: 120 # 2-minute sliding window
+      min_calls: 10 # Need 10 calls before evaluating error rate
+      consecutive_failure_threshold: 8 # 8 consecutive failures to trip
+      cooldown_seconds: 15 # Quick 15s recovery for faster testing
       tool_overrides: {}
 
   # Watchdog - enforce per-tool execution SLOs
@@ -591,9 +678,24 @@ plugins:
     conditions: []
     config:
       categories:
-        self_harm: ["\\bkill myself\\b", "\\bsuicide\\b", "\\bself-harm\\b", "\\bwant to die\\b"]
-        violence: ["\\bkill (?:him|her|them|someone)\\b", "\\bshoot (?:him|her|them|someone)\\b", "\\bstab (?:him|her|them|someone)\\b"]
-        hate: ["\\b(?:kill|eradicate) (?:[a-z]+) people\\b", "\\b(?:racial slur|hate speech)\\b"]
+        self_harm:
+          [
+            "\\bkill myself\\b",
+            "\\bsuicide\\b",
+            "\\bself-harm\\b",
+            "\\bwant to die\\b",
+          ]
+        violence:
+          [
+            "\\bkill (?:him|her|them|someone)\\b",
+            "\\bshoot (?:him|her|them|someone)\\b",
+            "\\bstab (?:him|her|them|someone)\\b",
+          ]
+        hate:
+          [
+            "\\b(?:kill|eradicate) (?:[a-z]+) people\\b",
+            "\\b(?:racial slur|hate speech)\\b",
+          ]
       block_on: ["self_harm", "violence", "hate"]
 
   # Timezone Translator - convert timestamps
@@ -647,7 +749,14 @@ plugins:
     conditions: []
     config:
       fields: ["sql", "query", "statement"]
-      blocked_statements: ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"]
+      blocked_statements:
+        [
+          "\\bDROP\\b",
+          "\\bTRUNCATE\\b",
+          "\\bALTER\\b",
+          "\\bGRANT\\b",
+          "\\bREVOKE\\b",
+        ]
       block_delete_without_where: true
       block_update_without_where: true
       strip_comments: true
@@ -674,7 +783,7 @@ plugins:
         private_key_block: true
         jwt_like: true
         hex_secret_32: true
-        base64_24: false  # Broad intrinsic-shape heuristic; keep opt-in because it can block ordinary 24+ char IDs and tokens
+        base64_24: false # Broad intrinsic-shape heuristic; keep opt-in because it can block ordinary 24+ char IDs and tokens
       redact: false
       redaction_text: "***REDACTED***"
       block_on_detection: true
@@ -784,7 +893,16 @@ plugins:
     priority: 180
     conditions: []
     config:
-      languages: ["plaintext", "python", "javascript", "typescript", "json", "markdown", "shell"]
+      languages:
+        [
+          "plaintext",
+          "python",
+          "javascript",
+          "typescript",
+          "json",
+          "markdown",
+          "shell",
+        ]
       tab_width: 4
       trim_trailing: true
       ensure_newline: true
@@ -809,7 +927,17 @@ plugins:
       header_template: |
         SPDX-License-Identifier: Apache-2.0
         Copyright (c) 2025
-      languages: ["python", "javascript", "typescript", "go", "java", "c", "cpp", "shell"]
+      languages:
+        [
+          "python",
+          "javascript",
+          "typescript",
+          "go",
+          "java",
+          "c",
+          "cpp",
+          "shell",
+        ]
       max_size_kb: 512
       dedupe_marker: "SPDX-License-Identifier:"
   # Citation Validator - validate links (after HTML conversion)
@@ -840,7 +968,7 @@ plugins:
     author: "Adrian Popa"
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 10
     conditions:
       - prompts: []
@@ -858,17 +986,30 @@ plugins:
     description: "Send HTTP webhook notifications on events, violations, and state changes"
     version: "1.0.0"
     author: "Manav Gupta"
-    hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
+    hooks:
+      [
+        "tool_pre_invoke",
+        "tool_post_invoke",
+        "prompt_post_fetch",
+        "resource_post_fetch",
+      ]
     tags: ["notification", "webhook", "monitoring", "observability"]
     # mode: "permissive"
     mode: "disabled"
-    priority: 900  # Run after other plugins to capture their violations
+    priority: 900 # Run after other plugins to capture their violations
     conditions: []
     config:
       webhooks:
         # Example placeholder only. Replace with your own endpoint before enabling.
         - url: "https://example.invalid/webhook"
-          events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
+          events:
+            [
+              "violation",
+              "tool_success",
+              "tool_error",
+              "rate_limit_exceeded",
+              "pii_detected",
+            ]
           authentication:
             type: "none"
           retry_attempts: 2
@@ -902,12 +1043,12 @@ plugins:
     tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
     # mode: "permissive"  # Use permissive mode for testing
     mode: "disabled"
-    priority: 30  # Run early in the pipeline
+    priority: 30 # Run early in the pipeline
     conditions: []
     config:
-      provider: "ibm_granite"  # Use Granite for easier testing (no API key needed)
+      provider: "ibm_granite" # Use Granite for easier testing (no API key needed)
       fallback_provider: null
-      fallback_on_error: "warn"  # Action when providers fail
+      fallback_on_error: "warn" # Action when providers fail
 
       # IBM Granite Guardian via Ollama (for testing)
       ibm_granite:
@@ -928,7 +1069,7 @@ plugins:
       categories:
         hate:
           threshold: 0.7
-          action: "warn"  # Use warn for testing
+          action: "warn" # Use warn for testing
         violence:
           threshold: 0.8
           action: "warn"
@@ -963,12 +1104,12 @@ plugins:
     author: "Jason Tsay"
     hooks: ["tool_post_invoke"]
     tags: ["plugin"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
-      - server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
+      - server_ids: [] # Apply to all servers
+        tenant_ids: [] # Apply to all tenants
     config:
       jsonprocessor_query: ""
       llm_provider: "watsonx" # one of watsonx, ollama, openai, anthropic
@@ -994,10 +1135,10 @@ plugins:
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["telemetry", "observability", "opentelemetry", "monitoring"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
-    priority: 200  # Run late to capture all context
-    conditions: []  # Apply to all tools
+    priority: 200 # Run late to capture all context
+    conditions: [] # Apply to all tools
     config:
-      export_full_payload: false  # opt in only if you explicitly want result content in telemetry
+      export_full_payload: false # opt in only if you explicitly want result content in telemetry
       max_payload_bytes_size: 10000
 
   # TOON Encoder - Convert JSON to TOON format for token efficiency
@@ -1008,21 +1149,21 @@ plugins:
     author: "Joe Stein"
     hooks: ["tool_post_invoke"]
     tags: ["optimization", "tokens", "encoding", "toon", "llm"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
-    priority: 900  # Run very late, after all other post-processing
-    conditions: []  # Apply to all tools
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
+    priority: 900 # Run very late, after all other post-processing
+    conditions: [] # Apply to all tools
     config:
       # Size thresholds
-      min_size_bytes: 100        # Only convert JSON larger than this
-      max_size_bytes: 1048576    # Skip very large payloads (1MB) to prevent OOM
+      min_size_bytes: 100 # Only convert JSON larger than this
+      max_size_bytes: 1048576 # Skip very large payloads (1MB) to prevent OOM
 
       # Tool filtering (leave empty to process all tools)
-      exclude_tools: []          # Tool names to skip (e.g., ["get_binary_file"])
-      include_tools: null        # Whitelist - if set, only these tools are converted
+      exclude_tools: [] # Tool names to skip (e.g., ["get_binary_file"])
+      include_tools: null # Whitelist - if set, only these tools are converted
 
       # Output options
-      add_format_marker: true    # Add annotations.format="toon" to converted content
-      skip_on_error: true        # Continue with original JSON if conversion fails
+      add_format_marker: true # Add annotations.format="toon" to converted content
+      skip_on_error: true # Continue with original JSON if conversion fails
 
   # Unified Policy Decision Point - single interface for Cedar, OPA, Native RBAC, MAC
   - name: "UnifiedPDPPlugin"
@@ -1032,8 +1173,8 @@ plugins:
     author: "yiannis2804"
     hooks: ["tool_pre_invoke", "resource_pre_fetch"]
     tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
-    mode: "disabled"  # set to "enforce" to activate
-    priority: 10  # Run early — access control before other plugins
+    mode: "disabled" # set to "enforce" to activate
+    priority: 10 # Run early — access control before other plugins
     conditions: []
     config:
       engines:
@@ -1080,8 +1221,8 @@ plugins:
     author: "yiannis2804"
     hooks: ["http_auth_resolve_user"]
     tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
-    mode: "disabled"  # set to "permissive" to activate
-    priority: 10  # Run early — before other auth plugins
+    mode: "disabled" # set to "permissive" to activate
+    priority: 10 # Run early — before other auth plugins
     conditions: []
     config:
       context_key: jwt_claims

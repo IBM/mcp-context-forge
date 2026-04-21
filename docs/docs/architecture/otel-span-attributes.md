@@ -2,6 +2,60 @@
 
 This document lists all span attributes created in the ContextForge codebase, organized by category with real-world code-level examples.
 
+## **CUSTOMIZING SPAN ATTRIBUTES**
+
+ContextForge provides the **SpanAttributeCustomizer** plugin to customize OpenTelemetry span attributes at runtime. This allows you to:
+
+- **Add global attributes** to all spans (e.g., environment, region, team)
+- **Override attributes per tool** for specific tools
+- **Transform attribute values** (hash for PII, uppercase, lowercase, truncate)
+- **Add conditional attributes** based on tool name or context
+- **Remove sensitive attributes** for privacy/compliance
+
+### Setup
+
+1. Enable the plugin in `plugins/config.yaml`:
+
+```yaml
+plugins:
+  - name: "SpanAttributeCustomizer"
+    kind: "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin"
+    hooks: ["tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"]
+    mode: "permissive"
+    priority: 10
+    config:
+      global_attributes:
+        environment: "production"
+        region: "us-east-1"
+        team: "platform"
+      tool_overrides:
+        weather_api:
+          attributes:
+            service: "weather"
+            cost_center: "engineering"
+      transformations:
+        - field: "user.email"
+          operation: "hash"
+      conditions:
+        - when: "tool.name == \"sensitive_operation\""
+          add:
+            audit_required: true
+            compliance_level: "high"
+      remove_attributes:
+        - "internal_debug_info"
+```
+
+2. Enable plugins in `.env`:
+
+```bash
+PLUGINS_ENABLED=true
+PLUGINS_CONFIG_FILE=plugins/config.yaml
+```
+
+3. Restart the gateway
+
+For detailed configuration options, see `plugins/span_attribute_customizer/README.md`.
+
 ---
 
 ## **TOOL INVOCATION ATTRIBUTES**

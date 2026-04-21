@@ -16564,6 +16564,7 @@ async def _sync_plugin_service_from_runtime(request: Request, plugin_service) ->
     """
     try:
         # pylint: disable=import-outside-toplevel
+        # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
 
         plugin_manager = await get_plugin_manager()
@@ -16690,6 +16691,7 @@ async def list_plugins(
             },
         )
 
+        # First-Party
         from mcpgateway.plugins.framework import are_plugins_enabled_shared  # pylint: disable=import-outside-toplevel
 
         return PluginListResponse(plugins_globally_enabled=await are_plugins_enabled_shared(), plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
@@ -16709,6 +16711,7 @@ async def toggle_plugins_global(
 ) -> PluginToggleResponse:
     """Enable or disable the plugin subsystem globally and broadcast the change."""
     # pylint: disable=import-outside-toplevel
+    # First-Party
     from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins_shared, get_plugin_manager
 
     redis_persisted = await enable_plugins_shared(payload.enabled)
@@ -16905,6 +16908,7 @@ async def update_plugin_mode(
 ) -> PluginModeUpdateResponse:
     """Persist a per-plugin mode override in Redis and invalidate cached managers."""
     # pylint: disable=import-outside-toplevel
+    # First-Party
     from mcpgateway.plugins.framework import invalidate_all_plugin_managers, list_configured_plugin_names, publish_plugin_mode_change
 
     mode = payload.mode
