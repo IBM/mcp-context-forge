@@ -219,7 +219,8 @@ async def test_delete_role_value_error(monkeypatch):
     with pytest.raises(rbac_router.HTTPException) as excinfo:
         await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
     assert excinfo.value.status_code == 400
-    assert "Cannot delete system role" in excinfo.value.detail
+    # Security fix: generic error message in production (debug=False by default)
+    assert "Invalid request" in excinfo.value.detail
 
 
 @pytest.mark.asyncio

@@ -220,7 +220,8 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "Token name already exists" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_create_token_with_is_active_false(self, mock_db, mock_current_user, mock_token_record):
@@ -269,8 +270,9 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            # Security fix: simplified message in production (debug=False by default)
             assert "already exists" in exc_info.value.detail
-            assert "unique per user" in exc_info.value.detail
+            assert "choose a different name" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
@@ -289,7 +291,8 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-            assert "conflict" in exc_info.value.detail.lower()
+            # Security fix: generic error message in production (debug=False by default)
+            assert "could not be completed" in exc_info.value.detail.lower() or "try again" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
@@ -497,7 +500,8 @@ class TestUpdateToken:
                 await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "Invalid token name" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_update_token_toggle_is_active(self, mock_db, mock_current_user, mock_token_record):
@@ -761,7 +765,8 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "User is not team owner" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -789,8 +794,9 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            # Security fix: simplified message in production (debug=False by default)
             assert "already exists" in exc_info.value.detail
-            assert "unique per user" in exc_info.value.detail
+            assert "choose a different name" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_team_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
@@ -809,7 +815,8 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-            assert "conflict" in exc_info.value.detail.lower()
+            # Security fix: generic error message in production (debug=False by default)
+            assert "could not be completed" in exc_info.value.detail.lower() or "try again" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_team_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
@@ -856,7 +863,8 @@ class TestTeamTokens:
                 await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "User is not team member" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
 
 class TestApiTokenAuth:
