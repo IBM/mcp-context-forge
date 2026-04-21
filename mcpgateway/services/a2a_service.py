@@ -144,10 +144,10 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         endpoint_domain = parsed.hostname
     elif endpoint_url.startswith("[") and "]" in endpoint_url:
         # IPv6 with brackets: [::1]:8080 -> ::1
-        endpoint_domain = endpoint_url.split("]")[0][1:]
+        endpoint_domain = endpoint_url.split("]", maxsplit=1)[0][1:]
     else:
         # Regular hostname or IPv4: example.com:8080 -> example.com
-        endpoint_domain = endpoint_url.split("/")[0].rsplit(":", maxsplit=1)[0]
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0].rsplit(":", maxsplit=1)[0]
 
     # Validate against allowlist with subdomain matching
     # "sub.example.com" matches "example.com", but "evilexample.com" does not
