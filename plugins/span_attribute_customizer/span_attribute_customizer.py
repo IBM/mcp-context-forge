@@ -174,11 +174,13 @@ class SpanAttributeCustomizerPlugin(Plugin):
         Returns:
             Result with metadata about attributes added.
         """
+        # Compute attributes outside lock (read-only operations)
         custom_attrs = self._compute_attributes(payload.name, context)
         removal_list = self._get_removal_list(payload.name)
         attribute_mapping = self._get_attribute_mapping()
 
         # Store in context for observability service with thread-safe access
+        # Snapshot all state under lock to prevent race conditions (Finding 1: CWE-362)
         with self._state_lock:
             context.global_context.state["custom_span_attributes"] = custom_attrs
             context.global_context.state["remove_span_attributes"] = removal_list
@@ -201,12 +203,14 @@ class SpanAttributeCustomizerPlugin(Plugin):
             Result indicating pre-processing completion.
         """
         custom_attrs = self._compute_attributes(None, context)
+        attribute_mapping = self._get_attribute_mapping()
 
-        # Reset all state keys to prevent stale tool-invocation state from bleeding into resource spans
+        # Apply attribute mapping to resource spans (Finding 3: CWE-840)
+        # Reset tool-specific state but preserve global attribute mapping for compliance/privacy
         with self._state_lock:
             context.global_context.state["custom_span_attributes"] = custom_attrs
             context.global_context.state["remove_span_attributes"] = []
-            context.global_context.state["span_attribute_mapping"] = {}
+            context.global_context.state["span_attribute_mapping"] = attribute_mapping
 
         return ResourcePreFetchResult()
 
