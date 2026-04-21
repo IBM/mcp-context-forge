@@ -267,3 +267,97 @@ class TestModeToggleCycle:
         _set_plugin_mode("enforce")
         text = _call_echo(server_id, f"cycle {TRIGGER_WORD}")
         assert EXPECTED_WHEN_ENFORCING in text, f"Step 3 (re-enforce): got {text}"
+
+
+# ---------------------------------------------------------------------------
+# Burst-mode toggle cycle — diagnostic counterpart to the rate-limiter's
+# test_disable_enable_disable_cycle (in test_rate_limiter_dynamic_behavior.py).
+#
+# Purpose: the rate-limiter burst test surfaces a partial-propagation symptom
+# (7 of 40 requests still rate-limited at Step 1 after enforce→disabled + 7s
+# PROPAGATION_WAIT). That could be:
+#   (a) rate-limiter-specific — Redis counter residue from Step 0's enforce
+#       phase bleeding into Step 1, even though mode=disabled should short-
+#       circuit the plugin entirely; OR
+#   (b) framework-wide — mode change invalidation hasn't propagated across
+#       every gunicorn worker across every gateway replica by the time we
+#       start bursting.
+#
+# If this bad-words burst cycle shows the *same* partial symptom (some
+# requests transformed at Step 1 after enforce→disabled), the issue is (b).
+# If it's always clean (exactly 40 unchanged or 40 transformed per phase),
+# the issue is (a) and lives in the rate-limiter path.
+# ---------------------------------------------------------------------------
+
+# Mirror the burst size used by the rate-limiter test for apples-to-apples.
+BURST_SIZE = 40
+
+
+def _call_echo_burst(server_id: str, count: int, tag: str) -> dict:
+    """Burst ``count`` echo calls using the trigger word, return outcome counts.
+
+    Mirrors ``_send_tool_burst`` from test_rate_limiter_dynamic_behavior.py but
+    classifies responses by "did the bad-words transform fire" rather than by
+    HTTP 429.
+
+    Returns:
+        {"transformed": int, "unchanged": int, "errors": int, "total": int}
+    """
+    transformed = 0
+    unchanged = 0
+    errors = 0
+    for i in range(count):
+        try:
+            text = _call_echo(server_id, f"{tag} {TRIGGER_WORD} {i}")
+        except Exception:
+            errors += 1
+            continue
+        if EXPECTED_WHEN_ENFORCING in text:
+            transformed += 1
+        elif TRIGGER_WORD in text:
+            unchanged += 1
+        else:
+            errors += 1
+    return {
+        "transformed": transformed,
+        "unchanged": unchanged,
+        "errors": errors,
+        "total": count,
+    }
+
+
+class TestBadWordsToggleBurst:
+    """Burst-mode toggle cycle against ReplaceBadWordsPlugin.
+
+    Apples-to-apples with
+    ``test_rate_limiter_dynamic_behavior.py::TestRateLimiterToggleCycle::test_disable_enable_disable_cycle``
+    — same 3-step cycle, same BURST_SIZE, same PROPAGATION_WAIT (applied by
+    ``_set_plugin_mode``). If these pass cleanly while the rate-limiter
+    equivalent fails at Step 1, the rate-limiter's residual symptom is not a
+    framework-wide propagation issue.
+    """
+
+    def test_disable_enable_disable_cycle_burst(self, server_id):
+        """Full cycle: disabled (all unchanged) → enforce (all transformed) → disabled (all unchanged)."""
+        # Step 1: Disabled after previous enforce — all requests should pass through unchanged.
+        _set_plugin_mode("disabled")
+        r1 = _call_echo_burst(server_id, BURST_SIZE, "step1")
+        assert r1["transformed"] == 0, (
+            f"Step 1 (disabled after enforce): expected 0 transformed across {BURST_SIZE} requests, "
+            f"got {r1}"
+        )
+
+        # Step 2: Enforce — all requests should be transformed.
+        _set_plugin_mode("enforce")
+        r2 = _call_echo_burst(server_id, BURST_SIZE, "step2")
+        assert r2["transformed"] == BURST_SIZE, (
+            f"Step 2 (enforce): expected all {BURST_SIZE} transformed, got {r2}"
+        )
+
+        # Step 3: Disabled again — all requests should pass through unchanged.
+        _set_plugin_mode("disabled")
+        r3 = _call_echo_burst(server_id, BURST_SIZE, "step3")
+        assert r3["transformed"] == 0, (
+            f"Step 3 (disabled again): expected 0 transformed across {BURST_SIZE} requests, "
+            f"got {r3}"
+        )
