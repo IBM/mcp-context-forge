@@ -182,6 +182,13 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_LOG", default_value = "info")]
     pub log_filter: String,
 
+    #[arg(
+        long,
+        env = "MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES",
+        default_value_t = 10_485_760
+    )]
+    pub max_request_body_size_bytes: usize,
+
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,
 }

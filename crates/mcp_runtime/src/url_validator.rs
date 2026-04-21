@@ -242,7 +242,7 @@ pub struct UrlValidator {
 
 impl UrlValidator {
     /// Create a validator from runtime configuration.
-    pub fn from_config(runtime_config: &RuntimeConfig) -> Result<Self, String> {
+    pub fn from_config(_runtime_config: &RuntimeConfig) -> Result<Self, String> {
         let mut config = UrlValidatorConfig::default();
 
         // Parse environment variables
@@ -309,7 +309,8 @@ impl UrlValidator {
         let dns_cache = Arc::new(RwLock::new(HashMap::new()));
 
         // Pattern for detecting suspicious content
-        let suspicious_pattern = Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
+        let suspicious_pattern =
+            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
 
         Ok(Self {
             config,
@@ -322,7 +323,8 @@ impl UrlValidator {
     /// Create a validator with a custom DNS resolver (for testing).
     pub fn with_resolver(config: UrlValidatorConfig, resolver: Arc<dyn DnsResolver>) -> Self {
         let dns_cache = Arc::new(RwLock::new(HashMap::new()));
-        let suspicious_pattern = Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
+        let suspicious_pattern =
+            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
 
         Self {
             config,
@@ -427,11 +429,7 @@ impl UrlValidator {
         let normalized_hostname = hostname.to_lowercase().trim_end_matches('.').to_string();
 
         // Check blocked hostnames
-        if self
-            .config
-            .blocked_hosts
-            .contains(&normalized_hostname)
-        {
+        if self.config.blocked_hosts.contains(&normalized_hostname) {
             return Err(ValidationError::BlockedHostname {
                 field: field.to_string(),
                 hostname: normalized_hostname,
@@ -463,7 +461,10 @@ impl UrlValidator {
     }
 
     /// Resolve hostname to IPs with caching.
-    async fn resolve_hostname_cached(&self, hostname: &str) -> Result<Vec<IpAddr>, ValidationError> {
+    async fn resolve_hostname_cached(
+        &self,
+        hostname: &str,
+    ) -> Result<Vec<IpAddr>, ValidationError> {
         // Try parsing as IP first
         if let Ok(ip) = hostname.parse::<IpAddr>() {
             return Ok(vec![ip]);
@@ -482,15 +483,15 @@ impl UrlValidator {
 
         // Cache miss - resolve
         debug!("DNS cache miss for {}, resolving...", hostname);
-        let ips = self
-            .resolver
-            .lookup_ip(hostname)
-            .await
-            .map_err(|e| ValidationError::DnsError {
-                field: "Backend URL".to_string(),
-                hostname: hostname.to_string(),
-                reason: e,
-            })?;
+        let ips =
+            self.resolver
+                .lookup_ip(hostname)
+                .await
+                .map_err(|e| ValidationError::DnsError {
+                    field: "Backend URL".to_string(),
+                    hostname: hostname.to_string(),
+                    reason: e,
+                })?;
 
         // Update cache (write lock)
         {
@@ -627,10 +628,7 @@ mod tests {
         let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
 
         let result = validator.validate_url("ftp://example.com/", "test").await;
-        assert!(matches!(
-            result,
-            Err(ValidationError::InvalidScheme { .. })
-        ));
+        assert!(matches!(result, Err(ValidationError::InvalidScheme { .. })));
     }
 
     #[tokio::test]

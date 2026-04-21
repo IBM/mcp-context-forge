@@ -15,7 +15,7 @@ pub mod url_validator;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{
@@ -189,6 +189,8 @@ pub struct AppState {
     session_auth_reuse_ttl: Duration,
     public_ingress_enabled: bool,
     runtime_stats: Arc<RuntimeStats>,
+    url_validator: Arc<url_validator::UrlValidator>,
+    max_request_body_size_bytes: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -724,6 +726,9 @@ impl AppState {
             .map_err(|err| RuntimeError::Config(format!("rmcp http client error: {err}")))?;
         let db_pool = build_db_pool(config)?;
         let redis_client = build_redis_client(config)?;
+        let url_validator = Arc::new(url_validator::UrlValidator::from_config(config).map_err(
+            |e| RuntimeError::Config(format!("URL validator initialization failed: {}", e)),
+        )?);
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
@@ -840,6 +845,8 @@ impl AppState {
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             public_ingress_enabled: config.public_listen_http.is_some(),
             runtime_stats: Arc::new(RuntimeStats::default()),
+            url_validator,
+            max_request_body_size_bytes: config.max_request_body_size_bytes,
         })
     }
 
@@ -1305,6 +1312,7 @@ impl RuntimeStats {
 /// The router exposes public MCP ingress, health probes, and internal helpers
 /// used by tests and mode-specific runtime slices.
 pub fn build_router(state: AppState) -> Router {
+    let max_body_size = state.max_request_body_size_bytes;
     Router::new()
         .route("/health", get(healthz))
         .route("/healthz", get(healthz))
@@ -1335,10 +1343,12 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        .layer(DefaultBodyLimit::max(max_body_size))
         .with_state(state)
 }
 
 fn build_public_router(state: AppState) -> Router {
+    let max_body_size = state.max_request_body_size_bytes;
     Router::new()
         .route("/health", get(public_healthz))
         .route("/healthz", get(public_healthz))
@@ -1364,6 +1374,7 @@ fn build_public_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        .layer(DefaultBodyLimit::max(max_body_size))
         .with_state(state)
 }
 
@@ -2627,9 +2638,21 @@ async fn authenticate_public_request_if_needed(
         client_ip: public_client_ip(&incoming_headers, peer_addr),
     };
 
+    let backend_url = state.backend_authenticate_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend authenticate URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(backend_detail_error_response(
+            "Backend URL validation failed",
+        ));
+    }
+
     let backend_response = state
         .client
-        .post(state.backend_authenticate_url())
+        .post(backend_url)
         .header(RUNTIME_HEADER, RUNTIME_NAME)
         .header(
             HeaderName::from_static(INTERNAL_RUNTIME_AUTH_HEADER),
@@ -4498,6 +4521,18 @@ async fn send_to_backend_url(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(backend_jsonrpc_error_response(
+            None,
+            "Backend URL validation failed",
+        ));
+    }
+
     state
         .client
         .post(backend_url)
@@ -7860,9 +7895,30 @@ async fn send_tools_list_to_backend(
     // The helpers below are thin, method-specific bridges to Python's internal
     // MCP handlers. They keep the runtime's public response shaping separate
     // from the actual HTTP dispatch and error translation.
+    let backend_url = state.backend_tools_list_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend tools list URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_tools_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .send()
         .await
@@ -7888,9 +7944,30 @@ async fn send_resources_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_resources_list_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend resources list URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_resources_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7917,9 +7994,30 @@ async fn send_resources_read_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_resources_read_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend resources read URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_resources_read_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7946,9 +8044,30 @@ async fn send_resources_subscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_resources_subscribe_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend resources subscribe URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_resources_subscribe_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7975,9 +8094,30 @@ async fn send_resources_unsubscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_resources_unsubscribe_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend resources unsubscribe URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_resources_unsubscribe_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8004,9 +8144,30 @@ async fn send_resource_templates_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_resource_templates_list_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend resource templates list URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_resource_templates_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8033,9 +8194,30 @@ async fn send_roots_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_roots_list_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend roots list URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_roots_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8062,9 +8244,30 @@ async fn send_completion_complete_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_completion_complete_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend completion complete URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_completion_complete_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8091,9 +8294,30 @@ async fn send_sampling_create_message_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_sampling_create_message_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend sampling create message URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_sampling_create_message_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8120,9 +8344,30 @@ async fn send_logging_set_level_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_logging_set_level_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend logging set level URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_logging_set_level_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8149,9 +8394,30 @@ async fn send_prompts_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_prompts_list_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend prompts list URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_prompts_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8178,9 +8444,30 @@ async fn send_prompts_get_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_prompts_get_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend prompts get URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_prompts_get_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8371,9 +8658,22 @@ async fn resolve_tools_call_plan_via_backend(
     incoming_headers: &HeaderMap,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
+    let backend_url = state.backend_tools_call_resolve_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend tools resolve URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(ResolveToolsCallError::Fallback(format!(
+            "Backend URL validation failed: {}",
+            e
+        )));
+    }
+
     let response = state
         .client
-        .post(state.backend_tools_call_resolve_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(incoming_headers))
         .body(body)
         .send()
@@ -8458,9 +8758,30 @@ async fn send_tools_call_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = state.backend_tools_call_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend tools call URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32000,
+                    "message": "Backend URL validation failed",
+                    "data": CLIENT_ERROR_DETAIL,
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_tools_call_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8487,9 +8808,19 @@ async fn send_tools_call_metric_to_backend(
     incoming_headers: &HeaderMap,
     payload: &ToolsCallMetricRecordRequest,
 ) -> Result<(), String> {
+    let backend_url = state.backend_tools_call_metric_url();
+    if let Err(e) = state
+        .url_validator
+        .validate_url(backend_url, "Backend tools call metric URL")
+        .await
+    {
+        error!("Validation blocked request to {}: {}", backend_url, e);
+        return Err(format!("Backend URL validation failed: {}", e));
+    }
+
     let response = state
         .client
-        .post(state.backend_tools_call_metric_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(incoming_headers))
         .json(payload)
         .send()
@@ -10226,7 +10557,7 @@ mod unit_tests {
     };
     use axum::{
         Json, Router,
-        body::to_bytes,
+        body::{Body, to_bytes},
         extract::{Path as AxumPath, State},
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
         response::{IntoResponse, Response, sse::Sse},
@@ -10246,6 +10577,7 @@ mod unit_tests {
         time::Duration,
     };
     use tokio::time::{Instant, sleep};
+    use tower::ServiceExt;
     use tracing::warn;
     use uuid::Uuid;
 
@@ -10373,6 +10705,7 @@ mod unit_tests {
             redis_url: None,
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
+            max_request_body_size_bytes: 10_485_760,
             exit_after_startup_ms: None,
         }
     }
@@ -13992,5 +14325,83 @@ mod unit_tests {
             .await,
             None
         );
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_accepts_small_payloads() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 1024; // 1 KB limit for test
+
+        let state = AppState::new(&config).expect("state");
+        let app = build_public_router(state);
+
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "id": 1
+        });
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
+        // Should succeed (ping is handled locally, returns 200)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_rejects_oversized_payloads() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 100; // Very small limit for test
+
+        let state = AppState::new(&config).expect("state");
+        let app = build_public_router(state);
+
+        // Create a payload larger than the limit
+        let large_payload = "x".repeat(200);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": large_payload,
+            "id": 1
+        });
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
+        // Should fail with 413 Payload Too Large
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_uses_configured_value() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 5_000_000; // 5 MB
+
+        let state = AppState::new(&config).expect("state");
+        assert_eq!(state.max_request_body_size_bytes, 5_000_000);
+    }
+
+    #[test]
+    fn request_body_limit_default_is_10mb() {
+        let config = test_config();
+        let state = AppState::new(&config).expect("state");
+        assert_eq!(state.max_request_body_size_bytes, 10_485_760); // 10 MB
     }
 }

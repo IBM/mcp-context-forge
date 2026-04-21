@@ -1330,6 +1330,12 @@ start = "2023-05-15"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for windows crates"
 
+[[trusted.windows-registry]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-15"
+end = "2027-04-21"
+
 [[trusted.windows-result]]
 criteria = "safe-to-deploy"
 user-id = 64539 # Kenny Kerr (kennykerr)

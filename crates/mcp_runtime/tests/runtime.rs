@@ -129,6 +129,7 @@ fn test_runtime_config() -> RuntimeConfig {
         redis_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
+        max_request_body_size_bytes: 10_485_760,
         exit_after_startup_ms: None,
     }
 }
