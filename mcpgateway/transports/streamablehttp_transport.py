@@ -38,7 +38,7 @@ import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union, assert_never
+from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -3280,20 +3280,20 @@ async def _handle_get_stream(
         require distinct outcome labels, filed as a potential
         follow-up if operators need to split.
     """
+    # Third-Party
+    from sse_starlette.sse import EventSourceResponse  # pylint: disable=import-outside-toplevel
+
     # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
         ListenerClaimResult,
         SessionAffinityNotInitializedError,
-        get_session_affinity,
     )
     from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
         BusBackendError,
-        ListenerBacklogOverflow,
         get_server_event_bus,
+        ListenerBacklogOverflow,
     )
-
-    # Third-Party
-    from sse_starlette.sse import EventSourceResponse  # pylint: disable=import-outside-toplevel
 
     if not _accepts_event_stream(accept):
         transport_get_rejected_counter.labels(outcome="not_acceptable").inc()
