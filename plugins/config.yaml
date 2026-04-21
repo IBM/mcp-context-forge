@@ -25,7 +25,6 @@ plugins:
     hooks:
       [
         "tool_pre_invoke",
-        "tool_post_invoke",
         "resource_pre_fetch",
         "resource_post_fetch",
       ]

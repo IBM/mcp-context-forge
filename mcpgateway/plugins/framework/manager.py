@@ -442,14 +442,12 @@ class PluginExecutor:
                 }
 
                 # Apply attribute name mapping if configured (from SpanAttributeCustomizerPlugin)
+                # First-Party
+                from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+
                 attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
                 if attribute_mapping:
-                    renamed_attributes = {}
-                    for old_name, value in base_attributes.items():
-                        new_name = attribute_mapping.get(old_name, old_name)
-                        renamed_attributes[new_name] = value
-                    base_attributes = renamed_attributes
-                    logger.debug(f"Applied {len(attribute_mapping)} attribute name mappings to plugin span")
+                    base_attributes = apply_attribute_mapping(base_attributes, attribute_mapping)
 
                 span_id = self.observability.start_span(
                     trace_id=trace_id,

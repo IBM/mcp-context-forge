@@ -7,9 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 import hashlib
+import hmac
 import logging
+import threading
 from typing import Any, Dict, Optional
 
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -40,6 +43,7 @@ class SpanAttributeCustomizerPlugin(Plugin):
         """
         super().__init__(config)
         self.cfg = SpanAttributeCustomizerConfig.model_validate(self._config.config)
+        self._state_lock = threading.Lock()
         logger.info(f"SpanAttributeCustomizer initialized with {len(self.cfg.global_attributes)} global attributes")
 
     def _compute_attributes(self, tool_name: Optional[str], context: PluginContext, base_attributes: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -98,11 +102,11 @@ class SpanAttributeCustomizerPlugin(Plugin):
         Returns:
             True if condition is met, False otherwise.
         """
-        # Simple condition evaluation (can be enhanced with safe eval)
-        # For now, support basic equality checks
+        # Simple condition evaluation supporting basic equality checks
         try:
             if "==" in condition:
-                left, right = condition.split("==")
+                # Split only on first occurrence to handle values containing ==
+                left, right = condition.split("==", 1)
                 left = left.strip()
                 right = right.strip().strip('"').strip("'")
 
@@ -127,7 +131,9 @@ class SpanAttributeCustomizerPlugin(Plugin):
         """
         try:
             if operation == "hash":
-                return hashlib.sha256(str(value).encode()).hexdigest()[:16]
+                # Use HMAC-SHA-256 with auth_encryption_secret for secure pseudonymization
+                secret = settings.auth_encryption_secret.get_secret_value().encode()
+                return hmac.new(secret, str(value).encode(), hashlib.sha256).hexdigest()[:32]
             if operation == "uppercase":
                 return str(value).upper()
             if operation == "lowercase":
@@ -174,10 +180,11 @@ class SpanAttributeCustomizerPlugin(Plugin):
         removal_list = self._get_removal_list(payload.name)
         attribute_mapping = self._get_attribute_mapping()
 
-        # Store in context for observability service
-        context.global_context.state["custom_span_attributes"] = custom_attrs
-        context.global_context.state["remove_span_attributes"] = removal_list
-        context.global_context.state["span_attribute_mapping"] = attribute_mapping
+        # Store in context for observability service with thread-safe access
+        with self._state_lock:
+            context.global_context.state["custom_span_attributes"] = custom_attrs
+            context.global_context.state["remove_span_attributes"] = removal_list
+            context.global_context.state["span_attribute_mapping"] = attribute_mapping
 
         logger.debug(f"Added {len(custom_attrs)} custom attributes for tool '{payload.name}'")
         if attribute_mapping:
@@ -185,18 +192,7 @@ class SpanAttributeCustomizerPlugin(Plugin):
 
         return ToolPreInvokeResult(metadata={"span_customizer": {"attributes_added": len(custom_attrs), "mappings_configured": len(attribute_mapping)}})
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        """Add result-based attributes after tool execution.
 
-        Args:
-            payload: Tool invocation result payload.
-            context: Plugin execution context.
-
-        Returns:
-            Result indicating post-processing completion.
-        """
-        # Can add attributes based on tool results
-        return ToolPostInvokeResult()
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Add custom attributes before resource fetch.
@@ -209,7 +205,13 @@ class SpanAttributeCustomizerPlugin(Plugin):
             Result indicating pre-processing completion.
         """
         custom_attrs = self._compute_attributes(None, context)
-        context.global_context.state["custom_span_attributes"] = custom_attrs
+        
+        # Reset all state keys to prevent stale tool-invocation state from bleeding into resource spans
+        with self._state_lock:
+            context.global_context.state["custom_span_attributes"] = custom_attrs
+            context.global_context.state["remove_span_attributes"] = []
+            context.global_context.state["span_attribute_mapping"] = {}
+        
         return ResourcePreFetchResult()
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:

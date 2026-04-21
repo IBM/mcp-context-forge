@@ -205,7 +205,7 @@ Track billing per tenant or team:
 ```yaml
 config:
   global_attributes:
-    tenant_id: "{{ tenant_id }}"
+    tenant_id: "team-123"  # Static value - dynamic templating not supported
     cost_center: "engineering"
     billing_code: "PROJ-123"
 ```
@@ -255,8 +255,10 @@ config:
     service.version: "1.0.0"
     service.namespace: "production"
     k8s.cluster.name: "prod-cluster"
-    k8s.pod.name: "{{ POD_NAME }}"
+    k8s.pod.name: "gateway-pod-abc123"  # Static value - use environment variables for dynamic values
 ```
+
+**Note:** Template syntax like `{{ POD_NAME }}` is shown for illustration only. The plugin does not support Jinja2 templating. Use static values or retrieve dynamic values from environment variables during plugin initialization.
 
 ### Audit & Security
 

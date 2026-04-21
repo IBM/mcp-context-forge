@@ -17,6 +17,7 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
 from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.utils import apply_attribute_mapping
 from mcpgateway.services.observability_service import ObservabilityService
 from plugins.span_attribute_customizer.span_attribute_customizer import SpanAttributeCustomizerPlugin
 
@@ -65,14 +66,9 @@ async def test_plugin_manager_applies_attribute_mapping():
         "plugin.timeout": 30,
     }
 
-    # Apply attribute name mapping (simulating manager.py lines 447-452)
+    # Apply attribute name mapping using centralized helper
     attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
-    if attribute_mapping:
-        renamed_attributes = {}
-        for old_name, value in base_attributes.items():
-            new_name = attribute_mapping.get(old_name, old_name)
-            renamed_attributes[new_name] = value
-        base_attributes = renamed_attributes
+    base_attributes = apply_attribute_mapping(base_attributes, attribute_mapping)
 
     # Verify mapping was applied correctly
     assert "controls.artifact.name" in base_attributes
@@ -137,22 +133,7 @@ async def test_observability_service_applies_attribute_mapping():
         # We can't directly verify this without mocking deeper, but we've covered the code path
 
 
-@pytest.mark.asyncio
-async def test_upstream_session_registry_attribute_mapping():
-    """Test attribute mapping in upstream session registry context."""
-    from mcpgateway.services.upstream_session_registry import UpstreamSessionRegistry
 
-    registry = UpstreamSessionRegistry()
-
-    # Setup context with mapping
-    global_context = GlobalContext(request_id="test-123")
-    global_context.state["span_attribute_mapping"] = {
-        "session.id": "controls.session.identifier",
-    }
-
-    # This tests that the registry can work with mapped attributes
-    # The actual line 516 is likely in a context where attributes are being processed
-    assert "span_attribute_mapping" in global_context.state
 
 
 @pytest.mark.asyncio
@@ -193,14 +174,9 @@ async def test_end_to_end_attribute_mapping_flow():
         "plugin.uuid": "uuid-123",
     }
 
-    # Apply mapping (simulating manager.py lines 447-452)
+    # Apply mapping using centralized helper
     attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
-    if attribute_mapping:
-        renamed_attributes = {}
-        for old_name, value in base_attributes.items():
-            new_name = attribute_mapping.get(old_name, old_name)
-            renamed_attributes[new_name] = value
-        base_attributes = renamed_attributes
+    base_attributes = apply_attribute_mapping(base_attributes, attribute_mapping)
 
     # Verify mapping was applied
     assert "controls.artifact.name" in base_attributes
@@ -213,13 +189,8 @@ async def test_end_to_end_attribute_mapping_flow():
         "tool.arguments": "{}",
     }
 
-    # Apply mapping (simulating observability_service.py lines 514-519)
-    if attribute_mapping:
-        renamed_attributes = {}
-        for old_name, value in final_attributes.items():
-            new_name = attribute_mapping.get(old_name, old_name)
-            renamed_attributes[new_name] = value
-        final_attributes = renamed_attributes
+    # Apply mapping using centralized helper
+    final_attributes = apply_attribute_mapping(final_attributes, attribute_mapping)
 
     # Verify mapping was applied
     assert "controls.artifact.name" in final_attributes
@@ -247,14 +218,9 @@ async def test_otel_span_attribute_mapping_in_manager():
         "contextforge.runtime": "python",
     }
 
-    # Apply mapping (simulating manager.py lines 480-484)
+    # Apply mapping using centralized helper
     attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
-    if attribute_mapping:
-        renamed_otel_attributes = {}
-        for old_name, value in otel_attributes.items():
-            new_name = attribute_mapping.get(old_name, old_name)
-            renamed_otel_attributes[new_name] = value
-        otel_attributes = renamed_otel_attributes
+    otel_attributes = apply_attribute_mapping(otel_attributes, attribute_mapping)
 
     # Verify mapping was applied
     assert "controls.artifact.name" in otel_attributes

@@ -508,15 +508,13 @@ class ObservabilityService:
                     final_attributes.update(custom_attrs)
                     logger.debug(f"Merged {len(custom_attrs)} custom attributes from plugin context")
 
-                # Apply attribute name mapping (renaming)
+                # Apply attribute name mapping (renaming) using centralized helper
+                # First-Party
+                from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+
                 attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
                 if attribute_mapping:
-                    renamed_attributes = {}
-                    for old_name, value in final_attributes.items():
-                        new_name = attribute_mapping.get(old_name, old_name)
-                        renamed_attributes[new_name] = value
-                    final_attributes = renamed_attributes
-                    logger.debug(f"Applied {len(attribute_mapping)} attribute name mappings")
+                    final_attributes = apply_attribute_mapping(final_attributes, attribute_mapping)
 
                 # Remove attributes specified by plugin
                 remove_attrs = context.global_context.state.get("remove_span_attributes", [])

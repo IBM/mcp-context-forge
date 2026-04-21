@@ -6,9 +6,9 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AttributeTransformation(BaseModel):
@@ -37,7 +37,10 @@ class SpanAttributeCustomizerConfig(BaseModel):
     """Configuration for Span Attribute Customizer plugin."""
 
     # Global attributes
-    global_attributes: Dict[str, Any] = Field(default_factory=dict, description="Attributes to add to all spans")
+    global_attributes: Dict[str, Union[str, int, float, bool]] = Field(
+        default_factory=dict, 
+        description="Attributes to add to all spans (values must be str, int, float, or bool)"
+    )
 
     # Per-tool overrides
     tool_overrides: Dict[str, ToolOverride] = Field(default_factory=dict, description="Per-tool attribute overrides")
@@ -56,3 +59,33 @@ class SpanAttributeCustomizerConfig(BaseModel):
         default_factory=dict,
         description="Map attribute names to new names (e.g., 'tool.name' -> 'controls.artifact.name')"
     )
+
+    @field_validator("global_attributes")
+    @classmethod
+    def validate_global_attributes(cls, v: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
+        """Validate that global attributes only contain OTEL-compatible types.
+        
+        Args:
+            v: Dictionary of attributes to validate.
+            
+        Returns:
+            Validated dictionary.
+            
+        Raises:
+            ValueError: If any attribute value is not str, int, float, or bool.
+        """
+        if len(v) > 100:
+            raise ValueError("global_attributes cannot exceed 100 entries")
+        
+        for key, value in v.items():
+            if len(key) > 255:
+                raise ValueError(f"Attribute key '{key}' exceeds 255 characters")
+            if not isinstance(value, (str, int, float, bool)):
+                raise ValueError(
+                    f"Attribute '{key}' has invalid type {type(value).__name__}. "
+                    "Only str, int, float, and bool are supported by OTEL SDKs."
+                )
+            if isinstance(value, str) and len(value) > 4096:
+                raise ValueError(f"Attribute '{key}' string value exceeds 4096 characters")
+        
+        return v

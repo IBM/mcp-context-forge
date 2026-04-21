@@ -175,8 +175,8 @@ class TestSpanAttributeCustomizerPlugin:
         await plugin.tool_pre_invoke(payload, plugin_context)
 
         custom_attrs = plugin_context.global_context.state["custom_span_attributes"]
-        # Hash should be 16 characters (truncated SHA-256)
-        assert len(custom_attrs["user_email"]) == 16
+        # Hash should be 32 characters (HMAC-SHA-256 truncated)
+        assert len(custom_attrs["user_email"]) == 32
         assert custom_attrs["user_email"] != "test@example.com"
 
     @pytest.mark.asyncio
@@ -374,15 +374,7 @@ class TestSpanAttributeCustomizerPlugin:
         # Should not crash, just skip the transformation
         assert "nonexistent_field" not in custom_attrs
 
-    @pytest.mark.asyncio
-    async def test_tool_post_invoke_hook(self, basic_plugin_config, plugin_context):
-        """Test tool_post_invoke hook returns successfully."""
-        plugin = SpanAttributeCustomizerPlugin(basic_plugin_config)
-        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result={"status": "ok"})
 
-        result = await plugin.tool_post_invoke(payload, plugin_context)
-
-        assert result is not None
 
     @pytest.mark.asyncio
     async def test_resource_pre_fetch_hook(self, basic_plugin_config, plugin_context):
@@ -434,7 +426,7 @@ class TestSpanAttributeCustomizerPlugin:
         assert custom_attrs["environment"] == "production"
 
         # Check transformations
-        assert len(custom_attrs["user_email"]) == 16  # Hashed
+        assert len(custom_attrs["user_email"]) == 32  # Hashed with HMAC-SHA-256
         assert custom_attrs["region"] == "US-EAST-1"  # Uppercased
 
         # Check tool override
