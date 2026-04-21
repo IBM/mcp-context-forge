@@ -3892,17 +3892,26 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        # Derive tenant_id from the tool payload so rate limiting and other
+        # tenant-scoped plugin behaviour works on the fallback path where
+        # middleware didn't run and _propagate_tenant_id never got a chance
+        # to fill it in. Non-string team_id values are ignored defensively.
+        payload_team_id = tool_payload.get("team_id") if tool_payload else None
+        hook_tenant_id: Optional[str] = payload_team_id if isinstance(payload_team_id, str) and payload_team_id else None
+
         if plugin_global_context:
             hook_global_context = plugin_global_context
             if tool_gateway_id and isinstance(tool_gateway_id, str):
                 hook_global_context.server_id = tool_gateway_id
             if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
                 hook_global_context.user = app_user_email
+            if not hook_global_context.tenant_id and hook_tenant_id:
+                hook_global_context.tenant_id = hook_tenant_id
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
             content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -4532,6 +4541,11 @@ class ToolService(BaseService):
 
         # Reuse existing global_context from middleware or create new one
         # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
+        # Derive tenant_id from the tool payload so by_tenant rate limiting
+        # and other tenant-scoped plugin behaviour works on the fallback
+        # path where middleware didn't run. Non-string values are ignored.
+        payload_tenant_id: Optional[str] = _tool_team_id if isinstance(_tool_team_id, str) and _tool_team_id else None
+
         if plugin_global_context:
             global_context = plugin_global_context
             # Update server_id using local variable (not ORM access)
@@ -4540,13 +4554,16 @@ class ToolService(BaseService):
             # Propagate user email to global context for plugin access
             if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
                 global_context.user = app_user_email
+            # Fill tenant_id if middleware/auth propagation didn't cover it
+            if not global_context.tenant_id and payload_tenant_id:
+                global_context.tenant_id = payload_tenant_id
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             content_type = request_headers.get("content-type") if request_headers else None
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
