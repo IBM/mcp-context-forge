@@ -279,6 +279,7 @@ mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/.vite/
 mcpgateway/static/app/
+mcpgateway/static/css/
 public/
 
 # Generated Tailwind CSS (built during development or container build)
