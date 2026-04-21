@@ -139,19 +139,98 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
     url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
     parsed = urlparse(url_to_parse)
 
-    # Fallback for malformed URLs: handle IPv6 bracket notation and regular hostnames
-    if parsed.hostname:
+    # Extract hostname:port (netloc) for validation to support port-specific allowlisting
+    # Examples:
+    #   - "https://127.0.0.1:4444/api" → "127.0.0.1:4444"
+    #   - "https://example.com/api" → "example.com" (no port)
+    #   - "[::1]:8080" → "[::1]:8080"
+    if parsed.netloc:
+        endpoint_domain = parsed.netloc
+    elif parsed.hostname:
+        # Fallback: just hostname if netloc is empty
         endpoint_domain = parsed.hostname
     elif endpoint_url.startswith("[") and "]" in endpoint_url:
-        # IPv6 with brackets: [::1]:8080 -> ::1
-        endpoint_domain = endpoint_url.split("]", maxsplit=1)[0][1:]
+        # IPv6 with brackets: [::1]:8080 -> [::1]:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
     else:
-        # Regular hostname or IPv4: example.com:8080 -> example.com
-        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0].rsplit(":", maxsplit=1)[0]
+        # Regular hostname or IPv4: example.com:8080 -> example.com:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
 
     # Validate against allowlist with subdomain matching
-    # "sub.example.com" matches "example.com", but "evilexample.com" does not
-    if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
+    # Matching logic:
+    #   - Exact match: "127.0.0.1:4444" == "127.0.0.1:4444"
+    #   - Subdomain match: "api.example.com:8080" matches "example.com:8080" (same port)
+    #   - Subdomain match: "api.example.com" matches "example.com" (no port required)
+    #   - No match: "api.example.com:8080" does NOT match "example.com:9090" (different port)
+    #   - IPv6 match: "[::1]:8080" matches "::1" (brackets stripped for comparison)
+    def domain_matches(endpoint: str, allowed: str) -> bool:
+        """Check if endpoint domain matches allowed domain (with subdomain support)."""
+        # Exact match
+        if endpoint == allowed:
+            return True
+
+        # Helper to parse hostname and port from domain string
+        def parse_host_port(domain: str) -> tuple[str, str | None]:
+            """Parse domain into (hostname, port).
+
+            Returns:
+                (hostname, port) where port is None if not present
+
+            Examples:
+                "example.com:8080" → ("example.com", "8080")
+                "example.com" → ("example.com", None)
+                "[::1]:8080" → ("::1", "8080")
+                "[::1]" → ("::1", None)
+                "::1" → ("::1", None)
+            """
+            # Handle IPv6 with brackets: [::1]:8080 or [::1]
+            if domain.startswith("["):
+                if "]:" in domain:
+                    # [::1]:8080 → ::1, 8080
+                    host, port = domain.split("]:", 1)
+                    return (host[1:], port)  # Remove leading [
+                elif domain.endswith("]"):
+                    # [::1] → ::1, None
+                    return (domain[1:-1], None)
+                else:
+                    # Malformed, treat as-is
+                    return (domain, None)
+
+            # Handle regular hostname:port or hostname
+            if ":" in domain:
+                # Could be IPv6 without brackets (::1) or hostname:port (example.com:8080)
+                parts = domain.rsplit(":", 1)
+                # Check if last part is a valid port number
+                if parts[1].isdigit():
+                    return (parts[0], parts[1])
+                else:
+                    # Not a port, must be IPv6 like ::1
+                    return (domain, None)
+            else:
+                # No port
+                return (domain, None)
+
+        endpoint_host, endpoint_port = parse_host_port(endpoint)
+        allowed_host, allowed_port = parse_host_port(allowed)
+
+        # If both have ports, they must match
+        if endpoint_port is not None and allowed_port is not None:
+            if endpoint_port != allowed_port:
+                return False
+            # Ports match, now check hostname (subdomain matching)
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+
+        # If only one has a port, check if hostnames match (ignore port mismatch)
+        # This allows "example.com" in allowlist to match "example.com:8080" in endpoint
+        # But "example.com:8080" in allowlist requires exact port match
+        if allowed_port is None:
+            # Allowed domain has no port, so port-agnostic matching
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+        else:
+            # Allowed domain has a port, but endpoint doesn't - no match
+            return False
+
+    if not any(domain_matches(endpoint_domain, d) for d in allowed_domains):
         raise ValueError(
             f"UAID {operation_context} blocked: endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS. "
             f"Endpoint: {endpoint_url!r}. "
@@ -1462,6 +1541,10 @@ class A2AAgentService(BaseService):
                 from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
 
                 try:
+                    # ✅ FIX: Validate endpoint domain against allowlist (was missing in edit flow)
+                    # This prevents bypassing UAID_ALLOWED_DOMAINS security via edit form
+                    _validate_uaid_endpoint_domain(agent.endpoint_url, operation_context="UAID generation during edit")
+
                     uaid = generate_uaid(
                         registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                         name=agent.name,  # Use current agent name
