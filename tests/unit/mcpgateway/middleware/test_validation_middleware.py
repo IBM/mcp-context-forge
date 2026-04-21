@@ -8,6 +8,7 @@ Tests for the validation middleware.
 """
 
 # Standard
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -393,8 +394,8 @@ class TestValidationMiddleware:
             await middleware._validate_request(DummyRequest())
 
     @pytest.mark.asyncio
-    async def test_validate_request_with_rust_rejects_bad_params_before_reading_json_body(self):
-        """Test Rust-backed param validation short-circuits before JSON body reads."""
+    async def test_validate_request_with_rust_rejects_bad_params_via_combined_request_path(self):
+        """Test Rust-backed request validation rejects bad params without a separate param precheck."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -408,7 +409,7 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
             rust_validator = MagicMock()
-            rust_validator.validate_parameters.return_value = ("id", "dangerous_pattern")
+            rust_validator.validate_http_request.return_value = ("id", "dangerous_pattern")
             middleware._rust_validator = rust_validator
             middleware._rust_validate_http_request = rust_validator.validate_http_request
 
@@ -418,17 +419,17 @@ class TestValidationMiddleware:
                 headers = {"content-type": "application/json"}
 
                 async def body(self):
-                    raise AssertionError("body should not be read when params already fail")
+                    return b'{"name":"safe"}'
 
             with pytest.raises(HTTPException, match="contains dangerous characters"):
                 await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_parameters.assert_called_once_with([("id", "<script>")])
-            rust_validator.validate_http_request.assert_not_called()
+            rust_validator.validate_parameters.assert_not_called()
+            rust_validator.validate_http_request.assert_called_once_with([("id", "<script>")], "application/json", b'{"name":"safe"}')
 
     @pytest.mark.asyncio
-    async def test_validate_request_with_rust_parameter_failure_falls_back_before_body_read(self):
-        """Test Rust parameter-precheck fallback still rejects before reading the body."""
+    async def test_validate_request_with_rust_request_failure_falls_back_to_python_parameter_validation(self):
+        """Test Rust request-path failures fall back to Python parameter validation."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -442,7 +443,7 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
             rust_validator = MagicMock()
-            rust_validator.validate_parameters.side_effect = RuntimeError("boom")
+            rust_validator.validate_http_request.side_effect = RuntimeError("boom")
             middleware._rust_validator = rust_validator
             middleware._rust_validate_http_request = rust_validator.validate_http_request
 
@@ -452,13 +453,13 @@ class TestValidationMiddleware:
                 headers = {"content-type": "application/json"}
 
                 async def body(self):
-                    raise AssertionError("body should not be read when Python fallback rejects params")
+                    return b'{"name":"safe"}'
 
             with pytest.raises(HTTPException, match="contains dangerous characters"):
                 await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_parameters.assert_called_once_with([("id", "<script>")])
-            rust_validator.validate_http_request.assert_not_called()
+            rust_validator.validate_parameters.assert_not_called()
+            rust_validator.validate_http_request.assert_called_once_with([("id", "<script>")], "application/json", b'{"name":"safe"}')
 
     @pytest.mark.asyncio
     async def test_validate_request_rust_bytes_extension_falls_back_to_python_validation(self):
@@ -494,7 +495,7 @@ class TestValidationMiddleware:
 
     @pytest.mark.asyncio
     async def test_validate_request_with_rust_prechecks_parameters_before_json_body(self):
-        """Test Rust request validation rejects params before issuing the JSON-body call."""
+        """Test Rust request validation uses the combined request path for params and body."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -523,7 +524,7 @@ class TestValidationMiddleware:
 
             await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_parameters.assert_called_once_with([("id", "123"), ("q", "safe")])
+            rust_validator.validate_parameters.assert_not_called()
             rust_validator.validate_http_request.assert_called_once_with([("id", "123"), ("q", "safe")], "application/json", b'{"name":"safe"}')
 
     def test_validate_request_with_rust_maps_invalid_json_value_error_to_decode_error(self):
@@ -729,7 +730,13 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_validate_request_with_real_rust_extension_when_installed(self):
         """Test the compiled Rust extension can be imported and used through middleware."""
-        validation_rust = pytest.importorskip("validation_middleware_rust")
+        if os.getenv("REQUIRE_RUST") == "1":
+            # Rust-required CI must fail if the built extension is missing.
+            import importlib
+
+            validation_rust = importlib.import_module("validation_middleware_rust")
+        else:
+            validation_rust = pytest.importorskip("validation_middleware_rust")
 
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True

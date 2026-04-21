@@ -144,7 +144,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         content_type = request.headers.get("content-type", "")
         is_json_body = content_type.startswith("application/json")
 
-        if parameters_to_validate:
+        defer_parameter_validation_to_rust_request = self._rust_validate_http_request is not None and is_json_body
+
+        if parameters_to_validate and not defer_parameter_validation_to_rust_request:
             self._validate_parameters(parameters_to_validate)
 
         body = b""
@@ -164,6 +166,12 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 raise
             except Exception as exc:
                 logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+
+        if parameters_to_validate and defer_parameter_validation_to_rust_request:
+            result = self._validate_parameters_with_python(parameters_to_validate)
+            if result is not None:
+                key, error_type = result
+                self._raise_validation_failure(key, error_type)
 
         if is_json_body:
             try:
