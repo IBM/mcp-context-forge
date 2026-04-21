@@ -7853,7 +7853,20 @@ async fn send_transport_to_backend(
     // runtime session, it marks that fact in forwarded headers so Python can
     // skip repeating the same session-ownership check on the internal hop.
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
-    let mut request = state.client.request(method, target_url).headers(
+    state
+        .validate_backend_url(&target_url, "Backend transport URL")
+        .await
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "error": "Bad Gateway",
+                    "message": e,
+                    "data": CLIENT_ERROR_DETAIL,
+                }),
+            )
+        })?;
+    let mut request = state.client.request(method, &target_url).headers(
         build_forwarded_headers_with_session_validation(incoming_headers, session_validated),
     );
     if let Some(body) = body {
@@ -7877,9 +7890,22 @@ async fn send_session_delete_to_backend(
     incoming_headers: &HeaderMap,
     session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
+    let backend_url = derive_backend_session_delete_url(state.backend_rpc_url());
+    state
+        .validate_backend_url(&backend_url, "Backend session delete URL")
+        .await
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": e,
+                    "data": CLIENT_ERROR_DETAIL,
+                }),
+            )
+        })?;
     state
         .client
-        .delete(derive_backend_session_delete_url(state.backend_rpc_url()))
+        .delete(&backend_url)
         .headers(build_forwarded_headers_with_session_validation(
             incoming_headers,
             session_validated,
@@ -10479,9 +10505,9 @@ fn empty_response(status: StatusCode) -> Response {
 
 #[cfg(test)]
 mod unit_tests {
+    use crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES;
     use base64::Engine;
     use bytes::BytesMut;
-    use crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES;
 
     use super::{
         AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL,
@@ -10679,6 +10705,17 @@ mod unit_tests {
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
             max_request_body_size_bytes: DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
+            validation_enabled: true,
+            max_url_length: 2048,
+            allow_localhost: true,
+            allow_private_networks: false,
+            blocked_networks: vec!["169.254.169.254/32".to_string()],
+            blocked_hosts: vec![
+                "metadata.google.internal".to_string(),
+                "metadata.goog".to_string(),
+            ],
+            allowed_networks: vec![],
+            dns_fail_closed: true,
             exit_after_startup_ms: None,
         }
     }

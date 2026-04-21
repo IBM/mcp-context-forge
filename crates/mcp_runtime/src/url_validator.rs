@@ -1,6 +1,6 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
-// Authors: Mihai Criveti, ContextForge Team
+// Authors: Mihai Criveti
 
 //! URL validation with hostname resolution and network filtering for the Rust MCP runtime.
 //!
@@ -259,75 +259,72 @@ pub struct UrlValidator {
 
 impl UrlValidator {
     /// Create a validator from runtime configuration.
-    pub fn from_config(_runtime_config: &RuntimeConfig) -> Result<Self, String> {
-        let mut config = UrlValidatorConfig::default();
-
-        // Parse environment variables
-        if let Ok(val) = std::env::var("VALIDATION_ENABLED") {
-            config.enabled = val.parse().unwrap_or(true);
-        }
-
-        if let Ok(val) = std::env::var("MAX_URL_LENGTH") {
-            config.max_url_length = val.parse().unwrap_or(2048);
-        }
-
-        if let Ok(val) = std::env::var("ALLOW_LOCALHOST") {
-            config.allow_localhost = val.parse().unwrap_or(true);
-        }
-
-        if let Ok(val) = std::env::var("ALLOW_PRIVATE_NETWORKS") {
-            config.allow_private_networks = val.parse().unwrap_or(false);
-        }
-
-        if let Ok(val) = std::env::var("DNS_FAIL_CLOSED") {
-            config.dns_fail_closed = val.parse().unwrap_or(true);
-        }
+    pub fn from_config(runtime_config: &RuntimeConfig) -> Result<Self, String> {
+        // Read config from RuntimeConfig (sourced from clap + env vars)
+        let mut config = UrlValidatorConfig {
+            enabled: runtime_config.validation_enabled,
+            max_url_length: runtime_config.max_url_length,
+            allow_localhost: runtime_config.allow_localhost,
+            allow_private_networks: runtime_config.allow_private_networks,
+            dns_fail_closed: runtime_config.dns_fail_closed,
+            blocked_networks: Vec::new(),
+            blocked_hosts: Vec::new(),
+            allowed_networks: Vec::new(),
+            dns_cache_ttl: Duration::from_secs(300), // Keep 5-minute cache TTL
+        };
 
         // Parse blocked networks - FAIL CLOSED on invalid CIDR
-        if let Ok(val) = std::env::var("BLOCKED_NETWORKS") {
-            for network_str in val.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                match network_str.parse::<IpNetwork>() {
-                    Ok(network) => config.blocked_networks.push(network),
-                    Err(e) => {
-                        return Err(format!(
-                            "Invalid CIDR in BLOCKED_NETWORKS '{}': {}",
-                            network_str, e
-                        ));
-                    }
+        for network_str in runtime_config
+            .blocked_networks
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            match network_str.parse::<IpNetwork>() {
+                Ok(network) => config.blocked_networks.push(network),
+                Err(e) => {
+                    return Err(format!(
+                        "Invalid CIDR in BLOCKED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
                 }
             }
         }
 
         // Parse allowed networks - FAIL CLOSED on invalid CIDR
-        if let Ok(val) = std::env::var("ALLOWED_NETWORKS") {
-            for network_str in val.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                match network_str.parse::<IpNetwork>() {
-                    Ok(network) => config.allowed_networks.push(network),
-                    Err(e) => {
-                        return Err(format!(
-                            "Invalid CIDR in ALLOWED_NETWORKS '{}': {}",
-                            network_str, e
-                        ));
-                    }
+        for network_str in runtime_config
+            .allowed_networks
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            match network_str.parse::<IpNetwork>() {
+                Ok(network) => config.allowed_networks.push(network),
+                Err(e) => {
+                    return Err(format!(
+                        "Invalid CIDR in ALLOWED_NETWORKS '{}': {}",
+                        network_str, e
+                    ));
                 }
             }
         }
 
         // Parse blocked hosts
-        if let Ok(val) = std::env::var("BLOCKED_HOSTS") {
-            config.blocked_hosts = val
-                .split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
-        }
+        config.blocked_hosts = runtime_config
+            .blocked_hosts
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let resolver = Arc::new(HickoryDnsResolver::new()?) as Arc<dyn DnsResolver>;
         let dns_cache = Arc::new(RwLock::new(HashMap::new()));
 
         // Pattern for detecting suspicious content
+        // Note: \bon\w+ uses word boundary to match HTML event handlers (onclick, onerror)
+        // without matching words containing "on" (like session_id)
         let suspicious_pattern =
-            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
+            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|\bon\w+\s*=").unwrap();
 
         Ok(Self {
             config,
@@ -340,8 +337,10 @@ impl UrlValidator {
     /// Create a validator with a custom DNS resolver (for testing).
     pub fn with_resolver(config: UrlValidatorConfig, resolver: Arc<dyn DnsResolver>) -> Self {
         let dns_cache = Arc::new(RwLock::new(HashMap::new()));
+        // Note: \bon\w+ uses word boundary to match HTML event handlers (onclick, onerror)
+        // without matching words containing "on" (like session_id)
         let suspicious_pattern =
-            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|on\w+\s*=").unwrap();
+            Regex::new(r"(?i)<script|javascript:|data:|vbscript:|\bon\w+\s*=").unwrap();
 
         Self {
             config,
@@ -454,19 +453,30 @@ impl UrlValidator {
         }
 
         // Resolve hostname to IPs
-        let ips = self.resolve_hostname_cached(&normalized_hostname).await?;
-
-        // If DNS returns empty, handle based on fail-closed setting
-        if ips.is_empty() {
-            if self.config.dns_fail_closed {
-                return Err(ValidationError::DnsError {
-                    field: field.to_string(),
-                    hostname: normalized_hostname,
-                    reason: "No DNS records found".to_string(),
-                });
+        let ips = match self.resolve_hostname_cached(&normalized_hostname).await {
+            Ok(ips) => ips,
+            Err(e) => {
+                // DNS resolution failed - apply fail-closed/open policy
+                if self.config.dns_fail_closed {
+                    return Err(e);
+                } else {
+                    // Fail-open: allow on DNS errors
+                    debug!(
+                        "DNS resolution failed for {}, failing open",
+                        normalized_hostname
+                    );
+                    return Ok(());
+                }
             }
-            // Fail-open: allow if no records found
-            return Ok(());
+        };
+
+        // If DNS returns empty (legitimately no records), fail closed
+        if ips.is_empty() {
+            return Err(ValidationError::DnsError {
+                field: field.to_string(),
+                hostname: normalized_hostname,
+                reason: "No DNS records found".to_string(),
+            });
         }
 
         // Check each resolved IP
@@ -657,5 +667,23 @@ mod tests {
             .validate_url("http://127.0.0.1:4444/rpc", "test")
             .await;
         assert!(result.is_ok(), "Localhost should be allowed by default");
+    }
+
+    #[tokio::test]
+    async fn test_localhost_with_query_params() {
+        let config = create_test_config();
+        let validator = UrlValidator::from_config(&config).expect("Failed to create validator");
+
+        let result = validator
+            .validate_url(
+                "http://127.0.0.1:8787/_internal/mcp/transport?session_id=test",
+                "test",
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Localhost with query params should be allowed: {:?}",
+            result.err()
+        );
     }
 }

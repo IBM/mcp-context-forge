@@ -36,7 +36,7 @@ Use the smallest set that matches your change.
 | Change type | Minimum checks |
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C crates/mcp_runtime fmt-check clippy-all test test-rmcp` |
-| URL validation or request limit changes | Rust-local checks plus `cargo test url_validator request_body_limit --all-features` |
+| URL validation or request limit changes | Rust-local checks plus `cargo test --all-features` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
 | MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-protocol-e2e test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |

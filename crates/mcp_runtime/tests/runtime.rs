@@ -12,7 +12,10 @@ use axum::{
     routing::{any, delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use contextforge_mcp_runtime::{AppState, build_router, config::{RuntimeConfig, DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES}};
+use contextforge_mcp_runtime::{
+    AppState, build_router,
+    config::{DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES, RuntimeConfig},
+};
 use futures_util::StreamExt;
 use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
@@ -130,6 +133,17 @@ fn test_runtime_config() -> RuntimeConfig {
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
         max_request_body_size_bytes: DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
+        validation_enabled: true,
+        max_url_length: 2048,
+        allow_localhost: true,
+        allow_private_networks: false,
+        blocked_networks: vec!["169.254.169.254/32".to_string()],
+        blocked_hosts: vec![
+            "metadata.google.internal".to_string(),
+            "metadata.goog".to_string(),
+        ],
+        allowed_networks: vec![],
+        dns_fail_closed: true,
         exit_after_startup_ms: None,
     }
 }

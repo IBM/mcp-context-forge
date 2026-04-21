@@ -192,6 +192,45 @@ pub struct RuntimeConfig {
     )]
     pub max_request_body_size_bytes: usize,
 
+    #[arg(long, env = "VALIDATION_ENABLED", default_value_t = true)]
+    pub validation_enabled: bool,
+
+    #[arg(long, env = "MAX_URL_LENGTH", default_value_t = 2048)]
+    pub max_url_length: usize,
+
+    #[arg(long, env = "ALLOW_LOCALHOST", default_value_t = true)]
+    pub allow_localhost: bool,
+
+    #[arg(long, env = "ALLOW_PRIVATE_NETWORKS", default_value_t = false)]
+    pub allow_private_networks: bool,
+
+    #[arg(
+        long,
+        env = "BLOCKED_NETWORKS",
+        default_value = "169.254.169.254/32",
+        value_delimiter = ','
+    )]
+    pub blocked_networks: Vec<String>,
+
+    #[arg(
+        long,
+        env = "BLOCKED_HOSTS",
+        default_value = "metadata.google.internal,metadata.goog",
+        value_delimiter = ','
+    )]
+    pub blocked_hosts: Vec<String>,
+
+    #[arg(
+        long,
+        env = "ALLOWED_NETWORKS",
+        default_value = "",
+        value_delimiter = ','
+    )]
+    pub allowed_networks: Vec<String>,
+
+    #[arg(long, env = "DNS_FAIL_CLOSED", default_value_t = true)]
+    pub dns_fail_closed: bool,
+
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,
 }
