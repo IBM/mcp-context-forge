@@ -109,6 +109,7 @@ jobs:
             --durations=5 \
             --ignore=tests/fuzz \
             --ignore=tests/e2e/test_entra_id_integration.py \
+            --ignore=tests/e2e/plugins \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \

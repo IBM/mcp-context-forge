@@ -47,7 +47,7 @@ def _make_admin_jwt() -> str:
                     "/auth/login",
                     json={
                         "email": "admin@example.com",
-                        "password": "changeme",
+                        "password": "changeme",  # pragma: allowlist secret
                     },
                 )
                 if response.status_code == 200:
@@ -276,7 +276,7 @@ def plugin_team(admin_client: httpx.Client) -> Generator[dict[str, Any], None, N
 def plugin_user(admin_client: httpx.Client, plugin_team: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
     """Create a dedicated test user and API token for plugin E2E flows."""
     email = f"{E2E_PLUGIN_PREFIX}-{uuid.uuid4().hex[:8]}@test.com"
-    password = "SecureTestPass123!"
+    password = "SecureTestPass123!"  # pragma: allowlist secret
     create_response = admin_client.post(
         "/auth/email/admin/users",
         json={
