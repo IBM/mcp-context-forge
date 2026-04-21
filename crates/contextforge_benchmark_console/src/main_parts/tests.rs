@@ -362,22 +362,18 @@ fn generator_metadata_uses_rust_profiling_field_names() {
 #[test]
 fn generator_multi_gateway_template_includes_override_example() {
     let mut generator = GeneratorState::new();
-    generator
+    generator.selected = generator
         .fields
-        .iter_mut()
-        .find(|field| field.key == "topology_mode")
-        .unwrap()
-        .value = "multi_gateway".to_string();
-    generator
-        .fields
-        .iter_mut()
-        .find(|field| field.key == "ingress_enabled")
-        .unwrap()
-        .value = "true".to_string();
+        .iter()
+        .position(|field| field.key == "topology_mode")
+        .unwrap();
+    generator.toggle_or_cycle();
     let template = generate_template_toml(&generator);
 
     assert!(template.contains("[[scenario.topology.gateway_override]]"));
     assert!(template.contains("LOG_LEVEL = \"DEBUG\""));
+    assert!(template.contains("gateway_count = 2"));
+    assert!(template.contains("ingress_enabled = true"));
 }
 
 #[test]

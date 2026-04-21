@@ -126,6 +126,7 @@ impl GeneratorState {
     }
 
     pub(crate) fn toggle_or_cycle(&mut self) {
+        let selected_key = self.selected_field().key;
         let field = self.selected_field_mut();
         match field.kind {
             GeneratorFieldKind::Bool => {
@@ -144,6 +145,9 @@ impl GeneratorState {
                 field.value = options[(current + 1) % options.len()].to_string();
             }
             GeneratorFieldKind::Text => {}
+        }
+        if selected_key == "topology_mode" {
+            self.apply_topology_defaults();
         }
         self.ensure_visible_selection();
     }
@@ -205,6 +209,44 @@ impl GeneratorState {
             "workload_selection" | "fallback_endpoint" => true,
             "workload_endpoints" => workload_selection_present,
             _ => true,
+        }
+    }
+
+    fn apply_topology_defaults(&mut self) {
+        let topology_mode = self.get("topology_mode").to_string();
+        if topology_mode == "multi_gateway" {
+            self.set_if_empty_or_value("gateway_count", "1", "2");
+            self.set_if_value("ingress_enabled", "false", "true");
+            self.set_if_empty("ingress_service", "nginx");
+            self.set_if_empty("shared_services", "postgres,redis,pgbouncer");
+            self.set_if_empty("gateway_name_prefix", "gateway");
+            self.set_if_value("target_service", "gateway", "nginx");
+        } else if topology_mode == "single_gateway" {
+            self.set_if_value("gateway_count", "2", "1");
+        }
+    }
+
+    fn set_if_empty(&mut self, key: &str, value: &str) {
+        if self.get(key).trim().is_empty() {
+            self.set_field_value(key, value);
+        }
+    }
+
+    fn set_if_value(&mut self, key: &str, current: &str, value: &str) {
+        if self.get(key) == current {
+            self.set_field_value(key, value);
+        }
+    }
+
+    fn set_if_empty_or_value(&mut self, key: &str, current: &str, value: &str) {
+        if self.get(key).trim().is_empty() || self.get(key) == current {
+            self.set_field_value(key, value);
+        }
+    }
+
+    fn set_field_value(&mut self, key: &str, value: &str) {
+        if let Some(field) = self.fields.iter_mut().find(|field| field.key == key) {
+            field.value = value.to_string();
         }
     }
 }
