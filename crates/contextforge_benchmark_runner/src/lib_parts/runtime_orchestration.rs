@@ -322,7 +322,13 @@ pub(crate) fn write_compose_override(
         for name in ["fast_time_server", "register_fast_time"] {
             services.insert(
                 yaml_key(name),
-                serde_yaml::Value::Mapping(clone_aux_service(root, &base_services, name)?),
+                serde_yaml::Value::Mapping(clone_aux_service(
+                    root,
+                    &base_services,
+                    name,
+                    scenario,
+                    image_name,
+                )?),
             );
         }
     }
@@ -330,7 +336,13 @@ pub(crate) fn write_compose_override(
         for name in ["a2a_echo_agent", "register_a2a_echo"] {
             services.insert(
                 yaml_key(name),
-                serde_yaml::Value::Mapping(clone_aux_service(root, &base_services, name)?),
+                serde_yaml::Value::Mapping(clone_aux_service(
+                    root,
+                    &base_services,
+                    name,
+                    scenario,
+                    image_name,
+                )?),
             );
         }
     }
@@ -350,6 +362,8 @@ fn clone_aux_service(
     root: &Path,
     base_services: &serde_yaml::Mapping,
     name: &str,
+    scenario: &ResolvedScenario,
+    image_name: &str,
 ) -> Result<serde_yaml::Mapping> {
     let mut service = base_services
         .get(yaml_key(name))
@@ -366,7 +380,57 @@ fn clone_aux_service(
             .collect::<Vec<_>>();
         service.insert(yaml_key("volumes"), serde_yaml::to_value(normalized)?);
     }
+    service.insert(
+        yaml_key("image"),
+        serde_yaml::Value::String(image_name.to_string()),
+    );
+    rewrite_aux_service_gateway_refs(&mut service, scenario)?;
     Ok(service)
+}
+
+fn rewrite_aux_service_gateway_refs(
+    service: &mut serde_yaml::Mapping,
+    scenario: &ResolvedScenario,
+) -> Result<()> {
+    if !scenario.uses_multi_gateway_topology() {
+        return Ok(());
+    }
+
+    let bootstrap_gateway = scenario.bootstrap_gateway_service();
+    if let Some(depends_on) = service
+        .get(yaml_key("depends_on"))
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned()
+    {
+        let mut rewritten = serde_yaml::Mapping::new();
+        for (key, value) in depends_on {
+            if key.as_str() == Some("gateway") {
+                rewritten.insert(yaml_key(&bootstrap_gateway), value);
+            } else {
+                rewritten.insert(key, value);
+            }
+        }
+        service.insert(yaml_key("depends_on"), serde_yaml::Value::Mapping(rewritten));
+    }
+
+    if let Some(command) = service
+        .get(yaml_key("command"))
+        .and_then(serde_yaml::Value::as_sequence)
+        .cloned()
+    {
+        let rewritten = command
+            .into_iter()
+            .map(|item| match item {
+                serde_yaml::Value::String(raw) => serde_yaml::Value::String(
+                    raw.replace("http://gateway:4444", &format!("http://{bootstrap_gateway}:4444")),
+                ),
+                other => other,
+            })
+            .collect::<Vec<_>>();
+        service.insert(yaml_key("command"), serde_yaml::to_value(rewritten)?);
+    }
+
+    Ok(())
 }
 
 pub(crate) fn yaml_strings(value: Option<&serde_yaml::Value>) -> Vec<String> {

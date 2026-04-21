@@ -1,6 +1,6 @@
 [suite]
-name = "benchmark-multi-gateway-smoke"
-description = "Smoke validation for ingress-balanced multi-gateway benchmark topology with shared database and cache services enabled."
+name = "benchmark-multi-gateway-plugins-3node"
+description = "Cold-start validation for ingress-balanced three-gateway benchmarks with plugins, PostgreSQL, Redis, and PgBouncer enabled."
 output_root = "reports/benchmarks"
 continue_on_failure = false
 save_intermediate_artifacts = true
@@ -9,14 +9,14 @@ flamegraph_enabled = false
 [defaults.setup]
 target_kind = "gateway"
 auth_mode = "jwt"
-plugins_enabled = false
+plugins_enabled = true
 
 [defaults.build]
 rust_plugins = false
 profiling_image = false
 container_file = "crates/contextforge_benchmark_runner/assets/Containerfile"
 image_name = "mcpgateway/mcpgateway"
-image_tag = "benchmark-suite-multi-gateway-smoke"
+image_tag = "benchmark-suite-multi-gateway-plugins-3node"
 rebuild_policy = "missing"
 
 [defaults.runtime]
@@ -37,7 +37,7 @@ dev_mode = false
 
 [defaults.topology]
 mode = "multi_gateway"
-gateway_count = 2
+gateway_count = 3
 ingress_enabled = true
 ingress_service = "nginx"
 shared_services = ["postgres", "redis", "pgbouncer"]
@@ -56,28 +56,32 @@ driver = "contextforge_goose"
 headless = true
 only_summary = true
 html_report = false
-users = 20
-spawn_rate = 5
-run_time = "30s"
-request_count = 200
+users = 60
+spawn_rate = 12
+run_time = "60s"
+request_count = 900
 target_service = "nginx"
 
 [defaults.load.env]
 BENCH_MCP_SESSION_MODE = "reuse"
 
 [defaults.load.workload]
-fallback_endpoint = "/servers"
+fallback_endpoint = "/admin/plugins"
 
 [defaults.load.workload.endpoints."/health"]
 enabled = false
 
+[defaults.load.workload.endpoints."/admin/plugins"]
+enabled = true
+weight = 5
+
 [defaults.load.workload.endpoints."/servers"]
 enabled = true
-weight = 1
+weight = 2
 
 [defaults.measurement]
 warmup_seconds = 5
-measure_seconds = 15
+measure_seconds = 45
 profile_seconds = 0
 cooldown_seconds = 5
 
@@ -95,12 +99,18 @@ save_raw_results = true
 reuse_stack = true
 
 [[scenario]]
-name = "gunicorn-multi-gateway-smoke"
-description = "Smoke benchmark through nginx across two shared gateway nodes."
-scenario_type = "multi_gateway_smoke"
+name = "gunicorn-multi-gateway-plugins-3node"
+description = "Plugin-enabled full benchmark through nginx across three shared gateway nodes."
+scenario_type = "multi_gateway_plugins_3node"
 
 [[scenario.topology.gateway_override]]
 index = 2
+
+[scenario.topology.gateway_override.environment]
+LOG_LEVEL = "WARNING"
+
+[[scenario.topology.gateway_override]]
+index = 3
 
 [scenario.topology.gateway_override.environment]
 LOG_LEVEL = "WARNING"

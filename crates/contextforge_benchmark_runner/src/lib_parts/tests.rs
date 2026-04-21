@@ -579,6 +579,99 @@ volumes: {}
 }
 
 #[test]
+fn multi_gateway_aux_services_target_bootstrap_gateway() {
+    let tempdir = std::env::temp_dir().join("benchmark-runner-compose-multi-gateway-aux");
+    let _ = std::fs::remove_dir_all(&tempdir);
+    std::fs::create_dir_all(tempdir.join("reports/benchmarks/test-scenario")).unwrap();
+    std::fs::create_dir_all(tempdir.join("infra/nginx")).unwrap();
+    std::fs::write(
+        tempdir.join("docker-compose.yml"),
+        std::fs::read_to_string(fixture_repo_root().join("docker-compose.yml")).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        tempdir.join("infra/nginx/nginx.conf"),
+        std::fs::read_to_string(fixture_repo_root().join("infra/nginx/nginx.conf")).unwrap(),
+    )
+    .unwrap();
+
+    let scenario_dir = tempdir.join("reports/benchmarks/test-scenario");
+    let mut endpoints = std::collections::BTreeMap::new();
+    endpoints.insert(
+        "/mcp tools/list".to_string(),
+        EndpointOverride {
+            enabled: Some(true),
+            weight: Some(1),
+        },
+    );
+    let scenario = ResolvedScenario {
+        name: "multi-gateway-aux".to_string(),
+        description: String::new(),
+        scenario_type: String::new(),
+        setup: SetupConfig::default(),
+        build: BuildConfig::default(),
+        runtime: RuntimeConfig::default(),
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 2,
+            ingress_enabled: true,
+            ..TopologyConfig::default()
+        },
+        gateway: GatewayConfig::default(),
+        load: LoadConfig {
+            target_service: "nginx".to_string(),
+            workload: WorkloadConfig {
+                endpoints,
+                ..WorkloadConfig::default()
+            },
+            ..LoadConfig::default()
+        },
+        measurement: MeasurementConfig::default(),
+        profiling: ProfilingConfig::default(),
+        execution: ExecutionConfig::default(),
+        requests: RequestsConfig::default(),
+    };
+
+    let override_path =
+        write_compose_override(&tempdir, &scenario, &scenario_dir, "mcpgateway/test:latest")
+            .unwrap();
+    let raw = std::fs::read_to_string(&override_path).unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+    let services = parsed
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    let register_fast_time = services
+        .get(serde_yaml::Value::String("register_fast_time".to_string()))
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    assert_eq!(
+        register_fast_time
+            .get("image")
+            .and_then(serde_yaml::Value::as_str),
+        Some("mcpgateway/test:latest")
+    );
+    let depends_on = register_fast_time
+        .get("depends_on")
+        .and_then(serde_yaml::Value::as_mapping)
+        .unwrap();
+    assert!(depends_on.contains_key(serde_yaml::Value::String("gateway-1".to_string())));
+    assert!(!depends_on.contains_key(serde_yaml::Value::String("gateway".to_string())));
+
+    let command = register_fast_time
+        .get("command")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|items| items.first())
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap();
+    assert!(command.contains("http://gateway-1:4444/health"));
+    assert!(command.contains("url = f'http://gateway-1:4444{path}'"));
+    assert!(!command.contains("http://gateway:4444"));
+
+    let _ = std::fs::remove_dir_all(&tempdir);
+}
+
+#[test]
 fn load_suite_resolves_multi_gateway_defaults_and_validates_targeting() {
     let tempdir = std::env::temp_dir().join("benchmark-runner-topology-suite");
     let _ = std::fs::remove_dir_all(&tempdir);

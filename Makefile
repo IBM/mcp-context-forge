@@ -7732,6 +7732,49 @@ benchmark:
 	@echo "Starting benchmark console (first run may compile; wait for TUI)..."
 	cargo run --manifest-path crates/contextforge_benchmark_console/Cargo.toml --
 
+BENCHMARK_RUNNER = cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml --
+
+# help: benchmark-list - List committed benchmark suites
+.PHONY: benchmark-list
+benchmark-list:
+	@$(BENCHMARK_RUNNER) list
+
+# help: benchmark-validate - Validate a benchmark suite (requires SCENARIO=<name>)
+.PHONY: benchmark-validate
+benchmark-validate:
+	@test -n "$(SCENARIO)" || (echo "SCENARIO is required, for example: make benchmark-validate SCENARIO=multi-gateway-smoke" && exit 1)
+	@$(BENCHMARK_RUNNER) validate --scenario "$(SCENARIO)"
+
+# help: benchmark-smoke - Run a benchmark suite in smoke mode (requires SCENARIO=<name>)
+.PHONY: benchmark-smoke
+benchmark-smoke:
+	@test -n "$(SCENARIO)" || (echo "SCENARIO is required, for example: make benchmark-smoke SCENARIO=admin-plugins-300" && exit 1)
+	@$(BENCHMARK_RUNNER) run --scenario "$(SCENARIO)" --smoke
+
+# help: benchmark-run - Run a benchmark suite with committed load settings (requires SCENARIO=<name>)
+.PHONY: benchmark-run
+benchmark-run:
+	@test -n "$(SCENARIO)" || (echo "SCENARIO is required, for example: make benchmark-run SCENARIO=multi-gateway-smoke" && exit 1)
+	@$(BENCHMARK_RUNNER) run --scenario "$(SCENARIO)"
+
+# help: benchmark-report - Regenerate reports for an existing run (requires RUN_DIR=<path>)
+.PHONY: benchmark-report
+benchmark-report:
+	@test -n "$(RUN_DIR)" || (echo "RUN_DIR is required, for example: make benchmark-report RUN_DIR=reports/benchmarks/multi-gateway-smoke_20260421_132840" && exit 1)
+	@$(BENCHMARK_RUNNER) regenerate-report --run-dir "$(RUN_DIR)"
+
+# help: benchmark-compare - Rebuild comparison output for an existing run (requires RUN_DIR=<path>)
+.PHONY: benchmark-compare
+benchmark-compare:
+	@test -n "$(RUN_DIR)" || (echo "RUN_DIR is required, for example: make benchmark-compare RUN_DIR=reports/benchmarks/multi-gateway-smoke_20260421_132840" && exit 1)
+	@$(BENCHMARK_RUNNER) compare-run --run-dir "$(RUN_DIR)"
+
+# help: benchmark-check-runtime - Check runtime setup for a suite (requires SCENARIO=<name>)
+.PHONY: benchmark-check-runtime
+benchmark-check-runtime:
+	@test -n "$(SCENARIO)" || (echo "SCENARIO is required, for example: make benchmark-check-runtime SCENARIO=multi-gateway-smoke" && exit 1)
+	@$(BENCHMARK_RUNNER) check-runtime --scenario "$(SCENARIO)" --smoke
+
 .PHONY: async-validate
 async-validate:
 	@echo "✅ Validating async code patterns..."

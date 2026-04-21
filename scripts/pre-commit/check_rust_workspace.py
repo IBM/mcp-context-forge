@@ -69,7 +69,15 @@ def main() -> int:
 
     # Crates directory is flat
     crate_names = [p.name for p in _top_level_crate_dirs()]
-    expected_crates = ["a2a_runtime", "mcp_runtime", "request_logging_masking_native_extension", "wrapper"]
+    expected_crates = [
+        "a2a_runtime",
+        "contextforge_benchmark_console",
+        "contextforge_benchmark_runner",
+        "contextforge_goose",
+        "mcp_runtime",
+        "request_logging_masking_native_extension",
+        "wrapper",
+    ]
     if crate_names != expected_crates:
         violations.append(f"Expected crates: {expected_crates}, got {crate_names}")
 

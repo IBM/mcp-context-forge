@@ -69,22 +69,19 @@ under `crates/contextforge_benchmark_runner/assets/scenarios/`.
 
 ## CLI Workflow
 
-The direct runner command is:
-
-```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml --
-```
+The shortest entry points live in the repository `Makefile`.
 
 ### List Available Suites
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- list
+make benchmark-list
 ```
 
 This prints the committed scenario names, for example:
 
 - `admin-plugins-300`
 - `baseline-300`
+- `multi-gateway-plugins-smoke`
 - `multi-gateway-smoke`
 - `rust-mcp-runtime-300`
 
@@ -93,13 +90,13 @@ This prints the committed scenario names, for example:
 Validation checks and renders the scenario without running load:
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- validate --scenario multi-gateway-smoke
+make benchmark-validate SCENARIO=multi-gateway-plugins-smoke
 ```
 
 On the current branch this wrote:
 
 ```text
-reports/benchmarks/multi-gateway-smoke_20260421_132840
+reports/benchmarks/multi-gateway-plugins-smoke_20260421_140002
 ```
 
 Use validation first when you are editing a scenario and want a cheap check.
@@ -110,7 +107,7 @@ Smoke mode is the fastest real end-to-end path. It starts the stack and runs
 the scenario with smoke settings:
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario admin-plugins-300 --smoke
+make benchmark-smoke SCENARIO=multi-gateway-plugins-smoke
 ```
 
 Use this before longer runs. It exercises the real stack and produces the same
@@ -119,28 +116,39 @@ artifact shape as a full run.
 On the current branch this completed successfully and wrote:
 
 ```text
-reports/benchmarks/admin-plugins-300_20260421_132928
+reports/benchmarks/multi-gateway-plugins-smoke_20260421_140004
 ```
 
 ### Run with the Scenario's Full Load
 
 To use the scenario's committed load settings, run the same command without
-`--smoke`:
+smoke mode:
+
+```bash
+make benchmark-run SCENARIO=multi-gateway-plugins-smoke
+```
+
+This is the current real-world multi-gateway example: two gateway nodes behind
+`nginx`, shared `postgres` + `redis` + `pgbouncer`, and plugins enabled.
+
+On April 21, 2026, this command was also verified from a cold local Docker
+state after deleting the benchmark image and ingress image first. That full run
+completed successfully and wrote:
 
 ```text
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- run --scenario <scenario-name>
+reports/benchmarks/multi-gateway-plugins-smoke_20260421_140113
 ```
 
 ### Regenerate Reports from a Saved Run
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/multi-gateway-smoke_20260421_132840
+make benchmark-report RUN_DIR=reports/benchmarks/multi-gateway-plugins-smoke_20260421_140113
 ```
 
 ### Rebuild the Comparison Output for a Saved Run
 
 ```bash
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/multi-gateway-smoke_20260421_132840
+make benchmark-compare RUN_DIR=reports/benchmarks/multi-gateway-plugins-smoke_20260421_140113
 ```
 
 ### `check-runtime`
@@ -148,13 +156,14 @@ cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- com
 The runner has a `check-runtime` command for setup diagnostics:
 
 ```text
-cargo run --manifest-path crates/contextforge_benchmark_runner/Cargo.toml -- check-runtime --scenario <scenario-name> --smoke
+make benchmark-check-runtime SCENARIO=multi-gateway-plugins-smoke
 ```
 
-Current note: on April 21, 2026, `check-runtime --scenario multi-gateway-smoke
---smoke` still failed in this checkout because the Compose graph in that path
-referenced an undefined `gateway` service. Use `validate` or `run` for current
-multi-gateway verification until that path is fixed.
+On the current branch this completed successfully and wrote:
+
+```text
+reports/benchmarks/multi-gateway-plugins-smoke_20260421_140252
+```
 
 ## Scenario File Structure
 
@@ -249,10 +258,16 @@ Current model:
 - one shared backing tier: `postgres`, `redis`, `pgbouncer`
 - benchmark traffic goes through ingress
 
-The committed smoke example is:
+The smallest committed multi-gateway example is:
 
 ```text
 crates/contextforge_benchmark_runner/assets/scenarios/multi-gateway-smoke.toml
+```
+
+The current plugin-enabled real-world example is:
+
+```text
+crates/contextforge_benchmark_runner/assets/scenarios/multi-gateway-plugins-smoke.toml
 ```
 
 Core topology fields:
@@ -309,9 +324,9 @@ The reports include:
 Use this order:
 
 1. `make benchmark` if you want the TUI or generator.
-2. `... -- list` to find the scenario name.
-3. `... -- validate --scenario <name>` after editing a scenario.
-4. `... -- run --scenario <name> --smoke` for a fast real run.
-5. repeat without `--smoke` when the smoke run looks good.
-6. use `regenerate-report` or `compare-run` on saved output instead of rerunning
-   the stack when you only need report changes.
+2. `make benchmark-list` to find the scenario name.
+3. `make benchmark-validate SCENARIO=<name>` after editing a scenario.
+4. `make benchmark-smoke SCENARIO=<name>` for a fast real run.
+5. `make benchmark-run SCENARIO=<name>` when the smoke run looks good.
+6. use `make benchmark-report ...` or `make benchmark-compare ...` on saved
+   output instead of rerunning the stack when you only need report changes.

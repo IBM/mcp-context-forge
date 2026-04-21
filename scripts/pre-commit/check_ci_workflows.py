@@ -15,13 +15,44 @@ Exit codes:
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
-
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
+
+
+def _import_yaml():
+    try:
+        import yaml  # type: ignore
+
+        return yaml
+    except ModuleNotFoundError:
+        candidates = []
+        virtual_env = Path(sys.prefix)
+        candidates.append(virtual_env)
+        active_virtual_env = Path(os.environ["VIRTUAL_ENV"]) if "VIRTUAL_ENV" in os.environ else None
+        if active_virtual_env is not None:
+            candidates.append(active_virtual_env)
+        candidates.append(Path.home() / ".venv" / "mcpgateway")
+        candidates.append(REPO_ROOT / ".venv")
+
+        for venv in candidates:
+            for site_packages in venv.glob("lib/python*/site-packages"):
+                if site_packages.exists():
+                    sys.path.insert(0, str(site_packages))
+                    try:
+                        import yaml  # type: ignore
+
+                        return yaml
+                    except ModuleNotFoundError:
+                        continue
+
+        raise
+
+
+yaml = _import_yaml()
 
 
 def _load_workflow(name: str) -> dict | None:
