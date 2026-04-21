@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { "cpex-url-reputation" = "2026-04-20T23:59:59Z", "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-09T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-20T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z", "authlib" = "2026-04-19T23:59:59Z" }
+exclude-newer-package = { "cpex-url-reputation" = "2026-04-20T23:59:59Z", "cpex-rate-limiter" = "2026-04-09T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-21T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-20T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z", "authlib" = "2026-04-19T23:59:59Z" }
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
@@ -261,7 +261,7 @@ templating = [
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
     "cpex-encoded-exfil-detection>=0.2.0",
-    "cpex-pii-filter>=0.2.0",
+    "cpex-pii-filter>=0.2.1",
     "cpex-rate-limiter>=0.0.3",
     "cpex-retry-with-backoff>=0.1.0",
     "cpex-secrets-detection>=0.2.0",
