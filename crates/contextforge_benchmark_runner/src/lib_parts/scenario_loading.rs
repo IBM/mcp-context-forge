@@ -450,6 +450,12 @@ fn validate_topology(scenario: &ResolvedScenario) -> Result<()> {
                     scenario.name
                 );
             }
+            if scenario.ingress_service_name() != "nginx" {
+                bail!(
+                    "scenario '{}' must use topology.ingress_service = 'nginx' in multi_gateway mode",
+                    scenario.name
+                );
+            }
             if scenario.load.target_service != scenario.ingress_service_name() {
                 bail!(
                     "scenario '{}' must target ingress service '{}' in multi_gateway mode; direct gateway targeting is not supported",

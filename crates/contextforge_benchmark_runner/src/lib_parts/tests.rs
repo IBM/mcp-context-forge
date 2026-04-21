@@ -660,6 +660,104 @@ fn validate_scenario_rejects_invalid_multi_gateway_topology() {
 }
 
 #[test]
+fn validate_scenario_rejects_non_nginx_multi_gateway_ingress() {
+    let scenario = ResolvedScenario {
+        name: "bad-ingress".to_string(),
+        description: String::new(),
+        scenario_type: String::new(),
+        setup: SetupConfig::default(),
+        build: BuildConfig::default(),
+        runtime: RuntimeConfig::default(),
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 2,
+            ingress_enabled: true,
+            ingress_service: "custom-proxy".to_string(),
+            ..TopologyConfig::default()
+        },
+        gateway: GatewayConfig::default(),
+        load: LoadConfig {
+            driver: DEFAULT_GOSE_BIN.to_string(),
+            target_service: "custom-proxy".to_string(),
+            ..LoadConfig::default()
+        },
+        measurement: MeasurementConfig::default(),
+        profiling: ProfilingConfig::default(),
+        execution: ExecutionConfig::default(),
+        requests: RequestsConfig::default(),
+    };
+
+    let error = validate_scenario(fixture_repo_root(), &scenario)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("topology.ingress_service = 'nginx'"));
+}
+
+#[test]
+fn multi_gateway_override_fails_when_nginx_config_marker_is_missing() {
+    let tempdir = std::env::temp_dir().join("benchmark-runner-nginx-marker-missing");
+    let _ = std::fs::remove_dir_all(&tempdir);
+    std::fs::create_dir_all(tempdir.join("reports/benchmarks/test-scenario")).unwrap();
+    std::fs::create_dir_all(tempdir.join("infra/nginx")).unwrap();
+    std::fs::write(
+        tempdir.join("docker-compose.yml"),
+        r#"
+services:
+  postgres: { image: postgres:16 }
+  redis: { image: redis:7 }
+  pgbouncer: { image: edoburu/pgbouncer }
+  gateway:
+    image: mcpgateway/test:latest
+    environment:
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+networks: {}
+volumes: {}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tempdir.join("infra/nginx/nginx.conf"),
+        "events {}\nhttp { server { listen 80; } }\n",
+    )
+    .unwrap();
+    let scenario_dir = tempdir.join("reports/benchmarks/test-scenario");
+    let scenario = ResolvedScenario {
+        name: "multi-gateway".to_string(),
+        description: String::new(),
+        scenario_type: String::new(),
+        setup: SetupConfig::default(),
+        build: BuildConfig::default(),
+        runtime: RuntimeConfig::default(),
+        topology: TopologyConfig {
+            mode: "multi_gateway".to_string(),
+            gateway_count: 2,
+            ingress_enabled: true,
+            ..TopologyConfig::default()
+        },
+        gateway: GatewayConfig::default(),
+        load: LoadConfig {
+            target_service: "nginx".to_string(),
+            ..LoadConfig::default()
+        },
+        measurement: MeasurementConfig::default(),
+        profiling: ProfilingConfig::default(),
+        execution: ExecutionConfig::default(),
+        requests: RequestsConfig::default(),
+    };
+
+    let error = write_compose_override(&tempdir, &scenario, &scenario_dir, "mcpgateway/test:latest")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("expected single-gateway upstream block not found"));
+
+    let _ = std::fs::remove_dir_all(&tempdir);
+}
+
+#[test]
 fn comparison_report_tracks_changed_dimensions() {
     let left = ScenarioSummary {
         scenario: "left".to_string(),

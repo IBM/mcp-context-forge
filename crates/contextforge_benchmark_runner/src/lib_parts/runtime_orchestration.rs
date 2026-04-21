@@ -522,6 +522,7 @@ fn gateway_override_for<'a>(
 fn write_nginx_topology_config(root: &Path, scenario: &ResolvedScenario) -> Result<PathBuf> {
     let source = root.join("infra/nginx/nginx.conf");
     let mut raw = fs::read_to_string(&source)?;
+    let single_gateway_block = "map \"\" $gateway_backend_url {\n        default \"http://gateway:4444\";\n    }\n\n    map \"\" $mcp_transport_backend_url {\n        default \"http://gateway:8787\";\n    }\n\n    map \"\" $mcp_transport_fallback_url {\n        default \"http://gateway:4444\";\n    }\n\n    # A2A HTTP API: prefer Rust sidecar when enabled, fallback to Python gateway.\n    # Mirrors the MCP transport pattern above.\n    upstream a2a_backend {\n        least_conn;\n        server gateway:8788 max_fails=0;\n        server gateway:4444 max_fails=0 backup;\n        keepalive 512;\n        keepalive_requests 100000;\n        keepalive_timeout 60s;\n    }\n";
     let gateway_upstream = build_upstream_block(
         "benchmark_gateway_backend",
         &scenario.gateway_service_names(),
@@ -542,12 +543,17 @@ fn write_nginx_topology_config(root: &Path, scenario: &ResolvedScenario) -> Resu
     );
     let a2a_upstream =
         build_upstream_block("a2a_backend", &scenario.gateway_service_names(), 8788, true);
-    raw = raw.replace(
-        "map \"\" $gateway_backend_url {\n        default \"http://gateway:4444\";\n    }\n\n    map \"\" $mcp_transport_backend_url {\n        default \"http://gateway:8787\";\n    }\n\n    map \"\" $mcp_transport_fallback_url {\n        default \"http://gateway:4444\";\n    }\n\n    # A2A HTTP API: prefer Rust sidecar when enabled, fallback to Python gateway.\n    # Mirrors the MCP transport pattern above.\n    upstream a2a_backend {\n        least_conn;\n        server gateway:8788 max_fails=0;\n        server gateway:4444 max_fails=0 backup;\n        keepalive 512;\n        keepalive_requests 100000;\n        keepalive_timeout 60s;\n    }\n",
-        &format!(
+    let replacement = format!(
             "map \"\" $gateway_backend_url {{\n        default \"http://benchmark_gateway_backend\";\n    }}\n\n    map \"\" $mcp_transport_backend_url {{\n        default \"http://benchmark_mcp_transport_backend\";\n    }}\n\n    map \"\" $mcp_transport_fallback_url {{\n        default \"http://benchmark_mcp_transport_fallback\";\n    }}\n\n{gateway_upstream}\n\n{transport_upstream}\n\n{fallback_upstream}\n\n    # A2A HTTP API: prefer Rust sidecar when enabled, fallback to Python gateway.\n    # Mirrors the MCP transport pattern above.\n{a2a_upstream}\n"
-        ),
     );
+    let replaced = raw.replace(single_gateway_block, &replacement);
+    if replaced == raw {
+        bail!(
+            "failed to rewrite nginx config for scenario '{}': expected single-gateway upstream block not found",
+            scenario.name
+        );
+    }
+    raw = replaced;
     let path = root
         .join(DEFAULT_OUTPUT_ROOT)
         .join("_runtime_staging")
