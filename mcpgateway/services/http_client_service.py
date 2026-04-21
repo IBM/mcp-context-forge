@@ -300,6 +300,10 @@ def get_default_verify() -> bool:
     return not settings.skip_ssl_verify
 
 
+class Ssl:
+    _DCTX = ssl.create_default_context()
+
+
 @asynccontextmanager
 async def get_isolated_http_client(
     timeout: Optional[float] = None,
@@ -359,7 +363,7 @@ async def get_isolated_http_client(
         limits=limits,
         timeout=timeout_config,
         headers=headers,
-        verify=effective_verify,
+        verify=Ssl._DCTX, # effective_verify,
         auth=auth,
         http2=http2 if http2 is not None else settings.httpx_http2_enabled,
         follow_redirects=follow_redirects,

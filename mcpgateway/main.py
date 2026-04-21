@@ -194,6 +194,7 @@ from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, 
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
 
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")

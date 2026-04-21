@@ -109,6 +109,10 @@ _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
 
 
+class Ssl:
+    _DCTX = ssl.create_default_context()
+
+
 def _get_registry_cache():
     """Get registry cache singleton lazily.
 
@@ -4981,7 +4985,7 @@ class ToolService(BaseService):
                             else:
                                 valid = True
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_http_timeout  # pylint: disable=import-outside-toplevel
 
                         # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
                         if gateway_url and gateway_url.lower().startswith("http://"):
@@ -5000,7 +5004,7 @@ class ToolService(BaseService):
                         factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
 
                         return httpx.AsyncClient(
-                            verify=ctx if ctx else get_default_verify(),
+                            verify=Ssl._DCTX,   # ctx if ctx else get_default_verify(),
                             follow_redirects=True,
                             headers=headers,
                             timeout=factory_timeout,

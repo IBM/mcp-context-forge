@@ -42,6 +42,8 @@ from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+import ssl
+
 # Third-Party
 import anyio
 from fastapi import HTTPException
@@ -96,6 +98,25 @@ from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, requ
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+_SHARED_INTERNAL_SSL_CONTEXT: Optional[ssl.SSLContext] = None
+
+
+def sslctx() -> ssl.SSLContext:
+    global _SHARED_INTERNAL_SSL_CONTEXT
+    if _SHARED_INTERNAL_SSL_CONTEXT is None:
+        verify_param = internal_loopback_verify()
+        if verify_param is False:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        else:
+            context = ssl.create_default_context()
+            if isinstance(verify_param, str):
+                context.load_verify_locations(cafile=verify_param)
+        _SHARED_INTERNAL_SSL_CONTEXT = context
+    return _SHARED_INTERNAL_SSL_CONTEXT
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -3950,7 +3971,7 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
+                async with httpx.AsyncClient(verify=sslctx()) as client:
                     rpc_headers = {
                         "content-type": "application/json",
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
@@ -4117,7 +4138,7 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
+                        async with httpx.AsyncClient(verify=sslctx()) as client:
                             rpc_headers = {
                                 "content-type": "application/json",
                                 "x-mcp-session-id": mcp_session_id,
