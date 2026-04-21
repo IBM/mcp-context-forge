@@ -138,7 +138,7 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
     # Handle URLs with or without scheme
     url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
     parsed = urlparse(url_to_parse)
-    endpoint_domain = parsed.hostname or endpoint_url.split(":")[0]
+    endpoint_domain = parsed.hostname or endpoint_url.split(":", maxsplit=1)[0]
 
     # Validate against allowlist with subdomain matching
     # "sub.example.com" matches "example.com", but "evilexample.com" does not
