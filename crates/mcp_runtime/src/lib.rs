@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod observability;
+pub mod url_validator;
 
 use axum::{
     Json, Router,
