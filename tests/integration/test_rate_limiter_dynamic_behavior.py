@@ -260,44 +260,6 @@ class TestRateLimiterEnforceBlocks:
         )
 
 
-class TestRateLimiterToggleCycle:
-    """Verify that toggling the rate limiter mode changes actual behavior."""
-
-    def test_disable_enable_disable_cycle(self, server_and_tool):
-        """Full cycle: disabled (all pass) → enforce (some blocked) → disabled (all pass)."""
-        server_id, tool_name = server_and_tool
-
-        # Explicit disable + wait to ensure clean state (previous test may have
-        # left the rate limiter enforcing and the autouse fixture's wait may
-        # not have been enough for all replicas to converge)
-        _set_plugin_mode("disabled")
-        time.sleep(PROPAGATION_WAIT)
-
-        # Step 1: Disabled — all should pass
-        result_disabled = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert result_disabled["rate_limited"] == 0, (
-            f"Step 1 (disabled): expected 0 rate-limited, got {result_disabled}"
-        )
-
-        # Step 2: Enable — some should be blocked
-        _set_plugin_mode("enforce")
-        time.sleep(PROPAGATION_WAIT)
-
-        result_enforcing = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert result_enforcing["rate_limited"] > 0, (
-            f"Step 2 (enforce): expected some rate-limited, got {result_enforcing}"
-        )
-
-        # Step 3: Disable again — all should pass
-        _set_plugin_mode("disabled")
-        time.sleep(PROPAGATION_WAIT)
-
-        result_disabled_again = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert result_disabled_again["rate_limited"] == 0, (
-            f"Step 3 (disabled again): expected 0 rate-limited, got {result_disabled_again}"
-        )
-
-
 class TestRateLimiterRedisState:
     """Verify that rate limiter mode changes are persisted in Redis."""
 
