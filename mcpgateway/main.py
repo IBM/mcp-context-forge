@@ -4865,6 +4865,14 @@ async def invoke_a2a_agent(
 
         # Fallback: extract from Authorization header if middleware didn't set it
         # (e.g., when auth middleware is disabled or skipped for certain paths)
+        #
+        # Security Note: This fallback extracts the token without local validation,
+        # but security is preserved because:
+        # 1. Remote gateway MUST validate the token (AUTH_REQUIRED enforcement)
+        # 2. Invalid/expired tokens will be rejected by remote gateway's auth middleware
+        # 3. This enables token forwarding even when local auth is disabled for A2A endpoints
+        #
+        # If the token is invalid, remote gateway returns 401, and we propagate error to caller.
         if not bearer_token:
             auth_header = request.headers.get("authorization", "")
             if auth_header.lower().startswith("bearer "):

@@ -816,8 +816,8 @@ class Settings(BaseSettings):
         invalid_domains = []
         for domain in v:
             domain_lower = domain.lower()
-            # Check for localhost variants
-            if domain_lower in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            # Check for localhost variants (including IPv6 bracket notation)
+            if domain_lower in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
                 invalid_domains.append((domain, "loopback address"))
             # Check for link-local
             elif domain_lower.startswith("169.254."):

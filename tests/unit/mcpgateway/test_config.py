@@ -1476,3 +1476,21 @@ def test_uaid_config_warns_on_contradictory_settings(caplog):
     # Check warning was logged in config module
     assert any("Configuration conflict" in record.message for record in caplog.records), \
         f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
+
+
+def test_uaid_allowed_domains_rejects_ipv6_with_brackets():
+    """Verify validator rejects IPv6 loopback with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::1]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_ipv6_zero_with_brackets():
+    """Verify validator rejects IPv6 zero address with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::0]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_multiple_invalid():
+    """Verify validator reports all invalid domains when multiple are present."""
+    with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
+        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
