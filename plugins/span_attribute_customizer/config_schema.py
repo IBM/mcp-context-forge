@@ -38,7 +38,7 @@ class SpanAttributeCustomizerConfig(BaseModel):
 
     # Global attributes
     global_attributes: Dict[str, Union[str, int, float, bool]] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         description="Attributes to add to all spans (values must be str, int, float, or bool)"
     )
 
@@ -64,19 +64,19 @@ class SpanAttributeCustomizerConfig(BaseModel):
     @classmethod
     def validate_global_attributes(cls, v: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """Validate that global attributes only contain OTEL-compatible types.
-        
+
         Args:
             v: Dictionary of attributes to validate.
-            
+
         Returns:
             Validated dictionary.
-            
+
         Raises:
             ValueError: If any attribute value is not str, int, float, or bool.
         """
         if len(v) > 100:
             raise ValueError("global_attributes cannot exceed 100 entries")
-        
+
         for key, value in v.items():
             if len(key) > 255:
                 raise ValueError(f"Attribute key '{key}' exceeds 255 characters")
@@ -87,5 +87,5 @@ class SpanAttributeCustomizerConfig(BaseModel):
                 )
             if isinstance(value, str) and len(value) > 4096:
                 raise ValueError(f"Attribute '{key}' string value exceeds 4096 characters")
-        
+
         return v

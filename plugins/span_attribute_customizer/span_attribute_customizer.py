@@ -205,13 +205,13 @@ class SpanAttributeCustomizerPlugin(Plugin):
             Result indicating pre-processing completion.
         """
         custom_attrs = self._compute_attributes(None, context)
-        
+
         # Reset all state keys to prevent stale tool-invocation state from bleeding into resource spans
         with self._state_lock:
             context.global_context.state["custom_span_attributes"] = custom_attrs
             context.global_context.state["remove_span_attributes"] = []
             context.global_context.state["span_attribute_mapping"] = {}
-        
+
         return ResourcePreFetchResult()
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:

@@ -482,7 +482,6 @@ class ORJSONResponse(JSONResponse):
         )
 
 
-
 def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
     """Apply attribute name mapping (renaming) to a dictionary of attributes.
 

@@ -327,7 +327,7 @@ class TestSpanAttributeCustomizerPlugin:
         await plugin.tool_pre_invoke(payload, plugin_context)
 
         custom_attrs = plugin_context.global_context.state["custom_span_attributes"]
-        assert len(custom_attrs["email"]) == 16  # Hashed
+        assert len(custom_attrs["email"]) == 32  # Hashed (HMAC-SHA256 truncated to 32 chars)
         assert custom_attrs["team"] == "ALPHA"  # Uppercased
 
     @pytest.mark.asyncio
