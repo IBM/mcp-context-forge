@@ -446,6 +446,56 @@ class TestUAIDBearerTokenForwarding:
         assert any("Cross-gateway call without bearer token" in record.message for record in caplog.records)
         assert any("unauthenticated request" in record.message for record in caplog.records)
 
+    async def test_bearer_token_not_forwarded_when_disabled(self, service, monkeypatch, caplog):
+        """
+        DENY-PATH TEST: Verify bearer token is NOT forwarded when UAID_FORWARD_AUTH=false.
+
+        Given: UAID_FORWARD_AUTH is set to false and a bearer token is provided
+        When: _invoke_remote_agent is called
+        Then: Should NOT include Authorization header and should log INFO message
+        Rationale: Feature flag test per CLAUDE.md security invariants - deny-path regression test
+        """
+        # Third-Party
+        import httpx
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_forward_auth", False)
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        test_token = "test-bearer-token-should-not-be-forwarded"
+
+        captured_headers = {}
+
+        async def mock_post(*args, **kwargs):
+            # First-Party
+            from unittest.mock import MagicMock
+
+            captured_headers.update(kwargs.get("headers", {}))
+            response = MagicMock()
+            response.status_code = 200
+            response.json.return_value = {"result": "success"}
+            return response
+
+        monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token=test_token,
+            )
+
+        # Assert - Feature disabled deny-path checks
+        assert "Authorization" not in captured_headers, "SECURITY VIOLATION: Bearer token forwarded when UAID_FORWARD_AUTH=false!"
+        assert result == {"result": "success"}
+
+        # Verify INFO log message about disabled forwarding
+        assert any("UAID_FORWARD_AUTH disabled" in record.message for record in caplog.records)
+        assert any("not forwarding bearer token" in record.message for record in caplog.records)
+
 
 class TestAuthenticationErrorHandling:
     """Tests for authentication error handling in cross-gateway calls."""

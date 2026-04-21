@@ -3682,6 +3682,106 @@ class TestA2AAgentEndpoints:
         )
         assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 0
 
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
+        """
+        The handler must extract bearer token from Authorization header and forward
+        it as the `bearer_token` kwarg to ``invoke_agent``. This is the HTTP-edge
+        plumbing for cross-gateway authentication — a regression that drops this
+        parameter would break RBAC enforcement on remote gateways.
+
+        Security Context: Bearer tokens enable RBAC enforcement on remote gateways.
+        Without this parameter, cross-gateway calls become unauthenticated even when
+        the caller provided credentials.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test-payload.signature"
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers={**auth_headers, "Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_missing_bearer_token(self, mock_service, test_client, auth_headers):
+        """
+        Missing Authorization header should result in bearer_token=None being passed
+        to the service layer. The service layer will handle the unauthenticated case.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Create headers without Authorization (test auth bypass via mock)
+        headers_without_auth = {k: v for k, v in auth_headers.items() if k != "Authorization"}
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers=headers_without_auth,
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_malformed_authorization_header(self, mock_service, test_client, auth_headers):
+        """
+        Malformed Authorization header (not starting with 'Bearer ') should result
+        in bearer_token=None, gracefully degrading to unauthenticated request.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Test various malformed formats that should result in None
+        malformed_headers = [
+            "Basic dXNlcjpwYXNz",  # Basic auth instead of Bearer
+            "Token xyz",  # Wrong scheme
+            "Bearer",  # Missing token (only "Bearer" with no space/token)
+            "",  # Empty string
+        ]
+
+        for malformed in malformed_headers:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": malformed},
+            )
+            assert response.status_code == 200
+            # Service layer should receive None for malformed auth
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None, f"Failed for: {malformed}"
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_lowercase_bearer(self, mock_service, test_client, auth_headers):
+        """
+        Verify that 'bearer' (lowercase) in Authorization header is accepted (case-insensitive).
+        The implementation uses .lower().startswith() so it should handle various cases.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = "test-token-123"
+
+        # Test case variations that should all work
+        case_variations = [
+            f"Bearer {test_token}",
+            f"bearer {test_token}",
+            f"BEARER {test_token}",
+            f"BeArEr {test_token}",
+        ]
+
+        for auth_value in case_variations:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": auth_value},
+            )
+            assert response.status_code == 200
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token, f"Failed for: {auth_value}"
+
 
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #
