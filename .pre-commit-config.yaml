@@ -423,7 +423,6 @@ repos:
         name: 🐍 Black - Python Code Formatter
         description: The uncompromising Python code formatter.
         language_version: python3
-        files: ^mcpgateway/
 
   # - repo: https://github.com/pycqa/isort
   #   rev: 6.0.1
@@ -536,7 +535,6 @@ repos:
       - id: interrogate
         args: [--quiet, --fail-under=100]
         files: ^mcpgateway/
-        exclude: ^mcpgateway/plugins/framework/external/grpc/proto/.*_pb2.*\.py$
 
   # -----------------------------------------------------------------------------
   #  🔐 Security - Static Code Policy Checks
@@ -606,7 +604,6 @@ repos:
         name: 🔐 IBM Detect Secrets
         description: Detects secrets within a repository using IBM's detect-secrets.
         args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
-        pass_filenames: false
         types: [text]
         # Keep in sync with DETECT_SECRETS_FILES_EXCLUDE in Makefile.
         # (.secrets.baseline is auto-excluded by detect-secrets itself.)

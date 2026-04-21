@@ -8651,9 +8651,6 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
 	@echo "✅ Rust lint passed"
 
-rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
-	@$(MAKE) -C plugins_rust compare
-
 rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
 	@$(MAKE) rust-validation-test
 	@echo "✅ Rust check passed"

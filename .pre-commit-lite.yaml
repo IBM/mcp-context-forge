@@ -531,5 +531,4 @@ repos:
         name: 🔐 IBM Detect Secrets
         description: Detects secrets within a repository using IBM's detect-secrets.
         args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
-        pass_filenames: false
         types: [text]
