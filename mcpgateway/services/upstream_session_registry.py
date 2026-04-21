@@ -534,7 +534,8 @@ class UpstreamSessionRegistry:
             else:
                 self._metrics.reuses += 1
 
-            assert session is not None
+            if session is None:  # nosec B101 - runtime check instead of assert
+                raise RuntimeError("Session unexpectedly None after acquire")
             session.last_used = time.time()
             session.use_count += 1
 

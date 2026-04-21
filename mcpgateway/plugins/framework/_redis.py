@@ -17,6 +17,7 @@ lifespan startup runs), ``get_shared_redis_client`` returns ``None`` and
 the caller's Redis-unavailable fallback paths engage.
 """
 
+# Standard
 from typing import Any, Awaitable, Callable, Optional
 
 RedisProvider = Callable[[], Awaitable[Optional[Any]]]
