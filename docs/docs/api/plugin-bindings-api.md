@@ -10,11 +10,14 @@ A **binding** is a `(team_id, tool_name, plugin_id)` triple with an associated `
 
 ### Supported plugins
 
-| `plugin_id`          | Plugin class name          | Hook phase        | What it does                                       |
-|----------------------|----------------------------|-------------------|----------------------------------------------------|
-| `OUTPUT_LENGTH_GUARD`| `OutputLengthGuardPlugin`  | `tool_post_invoke`| Truncates or blocks responses that exceed a character limit |
-| `RATE_LIMITER`       | `RateLimiterPlugin`        | `tool_pre_invoke` | Throttles calls per user, tenant, or tool          |
-| `SECRETS_DETECTION`  | `SecretsDetection`         | `tool_post_invoke`| Detects and optionally redacts/blocks secrets in outputs |
+`plugin_id` is the **plugin class name** as registered in `config.yaml`. Any plugin loaded by the gateway can be used; the table below lists the commonly bound ones.
+
+| `plugin_id`               | Hook phase        | What it does                                                  |
+|---------------------------|-------------------|---------------------------------------------------------------|
+| `OutputLengthGuardPlugin` | `tool_post_invoke`| Truncates or blocks responses that exceed a character limit   |
+| `RateLimiterPlugin`       | `tool_pre_invoke` | Throttles calls per user, tenant, or tool                     |
+| `SecretsDetection`        | `tool_post_invoke`| Detects and optionally redacts/blocks secrets in outputs      |
+| `SQLSanitizer`            | `tool_pre_invoke` | Blocks dangerous SQL patterns; strips comments                |
 
 ---
 
@@ -84,7 +87,7 @@ On success, returns **all created/updated** bindings and immediately invalidates
 | `teams`                     | object          | ✅        | —          | Keys are `team_id` strings                                         |
 | `teams.<id>.policies`       | array           | ✅        | —          | At least one item required                                         |
 | `policies[].tool_names`     | string[]        | ✅        | —          | Use `["*"]` to match all tools in the team                         |
-| `policies[].plugin_id`      | enum string     | ✅        | —          | `OUTPUT_LENGTH_GUARD`, `RATE_LIMITER`, or `SECRETS_DETECTION`      |
+| `policies[].plugin_id`      | string          | ✅        | —          | Plugin class name as registered in `config.yaml` (e.g. `OutputLengthGuardPlugin`, `SQLSanitizer`, `RateLimiterPlugin`, `SecretsDetection`) |
 | `policies[].mode`           | enum string     | ❌        | `enforce`  | `enforce` = fail on violation; `permissive` = log only; `disabled` = skip |
 | `policies[].priority`       | int (1–1000)    | ❌        | `50`       | Lower runs first                                                    |
 | `policies[].binding_reference_id` | string   | ❌        | `null`     | External reference ID for correlating this binding with an upstream system. Used for stale-tool pruning on update and bulk delete. Max 255 chars; must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. |
@@ -179,7 +182,7 @@ All write operations (`POST`, `DELETE`) and read operations (`GET`) return the s
   "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
   "team_id": "<YOUR_TEAM_ID>",
   "tool_name": "echo_text",
-  "plugin_id": "OUTPUT_LENGTH_GUARD",
+  "plugin_id": "OutputLengthGuardPlugin",
   "mode": "enforce",
   "priority": 10,
   "config": {
@@ -213,7 +216,7 @@ The `config` object in a policy item **must include all fields** for the plugin.
 
 ---
 
-### `OUTPUT_LENGTH_GUARD`
+### `OutputLengthGuardPlugin`
 
 Enforces a character or token budget on tool outputs. Responses that exceed the limit are either truncated (with an optional `ellipsis` suffix) or blocked entirely.
 
@@ -264,7 +267,7 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["echo_text"],
-          "plugin_id": "OUTPUT_LENGTH_GUARD",
+          "plugin_id": "OutputLengthGuardPlugin",
           "mode": "enforce",
           "priority": 10,
           "config": {
@@ -309,7 +312,7 @@ curl -s -X POST \
 
 ---
 
-### `RATE_LIMITER`
+### `RateLimiterPlugin`
 
 Throttles tool invocations before they are dispatched. Limits can be set independently for the calling user, the tenant (team), or per individual tool.
 
@@ -354,7 +357,7 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["*"],
-          "plugin_id": "RATE_LIMITER",
+          "plugin_id": "RateLimiterPlugin",
           "mode": "enforce",
           "priority": 5,
           "config": {
@@ -378,7 +381,7 @@ curl -s -X POST \
 
 ---
 
-### `SECRETS_DETECTION`
+### `SecretsDetection`
 
 Scans tool outputs for common secret patterns (AWS keys, GCP API keys, Slack tokens, private keys, JWTs, hex secrets, etc.). Can redact findings or block the response.
 
@@ -435,7 +438,7 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["fetch_data", "query_db"],
-          "plugin_id": "SECRETS_DETECTION",
+          "plugin_id": "SecretsDetection",
           "mode": "enforce",
           "priority": 20,
           "config": {
@@ -463,6 +466,67 @@ curl -s -X POST \
 
 ---
 
+### `SQLSanitizer`
+
+Inspects tool arguments for dangerous SQL patterns before the tool is invoked. Blocks statements such as `DROP`, `TRUNCATE`, `ALTER`, `GRANT`, and `REVOKE`, optionally blocks `DELETE`/`UPDATE` without a `WHERE` clause, and can strip SQL comments from the input.
+
+**Hooks:** `tool_pre_invoke`
+
+```json
+{
+  "fields": ["sql", "query", "statement"],
+  "blocked_statements": ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"],
+  "block_delete_without_where": true,
+  "block_update_without_where": true,
+  "strip_comments": true,
+  "require_parameterization": false,
+  "block_on_violation": true
+}
+```
+
+| Field                        | Type       | Default | Description                                                                                          |
+|------------------------------|------------|---------|------------------------------------------------------------------------------------------------------|
+| `fields`                     | string[]   | —       | Argument key names to inspect (e.g. `sql`, `query`, `statement`)                                     |
+| `blocked_statements`         | string[]   | —       | Regex patterns matched case-insensitively; any match blocks the call                                 |
+| `block_delete_without_where` | boolean    | `true`  | Block `DELETE` statements that have no `WHERE` clause                                                |
+| `block_update_without_where` | boolean    | `true`  | Block `UPDATE` statements that have no `WHERE` clause                                                |
+| `strip_comments`             | boolean    | `true`  | Remove `--` line comments and `/* */` block comments before passing the SQL on                       |
+| `require_parameterization`   | boolean    | `false` | Block any statement that contains literal string or numeric values instead of `?`/`$N` placeholders  |
+| `block_on_violation`         | boolean    | `true`  | Return an error on violation; if `false`, violations are logged but the call proceeds                |
+
+#### Example — protect a database query tool
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teams": {
+      "<YOUR_TEAM_ID>": {
+        "policies": [{
+          "tool_names": ["query_db"],
+          "plugin_id": "SQLSanitizer",
+          "mode": "enforce",
+          "priority": 45,
+          "binding_reference_id": "query-db-sql-sanitizer-v1",
+          "config": {
+            "fields": ["sql", "query", "statement"],
+            "blocked_statements": ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"],
+            "block_delete_without_where": true,
+            "block_update_without_where": true,
+            "strip_comments": true,
+            "require_parameterization": false,
+            "block_on_violation": true
+          }
+        }]
+      }
+    }
+  }' \
+  http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings | jq
+```
+
+---
+
 ## Multi-plugin, multi-team example
 
 A single `POST` can configure multiple plugins across multiple teams:
@@ -477,7 +541,7 @@ curl -s -X POST \
         "policies": [
           {
             "tool_names": ["*"],
-            "plugin_id": "RATE_LIMITER",
+            "plugin_id": "RateLimiterPlugin",
             "mode": "enforce",
             "priority": 5,
             "config": {
@@ -493,7 +557,7 @@ curl -s -X POST \
           },
           {
             "tool_names": ["summarize_doc", "extract_invoice"],
-            "plugin_id": "OUTPUT_LENGTH_GUARD",
+            "plugin_id": "OutputLengthGuardPlugin",
             "mode": "enforce",
             "priority": 10,
             "config": {
@@ -517,7 +581,7 @@ curl -s -X POST \
         "policies": [
           {
             "tool_names": ["*"],
-            "plugin_id": "SECRETS_DETECTION",
+            "plugin_id": "SecretsDetection",
             "mode": "enforce",
             "priority": 20,
             "config": {
@@ -555,11 +619,11 @@ curl -s -X POST \
 | `403`       | Caller lacks `tools.manage_plugins` or configuring bindings for a team they don't belong to |
 | `404`       | Binding ID not found (DELETE `/{binding_id}` only)                       |
 
-### Example 400 — bad `OUTPUT_LENGTH_GUARD` config
+### Example 400 — bad `OutputLengthGuardPlugin` config
 
 ```json
 {
-  "detail": "Invalid OUTPUT_LENGTH_GUARD config: [min_chars must be less than max_chars]"
+  "detail": "Invalid OutputLengthGuardPlugin config: [min_chars must be less than max_chars]"
 }
 ```
 
@@ -567,7 +631,7 @@ curl -s -X POST \
 
 ```json
 {
-  "detail": "Invalid RATE_LIMITER config: [by_user: Rate string '5/h' is invalid. Use format '<count>/s' or '<count>/m']"
+  "detail": "Invalid RateLimiterPlugin config: [by_user: Rate string '5/h' is invalid. Use format '<count>/s' or '<count>/m']"
 }
 ```
 
@@ -586,7 +650,7 @@ curl -s -X POST \
 Plugins with lower `priority` values run first. The default is `50`. Example ordering:
 
 ```
-priority 5  → RATE_LIMITER   (gate-keep before any work is done)
-priority 10 → OUTPUT_LENGTH_GUARD
-priority 20 → SECRETS_DETECTION
+priority 5  → RateLimiterPlugin        (gate-keep before any work is done)
+priority 10 → OutputLengthGuardPlugin
+priority 20 → SecretsDetection
 ```
