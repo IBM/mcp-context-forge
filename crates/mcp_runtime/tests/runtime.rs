@@ -12,7 +12,7 @@ use axum::{
     routing::{any, delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
+use contextforge_mcp_runtime::{AppState, build_router, config::{RuntimeConfig, DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES}};
 use futures_util::StreamExt;
 use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
@@ -129,7 +129,7 @@ fn test_runtime_config() -> RuntimeConfig {
         redis_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
-        max_request_body_size_bytes: 10_485_760,
+        max_request_body_size_bytes: DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
         exit_after_startup_ms: None,
     }
 }

@@ -115,7 +115,14 @@ crates/mcp_runtime/profiles/
 
 ### URL Validation
 
-The runtime includes URL validation for backend HTTP requests with hostname resolution and network filtering.
+The runtime includes URL validation for **outgoing backend HTTP requests** to protect against SSRF via misconfigured environment variables.
+
+**Scope**: Validates Rust→Python backend service URLs (not client-facing requests)
+
+**Threat model**: Prevents BACKEND_RPC_URL and related env vars from pointing to:
+- Cloud metadata endpoints (169.254.169.254)
+- Internal network ranges (RFC1918 if disabled)
+- Other blocked networks/hosts
 
 **Environment Variables:**
 

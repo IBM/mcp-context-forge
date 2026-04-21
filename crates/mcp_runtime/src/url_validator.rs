@@ -4,8 +4,25 @@
 
 //! URL validation with hostname resolution and network filtering for the Rust MCP runtime.
 //!
-//! This module implements URL validation to ensure backend requests reach only approved
-//! network destinations. It matches the validation guarantees of the Python implementation.
+//! This module validates **OUTGOING** requests from the Rust runtime to Python backend services
+//! (not client-facing requests). It protects against SSRF (Server-Side Request Forgery) attacks
+//! via misconfigured or compromised environment variables (BACKEND_RPC_URL, etc.) that could
+//! point to internal metadata endpoints or other sensitive network destinations.
+//!
+//! # Threat Model
+//!
+//! - **Attack vector**: Compromised/misconfigured environment variables
+//! - **Target**: Cloud metadata endpoints (169.254.169.254), internal services
+//! - **Defense**: Hostname resolution + network range blocking before HTTP request
+//!
+//! # Scope
+//!
+//! URLs validated before reqwest HTTP calls to backend services:
+//! - Authentication: `backend_authenticate_url()`
+//! - Tool operations: `backend_tools_call_resolve_url()`, `backend_tools_call_url()`, etc.
+//! - All other backend RPC endpoints
+//!
+//! See `AppState::validate_backend_url()` in `lib.rs` for the standard call pattern.
 //!
 //! # Features
 //!

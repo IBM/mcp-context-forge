@@ -1137,6 +1137,29 @@ impl AppState {
     fn runtime_stats(&self) -> &Arc<RuntimeStats> {
         &self.runtime_stats
     }
+
+    /// Validates a backend URL and logs errors if validation fails.
+    ///
+    /// This validates OUTGOING requests from Rust runtime to Python backend services,
+    /// protecting against SSRF via misconfigured environment variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The backend URL to validate
+    /// * `description` - Human-readable description for logging context
+    ///
+    /// # Errors
+    ///
+    /// Returns an error message if validation fails (DNS resolution, blocked network, etc.)
+    async fn validate_backend_url(&self, url: &str, description: &str) -> Result<(), String> {
+        self.url_validator
+            .validate_url(url, description)
+            .await
+            .map_err(|e| {
+                error!("Validation blocked request to {}: {}", url, e);
+                format!("Backend URL validation failed: {}", e)
+            })
+    }
 }
 
 fn ensure_internal_runtime_auth_secret() -> Result<(), RuntimeError> {
@@ -2639,16 +2662,10 @@ async fn authenticate_public_request_if_needed(
     };
 
     let backend_url = state.backend_authenticate_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend authenticate URL")
+    state
+        .validate_backend_url(backend_url, "Backend authenticate URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(backend_detail_error_response(
-            "Backend URL validation failed",
-        ));
-    }
+        .map_err(|e| backend_detail_error_response(&e))?;
 
     let backend_response = state
         .client
@@ -4521,17 +4538,10 @@ async fn send_to_backend_url(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend URL")
+    state
+        .validate_backend_url(backend_url, "Backend URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(backend_jsonrpc_error_response(
-            None,
-            "Backend URL validation failed",
-        ));
-    }
+        .map_err(|e| backend_jsonrpc_error_response(None, &e))?;
 
     state
         .client
@@ -7896,25 +7906,23 @@ async fn send_tools_list_to_backend(
     // MCP handlers. They keep the runtime's public response shaping separate
     // from the actual HTTP dispatch and error translation.
     let backend_url = state.backend_tools_list_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend tools list URL")
+    state
+        .validate_backend_url(backend_url, "Backend tools list URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -7945,25 +7953,23 @@ async fn send_resources_list_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_resources_list_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend resources list URL")
+    state
+        .validate_backend_url(backend_url, "Backend resources list URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -7995,25 +8001,23 @@ async fn send_resources_read_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_resources_read_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend resources read URL")
+    state
+        .validate_backend_url(backend_url, "Backend resources read URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8045,25 +8049,23 @@ async fn send_resources_subscribe_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_resources_subscribe_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend resources subscribe URL")
+    state
+        .validate_backend_url(backend_url, "Backend resources subscribe URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8095,25 +8097,23 @@ async fn send_resources_unsubscribe_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_resources_unsubscribe_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend resources unsubscribe URL")
+    state
+        .validate_backend_url(backend_url, "Backend resources unsubscribe URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8145,25 +8145,23 @@ async fn send_resource_templates_list_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_resource_templates_list_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend resource templates list URL")
+    state
+        .validate_backend_url(backend_url, "Backend resource templates list URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8195,25 +8193,23 @@ async fn send_roots_list_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_roots_list_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend roots list URL")
+    state
+        .validate_backend_url(backend_url, "Backend roots list URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8245,25 +8241,23 @@ async fn send_completion_complete_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_completion_complete_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend completion complete URL")
+    state
+        .validate_backend_url(backend_url, "Backend completion complete URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8295,25 +8289,23 @@ async fn send_sampling_create_message_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_sampling_create_message_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend sampling create message URL")
+    state
+        .validate_backend_url(backend_url, "Backend sampling create message URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8345,25 +8337,23 @@ async fn send_logging_set_level_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_logging_set_level_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend logging set level URL")
+    state
+        .validate_backend_url(backend_url, "Backend logging set level URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8395,25 +8385,23 @@ async fn send_prompts_list_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_prompts_list_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend prompts list URL")
+    state
+        .validate_backend_url(backend_url, "Backend prompts list URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8445,25 +8433,23 @@ async fn send_prompts_get_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_prompts_get_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend prompts get URL")
+    state
+        .validate_backend_url(backend_url, "Backend prompts get URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8659,17 +8645,10 @@ async fn resolve_tools_call_plan_via_backend(
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
     let backend_url = state.backend_tools_call_resolve_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend tools resolve URL")
+    state
+        .validate_backend_url(backend_url, "Backend tools resolve URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(ResolveToolsCallError::Fallback(format!(
-            "Backend URL validation failed: {}",
-            e
-        )));
-    }
+        .map_err(ResolveToolsCallError::Fallback)?;
 
     let response = state
         .client
@@ -8759,25 +8738,23 @@ async fn send_tools_call_to_backend(
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     let backend_url = state.backend_tools_call_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend tools call URL")
+    state
+        .validate_backend_url(backend_url, "Backend tools call URL")
         .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend URL validation failed",
-                    "data": CLIENT_ERROR_DETAIL,
-                }
-            }),
-        ));
-    }
+        .map_err(|e| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": e,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
 
     state
         .client
@@ -8809,14 +8786,9 @@ async fn send_tools_call_metric_to_backend(
     payload: &ToolsCallMetricRecordRequest,
 ) -> Result<(), String> {
     let backend_url = state.backend_tools_call_metric_url();
-    if let Err(e) = state
-        .url_validator
-        .validate_url(backend_url, "Backend tools call metric URL")
-        .await
-    {
-        error!("Validation blocked request to {}: {}", backend_url, e);
-        return Err(format!("Backend URL validation failed: {}", e));
-    }
+    state
+        .validate_backend_url(backend_url, "Backend tools call metric URL")
+        .await?;
 
     let response = state
         .client
@@ -10509,6 +10481,7 @@ fn empty_response(status: StatusCode) -> Response {
 mod unit_tests {
     use base64::Engine;
     use bytes::BytesMut;
+    use crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES;
 
     use super::{
         AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL,
@@ -10705,7 +10678,7 @@ mod unit_tests {
             redis_url: None,
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
-            max_request_body_size_bytes: 10_485_760,
+            max_request_body_size_bytes: DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
             exit_after_startup_ms: None,
         }
     }
