@@ -10,8 +10,8 @@ Create Date: 2026-04-10
 from typing import Sequence, Union
 
 # Third-Party
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "d3e4f5a6b7c8"  # pragma: allowlist secret

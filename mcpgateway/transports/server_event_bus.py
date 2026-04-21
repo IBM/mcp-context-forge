@@ -23,9 +23,10 @@ call and binds the singleton; switching backends requires a restart.
 SPDX-License-Identifier: Apache-2.0
 """
 
-# Standard
+# Future
 from __future__ import annotations
 
+# Standard
 import abc
 import asyncio
 from collections import deque

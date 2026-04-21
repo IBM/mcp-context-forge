@@ -39,8 +39,8 @@ async def sighup_reload() -> None:
     try:
         # First-Party
         from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
-            RegistryNotInitializedError,
             get_upstream_session_registry,
+            RegistryNotInitializedError,
         )
 
         await get_upstream_session_registry().close_all()

@@ -465,12 +465,13 @@ def _deployment_allows_override_mode(runtime, mode):
         reason.
     """
     # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+    # First-Party
     from mcpgateway.runtime_state import (  # pylint: disable=import-outside-toplevel
+        _coerce_mode,
+        _coerce_runtime,
         MoveCompatibility,
         OverrideMode,
         RuntimeKind,
-        _coerce_mode,
-        _coerce_runtime,
     )
 
     kind = _coerce_runtime(runtime)

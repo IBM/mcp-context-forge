@@ -25,13 +25,13 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from dataclasses import dataclass
 from enum import StrEnum
 import logging
 import os
 import time
-import uuid
-from dataclasses import dataclass
 from typing import Any, Dict, Optional, Union
+import uuid
 
 # Third-Party
 import orjson
@@ -802,6 +802,7 @@ class RuntimeStateCoordinator:
             hint_mode = None
         if hint_mode is not None:
             # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+            # First-Party
             from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
 
             compat = _deployment_allows_override_mode(kind, hint_mode)
@@ -910,6 +911,7 @@ class RuntimeStateCoordinator:
                 remote_runtime = None
             if remote_mode is not None and remote_runtime is not None:
                 # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+                # First-Party
                 from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
 
                 remote_compat = _deployment_allows_override_mode(remote_runtime, remote_mode)

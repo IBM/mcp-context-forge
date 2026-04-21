@@ -420,13 +420,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
         text = str(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     try:
         text = repr(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.

@@ -432,36 +432,56 @@ class PluginExecutor:
 
         if trace_id and self.observability:
             try:
+                # Build base plugin span attributes
+                base_attributes = {
+                    "plugin.name": hook_ref.plugin_ref.name,
+                    "plugin.uuid": hook_ref.plugin_ref.uuid,
+                    "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+                    "plugin.priority": hook_ref.plugin_ref.priority,
+                    "plugin.timeout": self.timeout,
+                }
+
+                # Apply attribute name mapping if configured (from SpanAttributeCustomizerPlugin)
+                # First-Party
+                from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+
+                attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
+                if attribute_mapping:
+                    base_attributes = apply_attribute_mapping(base_attributes, attribute_mapping)
+
                 span_id = self.observability.start_span(
                     trace_id=trace_id,
                     name=f"plugin.execute.{hook_ref.plugin_ref.name}",
                     kind="internal",
                     resource_type="plugin",
                     resource_name=hook_ref.plugin_ref.name,
-                    attributes={
-                        "plugin.name": hook_ref.plugin_ref.name,
-                        "plugin.uuid": hook_ref.plugin_ref.uuid,
-                        "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
-                        "plugin.priority": hook_ref.plugin_ref.priority,
-                        "plugin.timeout": self.timeout,
-                    },
+                    attributes=base_attributes,
                 )
             except Exception as e:
                 logger.debug("Plugin observability start_span failed: %s", e)
 
-        with create_span(
-            "plugin.execute",
-            {
-                "plugin.name": hook_ref.plugin_ref.name,
-                "plugin.uuid": hook_ref.plugin_ref.uuid,
-                "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
-                "plugin.priority": hook_ref.plugin_ref.priority,
-                "plugin.timeout": self.timeout,
-                "plugin.hook.type": hook_ref.name,
-                "plugin.kind": getattr(getattr(hook_ref.plugin_ref.plugin, "config", None), "kind", None),
-                "contextforge.runtime": "python",
-            },
-        ) as otel_span:
+        # Build OTEL span attributes with optional mapping
+        otel_attributes = {
+            "plugin.name": hook_ref.plugin_ref.name,
+            "plugin.uuid": hook_ref.plugin_ref.uuid,
+            "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+            "plugin.priority": hook_ref.plugin_ref.priority,
+            "plugin.timeout": self.timeout,
+            "plugin.hook.type": hook_ref.name,
+            "plugin.kind": getattr(getattr(hook_ref.plugin_ref.plugin, "config", None), "kind", None),
+            "contextforge.runtime": "python",
+        }
+
+        # Apply attribute name mapping if configured
+        attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
+        if attribute_mapping:
+            renamed_otel_attributes = {}
+            for old_name, value in otel_attributes.items():
+                new_name = attribute_mapping.get(old_name, old_name)
+                renamed_otel_attributes[new_name] = value
+            otel_attributes = renamed_otel_attributes
+
+        with create_span("plugin.execute", otel_attributes) as otel_span:
             # Execute plugin
             try:
                 result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)

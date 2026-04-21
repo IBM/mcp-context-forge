@@ -31,19 +31,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway import version as version_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.runtime_state import (
+    get_runtime_state,
+    get_runtime_state_coordinator,
     MoveCompatibility,
     OverrideMode,
     PublishStatus,
     RuntimeKind,
     RuntimeStateError,
-    get_runtime_state,
-    get_runtime_state_coordinator,
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.security_logger import get_security_logger
-from mcpgateway import version as version_module
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)

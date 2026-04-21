@@ -439,7 +439,7 @@ class ObservabilityService:
     # Span Management
     # ==============================
 
-    def start_span(
+    def start_span(  # pylint: disable=too-many-locals
         self,
         trace_id: str,
         name: str,
@@ -451,6 +451,7 @@ class ObservabilityService:
         attributes: Optional[Dict[str, Any]] = None,
         commit: bool = True,
         obs_db: Optional[Session] = None,
+        context: Optional[Any] = None,
     ) -> str:
         """Start a new span within a trace.
 
@@ -470,6 +471,9 @@ class ObservabilityService:
                 Set to False when called from context managers.
             obs_db: Optional observability session for context managers.
                 If not provided, creates a new independent session.
+            context: Optional plugin context for custom attribute injection.
+                If provided, reads custom_span_attributes and remove_span_attributes
+                from context.global_context.state (set by SpanAttributeCustomizerPlugin).
 
         Returns:
             Span ID (UUID string)
@@ -478,6 +482,8 @@ class ObservabilityService:
             When obs_db is provided, caller owns session lifecycle.
             When obs_db is None, this method creates and closes its own session.
             Uses separate database session from main transaction (issue #3883).
+            Plugin integration: Reads custom_span_attributes from context.global_context.state
+            and merges with provided attributes. Removes attributes in remove_span_attributes list.
 
         Examples:
             >>> span_id = service.start_span(  # doctest: +SKIP
@@ -492,6 +498,31 @@ class ObservabilityService:
             obs_db, session_owned = _get_or_create_observability_session()
 
         try:
+            # Merge attributes with plugin-provided custom attributes
+            final_attributes = dict(attributes or {})
+
+            # Read custom attributes from plugin context (SpanAttributeCustomizerPlugin)
+            if context and hasattr(context, "global_context") and hasattr(context.global_context, "state"):
+                custom_attrs = context.global_context.state.get("custom_span_attributes", {})
+                if custom_attrs:
+                    final_attributes.update(custom_attrs)
+                    logger.debug(f"Merged {len(custom_attrs)} custom attributes from plugin context")
+
+                # Apply attribute name mapping (renaming) using centralized helper
+                # First-Party
+                from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+
+                attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
+                if attribute_mapping:
+                    final_attributes = apply_attribute_mapping(final_attributes, attribute_mapping)
+
+                # Remove attributes specified by plugin
+                remove_attrs = context.global_context.state.get("remove_span_attributes", [])
+                if remove_attrs:
+                    for attr_name in remove_attrs:
+                        final_attributes.pop(attr_name, None)
+                    logger.debug(f"Removed {len(remove_attrs)} attributes as specified by plugin")
+
             span_id = str(uuid.uuid4())
             span = ObservabilitySpan(
                 span_id=span_id,
@@ -504,7 +535,7 @@ class ObservabilityService:
                 resource_name=resource_name,
                 resource_type=resource_type,
                 resource_id=resource_id,
-                attributes=attributes or {},
+                attributes=final_attributes,
                 created_at=utc_now(),
             )
             obs_db.add(span)
@@ -590,6 +621,7 @@ class ObservabilityService:
         resource_type: Optional[str] = None,
         resource_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        context: Optional[Any] = None,
     ) -> Generator[str, None, None]:
         """Context manager for automatic span lifecycle management.
 
@@ -602,6 +634,7 @@ class ObservabilityService:
             resource_type: Resource type
             resource_name: Resource name
             attributes: Additional attributes
+            context: Optional plugin context for custom attribute injection
 
         Yields:
             Span ID
@@ -630,6 +663,7 @@ class ObservabilityService:
                 attributes=attributes,
                 commit=False,  # Don't commit yet
                 obs_db=obs_db,  # Use our session
+                context=context,  # Pass context for plugin integration
             )
             yield span_id
             # Success path
@@ -681,6 +715,7 @@ class ObservabilityService:
         tool_name: str,
         arguments: Dict[str, Any],
         integration_type: Optional[str] = None,
+        context: Optional[Any] = None,
     ) -> Generator[Tuple[Optional[str], Dict[str, Any]], None, None]:
         """Context manager for tracing MCP tool invocations.
 
@@ -692,6 +727,7 @@ class ObservabilityService:
             tool_name: Name of the tool being invoked
             arguments: Tool arguments (will be sanitized)
             integration_type: Integration type (MCP, REST, A2A, etc.)
+            context: Optional plugin context for custom attribute injection
 
         Yields:
             Tuple of (span_id, result_dict) - update result_dict with tool results
@@ -739,6 +775,7 @@ class ObservabilityService:
                 },
                 commit=False,  # Don't commit yet
                 obs_db=obs_db,  # Use our session
+                context=context,  # Pass context for plugin integration
             )
 
             yield (span_id, result_dict)
