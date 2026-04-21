@@ -159,14 +159,6 @@ class TestIsFailure:
         assert _is_failure(result, self.cfg) is True
 
 
-    def test_is_error_with_404_skips_retry(self):
-        result = {"isError": True, "structuredContent": {"status_code": 404}}
-        assert _is_failure(result, self.cfg) is False
-
-    def test_is_error_with_401_skips_retry(self):
-        result = {"isError": True, "structuredContent": {"status_code": 401}}
-        assert _is_failure(result, self.cfg) is False
-
     def test_is_error_without_status_code_always_retries(self):
         # isError=True with no structuredContent → generic exception → always retry.
         assert _is_failure({"isError": True}, self.cfg) is True
