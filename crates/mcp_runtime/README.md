@@ -111,6 +111,68 @@ Generated profiling artifacts are written under:
 crates/mcp_runtime/profiles/
 ```
 
+## Configuration
+
+### URL Validation
+
+The runtime includes URL validation for backend HTTP requests with hostname resolution and network filtering.
+
+**Environment Variables:**
+
+```bash
+VALIDATION_ENABLED=true                 # Enable validation (default: true)
+MAX_URL_LENGTH=2048                     # Maximum URL length (default: 2048)
+ALLOW_LOCALHOST=true                    # Allow localhost access (default: true)
+ALLOW_PRIVATE_NETWORKS=false            # Allow RFC1918 networks (default: false)
+BLOCKED_NETWORKS="169.254.169.254/32"   # CIDR ranges to block (comma-separated)
+BLOCKED_HOSTS="metadata.internal"       # Hostnames to block (comma-separated)
+ALLOWED_NETWORKS=""                     # Allowlist specific CIDR ranges (comma-separated)
+DNS_FAIL_CLOSED=true                    # Fail closed on DNS errors (default: true)
+```
+
+**Default Blocked Networks:**
+- `169.254.169.254/32` - Cloud instance metadata endpoints
+
+**Default Blocked Hosts:**
+- `metadata.google.internal`
+- `metadata.goog`
+
+**Development Mode (default):**
+```bash
+# Localhost allowed by default - no config needed
+cargo run
+```
+
+**Production Mode:**
+```bash
+# Explicitly disable localhost for production deployments
+ALLOW_LOCALHOST=false \
+BLOCKED_NETWORKS="169.254.169.254/32,10.0.0.0/8" \
+cargo run
+```
+
+### Request Body Size Limits
+
+Control maximum request payload size to prevent resource exhaustion.
+
+**Environment Variables:**
+
+```bash
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=10485760  # Max body size (default: 10MB)
+```
+
+**Examples:**
+
+```bash
+# Increase limit for large tool payloads
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=52428800 cargo run  # 50MB
+
+# Strict limit for constrained environments
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=1048576 cargo run   # 1MB
+```
+
+Requests exceeding the limit receive a `413 Payload Too Large` response.
+
 ## Verify what is running
 
 ### Compose/gateway view

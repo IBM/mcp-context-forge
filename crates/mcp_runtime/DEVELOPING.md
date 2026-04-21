@@ -36,6 +36,7 @@ Use the smallest set that matches your change.
 | Change type | Minimum checks |
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C crates/mcp_runtime fmt-check clippy-all test test-rmcp` |
+| URL validation or request limit changes | Rust-local checks plus `cargo test url_validator request_body_limit --all-features` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
 | MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-protocol-e2e test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
@@ -69,6 +70,36 @@ Use these when:
 - editing `src/lib.rs`, `src/config.rs`, `src/main.rs`
 - changing request routing, auth/session logic, direct DB paths, or helpers
 - touching the optional RMCP path
+
+### Testing URL Validation and Request Limits
+
+When modifying URL validation (`src/url_validator.rs`) or request body limits:
+
+```bash
+# Run validation-specific tests
+cargo test url_validator
+cargo test request_body_limit
+
+# Run all tests including validation
+cargo test --all-features
+```
+
+**Key test modules:**
+- `url_validator::tests` - URL validation, DNS resolution, network filtering
+- `unit_tests::request_body_limit_*` - Request size constraint tests
+
+**Testing with different configurations:**
+
+```bash
+# Test with localhost blocked
+ALLOW_LOCALHOST=false cargo test url_validator
+
+# Test with custom blocked networks
+BLOCKED_NETWORKS="192.168.0.0/16,10.0.0.0/8" cargo test url_validator
+
+# Test with different body size limits
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=1048576 cargo test request_body_limit
+```
 
 ## Repo-Wide Hygiene
 
