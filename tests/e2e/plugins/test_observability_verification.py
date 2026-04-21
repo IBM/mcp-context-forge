@@ -49,19 +49,19 @@ class TestObservabilityVerification:
         # Invoke tool
         response = invoke_tool(plugin_harness, arguments={"timezone": "UTC"}, request_id=100)
         assert response["status_code"] == 200, response
-        
+
         # Query traces
         traces = query_observability_traces(
             resource_type="tool",
             resource_name=plugin_harness["tool_name"],
             limit=10
         )
-        
+
         # Log what we got
         logger.info("Found %d traces for tool %s", len(traces), plugin_harness["tool_name"])
         if traces:
             logger.info("First trace: %s", traces[0])
-        
+
         # Traces may or may not exist depending on observability config
         # This test just verifies the fixture works without errors
         assert isinstance(traces, list)
@@ -76,17 +76,17 @@ class TestObservabilityVerification:
         # Invoke tool
         response = invoke_tool(plugin_harness, arguments={"timezone": "UTC"}, request_id=101)
         assert response["status_code"] == 200, response
-        
+
         # Try to verify plugin execution
         executed = verify_plugin_execution(
             resource_name=plugin_harness["tool_name"],
             resource_type="tool",
             plugin_name="pii_filter"
         )
-        
+
         # Log result
         logger.info("Plugin execution detected: %s", executed)
-        
+
         # This test just verifies the fixture works without errors
         # The actual result depends on whether observability is capturing plugin spans
         assert isinstance(executed, bool)
@@ -105,7 +105,7 @@ class TestObservabilityVerification:
         )
         assert isinstance(traces, list)
         assert len(traces) == 0
-        
+
         # Verify for non-existent resource
         executed = verify_plugin_execution(
             resource_name="non-existent-tool-12345",
@@ -131,16 +131,16 @@ class TestPluginExecutionVerification:
             request_id=200
         )
         assert response["status_code"] == 200, response
-        
+
         # Verify plugin executed
         executed = verify_plugin_execution(
             resource_name=plugin_harness["tool_name"],
             resource_type="tool",
             plugin_name="pii_filter"
         )
-        
+
         logger.info("Plugin execution detected for tool %s: %s", plugin_harness["tool_name"], executed)
-        
+
         # If observability is working, we should detect plugin execution
         # If not, this test documents the expected behavior
         if executed:
@@ -162,16 +162,16 @@ class TestPluginExecutionVerification:
             request_id=201
         )
         assert response["status_code"] == 200, response
-        
+
         # Verify plugin executed
         executed = verify_plugin_execution(
             resource_name=plugin_harness["prompt_name"],
             resource_type="prompt",
             plugin_name="pii_filter"
         )
-        
+
         logger.info("Plugin execution detected for prompt %s: %s", plugin_harness["prompt_name"], executed)
-        
+
         if executed:
             logger.info("✓ Plugin execution successfully detected via observability")
         else:
@@ -191,7 +191,7 @@ class TestPluginExecutionVerification:
             request_id=202
         )
         assert response["status_code"] == 200, response
-        
+
         # Check for pre-invoke hook
         pre_executed = verify_plugin_execution(
             resource_name=plugin_harness["tool_name"],
@@ -199,7 +199,7 @@ class TestPluginExecutionVerification:
             plugin_name="pii_filter",
             hook_type="pre_invoke"
         )
-        
+
         # Check for post-invoke hook
         post_executed = verify_plugin_execution(
             resource_name=plugin_harness["tool_name"],
@@ -207,10 +207,10 @@ class TestPluginExecutionVerification:
             plugin_name="pii_filter",
             hook_type="post_invoke"
         )
-        
+
         logger.info("Pre-invoke hook detected: %s", pre_executed)
         logger.info("Post-invoke hook detected: %s", post_executed)
-        
+
         # Both hooks should execute for a complete tool invocation
         if pre_executed and post_executed:
             logger.info("✓ Both pre and post hooks detected")
@@ -235,18 +235,18 @@ class TestHookOrderingVerification:
             request_id=300
         )
         assert response["status_code"] == 200, response
-        
+
         # Query traces
         traces = query_observability_traces(
             resource_type="tool",
             resource_name=plugin_harness["tool_name"],
             limit=10
         )
-        
+
         if not traces:
             logger.warning("⚠ No traces found - observability may not be capturing plugin spans")
             pytest.skip("No traces available for hook ordering verification")
-        
+
         # Find plugin-related spans
         plugin_spans = []
         for trace in traces:
@@ -255,22 +255,22 @@ class TestHookOrderingVerification:
                 span_name = span.get("name", "").lower()
                 if "plugin" in span_name or "pii" in span_name:
                     plugin_spans.append(span)
-        
+
         if not plugin_spans:
             logger.warning("⚠ No plugin spans found in traces")
             pytest.skip("No plugin spans available for hook ordering verification")
-        
+
         # Look for pre and post invoke spans
         pre_spans = [s for s in plugin_spans if "pre" in s.get("name", "").lower()]
         post_spans = [s for s in plugin_spans if "post" in s.get("name", "").lower()]
-        
+
         logger.info("Found %d pre-invoke spans and %d post-invoke spans", len(pre_spans), len(post_spans))
-        
+
         if pre_spans and post_spans:
             # Verify pre-invoke happened before post-invoke
             pre_time = pre_spans[0].get("start_time", 0)
             post_time = post_spans[0].get("start_time", 0)
-            
+
             assert pre_time < post_time, (
                 f"Pre-invoke hook should execute before post-invoke hook. "
                 f"Pre: {pre_time}, Post: {post_time}"
@@ -293,18 +293,18 @@ class TestHookOrderingVerification:
             request_id=301
         )
         assert response["status_code"] == 200, response
-        
+
         # Query traces
         traces = query_observability_traces(
             resource_type="prompt",
             resource_name=plugin_harness["prompt_name"],
             limit=10
         )
-        
+
         if not traces:
             logger.warning("⚠ No traces found - observability may not be capturing plugin spans")
             pytest.skip("No traces available for hook ordering verification")
-        
+
         # Find plugin-related spans
         plugin_spans = []
         for trace in traces:
@@ -313,22 +313,22 @@ class TestHookOrderingVerification:
                 span_name = span.get("name", "").lower()
                 if "plugin" in span_name or "pii" in span_name:
                     plugin_spans.append(span)
-        
+
         if not plugin_spans:
             logger.warning("⚠ No plugin spans found in traces")
             pytest.skip("No plugin spans available for hook ordering verification")
-        
+
         # Look for pre and post fetch spans
         pre_spans = [s for s in plugin_spans if "pre" in s.get("name", "").lower()]
         post_spans = [s for s in plugin_spans if "post" in s.get("name", "").lower()]
-        
+
         logger.info("Found %d pre-fetch spans and %d post-fetch spans", len(pre_spans), len(post_spans))
-        
+
         if pre_spans and post_spans:
             # Verify pre-fetch happened before post-fetch
             pre_time = pre_spans[0].get("start_time", 0)
             post_time = post_spans[0].get("start_time", 0)
-            
+
             assert pre_time < post_time, (
                 f"Pre-fetch hook should execute before post-fetch hook. "
                 f"Pre: {pre_time}, Post: {post_time}"
@@ -352,22 +352,22 @@ class TestHookOrderingVerification:
                 request_id=400 + i
             )
             assert response["status_code"] == 200, response
-        
+
         # Query traces
         traces = query_observability_traces(
             resource_type="tool",
             resource_name=plugin_harness["tool_name"],
             limit=20
         )
-        
+
         if not traces:
             logger.warning("⚠ No traces found")
             pytest.skip("No traces available for verification")
-        
+
         # Count hook executions
         pre_count = 0
         post_count = 0
-        
+
         for trace in traces:
             spans = trace.get("spans", [])
             for span in spans:
@@ -377,9 +377,9 @@ class TestHookOrderingVerification:
                         pre_count += 1
                     if "post" in span_name:
                         post_count += 1
-        
+
         logger.info("Found %d pre-invoke and %d post-invoke hook executions", pre_count, post_count)
-        
+
         # We should have equal numbers of pre and post hooks
         if pre_count > 0 and post_count > 0:
             assert pre_count == post_count, (

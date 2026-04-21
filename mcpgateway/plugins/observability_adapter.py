@@ -74,11 +74,11 @@ class ObservabilityServiceAdapter:
         Returns:
             The span identifier, or None on failure.
         """
-        db: Optional[Session] = None
+        obs_db: Optional[Session] = None
         try:
-            db = self._make_session()
+            obs_db = self._make_session()
             return self._service.start_span(
-                db=db,
+                obs_db=obs_db,
                 trace_id=trace_id,
                 name=name,
                 kind=kind,
@@ -88,16 +88,16 @@ class ObservabilityServiceAdapter:
             )
         except Exception as exc:
             logger.warning("ObservabilityServiceAdapter.start_span failed: %s", exc)
-            if db:
+            if obs_db:
                 try:
-                    db.rollback()
+                    obs_db.rollback()
                 except Exception:  # nosec B110
                     pass
             return None
         finally:
-            if db:
+            if obs_db:
                 try:
-                    db.close()
+                    obs_db.close()
                 except Exception:  # nosec B110
                     pass
 
@@ -116,25 +116,25 @@ class ObservabilityServiceAdapter:
         """
         if span_id is None:
             return
-        db: Optional[Session] = None
+        obs_db: Optional[Session] = None
         try:
-            db = self._make_session()
+            obs_db = self._make_session()
             self._service.end_span(
-                db=db,
+                obs_db=obs_db,
                 span_id=span_id,
                 status=status,
                 attributes=attributes,
             )
         except Exception as exc:
             logger.warning("ObservabilityServiceAdapter.end_span failed: %s", exc)
-            if db:
+            if obs_db:
                 try:
-                    db.rollback()
+                    obs_db.rollback()
                 except Exception:  # nosec B110
                     pass
         finally:
-            if db:
+            if obs_db:
                 try:
-                    db.close()
+                    obs_db.close()
                 except Exception:  # nosec B110
                     pass
