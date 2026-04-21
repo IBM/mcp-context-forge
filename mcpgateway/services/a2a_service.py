@@ -182,6 +182,8 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
                 "[::1]:8080" → ("::1", "8080")
                 "[::1]" → ("::1", None)
                 "::1" → ("::1", None)
+                "2001:db8::1" → ("2001:db8::1", None)
+                "2001:0db8:0000:0000:0000:0000:0000:0001" → ("2001:0db8:0000:0000:0000:0000:0000:0001", None)
             """
             # Handle IPv6 with brackets: [::1]:8080 or [::1]
             if domain.startswith("["):
@@ -196,18 +198,25 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
                     # Malformed, treat as-is
                     return (domain, None)
 
-            # Handle regular hostname:port or hostname
-            if ":" in domain:
-                # Could be IPv6 without brackets (::1) or hostname:port (example.com:8080)
-                parts = domain.rsplit(":", 1)
-                # Check if last part is a valid port number
+            # Count colons to distinguish IPv6 from hostname:port
+            # IPv6 addresses have multiple colons (::1 has 2, 2001:db8::1 has 3+)
+            # hostname:port has exactly one colon
+            colon_count = domain.count(":")
+
+            if colon_count == 0:
+                # No colons, just a hostname
+                return (domain, None)
+            elif colon_count == 1:
+                # Exactly one colon, likely hostname:port
+                parts = domain.split(":", 1)
+                # Verify the second part is a valid port number
                 if parts[1].isdigit():
                     return (parts[0], parts[1])
                 else:
-                    # Not a port, must be IPv6 like ::1
+                    # Not a port, treat whole thing as hostname
                     return (domain, None)
             else:
-                # No port
+                # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
                 return (domain, None)
 
         endpoint_host, endpoint_port = parse_host_port(endpoint)
