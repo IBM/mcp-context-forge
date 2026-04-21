@@ -753,6 +753,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    uaid_require_allowlist_on_startup: bool = Field(
+        default=False,
+        description=(
+            "Fail-fast mode: abort gateway startup if A2A enabled but UAID allowlist not configured. "
+            "Default false = ERROR log only (non-blocking). Set true for stricter security posture in production."
+        ),
+    )
+
     uaid_max_length: int = Field(
         default=2048,
         ge=512,  # Minimum: accommodate shortest valid UAID

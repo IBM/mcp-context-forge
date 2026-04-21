@@ -2234,17 +2234,18 @@ class A2AAgentService(BaseService):
             logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY WARNING: Log authentication gap on first cross-gateway call
+            # SECURITY INFO: Log cross-gateway authentication model on first call
             # ═══════════════════════════════════════════════════════════════════════════
             global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
             if not _cross_gateway_auth_warning_logged:
-                logger.warning(
-                    "⚠️  SECURITY: First cross-gateway UAID call detected. "
-                    "Cross-gateway routing does NOT forward authentication credentials. "
-                    "Remote gateways receive unauthenticated requests. "
+                logger.info(
+                    "ℹ️  SECURITY: First cross-gateway UAID call detected. "
+                    "Cross-gateway routing forwards bearer tokens when available for RBAC enforcement on remote gateways. "
+                    "Both gateways must trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
+                    "Calls without bearer tokens will be unauthenticated on the remote gateway. "
                     "Ensure target gateways enforce AUTH_REQUIRED=true and configure UAID_ALLOWED_DOMAINS "
                     "to restrict routing to trusted domains only. "
-                    "See documentation: .env.example lines 85-125 for security implications and mitigations."
+                    "See documentation: docs/security/uaid-cross-gateway-auth.md for security model details."
                 )
                 _cross_gateway_auth_warning_logged = True
 
