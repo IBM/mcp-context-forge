@@ -15,7 +15,7 @@ pub mod observability;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{
@@ -188,6 +188,7 @@ pub struct AppState {
     session_ttl: Duration,
     session_auth_reuse_ttl: Duration,
     backend_url_validator: backend_url_validator::BackendUrlValidator,
+    max_request_body_size_bytes: usize,
     public_ingress_enabled: bool,
     runtime_stats: Arc<RuntimeStats>,
 }
@@ -851,6 +852,7 @@ impl AppState {
             session_ttl: Duration::from_secs(config.session_ttl_seconds),
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             backend_url_validator,
+            max_request_body_size_bytes: config.max_request_body_size_bytes,
             public_ingress_enabled: config.public_listen_http.is_some(),
             runtime_stats: Arc::new(RuntimeStats::default()),
         })
@@ -1332,6 +1334,7 @@ impl RuntimeStats {
 /// The router exposes public MCP ingress, health probes, and internal helpers
 /// used by tests and mode-specific runtime slices.
 pub fn build_router(state: AppState) -> Router {
+    let max_body_size = state.max_request_body_size_bytes;
     Router::new()
         .route("/health", get(healthz))
         .route("/healthz", get(healthz))
@@ -1362,10 +1365,12 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        .layer(DefaultBodyLimit::max(max_body_size))
         .with_state(state)
 }
 
 fn build_public_router(state: AppState) -> Router {
+    let max_body_size = state.max_request_body_size_bytes;
     Router::new()
         .route("/health", get(public_healthz))
         .route("/healthz", get(public_healthz))
@@ -1391,6 +1396,7 @@ fn build_public_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        .layer(DefaultBodyLimit::max(max_body_size))
         .with_state(state)
 }
 
@@ -10273,9 +10279,10 @@ fn empty_response(status: StatusCode) -> Response {
 mod unit_tests {
     use base64::Engine;
     use bytes::BytesMut;
+    use tower::util::ServiceExt;
 
     use super::{
-        AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL,
+        AffinityForwardResponse, AppState, Body, Bytes, CLIENT_ERROR_DETAIL,
         DirectExecutionAuthorization, EventStoreReplayRequest, EventStoreStoreRequest,
         INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext, InternalAuthenticateRequest,
         JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig, RuntimeError,
@@ -10472,6 +10479,7 @@ mod unit_tests {
             backend_allowed_hosts: "localhost,127.0.0.1".to_string(),
             backend_blocked_networks: "169.254.169.254/32".to_string(),
             backend_max_url_length: 2048,
+            max_request_body_size_bytes: crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
             exit_after_startup_ms: None,
         }
     }
@@ -14096,5 +14104,83 @@ mod unit_tests {
             .await,
             None
         );
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_accepts_small_payloads() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 1024; // 1 KB limit for test
+
+        let state = AppState::new(&config).expect("state");
+        let app = build_public_router(state);
+
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "id": 1
+        });
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
+        // Should succeed (ping is handled locally, returns 200)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_rejects_oversized_payloads() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 100; // Very small limit for test
+
+        let state = AppState::new(&config).expect("state");
+        let app = build_public_router(state);
+
+        // Create a payload larger than the limit
+        let large_payload = "x".repeat(200);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": large_payload,
+            "id": 1
+        });
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
+        // Should fail with 413 Payload Too Large
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_uses_configured_value() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 5_000_000; // 5 MB
+
+        let state = AppState::new(&config).expect("state");
+        assert_eq!(state.max_request_body_size_bytes, 5_000_000);
+    }
+
+    #[test]
+    fn request_body_limit_default_is_10mb() {
+        let config = test_config();
+        let state = AppState::new(&config).expect("state");
+        assert_eq!(state.max_request_body_size_bytes, 10_485_760); // 10 MB
     }
 }
