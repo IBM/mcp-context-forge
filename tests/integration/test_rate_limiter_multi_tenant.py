@@ -144,6 +144,9 @@ def _flush_rate_limiter_keys() -> None:
             timeout=5,
             check=False,
         )
+    remaining = _redis_keys("rl:*")
+    if remaining:
+        pytest.fail(f"Rate-limiter keys still present after flush: {remaining}")
 
 
 pytestmark = pytest.mark.skipif(
