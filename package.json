@@ -23,7 +23,7 @@
         "vitest": "^4.0.18"
     },
     "overrides": {
-        "basic-ftp": ">=5.2.0",
+        "basic-ftp": ">=5.3.0",
         "flatted": ">=3.4.2",
         "keyv": "5.1.0",
         "minimatch": ">=10.2.1",
