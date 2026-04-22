@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 # First-Party
-from mcpgateway.routers.auth import LoginRequest, get_db, login
+from mcpgateway.routers.auth import get_current_user_info, get_db, login, LoginRequest, logout
 
 
 class TestLoginRequest:
@@ -24,29 +24,29 @@ class TestLoginRequest:
 
     def test_get_email_from_email_field(self):
         """Test getting email from email field."""
-        req = LoginRequest(email="test@example.com", password="pass")
+        req = LoginRequest(email="test@example.com", password="pass")  # pragma: allowlist secret
         assert req.get_email() == "test@example.com"
 
     def test_get_email_from_username_with_at(self):
         """Test getting email from username field with @ symbol."""
-        req = LoginRequest(username="user@domain.com", password="pass")
+        req = LoginRequest(username="user@domain.com", password="pass")  # pragma: allowlist secret
         assert req.get_email() == "user@domain.com"
 
     def test_get_email_from_username_without_at_raises(self):
         """Test that plain username raises ValueError."""
-        req = LoginRequest(username="plainuser", password="pass")
+        req = LoginRequest(username="plainuser", password="pass")  # pragma: allowlist secret
         with pytest.raises(ValueError, match="Username format not supported"):
             req.get_email()
 
     def test_get_email_missing_both_raises(self):
         """Test that missing email and username raises ValueError."""
-        req = LoginRequest(password="pass")
+        req = LoginRequest(password="pass")  # pragma: allowlist secret
         with pytest.raises(ValueError, match="Either email or username must be provided"):
             req.get_email()
 
     def test_email_takes_precedence_over_username(self):
         """Test that email field takes precedence over username."""
-        req = LoginRequest(email="email@example.com", username="user@domain.com", password="pass")
+        req = LoginRequest(email="email@example.com", username="user@domain.com", password="pass")  # pragma: allowlist secret
         assert req.get_email() == "email@example.com"
 
 
@@ -168,7 +168,7 @@ class TestLogin:
 
             mock_create_token.return_value = ("test_token", 3600)
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             response = await login(login_request, mock_request, mock_db)
 
@@ -189,7 +189,7 @@ class TestLogin:
             mock_service.authenticate_user = AsyncMock(return_value=None)
             mock_auth_service.return_value = mock_service
 
-            login_request = LoginRequest(email="test@example.com", password="wrongpass")
+            login_request = LoginRequest(email="test@example.com", password="wrongpass")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
@@ -199,7 +199,7 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_value_error(self, mock_request, mock_db):
         """Test login with missing email/username."""
-        login_request = LoginRequest(password="password123")
+        login_request = LoginRequest(password="password123")  # pragma: allowlist secret
 
         with pytest.raises(HTTPException) as exc_info:
             await login(login_request, mock_request, mock_db)
@@ -214,7 +214,7 @@ class TestLogin:
             mock_service.authenticate_user = AsyncMock(side_effect=Exception("Service error"))
             mock_auth_service.return_value = mock_service
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
@@ -235,7 +235,7 @@ class TestLogin:
 
             mock_create_token.return_value = ("test_token", 3600)
 
-            login_request = LoginRequest(username="user@domain.com", password="password123")
+            login_request = LoginRequest(username="user@domain.com", password="password123")  # pragma: allowlist secret
 
             response = await login(login_request, mock_request, mock_db)
 
@@ -245,7 +245,7 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_with_plain_username_fails(self, mock_request, mock_db):
         """Test login with plain username (no @) fails."""
-        login_request = LoginRequest(username="plainuser", password="password123")
+        login_request = LoginRequest(username="plainuser", password="password123")  # pragma: allowlist secret
 
         with pytest.raises(HTTPException) as exc_info:
             await login(login_request, mock_request, mock_db)
@@ -269,7 +269,7 @@ class TestLogin:
             mock_settings.sso_enabled = True
             mock_settings.sso_preserve_admin_auth = True
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
@@ -278,63 +278,107 @@ class TestLogin:
             assert "restricted to admin accounts" in exc_info.value.detail
             mock_create_token.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_login_sets_cookie(self, mock_request, mock_db, mock_user):
+        """Test that login sets httpOnly cookie."""
+        with (
+            patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.routers.auth.set_auth_cookie") as mock_set_cookie,
+        ):
+            mock_service = MagicMock()
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user)
+            mock_auth_service.return_value = mock_service
+            mock_create_token.return_value = ("test_token", 3600)
 
-class TestLogout:
-    """Tests for logout endpoint."""
+            login_request = LoginRequest(email="test@example.com", password="password123", remember_me=False)  # pragma: allowlist secret
+            mock_response = MagicMock(spec=Response)
+
+            await login(login_request, mock_request, mock_response, mock_db)
+
+            mock_set_cookie.assert_called_once_with(mock_response, "test_token", remember_me=False)
+
+    @pytest.mark.asyncio
+    async def test_login_remember_me_sets_long_expiry(self, mock_request, mock_db, mock_user):
+        """Test that remember_me=True sets longer cookie expiry."""
+        with (
+            patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.routers.auth.set_auth_cookie") as mock_set_cookie,
+        ):
+            mock_service = MagicMock()
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user)
+            mock_auth_service.return_value = mock_service
+            mock_create_token.return_value = ("test_token", 3600)
+
+            login_request = LoginRequest(email="test@example.com", password="password123", remember_me=True)  # pragma: allowlist secret
+            mock_response = MagicMock(spec=Response)
+
+            await login(login_request, mock_request, mock_response, mock_db)
+
+            mock_set_cookie.assert_called_once_with(mock_response, "test_token", remember_me=True)
+
+
+class TestGetCurrentUserInfo:
+    """Tests for /auth/me endpoint."""
 
     @pytest.fixture
-    def mock_request(self):
-        """Create a mock FastAPI request with auth header."""
-        request = MagicMock()
-        request.headers = {"Authorization": "Bearer test_token_with_jti"}
-        return request
-
-    @pytest.fixture
-    def mock_db(self):
-        """Create a mock database session."""
-        return MagicMock()
-
-    @pytest.fixture
-    def mock_current_user(self):
-        """Create a mock current user."""
-        user = SimpleNamespace()
-        user.email = "test@example.com"
+    def mock_user(self):
+        """Create a mock email user."""
+        user = MagicMock()
         user.id = "test-user-id"
+        user.email = "test@example.com"
+        user.full_name = "Test User"
+        user.is_active = True
+        user.is_admin = False
+        user.auth_provider = "local"
+        user.teams = []
         return user
 
     @pytest.mark.asyncio
-    async def test_logout_with_secret_str_jwt_key(self, mock_request, mock_db, mock_current_user):
-        """Test logout when jwt_secret_key is a SecretStr type (covers line 239)."""
-        from mcpgateway.routers.auth import logout
+    async def test_get_current_user_info_success(self, mock_user):
+        """Test successful retrieval of current user info."""
+        with patch("mcpgateway.routers.auth.EmailUserResponse") as mock_response:
+            mock_response.from_email_user.return_value = MagicMock(
+                email="test@example.com",
+                full_name="Test User",
+                is_admin=False,
+            )
 
-        # Create a mock SecretStr
-        mock_secret_str = MagicMock()
-        mock_secret_str.get_secret_value.return_value = "test-secret-key"
+            result = await get_current_user_info(mock_user)
 
-        with (
-            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_blocklist_service,
-            patch("mcpgateway.config.settings") as mock_settings,
-        ):
-            # Setup settings with SecretStr
-            mock_settings.jwt_secret_key = mock_secret_str
-            mock_settings.jwt_algorithm = "HS256"
+            mock_response.from_email_user.assert_called_once_with(mock_user)
+            assert result is not None
 
-            # Setup blocklist service
-            mock_service = MagicMock()
-            mock_service.revoke_token.return_value = True
-            mock_blocklist_service.return_value = mock_service
 
-            # Mock jwt.decode inside the function
-            with patch("jwt.decode") as mock_jwt_decode:
-                mock_jwt_decode.return_value = {
-                    "jti": "test-jti-123",
-                    "exp": 1234567890,
-                    "iat": 1234567800,
-                }
+class TestLogout:
+    """Tests for /auth/logout endpoint."""
 
-                response = await logout(mock_request, mock_current_user, mock_db)
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock email user."""
+        user = MagicMock()
+        user.email = "test@example.com"
+        return user
 
-                assert response["message"] == "Logged out successfully"
-                assert response["revoked_token"] == "test-jti-123"
-                mock_secret_str.get_secret_value.assert_called_once()
-                mock_service.revoke_token.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_logout_clears_cookie(self, mock_user):
+        """Test that logout clears authentication cookie."""
+        with patch("mcpgateway.routers.auth.clear_auth_cookie") as mock_clear_cookie:
+            mock_response = MagicMock(spec=Response)
+
+            result = await logout(mock_response, mock_user)
+
+            mock_clear_cookie.assert_called_once_with(mock_response)
+            assert result == {"message": "Logged out successfully"}
+
+    @pytest.mark.asyncio
+    async def test_logout_returns_success_message(self, mock_user):
+        """Test that logout returns success message."""
+        with patch("mcpgateway.routers.auth.clear_auth_cookie"):
+            mock_response = MagicMock(spec=Response)
+
+            result = await logout(mock_response, mock_user)
+
+            assert "message" in result
+            assert result["message"] == "Logged out successfully"

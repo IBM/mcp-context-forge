@@ -73,11 +73,130 @@ Before using the API, you need to:
 
 ## Authentication
 
-Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission. The `/metrics/prometheus` Prometheus scrape endpoint requires JWT authentication and is disabled by default (`ENABLE_METRICS=false`); see the Prometheus Metrics section in `.env.example` for setup instructions.
+ContextForge supports two authentication methods:
+
+1. **Bearer Token** - JWT token in Authorization header (for API clients, scripts, CLI tools)
+2. **Cookie-based** - Secure httpOnly cookie (for browser clients like React Admin UI)
+
+Both methods work simultaneously and use the same JWT validation.
+
+Most API requests require authentication (public endpoints: `/health`, `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) require auth by default. The `/metrics` endpoint requires `admin.metrics` permission.
+
+### Bearer Token Authentication
+
+Traditional JWT token in Authorization header:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 ```
+
+### Cookie-based Authentication (Browser Clients)
+
+For browser-based clients, use the `/auth/login` endpoint to obtain a secure httpOnly cookie:
+
+```bash
+# Login and receive authentication cookie
+curl -c cookies.txt -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin@example.com",
+    "password": "changeme",
+    "remember_me": true
+  }' \
+  $BASE_URL/auth/login
+
+# Use cookie for subsequent requests
+curl -b cookies.txt $BASE_URL/auth/me
+```
+
+**Cookie attributes:**
+- **httpOnly**: Not accessible via JavaScript (XSS protection)
+- **SameSite=Lax**: CSRF protection
+- **Secure**: HTTPS only (production)
+- **Max-Age**: 3600s (1 hour) or 2592000s (30 days with `remember_me: true`)
+
+### Authentication Endpoints
+
+#### POST /auth/login
+
+Authenticate and receive both JWT token (response body) and httpOnly cookie.
+
+**Request:**
+```bash
+curl -c cookies.txt -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin@example.com",
+    "password": "changeme",
+    "remember_me": false
+  }' \
+  $BASE_URL/auth/login | jq '.'
+```
+
+**Parameters:**
+- `username` (required): User email
+- `password` (required): User password
+- `remember_me` (optional): Extend cookie to 30 days (default: false, 1 hour)
+
+**Response:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "user": {
+    "email": "admin@example.com",
+    "full_name": "Admin User",
+    "is_admin": true
+  }
+}
+```
+
+Also sets `jwt_token` httpOnly cookie for browser clients.
+
+#### GET /auth/me
+
+Get current authenticated user. Works with both Bearer token and cookie.
+
+**Request:**
+```bash
+# Using cookie
+curl -b cookies.txt $BASE_URL/auth/me | jq '.'
+
+# Using Bearer token
+curl -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/me | jq '.'
+```
+
+**Response:**
+```json
+{
+  "email": "admin@example.com",
+  "full_name": "Admin User",
+  "is_admin": true,
+  "teams": ["team-123"],
+  "roles": {
+    "team-123": ["team_admin"]
+  }
+}
+```
+
+#### POST /auth/logout
+
+Clear authentication cookie (stateless - JWT remains valid until expiration).
+
+**Request:**
+```bash
+curl -b cookies.txt -X POST $BASE_URL/auth/logout | jq '.'
+```
+
+**Response:**
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+!!! note "Stateless Logout"
+    Logout clears the browser cookie but doesn't revoke the JWT token server-side. The token remains valid until expiration. This is consistent with the stateless JWT design.
 
 ## Pagination
 

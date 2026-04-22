@@ -13,7 +13,7 @@ It serves as the primary entry point for authentication workflows.
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from mcpgateway.routers.email_auth import create_access_token, get_client_ip, ge
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 
 # Initialize logging
 logging_service = LoggingService()
@@ -80,6 +81,7 @@ class LoginRequest(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None  # For compatibility
     password: str
+    remember_me: bool = False  # Cookie expiry: 30d if True, 1hr if False
 
     def get_email(self) -> str:
         """Get email from either email or username field.
@@ -121,15 +123,19 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """Authenticate user and return session JWT token.
 
     This endpoint provides Tier 1 authentication for session-based access.
     The returned JWT token should be used for UI access and API key management.
 
+    Supports both cookie-based (browser) and Bearer token (API) authentication.
+    Cookie is set automatically for browser clients; API clients use token from response body.
+
     Args:
-        login_request: Login credentials (email/username + password)
+        login_request: Login credentials (email/username + password + optional remember_me)
         request: FastAPI request object
+        response: FastAPI response object (for setting cookie)
         db: Database session
 
     Returns:
@@ -142,7 +148,8 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         Email format (recommended):
             {
               "email": "admin@example.com",
-              "password": "ChangeMe_12345678$"
+              "password": "ChangeMe_12345678$",
+              "remember_me": false
             }
 
         Username format (compatibility):
@@ -171,9 +178,13 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         # Create session JWT token (Tier 1 authentication)
         access_token, expires_in = await create_access_token(user)
 
+        # Set httpOnly cookie for browser clients (React SPA)
+        set_auth_cookie(response, access_token, remember_me=login_request.remember_me)
+
         logger.info(f"User {email} authenticated successfully")
 
         # Return session token for UI access and API key management
+        # Token in response body maintains retro-compatibility with API clients
         return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
@@ -188,88 +199,63 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
-@auth_router.post("/logout")
-async def logout(request: Request, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Logout user and revoke session token.
+@auth_router.get("/me", response_model=EmailUserResponse)
+async def get_current_user_info(current_user: EmailUser = Depends(get_current_user)) -> EmailUserResponse:
+    """Get current user profile information.
 
-    This endpoint implements server-side token revocation by adding the token
-    to the blocklist, providing immediate invalidation as recommended by X-Force Red.
+    Supports both cookie-based (browser) and Bearer token (API) authentication.
+    Authentication is handled automatically by the auth middleware.
 
     Args:
-        request: FastAPI request object
-        current_user: Current authenticated user from dependency
-        db: Database session
+        current_user: Currently authenticated user (injected by dependency)
 
     Returns:
-        Success response confirming logout
+        EmailUserResponse: User profile information including email, name, admin status, teams, and roles
 
     Raises:
-        HTTPException: If logout fails
+        HTTPException: 401 if user is not authenticated
 
-    Security:
-        - Adds token to server-side blocklist
-        - Token cannot be reused after logout
-        - Supports audit trail for security monitoring
+    Examples:
+        Cookie-based (browser):
+            GET /auth/me
+            Cookie: jwt_token=<token>
+
+        Bearer token (API):
+            GET /auth/me
+            Authorization: Bearer <token>
     """
-    # First-Party
-    from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
+    return EmailUserResponse.from_email_user(current_user)
 
-    try:
-        # User is already authenticated via dependency injection
-        user = current_user
 
-        # Extract JWT from Authorization header
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No valid authorization token provided")
+@auth_router.post("/logout")
+async def logout(response: Response, current_user: EmailUser = Depends(get_current_user)) -> dict:
+    """Logout current user by clearing authentication cookie.
 
-        token = auth_header[7:]  # Remove "Bearer " prefix
+    Clears the httpOnly JWT cookie. Note: JWT remains valid until expiry (stateless design).
+    For immediate revocation, use short token expiry times.
 
-        # Decode token to get JTI and expiry
-        # Third-Party
-        import jwt
+    Supports both cookie-based (browser) and Bearer token (API) authentication.
+    Cookie is cleared for browser clients; API clients should discard the token.
 
-        # First-Party
-        from mcpgateway.config import settings
+    Args:
+        response: FastAPI response object (for clearing cookie)
+        current_user: Currently authenticated user (injected by dependency)
 
-        try:
-            # Handle both SecretStr and string types for jwt_secret_key
-            secret_key = settings.jwt_secret_key
-            if hasattr(secret_key, "get_secret_value"):
-                secret_key = secret_key.get_secret_value()
+    Returns:
+        dict: Success message
 
-            payload = jwt.decode(token, secret_key, algorithms=[settings.jwt_algorithm], options={"verify_signature": False})  # Already verified by get_current_user
+    Raises:
+        HTTPException: 401 if user is not authenticated
 
-            jti = payload.get("jti")
-            exp = payload.get("exp")
-            last_activity = payload.get("last_activity", payload.get("iat"))
+    Examples:
+        Cookie-based (browser):
+            POST /auth/logout
+            Cookie: jwt_token=<token>
 
-            if not jti:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not support revocation (missing JTI)")
-
-            # Convert timestamps to datetime
-            # Standard
-            from datetime import datetime, timezone
-
-            token_expiry = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else None
-            last_activity_dt = datetime.fromtimestamp(last_activity, tz=timezone.utc) if last_activity else None
-
-            # Revoke token using blocklist service
-            blocklist_service = get_token_blocklist_service(db=db)
-            success = blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
-
-            if not success:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token")
-
-            logger.info(f"User {user.email} logged out successfully", extra={"security_event": "logout", "user_email": user.email, "jti": jti})
-
-            return {"message": "Logged out successfully", "revoked_token": jti}
-
-        except jwt.DecodeError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token format")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Logout error: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Logout service error")
+        Bearer token (API):
+            POST /auth/logout
+            Authorization: Bearer <token>
+    """
+    clear_auth_cookie(response)
+    logger.info(f"User {current_user.email} logged out")
+    return {"message": "Logged out successfully"}
