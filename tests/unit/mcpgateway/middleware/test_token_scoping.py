@@ -129,16 +129,16 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
         """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
 
         # Test server restriction check - /admin should NOT be in general endpoints
-        result = middleware._check_server_restriction("/admin/users", "server-123")
+        result = middleware._check_server_restriction("/v1/admin/users", "server-123")
         assert result == False, "Admin endpoints should not bypass server scoping restrictions"
 
     @pytest.mark.asyncio
     async def test_health_endpoints_still_whitelisted(self, middleware, mock_request):
         """Test that health/metrics endpoints remain whitelisted."""
-        whitelist_paths = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/"]
+        whitelist_paths = ["/health", "/v1/metrics", "/openapi.json", "/docs", "/redoc", "/"]
 
         for path in whitelist_paths:
             result = middleware._check_server_restriction(path, "server-123")
@@ -241,14 +241,14 @@ class TestTokenScopingMiddleware:
     async def test_canonical_permissions_used_in_map(self, middleware):
         """Test that permission map uses canonical Permissions constants (Issue 5 fix)."""
         # Test tools permissions use canonical constants
-        result = middleware._check_permission_restrictions("/tools", "GET", [Permissions.TOOLS_READ])
+        result = middleware._check_permission_restrictions("/v1/tools", "GET", [Permissions.TOOLS_READ])
         assert result == True, "Should accept canonical TOOLS_READ permission"
 
-        result = middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_CREATE])
+        result = middleware._check_permission_restrictions("/v1/tools", "POST", [Permissions.TOOLS_CREATE])
         assert result == True, "Should accept canonical TOOLS_CREATE permission"
 
         # Test that old non-canonical permissions would not work
-        result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
+        result = middleware._check_permission_restrictions("/v1/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
     @pytest.mark.asyncio
@@ -329,23 +329,23 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
         """Test that admin endpoint groups use canonical granular permissions."""
-        result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        result = middleware._check_permission_restrictions("/v1/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
         assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /admin/users"
 
-        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
+        result = middleware._check_permission_restrictions("/v1/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
         assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /admin/config/*"
 
-        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        result = middleware._check_permission_restrictions("/v1/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
         assert result == False, "Should reject ADMIN_USER_MANAGEMENT for system-config admin routes"
 
         # Test that old non-canonical admin permissions would not work
-        result = middleware._check_permission_restrictions("/admin/users", "GET", ["admin.read"])
+        result = middleware._check_permission_restrictions("/v1/admin/users", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
     @pytest.mark.asyncio
     async def test_server_scoped_token_blocked_from_admin(self, middleware, mock_request):
         """Test that server-scoped tokens are blocked from admin endpoints (security fix)."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -370,7 +370,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_permission_restricted_token_blocked_from_admin(self, middleware, mock_request):
         """Test that permission-restricted tokens are blocked from admin endpoints."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -395,7 +395,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_token_allowed_to_admin_endpoints(self, middleware, mock_request):
         """Test that tokens with admin permissions can access admin endpoints."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -414,7 +414,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_wildcard_permissions_allow_all_access(self, middleware, mock_request):
         """Test that wildcard permissions allow access to any endpoint."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
         mock_request.method = "POST"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -433,7 +433,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_no_token_scopes_bypasses_middleware(self, middleware, mock_request):
         """Test that requests without token scopes bypass the middleware."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/v1/admin/users"
         mock_request.headers = {}  # No Authorization header
 
         call_next = AsyncMock()
@@ -447,7 +447,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_usage_limits_block_request_with_429(self, middleware, mock_request):
         """Requests above configured token usage limits should be denied."""
-        mock_request.url.path = "/tools"
+        mock_request.url.path = "/v1/tools"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -474,7 +474,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_whitelisted_paths_bypass_middleware(self, middleware):
         """Test that whitelisted paths bypass all scoping checks."""
-        whitelisted_paths = ["/health", "/metrics", "/docs", "/auth/email/login"]
+        whitelisted_paths = ["/health", "/v1/metrics", "/docs", "/v1/auth/email/login"]
 
         for path in whitelisted_paths:
             mock_request = MagicMock(spec=Request)
@@ -496,9 +496,9 @@ class TestTokenScopingMiddleware:
     async def test_regex_pattern_precision_tools(self, middleware):
         """Test that regex patterns match path segments precisely."""
         # Test exact /tools path matches for GET (should require TOOLS_READ)
-        assert middleware._check_permission_restrictions("/tools", "GET", [Permissions.TOOLS_READ]) == True
-        assert middleware._check_permission_restrictions("/tools/", "GET", [Permissions.TOOLS_READ]) == True
-        assert middleware._check_permission_restrictions("/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/tools", "GET", [Permissions.TOOLS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/tools/", "GET", [Permissions.TOOLS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
 
     def test_permission_restrictions_default_deny_for_unmatched_path(self, middleware):
         """Unmatched paths should default-deny when permissions list is non-empty."""
@@ -642,10 +642,10 @@ class TestTokenScopingMiddleware:
     def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
         """Server MCP endpoint should require servers.use or MCP method permissions."""
         # MCP method permissions get implicit transport access
-        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is True
-        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
+        assert middleware._check_permission_restrictions("/v1/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
         # Non-MCP permissions should still be denied
-        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", ["gateways.read"]) is False
+        assert middleware._check_permission_restrictions("/v1/servers/server-1/mcp", "POST", ["gateways.read"]) is False
 
     def test_permission_restrictions_llm_proxy_default_prefix(self, middleware):
         """LLM proxy endpoints should enforce llm.read/llm.invoke with default /v1 prefix."""
@@ -677,7 +677,7 @@ class TestTokenScopingMiddleware:
     def test_normalize_path_for_matching_adds_leading_slash(self, middleware, monkeypatch):
         """Relative normalized paths should be converted to absolute for matching."""
         monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "tools")
-        assert middleware._normalize_path_for_matching("/forge/tools") == "/tools"
+        assert middleware._normalize_path_for_matching("/forge/tools") == "/v1/tools"
 
     def test_get_normalized_request_path_handles_non_dict_scope_and_relative_path(self, middleware, mock_request, monkeypatch):
         """Non-dict scopes and relative normalized paths should be safely normalized."""
@@ -716,7 +716,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):
         """Session tokens always resolve teams from DB even when a teams claim is present."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
@@ -747,7 +747,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_without_teams_claim_resolves_from_db(self, middleware, mock_request):
         """Test that session tokens without 'teams' claim resolve teams from DB."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
@@ -778,7 +778,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_with_null_teams_uses_db_resolve(self, middleware, mock_request):
         """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
@@ -811,7 +811,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_api_token_always_uses_embedded_teams(self, middleware, mock_request):
         """Test that API tokens always use embedded teams regardless of teams claim."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer api_token"}
 
@@ -847,7 +847,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_legacy_token_without_token_use_uses_embedded_teams(self, middleware, mock_request):
         """Test that legacy tokens without token_use claim use embedded teams."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer legacy_token"}
 
@@ -882,7 +882,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_calls_resolve_session_teams(self, middleware, mock_request):
         """Verify middleware calls the public resolve_session_teams policy point, not _resolve_teams_from_db directly."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
@@ -906,7 +906,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):
         """Session tokens skip _check_team_membership; stale JWT teams produce empty intersection (public-only)."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
@@ -938,7 +938,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_api_token_still_checks_membership(self, middleware, mock_request):
         """API tokens must still go through _check_team_membership validation."""
-        mock_request.url.path = "/servers"
+        mock_request.url.path = "/v1/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer api_token"}
 
@@ -1009,83 +1009,80 @@ class TestTokenScopingMiddleware:
         tool.team_id = "team-1"
         db.execute.return_value.scalar_one_or_none.return_value = tool
 
-        assert middleware._check_resource_team_ownership("/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is True
-        assert middleware._check_resource_team_ownership("/tools/abc", [], db=db, _user_email="user@example.com") is False
+        assert middleware._check_resource_team_ownership("/v1/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is True
+        assert middleware._check_resource_team_ownership("/v1/tools/abc", [], db=db, _user_email="user@example.com") is False
 
         resource = MagicMock()
         resource.visibility = "private"
         resource.owner_email = "user@example.com"
         db.execute.return_value.scalar_one_or_none.return_value = resource
 
-        assert middleware._check_resource_team_ownership("/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is True
+        assert middleware._check_resource_team_ownership("/v1/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is True
 
         # Test that GET /tools requires TOOLS_READ permission specifically
-        assert middleware._check_permission_restrictions("/tools", "GET", [Permissions.TOOLS_CREATE]) == False
+        assert middleware._check_permission_restrictions("/v1/tools", "GET", [Permissions.TOOLS_CREATE]) == False
         # Note: Empty permissions list returns True due to "no restrictions" logic
-        assert middleware._check_permission_restrictions("/tools", "GET", []) == True
+        assert middleware._check_permission_restrictions("/v1/tools", "GET", []) == True
 
         # Test POST /tools requires TOOLS_CREATE permission specifically
-        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_CREATE]) == True
-        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_READ]) == False
+        assert middleware._check_permission_restrictions("/v1/tools", "POST", [Permissions.TOOLS_CREATE]) == True
+        assert middleware._check_permission_restrictions("/v1/tools", "POST", [Permissions.TOOLS_READ]) == False
 
         # Test specific tool ID patterns for PUT/DELETE
-        assert middleware._check_permission_restrictions("/tools/tool-123", "PUT", [Permissions.TOOLS_UPDATE]) == True
-        assert middleware._check_permission_restrictions("/tools/tool-123", "DELETE", [Permissions.TOOLS_DELETE]) == True
+        assert middleware._check_permission_restrictions("/v1/tools/tool-123", "PUT", [Permissions.TOOLS_UPDATE]) == True
+        assert middleware._check_permission_restrictions("/v1/tools/tool-123", "DELETE", [Permissions.TOOLS_DELETE]) == True
 
         # Test wrong permissions for tool operations
-        assert middleware._check_permission_restrictions("/tools/tool-123", "PUT", [Permissions.TOOLS_READ]) == False
-        assert middleware._check_permission_restrictions("/tools/tool-123", "DELETE", [Permissions.TOOLS_UPDATE]) == False
+        assert middleware._check_permission_restrictions("/v1/tools/tool-123", "PUT", [Permissions.TOOLS_READ]) == False
+        assert middleware._check_permission_restrictions("/v1/tools/tool-123", "DELETE", [Permissions.TOOLS_UPDATE]) == False
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_admin(self, middleware):
         """Test that admin regex patterns enforce route-group-specific permissions."""
         # Dashboard/overview groups
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
-        assert middleware._check_permission_restrictions("/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
+        assert middleware._check_permission_restrictions("/v1/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
 
         # User management vs config domains must remain separated
-        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
-        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
-        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+        assert middleware._check_permission_restrictions("/v1/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
+        assert middleware._check_permission_restrictions("/v1/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
         # Other admin route groups
-        assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
-        assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
-        assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/v1/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
         # Unmapped admin paths default-deny when token has explicit restrictions
-        assert middleware._check_permission_restrictions("/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+        assert middleware._check_permission_restrictions("/v1/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
         # Explicitly multi-scoped token remains functional
-        assert (
-            middleware._check_permission_restrictions(
-                "/admin/config/settings",
-                "GET",
-                [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
-            )
-            == True
-        )
+        assert middleware._check_permission_restrictions(
+            "/v1/admin/config/settings",
+            "GET",
+            [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
+        ) == True
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_servers(self, middleware):
         """Test that server path patterns require correct permissions."""
         # Test exact /servers path requires SERVERS_READ
-        assert middleware._check_permission_restrictions("/servers", "GET", [Permissions.SERVERS_READ]) == True
-        assert middleware._check_permission_restrictions("/servers/", "GET", [Permissions.SERVERS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/servers", "GET", [Permissions.SERVERS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/", "GET", [Permissions.SERVERS_READ]) == True
 
         # Test specific server operations require correct permissions
-        assert middleware._check_permission_restrictions("/servers/server-123", "PUT", [Permissions.SERVERS_UPDATE]) == True
-        assert middleware._check_permission_restrictions("/servers/server-123", "DELETE", [Permissions.SERVERS_DELETE]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/server-123", "PUT", [Permissions.SERVERS_UPDATE]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/server-123", "DELETE", [Permissions.SERVERS_DELETE]) == True
 
         # Test nested server paths for tools/resources
-        assert middleware._check_permission_restrictions("/servers/srv-1/tools", "GET", [Permissions.TOOLS_READ]) == True
-        assert middleware._check_permission_restrictions("/servers/srv-1/tools/tool-1/call", "POST", [Permissions.TOOLS_EXECUTE]) == True
-        assert middleware._check_permission_restrictions("/servers/srv-1/resources", "GET", [Permissions.RESOURCES_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/srv-1/tools", "GET", [Permissions.TOOLS_READ]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/srv-1/tools/tool-1/call", "POST", [Permissions.TOOLS_EXECUTE]) == True
+        assert middleware._check_permission_restrictions("/v1/servers/srv-1/resources", "GET", [Permissions.RESOURCES_READ]) == True
 
         # Test wrong permissions for server operations
-        assert middleware._check_permission_restrictions("/servers", "GET", [Permissions.TOOLS_READ]) == False
-        assert middleware._check_permission_restrictions("/servers/server-123", "PUT", [Permissions.SERVERS_READ]) == False
+        assert middleware._check_permission_restrictions("/v1/servers", "GET", [Permissions.TOOLS_READ]) == False
+        assert middleware._check_permission_restrictions("/v1/servers/server-123", "PUT", [Permissions.SERVERS_READ]) == False
 
     @pytest.mark.asyncio
     async def test_virtual_mcp_server_permission_pattern(self, middleware):
@@ -1098,121 +1095,192 @@ class TestTokenScopingMiddleware:
         The fix changes the pattern to ^/servers/?$ to only match exact paths.
         """
         # servers.create should be required ONLY for creating servers (exact path match)
-        assert middleware._check_permission_restrictions("/servers", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]) == False, "POST /servers should require servers.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == False, "POST /servers should require servers.create"
 
-        assert middleware._check_permission_restrictions("/servers/", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]) == False, "POST /servers/ should require servers.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == False, "POST /servers/ should require servers.create"
 
-        assert middleware._check_permission_restrictions("/servers", "POST", [Permissions.SERVERS_CREATE]) == True, "POST /servers should succeed with servers.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers", "POST", [Permissions.SERVERS_CREATE]
+        ) == True, "POST /servers should succeed with servers.create"
 
         # Virtual MCP Server access should NOT require servers.create (this is the fix!)
         # With MCP method permissions (tools.read), implicit servers.use is granted
-        assert (
-            middleware._check_permission_restrictions("/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]) == True
-        ), "POST /servers/{id}/mcp should be allowed with MCP method permissions"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp should be allowed with MCP method permissions"
 
         # Without MCP method permissions, servers.use is still required
-        assert (
-            middleware._check_permission_restrictions("/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp", "POST", [Permissions.SERVERS_READ, "gateways.read"]) == False
-        ), "POST /servers/{id}/mcp should require servers.use when no MCP method permissions"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_READ, "gateways.read"]
+        ) == False, "POST /servers/{id}/mcp should require servers.use when no MCP method permissions"
 
-        assert middleware._check_permission_restrictions("/servers/abc123/sse", "GET", [Permissions.SERVERS_USE]) == True, "GET /servers/{id}/sse should require servers.use"
-        assert middleware._check_permission_restrictions("/servers/abc123/sse", "GET", [Permissions.SERVERS_READ]) == False, "GET /servers/{id}/sse should NOT accept servers.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/abc123/sse",
+            "GET",
+            [Permissions.SERVERS_USE]
+        ) == True, "GET /servers/{id}/sse should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/abc123/sse",
+            "GET",
+            [Permissions.SERVERS_READ]
+        ) == False, "GET /servers/{id}/sse should NOT accept servers.read"
 
         # Other Virtual MCP Server endpoints — MCP method permissions grant implicit transport access
-        assert (
-            middleware._check_permission_restrictions("/servers/test-server/mcp/", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]) == True
-        ), "POST /servers/{id}/mcp/ should be allowed with MCP method permissions"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/test-server/mcp/",
+            "POST",
+            [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp/ should be allowed with MCP method permissions"
 
         # Without MCP method permissions, servers.use is still required
-        assert (
-            middleware._check_permission_restrictions("/servers/test-server/mcp/", "POST", [Permissions.SERVERS_READ]) == False
-        ), "POST /servers/{id}/mcp/ should require servers.use when no MCP method permissions"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/test-server/mcp/",
+            "POST",
+            [Permissions.SERVERS_READ]
+        ) == False, "POST /servers/{id}/mcp/ should require servers.use when no MCP method permissions"
 
         # Verify that servers.create works for Virtual MCP Server too (backward compatibility)
-        assert (
-            middleware._check_permission_restrictions(
-                "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp", "POST", [Permissions.SERVERS_CREATE, Permissions.SERVERS_USE, Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-            )
-            == True
-        ), "POST /servers/{id}/mcp should succeed when servers.use is present"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_CREATE, Permissions.SERVERS_USE, Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp should succeed when servers.use is present"
 
     @pytest.mark.asyncio
     async def test_tools_create_pattern_exact_match(self, middleware):
         """Test that tools.create is only required for exact POST /tools, not sub-paths."""
         # POST /tools requires tools.create
-        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/tools/", "POST", [Permissions.TOOLS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/tools", "POST", [Permissions.TOOLS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/tools/", "POST", [Permissions.TOOLS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/tools", "POST", [Permissions.TOOLS_READ]) is False
 
         # POST /tools/{id}/state requires tools.update, NOT tools.create
-        assert middleware._check_permission_restrictions("/tools/tool-123/state", "POST", [Permissions.TOOLS_UPDATE]) is True, "POST /tools/{id}/state should require tools.update"
-        assert middleware._check_permission_restrictions("/tools/tool-123/state", "POST", [Permissions.TOOLS_CREATE]) is False, "POST /tools/{id}/state should NOT accept tools.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/tools/tool-123/state", "POST", [Permissions.TOOLS_UPDATE]
+        ) is True, "POST /tools/{id}/state should require tools.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/tools/tool-123/state", "POST", [Permissions.TOOLS_CREATE]
+        ) is False, "POST /tools/{id}/state should NOT accept tools.create"
 
         # POST /tools/{id}/toggle requires tools.update
-        assert middleware._check_permission_restrictions("/tools/tool-123/toggle", "POST", [Permissions.TOOLS_UPDATE]) is True, "POST /tools/{id}/toggle should require tools.update"
-        assert middleware._check_permission_restrictions("/tools/tool-123/toggle", "POST", [Permissions.TOOLS_CREATE]) is False, "POST /tools/{id}/toggle should NOT accept tools.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/tools/tool-123/toggle", "POST", [Permissions.TOOLS_UPDATE]
+        ) is True, "POST /tools/{id}/toggle should require tools.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/tools/tool-123/toggle", "POST", [Permissions.TOOLS_CREATE]
+        ) is False, "POST /tools/{id}/toggle should NOT accept tools.create"
 
     @pytest.mark.asyncio
     async def test_resources_create_pattern_exact_match(self, middleware):
         """Test that resources.create is only required for exact POST /resources, not sub-paths."""
         # POST /resources requires resources.create
-        assert middleware._check_permission_restrictions("/resources", "POST", [Permissions.RESOURCES_CREATE]) is True
-        assert middleware._check_permission_restrictions("/resources/", "POST", [Permissions.RESOURCES_CREATE]) is True
-        assert middleware._check_permission_restrictions("/resources", "POST", [Permissions.RESOURCES_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/resources", "POST", [Permissions.RESOURCES_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/resources/", "POST", [Permissions.RESOURCES_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/resources", "POST", [Permissions.RESOURCES_READ]) is False
 
         # POST /resources/{id}/state requires resources.update, NOT resources.create
-        assert middleware._check_permission_restrictions("/resources/res-123/state", "POST", [Permissions.RESOURCES_UPDATE]) is True, "POST /resources/{id}/state should require resources.update"
-        assert middleware._check_permission_restrictions("/resources/res-123/state", "POST", [Permissions.RESOURCES_CREATE]) is False, "POST /resources/{id}/state should NOT accept resources.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/resources/res-123/state", "POST", [Permissions.RESOURCES_UPDATE]
+        ) is True, "POST /resources/{id}/state should require resources.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/resources/res-123/state", "POST", [Permissions.RESOURCES_CREATE]
+        ) is False, "POST /resources/{id}/state should NOT accept resources.create"
 
         # POST /resources/{id}/toggle requires resources.update
-        assert middleware._check_permission_restrictions("/resources/res-123/toggle", "POST", [Permissions.RESOURCES_UPDATE]) is True, "POST /resources/{id}/toggle should require resources.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/resources/res-123/toggle", "POST", [Permissions.RESOURCES_UPDATE]
+        ) is True, "POST /resources/{id}/toggle should require resources.update"
 
         # POST /resources/subscribe requires resources.read (SSE subscription)
-        assert middleware._check_permission_restrictions("/resources/subscribe", "POST", [Permissions.RESOURCES_READ]) is True, "POST /resources/subscribe should require resources.read"
-        assert middleware._check_permission_restrictions("/resources/subscribe", "POST", [Permissions.RESOURCES_CREATE]) is False, "POST /resources/subscribe should NOT accept resources.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/resources/subscribe", "POST", [Permissions.RESOURCES_READ]
+        ) is True, "POST /resources/subscribe should require resources.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/resources/subscribe", "POST", [Permissions.RESOURCES_CREATE]
+        ) is False, "POST /resources/subscribe should NOT accept resources.create"
 
     @pytest.mark.asyncio
     async def test_prompts_create_pattern_exact_match(self, middleware):
         """Test that prompts.create is only required for exact POST /prompts, not sub-paths."""
         # POST /prompts requires prompts.create
-        assert middleware._check_permission_restrictions("/prompts", "POST", [Permissions.PROMPTS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/prompts/", "POST", [Permissions.PROMPTS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/prompts", "POST", [Permissions.PROMPTS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/prompts", "POST", [Permissions.PROMPTS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/prompts/", "POST", [Permissions.PROMPTS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/prompts", "POST", [Permissions.PROMPTS_READ]) is False
 
         # POST /prompts/{id}/state requires prompts.update, NOT prompts.create
-        assert middleware._check_permission_restrictions("/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_UPDATE]) is True, "POST /prompts/{id}/state should require prompts.update"
-        assert middleware._check_permission_restrictions("/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_CREATE]) is False, "POST /prompts/{id}/state should NOT accept prompts.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_UPDATE]
+        ) is True, "POST /prompts/{id}/state should require prompts.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_CREATE]
+        ) is False, "POST /prompts/{id}/state should NOT accept prompts.create"
 
         # POST /prompts/{id}/toggle requires prompts.update
-        assert middleware._check_permission_restrictions("/prompts/prompt-123/toggle", "POST", [Permissions.PROMPTS_UPDATE]) is True, "POST /prompts/{id}/toggle should require prompts.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/prompts/prompt-123/toggle", "POST", [Permissions.PROMPTS_UPDATE]
+        ) is True, "POST /prompts/{id}/toggle should require prompts.update"
 
         # POST /prompts/{id} (MCP spec retrieval) requires prompts.read
-        assert middleware._check_permission_restrictions("/prompts/prompt-123", "POST", [Permissions.PROMPTS_READ]) is True, "POST /prompts/{id} (MCP spec) should require prompts.read"
-        assert middleware._check_permission_restrictions("/prompts/prompt-123", "POST", [Permissions.PROMPTS_CREATE]) is False, "POST /prompts/{id} (MCP spec) should NOT accept prompts.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/prompts/prompt-123", "POST", [Permissions.PROMPTS_READ]
+        ) is True, "POST /prompts/{id} (MCP spec) should require prompts.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/prompts/prompt-123", "POST", [Permissions.PROMPTS_CREATE]
+        ) is False, "POST /prompts/{id} (MCP spec) should NOT accept prompts.create"
 
     @pytest.mark.asyncio
     async def test_servers_subresource_permission_patterns(self, middleware):
         """Test that server sub-paths distinguish management (update) from access (read) endpoints."""
         # POST /servers/{id}/state requires servers.update (management)
-        assert middleware._check_permission_restrictions("/servers/srv-123/state", "POST", [Permissions.SERVERS_UPDATE]) is True, "POST /servers/{id}/state should require servers.update"
-        assert middleware._check_permission_restrictions("/servers/srv-123/state", "POST", [Permissions.SERVERS_CREATE]) is False, "POST /servers/{id}/state should NOT accept servers.create"
-        assert middleware._check_permission_restrictions("/servers/srv-123/state", "POST", [Permissions.SERVERS_READ]) is False, "POST /servers/{id}/state should NOT accept servers.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/state", "POST", [Permissions.SERVERS_UPDATE]
+        ) is True, "POST /servers/{id}/state should require servers.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/state", "POST", [Permissions.SERVERS_CREATE]
+        ) is False, "POST /servers/{id}/state should NOT accept servers.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/state", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/state should NOT accept servers.read"
 
         # POST /servers/{id}/toggle requires servers.update (management)
-        assert middleware._check_permission_restrictions("/servers/srv-123/toggle", "POST", [Permissions.SERVERS_UPDATE]) is True, "POST /servers/{id}/toggle should require servers.update"
-        assert middleware._check_permission_restrictions("/servers/srv-123/toggle", "POST", [Permissions.SERVERS_CREATE]) is False, "POST /servers/{id}/toggle should NOT accept servers.create"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/toggle", "POST", [Permissions.SERVERS_UPDATE]
+        ) is True, "POST /servers/{id}/toggle should require servers.update"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/toggle", "POST", [Permissions.SERVERS_CREATE]
+        ) is False, "POST /servers/{id}/toggle should NOT accept servers.create"
 
         # POST /servers/{id}/mcp requires servers.use (access endpoint)
-        assert middleware._check_permission_restrictions("/servers/srv-123/mcp", "POST", [Permissions.SERVERS_USE]) is True, "POST /servers/{id}/mcp should require servers.use"
-        assert middleware._check_permission_restrictions("/servers/srv-123/mcp", "POST", [Permissions.SERVERS_READ]) is False, "POST /servers/{id}/mcp should NOT accept servers.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/mcp", "POST", [Permissions.SERVERS_USE]
+        ) is True, "POST /servers/{id}/mcp should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/mcp", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/mcp should NOT accept servers.read"
 
         # GET /servers/{id}/sse requires servers.use (access endpoint)
-        assert middleware._check_permission_restrictions("/servers/srv-123/sse", "GET", [Permissions.SERVERS_USE]) is True, "GET /servers/{id}/sse should require servers.use"
-        assert middleware._check_permission_restrictions("/servers/srv-123/sse", "GET", [Permissions.SERVERS_READ]) is False, "GET /servers/{id}/sse should NOT accept servers.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/sse", "GET", [Permissions.SERVERS_USE]
+        ) is True, "GET /servers/{id}/sse should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/sse", "GET", [Permissions.SERVERS_READ]
+        ) is False, "GET /servers/{id}/sse should NOT accept servers.read"
 
         # POST /servers/{id}/message requires servers.use (access endpoint)
-        assert middleware._check_permission_restrictions("/servers/srv-123/message", "POST", [Permissions.SERVERS_USE]) is True, "POST /servers/{id}/message should require servers.use"
-        assert middleware._check_permission_restrictions("/servers/srv-123/message", "POST", [Permissions.SERVERS_READ]) is False, "POST /servers/{id}/message should NOT accept servers.read"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/message", "POST", [Permissions.SERVERS_USE]
+        ) is True, "POST /servers/{id}/message should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/v1/servers/srv-123/message", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/message should NOT accept servers.read"
 
     @pytest.mark.asyncio
     async def test_permission_pattern_consistency(self, middleware):
@@ -1251,11 +1319,11 @@ class TestTokenScopingMiddleware:
 
         # Test that exact patterns still work correctly
         exact_matches = [
-            ("/tools", "GET", [Permissions.TOOLS_READ], True),
-            ("/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
-            ("/resources", "GET", [Permissions.RESOURCES_READ], True),
-            ("/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
-            ("/servers", "POST", [Permissions.SERVERS_CREATE], True),
+            ("/v1/tools", "GET", [Permissions.TOOLS_READ], True),
+            ("/v1/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
+            ("/v1/resources", "GET", [Permissions.RESOURCES_READ], True),
+            ("/v1/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
+            ("/v1/servers", "POST", [Permissions.SERVERS_CREATE], True),
         ]
 
         for path, method, permissions, expected in exact_matches:
@@ -1267,9 +1335,9 @@ class TestTokenScopingMiddleware:
         """Test that server ID extraction is precise and doesn't overmatch."""
         # Test valid server ID extraction
         patterns_to_test = [
-            ("/servers/srv-123", "srv-123", True),
-            ("/servers/srv-123/", "srv-123", True),
-            ("/servers/srv-123/tools", "srv-123", True),
+            ("/v1/servers/srv-123", "srv-123", True),
+            ("/v1/servers/srv-123/", "srv-123", True),
+            ("/v1/servers/srv-123/tools", "srv-123", True),
             ("/sse/websocket-server", "websocket-server", True),
             ("/sse/websocket-server?param=value", "websocket-server", True),
             ("/ws/ws-server-1", "ws-server-1", True),
@@ -1282,7 +1350,7 @@ class TestTokenScopingMiddleware:
 
         # Test cases that should NOT match (different server IDs)
         negative_cases = [
-            ("/servers/srv-123", "srv-456", False),
+            ("/v1/servers/srv-123", "srv-456", False),
             ("/sse/websocket-server", "different-server", False),
             ("/ws/ws-server-1", "ws-server-2", False),
         ]
@@ -1295,48 +1363,48 @@ class TestTokenScopingMiddleware:
     async def test_gateway_permission_patterns(self, middleware):
         """Test that gateway permission patterns correctly distinguish create vs update."""
         # Test GET /gateways requires GATEWAYS_READ
-        assert middleware._check_permission_restrictions("/gateways", "GET", [Permissions.GATEWAYS_READ]) is True
-        assert middleware._check_permission_restrictions("/gateways/", "GET", [Permissions.GATEWAYS_READ]) is True
-        assert middleware._check_permission_restrictions("/gateways/gw-123", "GET", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways", "GET", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/", "GET", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123", "GET", [Permissions.GATEWAYS_READ]) is True
 
         # Test POST /gateways (exact) requires GATEWAYS_CREATE
-        assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/gateways/", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/", "POST", [Permissions.GATEWAYS_CREATE]) is True
 
         # Test POST to sub-resources requires GATEWAYS_UPDATE (not CREATE)
-        assert middleware._check_permission_restrictions("/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_UPDATE]) is True
-        assert middleware._check_permission_restrictions("/gateways/gw-123/toggle", "POST", [Permissions.GATEWAYS_UPDATE]) is True
-        assert middleware._check_permission_restrictions("/gateways/gw-123/tools/refresh", "POST", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123/toggle", "POST", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123/tools/refresh", "POST", [Permissions.GATEWAYS_UPDATE]) is True
 
         # Test that CREATE permission is NOT sufficient for sub-resource POSTs
-        assert middleware._check_permission_restrictions("/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_CREATE]) is False
-        assert middleware._check_permission_restrictions("/gateways/gw-123/toggle", "POST", [Permissions.GATEWAYS_CREATE]) is False
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_CREATE]) is False
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123/toggle", "POST", [Permissions.GATEWAYS_CREATE]) is False
 
         # Test PUT/DELETE require UPDATE/DELETE respectively
-        assert middleware._check_permission_restrictions("/gateways/gw-123", "PUT", [Permissions.GATEWAYS_UPDATE]) is True
-        assert middleware._check_permission_restrictions("/gateways/gw-123", "DELETE", [Permissions.GATEWAYS_DELETE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123", "PUT", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/v1/gateways/gw-123", "DELETE", [Permissions.GATEWAYS_DELETE]) is True
 
         # Test wrong permissions are rejected
-        assert middleware._check_permission_restrictions("/gateways", "GET", [Permissions.TOOLS_READ]) is False
-        assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/gateways", "GET", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/gateways", "POST", [Permissions.GATEWAYS_READ]) is False
 
     @pytest.mark.asyncio
     async def test_token_permission_patterns(self, middleware):
         """Test that token endpoints enforce the expected token permissions."""
-        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_READ]) is True
-        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_CREATE]) is False
+        assert middleware._check_permission_restrictions("/v1/tokens", "GET", [Permissions.TOKENS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/tokens", "GET", [Permissions.TOKENS_CREATE]) is False
 
-        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/tokens", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/tokens", "POST", [Permissions.TOKENS_READ]) is False
 
-        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_CREATE]) is True
-        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/tokens/teams/team-123", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/v1/tokens/teams/team-123", "POST", [Permissions.TOKENS_READ]) is False
 
-        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_UPDATE]) is True
-        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/tokens/token-123", "PUT", [Permissions.TOKENS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/v1/tokens/token-123", "PUT", [Permissions.TOKENS_READ]) is False
 
-        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_REVOKE]) is True
-        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/v1/tokens/token-123", "DELETE", [Permissions.TOKENS_REVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
 
     @pytest.mark.asyncio
     async def test_private_visibility_requires_owner(self, middleware):
@@ -1354,7 +1422,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Owner can access their private resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["aaaa-bbbb-cccc"],
             db=mock_db,
             _user_email="owner@example.com",
@@ -1363,7 +1431,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Non-owner in same team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["aaaa-bbbb-cccc"],
             db=mock_db,
             _user_email="teammate@example.com",
@@ -1372,7 +1440,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Non-owner in different team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["dddd-eeee-ffff"],
             db=mock_db,
             _user_email="outsider@example.com",
@@ -1393,7 +1461,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Team member (non-owner) can access team resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["aaaa-bbbb-cccc"],
             db=mock_db,
             _user_email="teammate@example.com",
@@ -1402,7 +1470,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Non-team member cannot access team resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["dddd-eeee-ffff"],
             db=mock_db,
             _user_email="outsider@example.com",
@@ -1423,7 +1491,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Any authenticated user can access public resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=["dddd-eeee-ffff"],
             db=mock_db,
             _user_email="anyone@example.com",
@@ -1432,7 +1500,7 @@ class TestTokenScopingMiddleware:
 
         # Test: Public-only token (empty teams) can access public resource
         result = middleware._check_resource_team_ownership(
-            request_path="/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            request_path="/v1/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
             token_teams=[],
             db=mock_db,
             _user_email="public-user@example.com",
@@ -1442,7 +1510,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_bypass_skips_team_validation(self, middleware, mock_request):
         """Admin tokens without teams should bypass team validation."""
-        mock_request.url.path = "/servers/server-123"
+        mock_request.url.path = "/v1/servers/server-123"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1461,7 +1529,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_bypass_requires_explicit_null_teams(self, middleware, mock_request):
         """Admin bypass should only activate when teams is explicitly null and is_admin is true."""
-        mock_request.url.path = "/tools"
+        mock_request.url.path = "/v1/tools"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1481,7 +1549,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_session_token_resolves_teams_from_db(self, middleware, mock_request, monkeypatch):
         """Session tokens should resolve teams via _resolve_teams_from_db and use shared DB for validation."""
-        mock_request.url.path = "/tools"
+        mock_request.url.path = "/v1/tools"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1508,7 +1576,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_team_scoped_token_uses_shared_db(self, middleware, mock_request, monkeypatch):
         """Team-scoped tokens should validate membership and resource ownership with shared DB session."""
-        mock_request.url.path = "/servers/server-123"
+        mock_request.url.path = "/v1/servers/server-123"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1536,7 +1604,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_public_only_token_rejected_when_membership_invalid(self, middleware, mock_request):
         """Public-only tokens should be rejected when membership check fails."""
-        mock_request.url.path = "/servers/server-123"
+        mock_request.url.path = "/v1/servers/server-123"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1554,7 +1622,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_ip_restrictions_block(self, middleware, mock_request):
         """IP restrictions should block disallowed requests."""
-        mock_request.url.path = "/tools"
+        mock_request.url.path = "/v1/tools"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1574,7 +1642,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_time_restrictions_block(self, middleware, mock_request):
         """Time restrictions should block disallowed requests."""
-        mock_request.url.path = "/tools"
+        mock_request.url.path = "/v1/tools"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -1602,18 +1670,18 @@ def test_check_resource_team_ownership_prompt_and_gateway():
     prompt.visibility = "team"
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
 
     # Gateway: private visibility with owner match should allow
     gateway = MagicMock()
     gateway.visibility = "private"
     gateway.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
 
     # Missing resources must fail closed
     db.execute.return_value.scalar_one_or_none.return_value = None
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_resource():
@@ -1626,7 +1694,7 @@ def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_reso
     resource.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = resource
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is True
 
 
 def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypatch):
@@ -1643,7 +1711,7 @@ def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypat
 
     monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is True
     db.commit.assert_called_once()
     db.close.assert_called_once()
 
@@ -1658,7 +1726,7 @@ def test_check_resource_team_ownership_public_only_token_denied_for_team_prompt(
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
@@ -1671,7 +1739,7 @@ def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_gateway_team_allows_matching_team():
@@ -1684,7 +1752,7 @@ def test_check_resource_team_ownership_gateway_team_allows_matching_team():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
 
 
 def test_check_resource_team_ownership_gateway_private_denies_non_owner():
@@ -1698,7 +1766,7 @@ def test_check_resource_team_ownership_gateway_private_denies_non_owner():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
 
 
 def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):
@@ -1725,12 +1793,12 @@ def test_check_resource_team_ownership_tool_private_and_unknown():
     tool.visibility = "private"
     tool.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = tool
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
 
     # Unknown visibility denies
     tool.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is False
 
 
 def test_check_resource_team_ownership_resource_branches():
@@ -1741,34 +1809,34 @@ def test_check_resource_team_ownership_resource_branches():
     resource = MagicMock()
     resource.visibility = "public"
     db.execute.return_value.scalar_one_or_none.return_value = resource
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
 
     # Public-only token denied for team resource
     resource.visibility = "team"
     resource.team_id = "team-1"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
 
     # Team mismatch denied
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is False
 
     # Private resource denied for non-owner
     resource.visibility = "private"
     resource.owner_email = "owner@example.com"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
 
     # Unknown visibility denies
     resource.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_exception_returns_false():
     middleware = TokenScopingMiddleware()
     db = MagicMock()
     db.execute.side_effect = RuntimeError("boom")
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/v1/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
-def _make_request(path: str = "/servers/server-123") -> MagicMock:
+def _make_request(path: str = "/v1/servers/server-123") -> MagicMock:
     request = MagicMock(spec=Request)
     request.url.path = path
     request.method = "GET"
@@ -1850,67 +1918,39 @@ class TestRuntimeMcpTransportCompensation:
 
     # --- Per-prefix verification across all transport endpoints ---
 
-    @pytest.mark.parametrize(
-        "mcp_permission",
-        [
-            "tools.read",
-            "tools.execute",
-            "tools.create",
-            "tools.update",
-            "tools.delete",
-            "resources.read",
-            "resources.create",
-            "resources.update",
-            "resources.delete",
-            "prompts.read",
-            "prompts.create",
-            "prompts.update",
-            "prompts.delete",
-        ],
-    )
-    @pytest.mark.parametrize(
-        "method,path",
-        [
-            ("POST", "/rpc"),
-            ("GET", "/sse"),
-            ("POST", "/mcp"),
-            ("GET", "/mcp"),
-            ("DELETE", "/mcp"),
-            ("GET", "/servers/abc123/sse"),
-            ("POST", "/servers/abc123/message"),
-            ("POST", "/servers/abc123/mcp"),
-        ],
-    )
+    @pytest.mark.parametrize("mcp_permission", [
+        "tools.read", "tools.execute", "tools.create", "tools.update", "tools.delete",
+        "resources.read", "resources.create", "resources.update", "resources.delete",
+        "prompts.read", "prompts.create", "prompts.update", "prompts.delete",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("GET", "/mcp"),
+        ("DELETE", "/mcp"),
+        ("GET", "/v1/servers/abc123/sse"),
+        ("POST", "/v1/servers/abc123/message"),
+        ("POST", "/v1/servers/abc123/mcp"),
+    ])
     def test_mcp_permission_grants_implicit_transport_access(self, middleware, mcp_permission, method, path):
         """Any MCP method permission should grant implicit servers.use on all transport endpoints."""
         assert middleware._check_permission_restrictions(path, method, [mcp_permission]) is True, f"{method} {path} should be allowed with MCP permission '{mcp_permission}'"
 
     # --- Non-MCP permissions must NOT grant implicit transport access ---
 
-    @pytest.mark.parametrize(
-        "non_mcp_permission",
-        [
-            "gateways.read",
-            "gateways.create",
-            "servers.read",
-            "servers.create",
-            "servers.update",
-            "servers.delete",
-            "admin.user_management",
-            "admin.system_config",
-            "llm.read",
-            "llm.invoke",
-        ],
-    )
-    @pytest.mark.parametrize(
-        "method,path",
-        [
-            ("POST", "/rpc"),
-            ("GET", "/sse"),
-            ("POST", "/mcp"),
-            ("POST", "/servers/abc123/mcp"),
-        ],
-    )
+    @pytest.mark.parametrize("non_mcp_permission", [
+        "gateways.read", "gateways.create",
+        "servers.read", "servers.create", "servers.update", "servers.delete",
+        "admin.user_management", "admin.system_config",
+        "llm.read", "llm.invoke",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("POST", "/v1/servers/abc123/mcp"),
+    ])
     def test_non_mcp_permission_denied_on_transport(self, middleware, non_mcp_permission, method, path):
         """Non-MCP permissions alone must NOT grant transport access."""
         assert middleware._check_permission_restrictions(path, method, [non_mcp_permission]) is False, f"{method} {path} should be denied with only non-MCP permission '{non_mcp_permission}'"
@@ -1950,9 +1990,9 @@ class TestRuntimeMcpTransportCompensation:
     def test_mcp_permissions_do_not_affect_non_transport_endpoints(self, middleware):
         """MCP method permissions should not grant access to non-transport endpoints like POST /tools."""
         # tools.read should not grant tools.create access
-        assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
+        assert middleware._check_permission_restrictions("/v1/tools", "POST", ["tools.read"]) is False
         # resources.read should not grant resources.create access
-        assert middleware._check_permission_restrictions("/resources", "POST", ["resources.read"]) is False
+        assert middleware._check_permission_restrictions("/v1/resources", "POST", ["resources.read"]) is False
 
     # --- Reproduces the original bug scenario ---
 

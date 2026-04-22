@@ -1472,7 +1472,7 @@ async def test_require_admin_auth_email_auth_fallback_redirects_for_htmx(monkeyp
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"].endswith("/admin/login")
+    assert exc.value.headers["Location"].endswith("/v1/admin/login")
 
 
 @pytest.mark.asyncio

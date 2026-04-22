@@ -132,7 +132,7 @@ async def test_shared_session_rollback_on_auth_logging_failure():
         return Response("ok")
 
     request = MagicMock()
-    request.url.path = "/servers"
+    request.url.path = "/v1/servers"
     request.cookies = {"jwt_token": "valid_token"}
     request.headers = {}
     request.client = MagicMock()

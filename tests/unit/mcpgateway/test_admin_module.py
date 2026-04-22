@@ -38,7 +38,7 @@ def _make_id_token(exp_offset: int = 3600) -> str:
     return f"{header}.{payload}.sig"
 
 
-def _make_request(root_path: str = "/admin") -> MagicMock:
+def _make_request(root_path: str = "/v1/admin") -> MagicMock:
     request = MagicMock(spec=Request)
     request.scope = {"root_path": root_path}
     request.headers = {}
@@ -567,7 +567,7 @@ async def test_admin_logout_keycloak_provider_from_nested_user_payload(monkeypat
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "/protocol/openid-connect/logout" in response.headers["location"]
+    assert "/v1/protocol/openid-connect/logout" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1542,7 +1542,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
     pagination.model_dump.return_value = {"page": 1, "per_page": 10}
 
     links = MagicMock()
-    links.model_dump.return_value = {"self": "/admin/servers?page=1&per_page=10"}
+    links.model_dump.return_value = {"self": "/v1/admin/servers?page=1&per_page=10"}
 
     async def _fake_list_servers(**_kwargs):
         return {"data": [mock_server], "pagination": pagination, "links": links}
@@ -1552,7 +1552,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
     result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
     assert result["data"] == [{"id": "server-1"}]
     assert result["pagination"] == {"page": 1, "per_page": 10}
-    assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}
+    assert result["links"] == {"self": "/v1/admin/servers?page=1&per_page=10"}
     mock_db.commit.assert_called_once()
 
 
@@ -1606,7 +1606,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
         pagination = MagicMock()
         pagination.model_dump.return_value = {"page": 1}
         links = MagicMock()
-        links.model_dump.return_value = {"self": "/admin/servers/partial?page=1"}
+        links.model_dump.return_value = {"self": "/v1/admin/servers/partial?page=1"}
         return {"data": [MagicMock()], "pagination": pagination, "links": links}
 
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db))

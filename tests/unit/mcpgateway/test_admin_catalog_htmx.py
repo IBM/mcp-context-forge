@@ -130,7 +130,7 @@ def test_register_catalog_server_htmx_success(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/test-server/register",
+            "/v1/admin/mcp-registry/test-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -157,7 +157,7 @@ def test_register_catalog_server_htmx_oauth(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/oauth-server/register",
+            "/v1/admin/mcp-registry/oauth-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -185,7 +185,7 @@ def test_register_catalog_server_htmx_error(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/failed-server/register",
+            "/v1/admin/mcp-registry/failed-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -210,7 +210,7 @@ def test_register_catalog_server_json_response(client):
     with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
 
-        response = client.post("/admin/mcp-registry/test-server/register")
+        response = client.post("/v1/admin/mcp-registry/test-server/register")
 
     assert response.status_code == 200
     data = response.json()
@@ -234,7 +234,7 @@ def test_register_catalog_server_htmx_with_api_key(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/api-server/register",
+            "/v1/admin/mcp-registry/api-server/register",
             headers={"HX-Request": "true"},
             json={"server_id": "api-server", "name": "API Server", "api_key": "secret-key"},
         )
@@ -260,7 +260,7 @@ def test_register_catalog_server_htmx_error_escaping(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/failed-server/register",
+            "/v1/admin/mcp-registry/failed-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -285,7 +285,7 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
         mock_settings.app_root_path = "/api"
 
         response = client.post(
-            "/admin/mcp-registry/timeout-server/register",
+            "/v1/admin/mcp-registry/timeout-server/register",
             headers={"HX-Request": "true"},
         )
 

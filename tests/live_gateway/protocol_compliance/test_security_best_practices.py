@@ -124,7 +124,7 @@ def test_admin_login_open_redirect_negative(gateway_http_client: httpx.Client) -
     redirect target. Skips if the endpoint doesn't exist on this deploy.
     """
     # Try a handful of common login-adjacent paths; if none exist, skip.
-    for path in ("/admin/login", "/login", "/admin"):
+    for path in ("/v1/admin/login", "/login", "/v1/admin"):
         resp = gateway_http_client.get(
             path,
             params={"next": "https://attacker.example.com/"},

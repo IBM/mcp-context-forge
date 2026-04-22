@@ -31,16 +31,16 @@ logger = logging.getLogger(__name__)
 # Endpoints to verify: (endpoint, entity_name, items_key)
 # items_key: key in the response dict containing items, or None for plain-list endpoints
 VERIFY_ENDPOINTS = [
-    ("/auth/email/admin/users", "users", None),
-    ("/teams/", "teams", "teams"),
-    ("/tools", "tools", "tools"),
-    ("/resources", "resources", "resources"),
-    ("/prompts", "prompts", "prompts"),
-    ("/servers", "servers", "servers"),
-    ("/gateways", "gateways", "gateways"),
-    ("/a2a", "a2a_agents", "agents"),
-    ("/tokens", "tokens", "tokens"),
-    ("/rbac/roles", "roles", None),
+    ("/v1/auth/email/admin/users", "users", None),
+    ("/v1/teams/", "teams", "teams"),
+    ("/v1/tools", "tools", "tools"),
+    ("/v1/resources", "resources", "resources"),
+    ("/v1/prompts", "prompts", "prompts"),
+    ("/v1/servers", "servers", "servers"),
+    ("/v1/gateways", "gateways", "gateways"),
+    ("/v1/a2a", "a2a_agents", "agents"),
+    ("/v1/tokens", "tokens", "tokens"),
+    ("/v1/rbac/roles", "roles", None),
 ]
 
 
@@ -120,7 +120,7 @@ async def verify_entities(base_url: str, email_domain: str = "loadtest.example.c
         # Verify login works for a sample user
         try:
             login_resp = await client.post(
-                "/auth/email/login",
+                "/v1/auth/email/login",
                 headers={"Content-Type": "application/json"},
                 json={"email": f"user1@{email_domain}", "password": "LoadTest1234!"},
             )

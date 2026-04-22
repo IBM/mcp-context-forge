@@ -810,7 +810,7 @@ class TestMetricsSetup:
 
         metrics_module.setup_metrics(app)
 
-        route = next(r for r in app.routes if getattr(r, "path", "") == "/metrics/prometheus")
+        route = next(r for r in app.routes if getattr(r, "path", "") == "/v1/metrics/prometheus")
         response = await route.endpoint()
 
         assert response.status_code == 503

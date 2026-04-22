@@ -57,7 +57,7 @@ def _get_admin_frame(page: Page):
     # Wait until the iframe has navigated to /admin/
     for _ in range(30):
         for frame in page.frames:
-            if "/admin" in frame.url:
+            if "/v1/admin" in frame.url:
                 return frame
         page.wait_for_timeout(500)
     # Fallback: return the last frame (the iframe)

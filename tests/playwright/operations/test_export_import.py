@@ -32,28 +32,28 @@ class TestExport:
 
     def test_full_export(self, admin_api: APIRequestContext):
         """Admin can perform a full export."""
-        resp = admin_api.get("/export")
+        resp = admin_api.get("/v1/export")
         assert resp.status == 200
         data = resp.json()
         assert "entities" in data
 
     def test_export_with_type_filter(self, admin_api: APIRequestContext):
         """Admin can export specific entity types."""
-        resp = admin_api.get("/export?types=tools,servers")
+        resp = admin_api.get("/v1/export?types=tools,servers")
         assert resp.status == 200
         data = resp.json()
         assert "entities" in data
 
     def test_export_includes_inactive(self, admin_api: APIRequestContext):
         """Admin can export including inactive entities."""
-        resp = admin_api.get("/export?include_inactive=true")
+        resp = admin_api.get("/v1/export?include_inactive=true")
         assert resp.status == 200
 
     def test_selective_export(self, admin_api: APIRequestContext):
         """Admin can perform a selective export by entity IDs."""
         name = f"export-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -67,14 +67,14 @@ class TestExport:
         )
         tool = create_resp.json()
 
-        resp = admin_api.post("/export/selective", data={"tools": [tool["id"]]})
+        resp = admin_api.post("/v1/export/selective", data={"tools": [tool["id"]]})
         assert resp.status == 200
 
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_non_admin_cannot_export(self, non_admin_api: APIRequestContext):
         """Non-admin user is denied export."""
-        resp = non_admin_api.get("/export")
+        resp = non_admin_api.get("/v1/export")
         assert resp.status in (401, 403), f"Non-admin export should be denied, got {resp.status}"
 
 
@@ -83,33 +83,33 @@ class TestImport:
 
     def test_dry_run_import(self, admin_api: APIRequestContext):
         """Admin can dry-run an import to preview changes."""
-        export_resp = admin_api.get("/export?types=servers")
+        export_resp = admin_api.get("/v1/export?types=servers")
         if export_resp.status != 200:
             pytest.skip("Export not available")
         export_data = export_resp.json()
 
         # All import parameters belong in the JSON body
-        resp = admin_api.post("/import", data={"import_data": export_data, "dry_run": True, "conflict_strategy": "skip"})
+        resp = admin_api.post("/v1/import", data={"import_data": export_data, "dry_run": True, "conflict_strategy": "skip"})
         assert resp.status == 200
         result = resp.json()
         assert "status" in result or "results" in result
 
     def test_import_with_skip_strategy(self, admin_api: APIRequestContext):
         """Admin can import with skip conflict strategy."""
-        export_resp = admin_api.get("/export?types=servers")
+        export_resp = admin_api.get("/v1/export?types=servers")
         if export_resp.status != 200:
             pytest.skip("Export not available")
         export_data = export_resp.json()
 
-        resp = admin_api.post("/import", data={"import_data": export_data, "conflict_strategy": "skip"})
+        resp = admin_api.post("/v1/import", data={"import_data": export_data, "conflict_strategy": "skip"})
         assert resp.status == 200
 
     def test_import_status_list(self, admin_api: APIRequestContext):
         """Admin can list import statuses."""
-        resp = admin_api.get("/import/status")
+        resp = admin_api.get("/v1/import/status")
         assert resp.status == 200
 
     def test_non_admin_cannot_import(self, non_admin_api: APIRequestContext):
         """Non-admin user is denied import."""
-        resp = non_admin_api.post("/import", data={})
+        resp = non_admin_api.post("/v1/import", data={})
         assert resp.status in (401, 403, 422), f"Non-admin import should be denied, got {resp.status}"

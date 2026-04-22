@@ -77,6 +77,6 @@ class ResourcePopulator(BasePopulator):
                     }
                 )
 
-        result = await self._batch_create(payloads, "/resources", id_field="id")
+        result = await self._batch_create(payloads, "/v1/resources", id_field="id")
         self.existing_data["resource_ids"] = result["ids"]
         return result

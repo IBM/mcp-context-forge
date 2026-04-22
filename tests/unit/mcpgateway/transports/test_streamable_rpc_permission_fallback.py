@@ -168,7 +168,7 @@ async def test_servers_use_check_passes_check_any_team_for_session_token():
             token = user_context_var.set(session_user_ctx)
             try:
                 with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", mock_perm):
-                    path = "/servers/abc123def456/mcp"
+                    path = "/v1/servers/abc123def456/mcp"
                     scope = {
                         "type": "http",
                         "method": "POST",

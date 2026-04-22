@@ -52,21 +52,21 @@ class TestTokenLifecycle:
     def lifecycle_token(self, admin_api: APIRequestContext):
         """Create a token for lifecycle tests, cleanup after class."""
         token_name = f"lifecycle-token-{uuid.uuid4().hex[:8]}"
-        resp = admin_api.post("/tokens", data={"name": token_name, "expires_in_days": 30})
+        resp = admin_api.post("/v1/tokens", data={"name": token_name, "expires_in_days": 30})
         assert resp.status in (200, 201), f"Failed to create token: {resp.status} {resp.text()}"
         data = resp.json()
         token_id = _get_token_id(data)
         yield {"id": token_id, "name": token_name, "raw": data}
         try:
             if token_id:
-                admin_api.delete(f"/tokens/{token_id}")
+                admin_api.delete(f"/v1/tokens/{token_id}")
         except Exception:
             pass
 
     def test_create_token(self, admin_api: APIRequestContext):
         """Admin can create an API token."""
         token_name = f"create-token-{uuid.uuid4().hex[:8]}"
-        resp = admin_api.post("/tokens", data={"name": token_name, "expires_in_days": 7})
+        resp = admin_api.post("/v1/tokens", data={"name": token_name, "expires_in_days": 7})
         assert resp.status in (200, 201)
         data = resp.json()
         assert _get_token_name(data) == token_name
@@ -74,11 +74,11 @@ class TestTokenLifecycle:
         # Cleanup
         token_id = _get_token_id(data)
         if token_id:
-            admin_api.delete(f"/tokens/{token_id}")
+            admin_api.delete(f"/v1/tokens/{token_id}")
 
     def test_list_tokens(self, admin_api: APIRequestContext, lifecycle_token: dict):
         """Created token appears in token list."""
-        resp = admin_api.get("/tokens")
+        resp = admin_api.get("/v1/tokens")
         assert resp.status == 200
         data = resp.json()
         # Response format: {"tokens": [...], "total": N, "limit": N, "offset": N}
@@ -88,13 +88,13 @@ class TestTokenLifecycle:
 
     def test_get_token_details(self, admin_api: APIRequestContext, lifecycle_token: dict):
         """Get specific token details by ID."""
-        resp = admin_api.get(f"/tokens/{lifecycle_token['id']}")
+        resp = admin_api.get(f"/v1/tokens/{lifecycle_token['id']}")
         assert resp.status == 200
 
     def test_update_token(self, admin_api: APIRequestContext, lifecycle_token: dict):
         """Admin can update a token's name."""
         new_name = f"updated-{uuid.uuid4().hex[:8]}"
-        resp = admin_api.put(f"/tokens/{lifecycle_token['id']}", data={"name": new_name})
+        resp = admin_api.put(f"/v1/tokens/{lifecycle_token['id']}", data={"name": new_name})
         assert resp.status == 200
         updated = resp.json()
         assert _get_token_name(updated) == new_name
@@ -102,15 +102,15 @@ class TestTokenLifecycle:
     def test_revoke_token(self, admin_api: APIRequestContext):
         """Admin can revoke a token."""
         token_name = f"revoke-{uuid.uuid4().hex[:8]}"
-        create_resp = admin_api.post("/tokens", data={"name": token_name, "expires_in_days": 1})
+        create_resp = admin_api.post("/v1/tokens", data={"name": token_name, "expires_in_days": 1})
         assert create_resp.status in (200, 201)
         token_id = _get_token_id(create_resp.json())
-        resp = admin_api.delete(f"/tokens/{token_id}")
+        resp = admin_api.delete(f"/v1/tokens/{token_id}")
         assert resp.status in (200, 204)
 
     def test_admin_list_all_tokens(self, admin_api: APIRequestContext):
         """Admin can list all tokens across all users."""
-        resp = admin_api.get("/tokens/admin/all")
+        resp = admin_api.get("/v1/tokens/admin/all")
         assert resp.status == 200
         data = resp.json()
         tokens = data.get("tokens", data if isinstance(data, list) else [])
@@ -137,7 +137,7 @@ class TestTokenRevokeUI:
     def test_revoke_button_triggers_correct_api_call(self, admin_api: APIRequestContext, tokens_page):
         """Revoke button in UI must send DELETE /tokens/{token_id} (not /admin/tokens/)."""
         token_name = f"ui-revoke-{uuid.uuid4().hex[:8]}"
-        create_resp = admin_api.post("/tokens", data={"name": token_name, "expires_in_days": 1})
+        create_resp = admin_api.post("/v1/tokens", data={"name": token_name, "expires_in_days": 1})
         assert create_resp.status in (200, 201), f"Setup failed: {create_resp.status}"
         token_id = _get_token_id(create_resp.json())
 
@@ -153,7 +153,7 @@ class TestTokenRevokeUI:
 
             # Click revoke via UI button directly — bypasses the fallback path
             with tokens_page.page.expect_response(
-                lambda r: f"/tokens/{token_id}" in r.url and r.request.method == "DELETE",
+                lambda r: f"/v1/tokens/{token_id}" in r.url and r.request.method == "DELETE",
                 timeout=10000,
             ) as response_info:
                 tokens_page.page.once("dialog", lambda dialog: dialog.accept())
@@ -164,19 +164,19 @@ class TestTokenRevokeUI:
         finally:
             # Cleanup: ensure token is revoked even if UI test fails
             try:
-                admin_api.delete(f"/tokens/{token_id}")
+                admin_api.delete(f"/v1/tokens/{token_id}")
             except Exception:
                 pass
 
     def test_revoke_button_not_shown_for_revoked_token(self, admin_api: APIRequestContext, tokens_page):
         """Already-revoked tokens must not show a revoke button even when listed."""
         token_name = f"already-revoked-{uuid.uuid4().hex[:8]}"
-        create_resp = admin_api.post("/tokens", data={"name": token_name, "expires_in_days": 1})
+        create_resp = admin_api.post("/v1/tokens", data={"name": token_name, "expires_in_days": 1})
         assert create_resp.status in (200, 201)
         token_id = _get_token_id(create_resp.json())
 
         # Revoke via API first
-        revoke_resp = admin_api.delete(f"/tokens/{token_id}")
+        revoke_resp = admin_api.delete(f"/v1/tokens/{token_id}")
         assert revoke_resp.status in (200, 204)
 
         # Navigate to tokens tab with include_inactive=true so revoked token IS listed
@@ -195,7 +195,7 @@ class TestTokenRevokeUI:
             assert revoke_btn.count() == 0, "Revoke button should be hidden for already-revoked tokens"
         else:
             # If include_inactive toggle is not available, verify via API that token is truly revoked
-            resp = admin_api.get(f"/tokens/{token_id}")
+            resp = admin_api.get(f"/v1/tokens/{token_id}")
             if resp.status == 200:
                 token_data = resp.json()
                 token_obj = token_data.get("token", token_data)
@@ -207,5 +207,5 @@ class TestTokenPermissions:
 
     def test_non_admin_denied_admin_token_list(self, non_admin_api: APIRequestContext):
         """Non-admin user cannot list all tokens."""
-        resp = non_admin_api.get("/tokens/admin/all")
+        resp = non_admin_api.get("/v1/tokens/admin/all")
         assert resp.status in (401, 403), f"Non-admin should be denied admin token list, got {resp.status}"

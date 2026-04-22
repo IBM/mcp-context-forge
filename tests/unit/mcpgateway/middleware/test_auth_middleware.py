@@ -20,7 +20,7 @@ async def test_health_and_static_paths_skipped(monkeypatch):
     middleware = AuthContextMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("ok"))
 
-    for path in ["/health", "/healthz", "/ready", "/metrics", "/static/admin.css"]:
+    for path in ["/health", "/healthz", "/ready", "/v1/metrics", "/static/admin.css"]:
         request = MagicMock(spec=Request)
         request.url.path = path
         response = await middleware.dispatch(request, call_next)
@@ -686,7 +686,7 @@ async def test_http_401_browser_request_continues_for_redirect():
     middleware = AuthContextMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("login page", status_code=200))
     request = MagicMock(spec=Request)
-    request.url.path = "/admin/overview/partial"
+    request.url.path = "/v1/admin/overview/partial"
     request.cookies = {"jwt_token": "stale_cookie"}
     request.headers = {"accept": "text/html", "hx-request": "true"}
     request.client = MagicMock()
@@ -864,7 +864,7 @@ async def test_http_401_referer_admin_continues_for_redirect():
     middleware = AuthContextMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("login page", status_code=200))
     request = MagicMock(spec=Request)
-    request.url.path = "/admin/tools/partial"
+    request.url.path = "/v1/admin/tools/partial"
     request.cookies = {"jwt_token": "stale_cookie"}
     request.headers = {"accept": "*/*", "referer": "http://localhost:8080/admin/"}
     request.client = MagicMock()

@@ -131,7 +131,7 @@ def temp_user(admin_api: APIRequestContext):
     """Create a temporary test user, yield email, then delete."""
     email = f"test-{uuid.uuid4().hex[:8]}@example.com"
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "Temp Test User"},
     )
     if resp.status == 401:
@@ -140,12 +140,12 @@ def temp_user(admin_api: APIRequestContext):
 
         time.sleep(0.5)
         resp = admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Temp Test User"},
         )
     assert resp.status in (200, 201), f"Failed to create temp user: {resp.status}"
     yield email
     try:
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
     except Exception:
         pass

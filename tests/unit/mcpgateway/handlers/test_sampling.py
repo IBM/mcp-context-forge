@@ -186,7 +186,7 @@ async def test_auth_all_ok(monkeypatch):
         messages.append(msg)
 
     scope = _make_scope(
-        "/servers/1/mcp",
+        "/v1/servers/1/mcp",
         headers=[(b"authorization", b"Bearer good-token")],
     )
 
@@ -214,7 +214,7 @@ async def test_auth_failure(monkeypatch):
         sent.append(msg)
 
     scope = _make_scope(
-        "/servers/1/mcp",
+        "/v1/servers/1/mcp",
         headers=[(b"authorization", b"Bearer bad")],
     )
 
@@ -240,7 +240,7 @@ async def test_auth_valid_token(monkeypatch):
     async def send(msg):
         messages.append(msg)
 
-    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+    scope = _make_scope("/v1/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
     assert await streamable_http_auth(scope, None, send) is True
     assert messages == []  # No response sent on success
 
@@ -263,7 +263,7 @@ async def test_auth_invalid_token_raises(monkeypatch):
     async def send(msg):
         sent.append(msg)
 
-    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer bad-token")])
+    scope = _make_scope("/v1/servers/1/mcp", headers=[(b"authorization", b"Bearer bad-token")])
     result = await streamable_http_auth(scope, None, send)
     assert result is False
     # Expect an HTTP 401 response to be sent

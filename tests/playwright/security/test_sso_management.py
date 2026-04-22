@@ -26,7 +26,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
-SSO_ADMIN_PATH = "/auth/sso/admin/providers"
+SSO_ADMIN_PATH = "/v1/auth/sso/admin/providers"
 
 
 def _make_provider_data(provider_id: str | None = None) -> dict:

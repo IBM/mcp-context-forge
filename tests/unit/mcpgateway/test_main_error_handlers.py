@@ -150,7 +150,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 502
             assert "Connection failed" in response.json()["message"]
 
@@ -164,7 +164,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 400
             assert "Unable to process input" in response.json()["message"]
 
@@ -178,7 +178,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
             assert "name already exists" in response.json()["message"]
 
@@ -202,7 +202,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
             assert "already exists" in response.json()["message"]
 
@@ -216,7 +216,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 500
             assert "Error during execution" in response.json()["message"]
 
@@ -232,7 +232,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_register_gateway_unexpected_error(self, test_client, auth_headers):
@@ -245,7 +245,7 @@ class TestGatewayCreateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Test gateway",
             }
-            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            response = test_client.post("/v1/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 500
             assert "Unexpected error" in response.json()["message"]
 
@@ -263,7 +263,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 403
 
     def test_update_gateway_not_found_error(self, test_client, auth_headers):
@@ -276,7 +276,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/nonexistent-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/nonexistent-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 404
 
     def test_update_gateway_connection_error(self, test_client, auth_headers):
@@ -289,7 +289,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 502
             assert "Connection failed" in response.json()["message"]
 
@@ -303,7 +303,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 400
 
     def test_update_gateway_name_conflict_error(self, test_client, auth_headers):
@@ -316,7 +316,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_update_gateway_duplicate_conflict_error(self, test_client, auth_headers):
@@ -339,7 +339,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_update_gateway_runtime_error(self, test_client, auth_headers):
@@ -352,7 +352,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 500
 
     def test_update_gateway_integrity_error(self, test_client, auth_headers):
@@ -366,7 +366,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_update_gateway_unexpected_error(self, test_client, auth_headers):
@@ -379,7 +379,7 @@ class TestGatewayUpdateErrorHandlers:
                 "url": "http://localhost:9000",
                 "description": "Updated gateway",
             }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            response = test_client.put("/v1/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 500
 
 
@@ -406,7 +406,7 @@ class TestA2AAgentErrorHandlers:
                 "description": "Test agent",
                 "url": "http://localhost:9000",
             }
-            response = test_client.put("/a2a/test-agent-id", json=agent_data, headers=auth_headers)
+            response = test_client.put("/v1/a2a/test-agent-id", json=agent_data, headers=auth_headers)
             assert response.status_code == 403
 
     def test_update_a2a_agent_not_found_error(self, test_client, auth_headers):
@@ -422,7 +422,7 @@ class TestA2AAgentErrorHandlers:
                 "description": "Test agent",
                 "url": "http://localhost:9000",
             }
-            response = test_client.put("/a2a/nonexistent-id", json=agent_data, headers=auth_headers)
+            response = test_client.put("/v1/a2a/nonexistent-id", json=agent_data, headers=auth_headers)
             assert response.status_code == 404
 
     def test_update_a2a_agent_name_conflict_error(self, test_client, auth_headers):
@@ -438,7 +438,7 @@ class TestA2AAgentErrorHandlers:
                 "description": "Test agent",
                 "url": "http://localhost:9000",
             }
-            response = test_client.put("/a2a/test-id", json=agent_data, headers=auth_headers)
+            response = test_client.put("/v1/a2a/test-id", json=agent_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_update_a2a_agent_general_error(self, test_client, auth_headers):
@@ -454,7 +454,7 @@ class TestA2AAgentErrorHandlers:
                 "description": "Test agent",
                 "url": "http://localhost:9000",
             }
-            response = test_client.put("/a2a/test-id", json=agent_data, headers=auth_headers)
+            response = test_client.put("/v1/a2a/test-id", json=agent_data, headers=auth_headers)
             assert response.status_code == 400
 
     def test_update_a2a_agent_integrity_error(self, test_client, auth_headers):
@@ -468,7 +468,7 @@ class TestA2AAgentErrorHandlers:
                 "description": "Test agent",
                 "url": "http://localhost:9000",
             }
-            response = test_client.put("/a2a/test-id", json=agent_data, headers=auth_headers)
+            response = test_client.put("/v1/a2a/test-id", json=agent_data, headers=auth_headers)
             assert response.status_code == 409
 
     def test_set_a2a_agent_state_permission_error(self, test_client, auth_headers):
@@ -476,7 +476,7 @@ class TestA2AAgentErrorHandlers:
         with patch("mcpgateway.main.a2a_service") as mock_service:
             mock_service.set_agent_state = AsyncMock(side_effect=PermissionError("Not authorized"))
 
-            response = test_client.post("/a2a/test-id/state?activate=true", headers=auth_headers)
+            response = test_client.post("/v1/a2a/test-id/state?activate=true", headers=auth_headers)
             assert response.status_code == 403
 
     def test_set_a2a_agent_state_not_found_error(self, test_client, auth_headers):
@@ -487,7 +487,7 @@ class TestA2AAgentErrorHandlers:
         with patch("mcpgateway.main.a2a_service") as mock_service:
             mock_service.set_agent_state = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
 
-            response = test_client.post("/a2a/nonexistent-id/state?activate=true", headers=auth_headers)
+            response = test_client.post("/v1/a2a/nonexistent-id/state?activate=true", headers=auth_headers)
             assert response.status_code == 404
 
     def test_set_a2a_agent_state_general_error(self, test_client, auth_headers):
@@ -498,7 +498,7 @@ class TestA2AAgentErrorHandlers:
         with patch("mcpgateway.main.a2a_service") as mock_service:
             mock_service.set_agent_state = AsyncMock(side_effect=A2AAgentError("General error"))
 
-            response = test_client.post("/a2a/test-id/state?activate=false", headers=auth_headers)
+            response = test_client.post("/v1/a2a/test-id/state?activate=false", headers=auth_headers)
             assert response.status_code == 400
 
 
@@ -519,7 +519,7 @@ class TestToolServiceErrorHandlers:
                 "name": "updated-tool",
                 "description": "Updated tool",
             }
-            response = test_client.put("/tools/test-id", json=tool_data, headers=auth_headers)
+            response = test_client.put("/v1/tools/test-id", json=tool_data, headers=auth_headers)
             assert response.status_code == 403
 
     def test_delete_tool_permission_error(self, test_client, auth_headers):
@@ -527,7 +527,7 @@ class TestToolServiceErrorHandlers:
         with patch("mcpgateway.main.tool_service.delete_tool", new_callable=AsyncMock) as mock_delete:
             mock_delete.side_effect = PermissionError("Not authorized")
 
-            response = test_client.delete("/tools/test-id", headers=auth_headers)
+            response = test_client.delete("/v1/tools/test-id", headers=auth_headers)
             assert response.status_code == 403
 
 
@@ -548,7 +548,7 @@ class TestResourceServiceErrorHandlers:
                 "name": "updated-resource",
                 "description": "Updated resource",
             }
-            response = test_client.put("/resources/test-id", json=resource_data, headers=auth_headers)
+            response = test_client.put("/v1/resources/test-id", json=resource_data, headers=auth_headers)
             assert response.status_code == 403
 
 
@@ -569,7 +569,7 @@ class TestPromptServiceErrorHandlers:
                 "name": "updated-prompt",
                 "description": "Updated prompt",
             }
-            response = test_client.put("/prompts/test-id", json=prompt_data, headers=auth_headers)
+            response = test_client.put("/v1/prompts/test-id", json=prompt_data, headers=auth_headers)
             assert response.status_code == 403
 
     def test_create_prompt_template_validation_error(self, test_client, auth_headers):
@@ -645,7 +645,7 @@ class TestServerServiceErrorHandlers:
                 "name": "updated-server",
                 "description": "Updated server",
             }
-            response = test_client.put("/servers/test-id", json=server_data, headers=auth_headers)
+            response = test_client.put("/v1/servers/test-id", json=server_data, headers=auth_headers)
 
 
 def test_content_type_exception_handler():

@@ -311,7 +311,7 @@ class TestGatewayCreation:
             The response object from the POST.
         """
         with gateways_page.page.expect_response(
-            lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as response_info:
             gateways_page.add_gateway_btn.scroll_into_view_if_needed()

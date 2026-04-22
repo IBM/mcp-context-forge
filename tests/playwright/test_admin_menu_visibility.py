@@ -147,7 +147,7 @@ def _inject_jwt_cookie(
 
 def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
     """Navigate to admin and wait for the application shell to load."""
-    page.goto("/admin")
+    page.goto("/v1/admin")
     page.wait_for_load_state("domcontentloaded")
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=timeout)
@@ -188,7 +188,7 @@ def _check_menu_visibility(page: Page, expected_visible: List[str]) -> Dict[str,
 
 def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
     """Resolve a role name to its UUID via the RBAC API."""
-    resp = admin_api.get("/rbac/roles")
+    resp = admin_api.get("/v1/rbac/roles")
     assert resp.status == 200, f"Failed to list RBAC roles: {resp.status} {resp.text()}"
     roles = resp.json()
     for role in roles:
@@ -207,7 +207,7 @@ def _create_user_and_join_team(
     """Create a user, invite them to the team, and assign an RBAC role."""
     # 1. Create user
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={
             "email": email,
             "password": MENU_TEST_PASSWORD,
@@ -224,7 +224,7 @@ def _create_user_and_join_team(
         logger.info("Created user %s", email)
 
     # 2. Invite user to team
-    invite_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
+    invite_resp = admin_api.post(f"/v1/teams/{team_id}/invitations", data={"email": email, "role": "member"})
     if invite_resp.status == 409:
         logger.info("User %s already invited/member, continuing", email)
     else:
@@ -240,7 +240,7 @@ def _create_user_and_join_team(
                 extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
             )
             try:
-                accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+                accept_resp = user_ctx.post(f"/v1/teams/invitations/{invitation_token}/accept")
                 assert accept_resp.status in (200, 201), f"Failed to accept invitation for {email}: {accept_resp.status} {accept_resp.text()}"
                 logger.info("User %s accepted team invitation", email)
             finally:
@@ -249,7 +249,7 @@ def _create_user_and_join_team(
     # 4. Assign RBAC role
     role_uuid = _resolve_role_id(admin_api, rbac_role)
     role_resp = admin_api.post(
-        f"/rbac/users/{email}/roles",
+        f"/v1/rbac/users/{email}/roles",
         data={"role_id": role_uuid, "scope": "team", "scope_id": team_id},
     )
     if role_resp.status == 409:
@@ -280,7 +280,7 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 def menu_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], None, None]:
     """Create a test team for menu visibility tests."""
     resp = admin_api.post(
-        "/teams/",
+        "/v1/teams/",
         data={"name": MENU_TEAM_NAME, "description": "Menu visibility test team", "visibility": "private"},
     )
     assert resp.status in (200, 201), f"Failed to create team: {resp.status} {resp.text()}"
@@ -292,7 +292,7 @@ def menu_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], No
 
     # Cleanup
     try:
-        del_resp = admin_api.delete(f"/teams/{team_id}")
+        del_resp = admin_api.delete(f"/v1/teams/{team_id}")
         logger.info("Deleted menu test team %s: %s", team_id, del_resp.status)
     except Exception as e:
         logger.warning("Failed to cleanup menu test team %s: %s", team_id, e)
@@ -303,7 +303,7 @@ def menu_platform_admin_user(admin_api: APIRequestContext) -> Generator[Dict[str
     """Create a platform admin user."""
     email = MENU_PLATFORM_ADMIN_EMAIL
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={
             "email": email,
             "password": MENU_TEST_PASSWORD,
@@ -323,7 +323,7 @@ def menu_platform_admin_user(admin_api: APIRequestContext) -> Generator[Dict[str
 
     # Cleanup
     try:
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
     except Exception as e:
         logger.warning("Failed to delete platform admin user: %s", e)
 
@@ -341,9 +341,9 @@ def menu_team_admin_user(
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_TEAM_ADMIN_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"/v1/rbac/users/{MENU_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{MENU_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{MENU_TEAM_ADMIN_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup team admin user: %s", e)
 
@@ -361,9 +361,9 @@ def menu_developer_user(
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_DEVELOPER_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_DEVELOPER_EMAIL}")
+        admin_api.delete(f"/v1/rbac/users/{MENU_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{MENU_DEVELOPER_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{MENU_DEVELOPER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup developer user: %s", e)
 
@@ -381,9 +381,9 @@ def menu_viewer_user(
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_VIEWER_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_VIEWER_EMAIL}")
+        admin_api.delete(f"/v1/rbac/users/{MENU_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{MENU_VIEWER_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{MENU_VIEWER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup viewer user: %s", e)
 
@@ -511,11 +511,11 @@ class TestAdminMenuVisibility:
     def test_unauthenticated_redirects_to_login(self, page: Page):
         """Unauthenticated user should be redirected to login page."""
         page.context.clear_cookies()
-        page.goto("/admin")
+        page.goto("/v1/admin")
         page.wait_for_load_state("domcontentloaded")
 
         # Should redirect to login
-        assert "/admin/login" in page.url or "/login" in page.url, "Unauthenticated user should be redirected to login"
+        assert "/v1/admin/login" in page.url or "/login" in page.url, "Unauthenticated user should be redirected to login"
         logger.info("✓ Unauthenticated user redirected to login")
 
     def test_menu_sections_match_permissions(

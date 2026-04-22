@@ -156,10 +156,10 @@ def test_check_usage_limits_db_failure_fails_open():
 
 def test_check_server_and_permission_restrictions():
     middleware = TokenScopingMiddleware()
-    assert middleware._check_server_restriction("/servers/abc/tools", "abc") is True
+    assert middleware._check_server_restriction("/v1/servers/abc/tools", "abc") is True
     assert middleware._check_server_restriction("/health", "abc") is True
-    assert middleware._check_permission_restrictions("/tools", "GET", ["*"]) is True
-    assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
+    assert middleware._check_permission_restrictions("/v1/tools", "GET", ["*"]) is True
+    assert middleware._check_permission_restrictions("/v1/tools", "POST", ["tools.read"]) is False
 
 
 def test_check_restrictions_normalize_app_root_path(monkeypatch):
@@ -248,56 +248,56 @@ class TestResourceTeamOwnershipServers:
     def test_server_not_found(self):
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_server_public_allowed(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="public", team_id=None, owner_email=None)
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_server_public_token_denied_team_server(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", [], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", [], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_server_team_access_granted(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="team", team_id="team-1", owner_email=None)
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_server_team_access_denied(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_server_private_owner_access(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="private", team_id=None, owner_email="u@t.com")
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_server_private_non_owner_denied(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="private", team_id=None, owner_email="other@t.com")
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_server_unknown_visibility_denied(self):
         middleware = TokenScopingMiddleware()
         server = SimpleNamespace(visibility="unknown_vis", team_id=None, owner_email=None)
         db = self._make_db_with_entity(server)
-        result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
 
@@ -315,28 +315,28 @@ class TestResourceTeamOwnershipTools:
     def test_tool_not_found(self):
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
-        result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_tool_public_allowed(self):
         middleware = TokenScopingMiddleware()
         tool = SimpleNamespace(visibility="public", team_id=None, owner_email=None)
         db = self._make_db_with_entity(tool)
-        result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_tool_team_access_denied(self):
         middleware = TokenScopingMiddleware()
         tool = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(tool)
-        result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_tool_public_token_denied(self):
         middleware = TokenScopingMiddleware()
         tool = SimpleNamespace(visibility="team", team_id="team-1", owner_email=None)
         db = self._make_db_with_entity(tool)
-        result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", [], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/tools/{_TOOL_ID}", [], db=db, _user_email="u@t.com")
         assert result is False
 
 
@@ -354,14 +354,14 @@ class TestResourceTeamOwnershipResources:
     def test_resource_not_found(self):
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
-        result = middleware._check_resource_team_ownership(f"/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_resource_team_denied(self):
         middleware = TokenScopingMiddleware()
         resource = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(resource)
-        result = middleware._check_resource_team_ownership(f"/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
 
@@ -379,35 +379,35 @@ class TestResourceTeamOwnershipPrompts:
     def test_prompt_not_found(self):
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
-        result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_prompt_public_allowed(self):
         middleware = TokenScopingMiddleware()
         prompt = SimpleNamespace(visibility="public", team_id=None, owner_email=None)
         db = self._make_db_with_entity(prompt)
-        result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_prompt_team_denied(self):
         middleware = TokenScopingMiddleware()
         prompt = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(prompt)
-        result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_prompt_private_owner_access(self):
         middleware = TokenScopingMiddleware()
         prompt = SimpleNamespace(visibility="private", team_id=None, owner_email="u@t.com")
         db = self._make_db_with_entity(prompt)
-        result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_prompt_private_non_owner_denied(self):
         middleware = TokenScopingMiddleware()
         prompt = SimpleNamespace(visibility="private", team_id=None, owner_email="other@t.com")
         db = self._make_db_with_entity(prompt)
-        result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
 
@@ -425,42 +425,42 @@ class TestResourceTeamOwnershipGateways:
     def test_gateway_not_found(self):
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_gateway_public_allowed(self):
         middleware = TokenScopingMiddleware()
         gw = SimpleNamespace(visibility="public", team_id=None, owner_email=None)
         db = self._make_db_with_entity(gw)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_gateway_public_token_denied(self):
         middleware = TokenScopingMiddleware()
         gw = SimpleNamespace(visibility="team", team_id="team-1", owner_email=None)
         db = self._make_db_with_entity(gw)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", [], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", [], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_gateway_team_denied(self):
         middleware = TokenScopingMiddleware()
         gw = SimpleNamespace(visibility="team", team_id="team-2", owner_email=None)
         db = self._make_db_with_entity(gw)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
     def test_gateway_private_owner(self):
         middleware = TokenScopingMiddleware()
         gw = SimpleNamespace(visibility="private", team_id=None, owner_email="u@t.com")
         db = self._make_db_with_entity(gw)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is True
 
     def test_gateway_unknown_visibility(self):
         middleware = TokenScopingMiddleware()
         gw = SimpleNamespace(visibility="weird", team_id=None, owner_email=None)
         db = self._make_db_with_entity(gw)
-        result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
+        result = middleware._check_resource_team_ownership(f"/v1/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
         assert result is False
 
 

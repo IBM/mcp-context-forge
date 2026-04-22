@@ -325,7 +325,7 @@ async def test_make_authenticated_request_bearer_auth_success():
             mock_settings.host = "localhost"
             mock_settings.port = 8000
             with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
-                result = await make_authenticated_request("POST", "/export", json_data={"x": 1})
+                result = await make_authenticated_request("POST", "/v1/export", json_data={"x": 1})
 
     assert result == {"ok": True}
     assert captured["headers"]["Authorization"] == "Bearer jwt-token"
@@ -349,7 +349,7 @@ async def test_make_authenticated_request_http_error_status_raises_cli_error():
             mock_settings.port = 4444
             with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
                 with pytest.raises(CLIError, match=r"API request failed \(500\): server down"):
-                    await make_authenticated_request("GET", "/export")
+                    await make_authenticated_request("GET", "/v1/export")
 
 
 @pytest.mark.asyncio
@@ -369,7 +369,7 @@ async def test_make_authenticated_request_httpx_error_raises_cli_error():
             mock_settings.port = 4444
             with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
                 with pytest.raises(CLIError, match=r"Failed to connect to gateway at http://gw:4444: boom"):
-                    await make_authenticated_request("GET", "/export")
+                    await make_authenticated_request("GET", "/v1/export")
 
 
 # Test the authentication flow by testing the token logic without the full HTTP call

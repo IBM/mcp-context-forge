@@ -44,7 +44,7 @@ def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
 def create_test_user(admin_api: APIRequestContext, email: str) -> None:
     """Create a test user in the database. Raises on failure."""
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": f"Test User {email.split('@')[0]}"},
     )
     assert resp.status in (200, 201, 409), f"Failed to create user {email}: {resp.status} {resp.text()}"
@@ -53,14 +53,14 @@ def create_test_user(admin_api: APIRequestContext, email: str) -> None:
 def delete_test_user(admin_api: APIRequestContext, email: str) -> None:
     """Delete a test user (best-effort, may fail if user has team memberships)."""
     try:
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
     except Exception:
         pass
 
 
 def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team_id: str, email: str) -> dict:
     """Invite a user to a team and accept the invitation. Returns the invitation data."""
-    inv_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
+    inv_resp = admin_api.post(f"/v1/teams/{team_id}/invitations", data={"email": email, "role": "member"})
     assert inv_resp.status in (200, 201), f"Failed to invite {email}: {inv_resp.status} {inv_resp.text()}"
     inv_data = inv_resp.json()
     invitation_token = inv_data["token"]
@@ -71,7 +71,7 @@ def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team
         base_url=BASE_URL,
         extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
     )
-    accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+    accept_resp = user_ctx.post(f"/v1/teams/invitations/{invitation_token}/accept")
     user_ctx.dispose()
     assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status}"
     return inv_data
@@ -98,12 +98,12 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 def private_team(admin_api: APIRequestContext):
     """Create a private team for invitation tests, cleanup after module."""
     team_name = f"priv-team-{uuid.uuid4().hex[:8]}"
-    resp = admin_api.post("/teams/", data={"name": team_name, "description": "E2E invite tests", "visibility": "private"})
+    resp = admin_api.post("/v1/teams/", data={"name": team_name, "description": "E2E invite tests", "visibility": "private"})
     assert resp.status in (200, 201), f"Failed to create private team: {resp.status}"
     team = resp.json()
     yield team
     try:
-        admin_api.delete(f"/teams/{team['id']}")
+        admin_api.delete(f"/v1/teams/{team['id']}")
     except Exception:
         pass
 
@@ -112,11 +112,11 @@ def private_team(admin_api: APIRequestContext):
 def public_team(admin_api: APIRequestContext):
     """Create a public team for join request tests, cleanup after module."""
     team_name = f"pub-team-{uuid.uuid4().hex[:8]}"
-    resp = admin_api.post("/teams/", data={"name": team_name, "description": "E2E join tests", "visibility": "public"})
+    resp = admin_api.post("/v1/teams/", data={"name": team_name, "description": "E2E join tests", "visibility": "public"})
     assert resp.status in (200, 201), f"Failed to create public team: {resp.status}"
     team = resp.json()
     yield team
     try:
-        admin_api.delete(f"/teams/{team['id']}")
+        admin_api.delete(f"/v1/teams/{team['id']}")
     except Exception:
         pass

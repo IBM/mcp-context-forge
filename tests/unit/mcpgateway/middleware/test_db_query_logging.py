@@ -64,7 +64,7 @@ def test_detect_n1_patterns():
 
 
 def test_format_text_log_and_json_log():
-    request_data = {"method": "GET", "path": "/tools", "timestamp": "2025-01-01T00:00:00Z"}
+    request_data = {"method": "GET", "path": "/v1/tools", "timestamp": "2025-01-01T00:00:00Z"}
     queries = [
         {"sql": "select * from tools", "duration_ms": 1.2},
         {"sql": "select * from tools", "duration_ms": 2.3},
@@ -84,7 +84,7 @@ def test_format_text_log_and_json_log():
 def test_format_text_log_includes_user_and_correlation_and_truncates_long_sql():
     request_data = {
         "method": "GET",
-        "path": "/tools",
+        "path": "/v1/tools",
         "timestamp": "2025-01-01T00:00:00Z",
         "user": "bob@example.com",
         "correlation_id": "cid-123",
@@ -156,7 +156,7 @@ def test_write_logs_writes_text_and_json_and_detects_n1(monkeypatch: pytest.Monk
     )
     monkeypatch.setattr(dql, "get_settings", lambda: settings)
 
-    request_data = {"method": "GET", "path": "/tools", "timestamp": "2025-01-01T00:00:00Z"}
+    request_data = {"method": "GET", "path": "/v1/tools", "timestamp": "2025-01-01T00:00:00Z"}
     queries = [
         {"sql": "select * from tools where id=1", "duration_ms": 1.2},
         {"sql": "select * from tools where id=2", "duration_ms": 2.3},
@@ -208,7 +208,7 @@ async def test_middleware_dispatch_disabled(monkeypatch: pytest.MonkeyPatch):
     middleware = dql.DBQueryLoggingMiddleware(app=None)
     request = MagicMock()
     request.method = "GET"
-    request.url.path = "/tools"
+    request.url.path = "/v1/tools"
     request.headers = {}
     request.state = SimpleNamespace()
 
@@ -245,7 +245,7 @@ async def test_middleware_dispatch_writes_logs(monkeypatch: pytest.MonkeyPatch):
     middleware = dql.DBQueryLoggingMiddleware(app=None)
     request = MagicMock()
     request.method = "GET"
-    request.url.path = "/tools"
+    request.url.path = "/v1/tools"
     request.headers = {"x-correlation-id": "cid"}
     request.state = SimpleNamespace(username="tester")
 
@@ -266,7 +266,7 @@ async def test_middleware_dispatch_extracts_user_from_state_user(monkeypatch: py
     middleware = dql.DBQueryLoggingMiddleware(app=None)
     request = MagicMock()
     request.method = "GET"
-    request.url.path = "/tools"
+    request.url.path = "/v1/tools"
     request.headers = {}
     request.state = SimpleNamespace(user=SimpleNamespace(username="tester"))
 
@@ -291,7 +291,7 @@ async def test_middleware_dispatch_warns_on_write_logs_failure(monkeypatch: pyte
     middleware = dql.DBQueryLoggingMiddleware(app=None)
     request = MagicMock()
     request.method = "GET"
-    request.url.path = "/tools"
+    request.url.path = "/v1/tools"
     request.headers = {}
     request.state = SimpleNamespace(username="tester")
 

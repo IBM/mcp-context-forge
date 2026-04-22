@@ -23,9 +23,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.transports.streamablehttp_transport import _get_shared_session_registry
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.transports.streamablehttp_transport import _get_shared_session_registry
 
 # Initialize logging
 logging_service = LoggingService()

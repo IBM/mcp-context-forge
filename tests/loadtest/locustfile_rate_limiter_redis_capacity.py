@@ -597,7 +597,7 @@ class CapacityPromptUser(FastHttpUser):
 
         try:
             with self.client.post(
-                f"/prompts/{_prompt_target.prompt_id}",
+                f"/v1/prompts/{_prompt_target.prompt_id}",
                 json=_prompt_target.required_arguments,
                 headers=self._headers(),
                 name="Prompt execute",

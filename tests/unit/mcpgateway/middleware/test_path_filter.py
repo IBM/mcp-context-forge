@@ -33,7 +33,7 @@ class TestObservabilitySkip:
             ("/health", True),
             ("/healthz", True),  # translate.py compatibility
             ("/ready", True),
-            ("/metrics", True),
+            ("/v1/metrics", True),
             # Static prefix (with trailing slash)
             ("/static/css/app.css", True),
             ("/static/js/bundle.js", True),
@@ -43,8 +43,8 @@ class TestObservabilitySkip:
             # Exact vs prefix behavior - allowlist skips non-MCP endpoints
             ("/health/security", True),
             ("/healthz/check", True),
-            ("/tools", True),
-            ("/admin", True),
+            ("/v1/tools", True),
+            ("/v1/admin", True),
             ("/api/v1/tools", True),
             ("/", True),
             ("/docs", True),
@@ -56,12 +56,12 @@ class TestObservabilitySkip:
             ("/message", False),
             ("/mcp", False),
             ("/mcp/", False),
-            ("/servers/123/mcp", False),
-            ("/servers/123/mcp/", False),
-            ("/servers/123/sse", False),
-            ("/servers/123/message", False),
-            ("/a2a", False),
-            ("/a2a/agents", False),
+            ("/v1/servers/123/mcp", False),
+            ("/v1/servers/123/mcp/", False),
+            ("/v1/servers/123/sse", False),
+            ("/v1/servers/123/message", False),
+            ("/v1/a2a", False),
+            ("/v1/a2a/agents", False),
         ],
     )
     def test_should_skip_observability(self, path: str, expected: bool):
@@ -79,7 +79,7 @@ class TestAuthContextSkip:
             ("/health", True),
             ("/healthz", True),
             ("/ready", True),
-            ("/metrics", True),
+            ("/v1/metrics", True),
             ("/static/js/app.js", True),
             ("/static/", True),
             # Exact vs prefix
@@ -87,12 +87,12 @@ class TestAuthContextSkip:
             ("/static", False),
             # Auth paths are NOT skipped by auth context
             # (TokenScopingMiddleware handles those separately)
-            ("/auth/email/login", False),
-            ("/auth/email/register", False),
+            ("/v1/auth/email/login", False),
+            ("/v1/auth/email/register", False),
             ("/.well-known/openid-configuration", False),
             # Normal paths not skipped
-            ("/tools", False),
-            ("/admin", False),
+            ("/v1/tools", False),
+            ("/v1/admin", False),
         ],
     )
     def test_should_skip_auth_context(self, path: str, expected: bool):
@@ -118,9 +118,9 @@ class TestLoggingSkip:
             ("/favicon.ico.backup", True),  # Prefix includes extensions
             # Should NOT skip - different endpoints
             ("/ready", False),  # Not in request logging skip list
-            ("/metrics", False),  # Not in request logging skip list
-            ("/tools", False),
-            ("/admin", False),
+            ("/v1/metrics", False),  # Not in request logging skip list
+            ("/v1/tools", False),
+            ("/v1/admin", False),
             ("/api/v1/tools", False),
             ("/", False),
         ],
@@ -147,10 +147,10 @@ class TestDbQueryLoggingSkip:
             ("/static/", True),
             ("/static/css/app.css", True),
             # Metrics is NOT skipped for DB logging (may need DB for metrics)
-            ("/metrics", False),
+            ("/v1/metrics", False),
             # Normal paths not skipped
-            ("/tools", False),
-            ("/admin", False),
+            ("/v1/tools", False),
+            ("/v1/admin", False),
             ("/api/v1/tools", False),
         ],
     )
@@ -182,7 +182,7 @@ class TestCacheEffectiveness:
     def test_different_paths_cached_separately(self):
         """Verify different paths are cached independently."""
         should_skip_observability("/health")
-        should_skip_observability("/tools")
+        should_skip_observability("/v1/tools")
         should_skip_observability("/health")  # Should hit cache
 
         info = should_skip_observability.cache_info()
@@ -298,7 +298,7 @@ class TestObservabilityIncludeExclude:
         monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
         clear_all_caches()
 
-        assert should_skip_observability("/admin") is False
+        assert should_skip_observability("/v1/admin") is False
         assert should_skip_observability("/rpc") is True
 
         clear_all_caches()
@@ -309,7 +309,7 @@ class TestObservabilityIncludeExclude:
         monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
         clear_all_caches()
 
-        assert should_skip_observability("/tools") is False
+        assert should_skip_observability("/v1/tools") is False
         assert should_skip_observability("/health") is True
 
         clear_all_caches()

@@ -29,7 +29,7 @@ class TestMetadataCapture:
         request.client.host = "192.168.1.100"
         request.headers = {"user-agent": "Mozilla/5.0 (Linux)"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         context = MetadataCapture.extract_request_context(request)
 
@@ -44,7 +44,7 @@ class TestMetadataCapture:
         request.client.host = "10.0.0.1"
         request.headers = {"user-agent": "Chrome/90.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/admin/tools"
+        request.url.path = "/v1/admin/tools"
 
         context = MetadataCapture.extract_request_context(request)
 
@@ -72,7 +72,7 @@ class TestMetadataCapture:
         request.client = None
         request.headers = {"user-agent": "test/1.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         context = MetadataCapture.extract_request_context(request)
 
@@ -87,7 +87,7 @@ class TestMetadataCapture:
         request.client.host = "172.16.0.5"
         request.headers = {"user-agent": "HTTPie/2.4.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/admin/servers"
+        request.url.path = "/v1/admin/servers"
 
         metadata = MetadataCapture.extract_creation_metadata(request, "admin", import_batch_id="batch-123", federation_source="gateway-prod")
 
@@ -106,7 +106,7 @@ class TestMetadataCapture:
         request.client.host = "192.168.1.1"
         request.headers = {"user-agent": "test-client"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         metadata = MetadataCapture.extract_creation_metadata(request, "anonymous")
 
@@ -121,7 +121,7 @@ class TestMetadataCapture:
         request.client.host = "10.1.1.1"
         request.headers = {"user-agent": "PostmanRuntime/7.28.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools/123"
+        request.url.path = "/v1/tools/123"
 
         metadata = MetadataCapture.extract_modification_metadata(request, "alice", 3)
 
@@ -215,7 +215,7 @@ class TestMetadataCapture:
         request.client.host = "192.168.1.1"
         request.headers = {"user-agent": "test"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         metadata = MetadataCapture.extract_creation_metadata(request, "user", import_batch_id=None, federation_source=None)
 
@@ -230,7 +230,7 @@ class TestMetadataCapture:
         request.client.host = "10.0.0.1"
         request.headers = {"user-agent": "test"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools/123"
+        request.url.path = "/v1/tools/123"
 
         metadata = MetadataCapture.extract_modification_metadata(request, "bob")
 
@@ -257,7 +257,7 @@ class TestMetadataCapture:
         request.client.host = "192.168.1.1"
         request.headers = {}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         context = MetadataCapture.extract_request_context(request)
 
@@ -271,7 +271,7 @@ class TestMetadataCapture:
         request.client.host = "127.0.0.1"
         request.headers = {"user-agent": "test", "x-forwarded-for": "malformed"}
         request.url = SimpleNamespace()
-        request.url.path = "/tools"
+        request.url.path = "/v1/tools"
 
         context = MetadataCapture.extract_request_context(request)
 

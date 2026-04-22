@@ -255,7 +255,7 @@ class TestIntegrationScenarios:
 
         # 1a. register a tool
         tool_req = {"tool": {"name": "test_tool", "url": "http://example.com"}, "team_id": None, "visibility": "private"}
-        resp_tool = test_client.post("/tools/", json=tool_req, headers=auth_headers)
+        resp_tool = test_client.post("/v1/tools/", json=tool_req, headers=auth_headers)
         assert resp_tool.status_code == 200
         mock_register_tool.assert_awaited_once()
 
@@ -269,7 +269,7 @@ class TestIntegrationScenarios:
             "team_id": None,
             "visibility": "private",
         }
-        resp_srv = test_client.post("/servers/", json=srv_req, headers=auth_headers)
+        resp_srv = test_client.post("/v1/servers/", json=srv_req, headers=auth_headers)
         assert resp_srv.status_code == 201
         assert resp_srv.json()["associatedTools"] == [MOCK_TOOL.id]
         mock_register_server.assert_awaited_once()
@@ -296,12 +296,12 @@ class TestIntegrationScenarios:
             "capabilities": {},
             "client_info": {"name": "pytest", "version": "0.0.0"},
         }
-        resp_init = test_client.post("/protocol/initialize", json=init_body, headers=auth_headers)
+        resp_init = test_client.post("/v1/protocol/initialize", json=init_body, headers=auth_headers)
         assert resp_init.status_code == 200
         mock_init.assert_awaited_once()
 
         resp_ping = test_client.post(
-            "/protocol/ping",
+            "/v1/protocol/ping",
             json={"jsonrpc": "2.0", "method": "ping", "id": "X"},
             headers=auth_headers,
         )
@@ -332,14 +332,14 @@ class TestIntegrationScenarios:
             "team_id": None,
             "visibility": "private",
         }
-        resp_create = test_client.post("/resources/", json=create_body, headers=auth_headers)
+        resp_create = test_client.post("/v1/resources/", json=create_body, headers=auth_headers)
         assert resp_create.status_code == 200
         mock_register.assert_awaited_once()
         resource_id = resp_create.json()["id"]
 
         # read content
         mock_read.return_value = ResourceContent(type="resource", id=str(resource_id), uri=MOCK_RESOURCE.uri, mime_type="text/plain", text="Hello")
-        resp_read = test_client.get(f"/resources/{resource_id}", headers=auth_headers)
+        resp_read = test_client.get(f"/v1/resources/{resource_id}", headers=auth_headers)
         assert resp_read.status_code == 200
         assert resp_read.json()["text"] == "Hello"
         mock_read.assert_awaited_once()
@@ -383,7 +383,7 @@ class TestIntegrationScenarios:
         test_client: TestClient,
         auth_headers,
     ):
-        resp = test_client.get("/metrics", headers=auth_headers)
+        resp = test_client.get("/v1/metrics", headers=auth_headers)
         assert resp.status_code == 200
         payload = resp.json()
         # Make sure all four keys are present regardless of exact values.

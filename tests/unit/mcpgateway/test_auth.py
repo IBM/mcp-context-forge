@@ -4804,7 +4804,7 @@ class TestTryOAuthAccessTokenDbErrors:
         scope = {
             "type": "http",
             "method": "POST",
-            "path": "/servers/srv-1/mcp",
+            "path": "/v1/servers/srv-1/mcp",
             "root_path": "",
             "scheme": "https",
             "server": ("gateway.example.com", 443),
@@ -4974,7 +4974,7 @@ def _make_handler():
     scope = {
         "type": "http",
         "method": "POST",
-        "path": f"/servers/{SERVER_ID}/mcp",
+        "path": f"/v1/servers/{SERVER_ID}/mcp",
         "root_path": "",
         "scheme": "https",
         "server": (GATEWAY_HOST, 443),
@@ -5001,7 +5001,7 @@ def _make_handler_unknown_host():
     scope = {
         "type": "http",
         "method": "POST",
-        "path": f"/servers/{SERVER_ID}/mcp",
+        "path": f"/v1/servers/{SERVER_ID}/mcp",
         "root_path": "",
         "scheme": "https",
         "server": None,
@@ -5296,7 +5296,7 @@ class TestOAuthAudienceEnforcement:
         scope = {
             "type": "http",
             "method": "POST",
-            "path": f"/servers/{SERVER_ID}/mcp",
+            "path": f"/v1/servers/{SERVER_ID}/mcp",
             "root_path": "",
             "scheme": "https",
             "server": ("attacker.example.com", 443),
@@ -5353,7 +5353,7 @@ class TestOAuthAudienceEnforcement:
         scope = {
             "type": "http",
             "method": "POST",
-            "path": f"/servers/{SERVER_ID}/mcp",
+            "path": f"/v1/servers/{SERVER_ID}/mcp",
             "root_path": "",
             "scheme": "https",
             "server": ("attacker.example.com", 443),

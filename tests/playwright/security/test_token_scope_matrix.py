@@ -72,7 +72,7 @@ def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
 
 def _create_server(admin_api: APIRequestContext, name: str, visibility: str, team_id: str | None = None) -> str:
     response = admin_api.post(
-        "/servers",
+        "/v1/servers",
         data={
             "server": {"name": name, "description": "playwright security test"},
             "team_id": team_id,
@@ -91,7 +91,7 @@ def scope_matrix_resources(playwright: Playwright):
     team_server_id: str | None = None
     try:
         team_name = f"scope-matrix-team-{uuid.uuid4().hex[:8]}"
-        team_resp = admin_ctx.post("/teams/", data={"name": team_name, "description": "scope matrix team", "visibility": "private"})
+        team_resp = admin_ctx.post("/v1/teams/", data={"name": team_name, "description": "scope matrix team", "visibility": "private"})
         assert team_resp.status in (200, 201), f"Failed to create team: {team_resp.status} {team_resp.text()}"
         team_id = team_resp.json()["id"]
 
@@ -102,13 +102,13 @@ def scope_matrix_resources(playwright: Playwright):
     finally:
         if team_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{team_server_id}")
+                admin_ctx.delete(f"/v1/servers/{team_server_id}")
         if public_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{public_server_id}")
+                admin_ctx.delete(f"/v1/servers/{public_server_id}")
         if team_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/teams/{team_id}")
+                admin_ctx.delete(f"/v1/teams/{team_id}")
         admin_ctx.dispose()
 
 
@@ -139,7 +139,7 @@ class TestTokenTeamsMatrix:
             for case, token in tokens.items():
                 ctx = _api_context(playwright, token)
                 contexts.append(ctx)
-                response = ctx.get("/servers")
+                response = ctx.get("/v1/servers")
                 assert response.status == 200, f"{case} failed listing servers: {response.status} {response.text()}"
                 results[case] = {item["id"] for item in _extract_servers(response.json())}
         finally:
@@ -164,7 +164,7 @@ class TestTokenTeamsMatrix:
     def test_non_admin_cannot_delegate_permissions_they_do_not_have(self, admin_api: APIRequestContext, playwright: Playwright):
         email = f"scope-nonadmin-{uuid.uuid4().hex[:8]}@example.com"
         create_user_resp = admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Scope Non Admin"},
         )
         assert create_user_resp.status in (200, 201), f"Failed to create test user: {create_user_resp.status} {create_user_resp.text()}"
@@ -175,7 +175,7 @@ class TestTokenTeamsMatrix:
         try:
             # Verify token creation is otherwise allowed for this user.
             baseline_resp = user_ctx.post(
-                "/tokens",
+                "/v1/tokens",
                 data={
                     "name": f"baseline-token-{uuid.uuid4().hex[:8]}",
                     "expires_in_days": 1,
@@ -185,11 +185,11 @@ class TestTokenTeamsMatrix:
             baseline_token_id = _extract_token_id(baseline_resp.json())
 
             # Pick a valid permission the user does not currently hold to test scope containment.
-            my_perms_resp = user_ctx.get("/rbac/my/permissions")
+            my_perms_resp = user_ctx.get("/v1/rbac/my/permissions")
             assert my_perms_resp.status == 200, f"Failed reading caller permissions: {my_perms_resp.status} {my_perms_resp.text()}"
             my_permissions = set(my_perms_resp.json())
 
-            all_perms_resp = user_ctx.get("/rbac/permissions/available")
+            all_perms_resp = user_ctx.get("/v1/rbac/permissions/available")
             assert all_perms_resp.status == 200, f"Failed reading available permissions: {all_perms_resp.status} {all_perms_resp.text()}"
             available_permissions = [perm for perm in all_perms_resp.json().get("all_permissions", []) if perm != "*"]
             disallowed_permission = next((perm for perm in available_permissions if perm not in my_permissions), None)
@@ -197,7 +197,7 @@ class TestTokenTeamsMatrix:
                 pytest.skip("Environment grants all available permissions to non-admin test user; cannot validate scope containment.")
 
             response = user_ctx.post(
-                "/tokens",
+                "/v1/tokens",
                 data={
                     "name": f"disallowed-scope-{uuid.uuid4().hex[:8]}",
                     "expires_in_days": 1,
@@ -211,17 +211,17 @@ class TestTokenTeamsMatrix:
             user_ctx.dispose()
             if baseline_token_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/tokens/{baseline_token_id}")
+                    admin_api.delete(f"/v1/tokens/{baseline_token_id}")
             if blocked_token_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/tokens/{blocked_token_id}")
+                    admin_api.delete(f"/v1/tokens/{blocked_token_id}")
             with suppress(Exception):
-                admin_api.delete(f"/auth/email/admin/users/{email}")
+                admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
     def test_token_scope_permissions_restrict_runtime_operations(self, admin_api: APIRequestContext, playwright: Playwright):
         token_name = f"limited-scope-{uuid.uuid4().hex[:8]}"
         create_token_resp = admin_api.post(
-            "/tokens",
+            "/v1/tokens",
             data={
                 "name": token_name,
                 "expires_in_days": 1,
@@ -236,11 +236,11 @@ class TestTokenTeamsMatrix:
         limited_ctx = _api_context(playwright, access_token)
         created_server_id: str | None = None
         try:
-            read_resp = limited_ctx.get("/servers")
+            read_resp = limited_ctx.get("/v1/servers")
             assert read_resp.status == 200, f"servers.read should succeed: {read_resp.status} {read_resp.text()}"
 
             create_resp = limited_ctx.post(
-                "/servers",
+                "/v1/servers",
                 data={
                     "server": {"name": f"should-not-create-{uuid.uuid4().hex[:8]}", "description": "scope restriction check"},
                     "team_id": None,
@@ -254,7 +254,7 @@ class TestTokenTeamsMatrix:
             limited_ctx.dispose()
             if created_server_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/servers/{created_server_id}")
+                    admin_api.delete(f"/v1/servers/{created_server_id}")
             if token_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/tokens/{token_id}")
+                    admin_api.delete(f"/v1/tokens/{token_id}")

@@ -29,20 +29,20 @@ class TestAPIEndpoints:
 
     def test_list_servers(self, api_request_context: APIRequestContext):
         """Test list servers endpoint."""
-        response = api_request_context.get("/servers")
+        response = api_request_context.get("/v1/servers")
         if response.status in (401, 403):
-            pytest.skip(f"Auth required for /servers (HTTP {response.status})")
-        assert response.ok, f"/servers returned HTTP {response.status}: {response.text()[:200]}"
+            pytest.skip(f"Auth required for /v1/servers (HTTP {response.status})")
+        assert response.ok, f"/v1/servers returned HTTP {response.status}: {response.text()[:200]}"
 
         servers = response.json()
         assert isinstance(servers, list)
 
     def test_list_tools(self, api_request_context: APIRequestContext):
         """Test list tools endpoint."""
-        response = api_request_context.get("/tools")
+        response = api_request_context.get("/v1/tools")
         if response.status in (401, 403):
-            pytest.skip(f"Auth required for /tools (HTTP {response.status})")
-        assert response.ok, f"/tools returned HTTP {response.status}: {response.text()[:200]}"
+            pytest.skip(f"Auth required for /v1/tools (HTTP {response.status})")
+        assert response.ok, f"/v1/tools returned HTTP {response.status}: {response.text()[:200]}"
 
         tools = response.json()
         assert isinstance(tools, list)

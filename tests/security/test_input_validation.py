@@ -1608,7 +1608,7 @@ class TestSpecificAttackVectors:
             "X-Forwarded-Port": "443",
             "X-Forwarded-Proto": "https",
             "X-Original-URL": "http://evil.com",
-            "X-Rewrite-URL": "/admin",
+            "X-Rewrite-URL": "/v1/admin",
             "CF-Connecting-IP": "127.0.0.1",
             "X-Originating-IP": "127.0.0.1",
             "X-Remote-IP": "127.0.0.1",

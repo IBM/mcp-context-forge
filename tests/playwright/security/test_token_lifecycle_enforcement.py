@@ -58,7 +58,7 @@ class TestTokenLifecycleEnforcement:
 
         ctx = _api_context(playwright, expired_token)
         try:
-            response = ctx.get("/servers")
+            response = ctx.get("/v1/servers")
             status_code = response.status
             response_text = response.text()
         finally:
@@ -69,7 +69,7 @@ class TestTokenLifecycleEnforcement:
 
     def test_revoked_api_token_cannot_be_used(self, admin_api: APIRequestContext, playwright: Playwright):
         create_resp = admin_api.post(
-            "/tokens",
+            "/v1/tokens",
             data={
                 "name": f"revocation-enforcement-{uuid.uuid4().hex[:8]}",
                 "expires_in_days": 1,
@@ -84,17 +84,17 @@ class TestTokenLifecycleEnforcement:
 
         token_ctx = _api_context(playwright, access_token)
         try:
-            before_revoke = token_ctx.get("/servers")
+            before_revoke = token_ctx.get("/v1/servers")
             assert before_revoke.status == 200, f"Token should work before revocation: {before_revoke.status} {before_revoke.text()}"
 
-            revoke_resp = admin_api.delete(f"/tokens/{token_id}")
+            revoke_resp = admin_api.delete(f"/v1/tokens/{token_id}")
             assert revoke_resp.status in (200, 204), f"Failed revoking token: {revoke_resp.status} {revoke_resp.text()}"
 
             # Revocation cache invalidation can be asynchronous; allow brief propagation.
             deadline = time.time() + 5.0
             after_status = None
             while time.time() < deadline:
-                after_revoke = token_ctx.get("/servers")
+                after_revoke = token_ctx.get("/v1/servers")
                 after_status = after_revoke.status
                 if after_status == 401:
                     break
@@ -104,7 +104,7 @@ class TestTokenLifecycleEnforcement:
 
         if after_status != 401:
             # Fallback validation: ensure revocation persisted even if runtime auth cache delays enforcement.
-            token_info = admin_api.get(f"/tokens/{token_id}")
+            token_info = admin_api.get(f"/v1/tokens/{token_id}")
             assert token_info.status == 200, f"Failed loading token after revoke: {token_info.status} {token_info.text()}"
             assert token_info.json().get("is_active") is False, "Revoked token should be marked inactive"
             pytest.skip("Token revocation persisted, but runtime rejection was not immediate in this environment.")
@@ -130,7 +130,7 @@ class TestTokenLifecycleEnforcement:
 
         ctx = _api_context(playwright, token_without_jti)
         try:
-            response = ctx.get("/servers")
+            response = ctx.get("/v1/servers")
             status_code = response.status
             response_text = response.text()
         finally:
@@ -145,7 +145,7 @@ class TestTokenLifecycleEnforcement:
     def test_cookie_only_auth_is_rejected_for_api_requests(self, admin_api: APIRequestContext, playwright: Playwright):
         email = f"cookie-api-{uuid.uuid4().hex[:8]}@example.com"
         create_user_resp = admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Cookie API User"},
         )
         assert create_user_resp.status in (200, 201), f"Failed creating user: {create_user_resp.status} {create_user_resp.text()}"
@@ -157,7 +157,7 @@ class TestTokenLifecycleEnforcement:
         cookie_ctx = None
         try:
             login_resp = login_ctx.post(
-                "/auth/email/login",
+                "/v1/auth/email/login",
                 data={"email": email, "password": TEST_PASSWORD},
             )
             if login_resp.status == 404:
@@ -173,7 +173,7 @@ class TestTokenLifecycleEnforcement:
                     "Cookie": f"jwt_token={access_token}",
                 },
             )
-            response = cookie_ctx.get("/servers")
+            response = cookie_ctx.get("/v1/servers")
             status_code = response.status
             response_text = response.text()
         finally:
@@ -181,7 +181,7 @@ class TestTokenLifecycleEnforcement:
             if cookie_ctx:
                 cookie_ctx.dispose()
             with suppress(Exception):
-                admin_api.delete(f"/auth/email/admin/users/{email}")
+                admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
         assert status_code == 401, f"Cookie-only API auth should be rejected, got {status_code}: {response_text}"
         assert "cookie authentication not allowed" in response_text.lower()

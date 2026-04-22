@@ -52,6 +52,6 @@ class ServerPopulator(BasePopulator):
                     }
                 )
 
-        result = await self._batch_create(payloads, "/servers", id_field="id")
+        result = await self._batch_create(payloads, "/v1/servers", id_field="id")
         self.existing_data["server_ids"] = result["ids"]
         return result

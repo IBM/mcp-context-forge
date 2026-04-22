@@ -143,7 +143,7 @@ class TestToolsPagination:
         client = TestClient(app)
 
         # Request first page with 10 items
-        response = client.get("/admin/tools?page=1&per_page=10", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=10", headers={"Authorization": "Bearer test-token"})
 
         # Verify response
         assert response.status_code == 200
@@ -167,10 +167,10 @@ class TestToolsPagination:
         assert all(isinstance(tool, dict) for tool in data["data"])
 
         # Verify links
-        assert "/admin/tools?page=1" in data["links"]["self"]
-        assert "/admin/tools?page=1" in data["links"]["first"]
-        assert "/admin/tools?page=3" in data["links"]["last"]
-        assert "/admin/tools?page=2" in data["links"]["next"]
+        assert "/v1/admin/tools?page=1" in data["links"]["self"]
+        assert "/v1/admin/tools?page=1" in data["links"]["first"]
+        assert "/v1/admin/tools?page=3" in data["links"]["last"]
+        assert "/v1/admin/tools?page=2" in data["links"]["next"]
         assert data["links"]["prev"] is None
 
         # Cleanup
@@ -209,7 +209,7 @@ class TestToolsPagination:
         client = TestClient(app)
 
         # Request middle page
-        response = client.get("/admin/tools?page=2&per_page=10", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=2&per_page=10", headers={"Authorization": "Bearer test-token"})
 
         # Verify response
         assert response.status_code == 200
@@ -221,8 +221,8 @@ class TestToolsPagination:
         assert data["pagination"]["has_prev"] is True
 
         # Verify links
-        assert "/admin/tools?page=3" in data["links"]["next"]
-        assert "/admin/tools?page=1" in data["links"]["prev"]
+        assert "/v1/admin/tools?page=3" in data["links"]["next"]
+        assert "/v1/admin/tools?page=1" in data["links"]["prev"]
 
         # Cleanup
         app.dependency_overrides.clear()
@@ -260,7 +260,7 @@ class TestToolsPagination:
         client = TestClient(app)
 
         # Request last page
-        response = client.get("/admin/tools?page=3&per_page=10", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=3&per_page=10", headers={"Authorization": "Bearer test-token"})
 
         # Verify response
         assert response.status_code == 200
@@ -276,7 +276,7 @@ class TestToolsPagination:
 
         # Verify links
         assert data["links"]["next"] is None
-        assert "/admin/tools?page=2" in data["links"]["prev"]
+        assert "/v1/admin/tools?page=2" in data["links"]["prev"]
 
         # Cleanup
         app.dependency_overrides.clear()
@@ -296,7 +296,7 @@ class TestToolsPagination:
         client = TestClient(app)
 
         # Request first page
-        response = client.get("/admin/tools?page=1&per_page=10", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=10", headers={"Authorization": "Bearer test-token"})
 
         # Verify response
         assert response.status_code == 200
@@ -345,13 +345,13 @@ class TestToolsPagination:
         client = TestClient(app)
 
         # Request without filter (should get 10 enabled tools)
-        response = client.get("/admin/tools?page=1&per_page=50", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=50", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
         data_active_only = response.json()
         assert data_active_only["pagination"]["total_items"] == 10
 
         # Request with include_inactive (should get all 20 tools)
-        response = client.get("/admin/tools?page=1&per_page=50&include_inactive=true", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=50&include_inactive=true", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
         data_all = response.json()
         assert data_all["pagination"]["total_items"] == 20
@@ -393,22 +393,22 @@ class TestToolsPagination:
 
         # Test that oversized per_page returns validation error (422)
         # FastAPI validates Query parameters with le=500 at router level
-        response = client.get("/admin/tools?page=1&per_page=10000", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=10000", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 422  # Validation error for per_page > 500
 
         # Test that maximum valid page size works (500)
-        response = client.get("/admin/tools?page=1&per_page=500", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=500", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
         data = response.json()
         assert data["pagination"]["per_page"] == 500
 
         # Test that invalid page number returns validation error (422)
         # FastAPI validates Query parameters at router level
-        response = client.get("/admin/tools?page=0&per_page=10", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=0&per_page=10", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 422  # Validation error for page < 1
 
         # Test that valid minimum values work
-        response = client.get("/admin/tools?page=1&per_page=1", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/admin/tools?page=1&per_page=1", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
         data = response.json()
         assert data["pagination"]["page"] == 1

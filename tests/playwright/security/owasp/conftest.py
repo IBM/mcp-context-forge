@@ -81,7 +81,7 @@ def owasp_user_a_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     """Non-admin API context for User A, registered in the system. Cleans up after test."""
     email = f"owasp-a-{uuid.uuid4().hex[:8]}@example.com"
     create_resp = owasp_admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "OWASP User A"},
     )
     assert create_resp.status in (200, 201), f"Failed to create User A: {create_resp.status} {create_resp.text()}"
@@ -91,7 +91,7 @@ def owasp_user_a_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     yield {"ctx": ctx, "email": email}
     ctx.dispose()
     with suppress(Exception):
-        owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+        owasp_admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def owasp_user_b_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     """Non-admin API context for User B, registered in the system. Cleans up after test."""
     email = f"owasp-b-{uuid.uuid4().hex[:8]}@example.com"
     create_resp = owasp_admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "OWASP User B"},
     )
     assert create_resp.status in (200, 201), f"Failed to create User B: {create_resp.status} {create_resp.text()}"
@@ -109,7 +109,7 @@ def owasp_user_b_api(owasp_admin_api: APIRequestContext, playwright: Playwright)
     yield {"ctx": ctx, "email": email}
     ctx.dispose()
     with suppress(Exception):
-        owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+        owasp_admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
 
 @pytest.fixture
@@ -124,18 +124,18 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
     ctx_b = None
     try:
         # Team A
-        resp_a = owasp_admin_api.post("/teams/", data={"name": f"owasp-team-a-{suffix}", "description": "OWASP Team A", "visibility": "private"})
+        resp_a = owasp_admin_api.post("/v1/teams/", data={"name": f"owasp-team-a-{suffix}", "description": "OWASP Team A", "visibility": "private"})
         assert resp_a.status in (200, 201), f"Failed creating Team A: {resp_a.status} {resp_a.text()}"
         team_a_id = resp_a.json()["id"]
 
         # Team B
-        resp_b = owasp_admin_api.post("/teams/", data={"name": f"owasp-team-b-{suffix}", "description": "OWASP Team B", "visibility": "private"})
+        resp_b = owasp_admin_api.post("/v1/teams/", data={"name": f"owasp-team-b-{suffix}", "description": "OWASP Team B", "visibility": "private"})
         assert resp_b.status in (200, 201), f"Failed creating Team B: {resp_b.status} {resp_b.text()}"
         team_b_id = resp_b.json()["id"]
 
         # Server owned by Team A
         srv_a = owasp_admin_api.post(
-            "/servers",
+            "/v1/servers",
             data={"server": {"name": f"owasp-srv-a-{suffix}", "description": "Team A server"}, "team_id": team_a_id, "visibility": "team"},
         )
         assert srv_a.status in (200, 201), f"Failed creating Team A server: {srv_a.status} {srv_a.text()}"
@@ -143,7 +143,7 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
 
         # Server owned by Team B
         srv_b = owasp_admin_api.post(
-            "/servers",
+            "/v1/servers",
             data={"server": {"name": f"owasp-srv-b-{suffix}", "description": "Team B server"}, "team_id": team_b_id, "visibility": "team"},
         )
         assert srv_b.status in (200, 201), f"Failed creating Team B server: {srv_b.status} {srv_b.text()}"
@@ -169,16 +169,16 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
             ctx_b.dispose()
         if server_a_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_a_id}")
+                owasp_admin_api.delete(f"/v1/servers/{server_a_id}")
         if server_b_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_b_id}")
+                owasp_admin_api.delete(f"/v1/servers/{server_b_id}")
         if team_a_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/teams/{team_a_id}")
+                owasp_admin_api.delete(f"/v1/teams/{team_a_id}")
         if team_b_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/teams/{team_b_id}")
+                owasp_admin_api.delete(f"/v1/teams/{team_b_id}")
 
 
 @pytest.fixture
@@ -187,7 +187,7 @@ def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_use
     server_id: str | None = None
     try:
         resp = owasp_admin_api.post(
-            "/servers",
+            "/v1/servers",
             data={
                 "server": {"name": f"owasp-priv-{uuid.uuid4().hex[:8]}", "description": "User A private server"},
                 "team_id": None,
@@ -201,4 +201,4 @@ def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_use
     finally:
         if server_id:
             with suppress(Exception):
-                owasp_admin_api.delete(f"/servers/{server_id}")
+                owasp_admin_api.delete(f"/v1/servers/{server_id}")

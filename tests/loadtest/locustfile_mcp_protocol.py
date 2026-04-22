@@ -534,7 +534,7 @@ class BaseMCPUser(FastHttpUser):
         self._prompt_targets: list[PromptTarget] = []
 
     def _mcp_path(self) -> str:
-        return f"/servers/{self._server_id}/mcp"
+        return f"/v1/servers/{self._server_id}/mcp"
 
     def _mcp_headers(self) -> dict[str, str]:
         headers = {
@@ -962,7 +962,7 @@ class RESTBaselineUser(FastHttpUser):
     def rest_list_tools(self):
         """/tools via REST API."""
         with self.client.get(
-            "/tools",
+            "/v1/tools",
             headers=self._auth_headers,
             name="REST /tools",
             catch_response=True,

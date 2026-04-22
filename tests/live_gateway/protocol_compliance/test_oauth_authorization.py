@@ -64,7 +64,7 @@ def test_prm_endpoint_wired_for_per_server_path(gateway_http_client: httpx.Clien
     spec JSON body (oauth enabled) or a 404 explaining oauth is disabled.
     A plain 404 without explanation, or a 5xx, would indicate the route
     isn't wired at all."""
-    servers = gateway_http_client.get("/servers").json()
+    servers = gateway_http_client.get("/v1/servers").json()
     assert servers, "no virtual servers registered — can't probe per-server PRM"
     server_id = servers[0]["id"]
 

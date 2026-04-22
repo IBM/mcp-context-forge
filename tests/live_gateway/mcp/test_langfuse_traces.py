@@ -346,7 +346,7 @@ def test_langfuse_trace_export_eventually_contains_resource_read_trace(jwt_token
     triggered_after = time.time() - 1
     read_response = _send_jsonrpc_http(
         jwt_token,
-        f"/servers/{fast_time_server_id}/mcp/",
+        f"/v1/servers/{fast_time_server_id}/mcp/",
         {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "time://formats"}},
     )
     assert "error" not in read_response, f"resources/read returned error: {read_response}"

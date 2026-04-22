@@ -105,7 +105,7 @@ def _expected_samesite() -> str:
     return {"lax": "Lax", "strict": "Strict", "none": "None"}.get(value, "Lax")
 
 
-def _server_ids_for_token(playwright, token: str, path: str = "/servers") -> set[str]:
+def _server_ids_for_token(playwright, token: str, path: str = "/v1/servers") -> set[str]:
     ctx = _api_context(playwright, token)
     try:
         response = ctx.get(path)
@@ -190,7 +190,7 @@ def email_logged_in_page(context: BrowserContext) -> Page:
             desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW")
             login_page.submit_password_change(password, desired_password)
 
-        if "/admin/login" not in page.url and "/admin/change-password-required" not in page.url:
+        if "/v1/admin/login" not in page.url and "/v1/admin/change-password-required" not in page.url:
             login_succeeded = True
             break
 
@@ -213,7 +213,7 @@ def scoped_server_matrix(playwright):
     public_name = f"pw-sec-public-{uuid.uuid4().hex[:8]}"
     team_name_server = f"pw-sec-team-server-{uuid.uuid4().hex[:8]}"
 
-    team_resp = admin_ctx.post("/teams/", data={"name": team_name, "description": "Playwright security team", "visibility": "private"})
+    team_resp = admin_ctx.post("/v1/teams/", data={"name": team_name, "description": "Playwright security team", "visibility": "private"})
     if team_resp.status == 404:
         admin_ctx.dispose()
         pytest.skip("/teams endpoint is unavailable in this environment.")
@@ -221,14 +221,14 @@ def scoped_server_matrix(playwright):
     team_id = team_resp.json()["id"]
 
     public_resp = admin_ctx.post(
-        "/servers",
+        "/v1/servers",
         data={"server": {"name": public_name, "description": "public scope probe"}, "team_id": None, "visibility": "public"},
     )
     assert public_resp.status in (200, 201), f"Failed to create public server: {public_resp.status} {public_resp.text()}"
     public_server_id = public_resp.json()["id"]
 
     team_resp_server = admin_ctx.post(
-        "/servers",
+        "/v1/servers",
         data={"server": {"name": team_name_server, "description": "team scope probe"}, "team_id": team_id, "visibility": "team"},
     )
     assert team_resp_server.status in (200, 201), f"Failed to create team server: {team_resp_server.status} {team_resp_server.text()}"
@@ -236,13 +236,13 @@ def scoped_server_matrix(playwright):
 
     member_email = f"pw-sec-member-{uuid.uuid4().hex[:8]}@example.com"
     user_resp = admin_ctx.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={"email": member_email, "password": TEST_PASSWORD, "full_name": "Playwright Scope Member"},
     )
     assert user_resp.status in (200, 201, 409), f"Failed to create member user: {user_resp.status} {user_resp.text()}"
 
     invite_resp = admin_ctx.post(
-        f"/teams/{team_id}/invitations",
+        f"/v1/teams/{team_id}/invitations",
         data={"email": member_email, "role": "member"},
     )
     assert invite_resp.status in (200, 201), f"Failed to invite member user: {invite_resp.status} {invite_resp.text()}"
@@ -250,7 +250,7 @@ def scoped_server_matrix(playwright):
 
     member_ctx = _api_context(playwright, _make_jwt(member_email, is_admin=False))
     try:
-        accept_resp = member_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+        accept_resp = member_ctx.post(f"/v1/teams/invitations/{invitation_token}/accept")
     finally:
         member_ctx.dispose()
     assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status} {accept_resp.text()}"
@@ -258,7 +258,7 @@ def scoped_server_matrix(playwright):
     # Team membership checks can lag briefly in cache-backed environments.
     member_visible = False
     for _ in range(20):
-        members_resp = admin_ctx.get(f"/teams/{team_id}/members")
+        members_resp = admin_ctx.get(f"/v1/teams/{team_id}/members")
         if members_resp.status == 200:
             payload = members_resp.json()
             members = payload if isinstance(payload, list) else payload.get("members", [])
@@ -280,26 +280,26 @@ def scoped_server_matrix(playwright):
     finally:
         if member_email and team_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/teams/{team_id}/members/{member_email}")
+                admin_ctx.delete(f"/v1/teams/{team_id}/members/{member_email}")
         if member_email:
             with suppress(Exception):
-                admin_ctx.delete(f"/auth/email/admin/users/{member_email}")
+                admin_ctx.delete(f"/v1/auth/email/admin/users/{member_email}")
         if team_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{team_server_id}")
+                admin_ctx.delete(f"/v1/servers/{team_server_id}")
         if public_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{public_server_id}")
+                admin_ctx.delete(f"/v1/servers/{public_server_id}")
         if team_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/teams/{team_id}")
+                admin_ctx.delete(f"/v1/teams/{team_id}")
         admin_ctx.dispose()
 
 
 @pytest.fixture
 def public_server_id(admin_api: APIRequestContext) -> str:
     response = admin_api.post(
-        "/servers",
+        "/v1/servers",
         data={
             "server": {"name": f"pw-sec-transport-{uuid.uuid4().hex[:8]}", "description": "transport auth checks"},
             "team_id": None,
@@ -312,13 +312,13 @@ def public_server_id(admin_api: APIRequestContext) -> str:
     server_id = response.json()["id"]
     yield server_id
     with suppress(Exception):
-        admin_api.delete(f"/servers/{server_id}")
+        admin_api.delete(f"/v1/servers/{server_id}")
 
 
 @pytest.fixture
 def read_only_scoped_token(admin_api: APIRequestContext):
     create_resp = admin_api.post(
-        "/tokens",
+        "/v1/tokens",
         data={
             "name": f"pw-read-only-{uuid.uuid4().hex[:8]}",
             "expires_in_days": 1,
@@ -335,7 +335,7 @@ def read_only_scoped_token(admin_api: APIRequestContext):
     finally:
         if token_id:
             with suppress(Exception):
-                admin_api.delete(f"/tokens/{token_id}")
+                admin_api.delete(f"/v1/tokens/{token_id}")
 
 
 class TestPlaywrightSecurityE2EAuthAndSession:
@@ -343,7 +343,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_01_admin_route_requires_authentication_when_enabled(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin")
+        response = page.goto("/v1/admin")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
@@ -354,7 +354,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_02_admin_deep_link_requires_authentication_when_enabled(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/#tokens")
+        response = page.goto("/v1/admin/#tokens")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
@@ -383,7 +383,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_04_login_page_maps_admin_required_error(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/login?error=admin_required")
+        response = page.goto("/v1/admin/login?error=admin_required")
         if response and response.status == 404:
             pytest.skip("Admin login endpoint is unavailable in this environment.")
 
@@ -394,7 +394,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_05_login_page_maps_session_expired_error(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/login?error=session_expired")
+        response = page.goto("/v1/admin/login?error=session_expired")
         if response and response.status == 404:
             pytest.skip("Admin login endpoint is unavailable in this environment.")
 
@@ -423,7 +423,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, logout session invalidation is not applicable.")
 
-        logout_button = email_logged_in_page.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = email_logged_in_page.locator('form[action$="/v1/admin/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         email_logged_in_page.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
@@ -438,11 +438,11 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, logout session invalidation is not applicable.")
 
-        response = email_logged_in_page.goto("/admin/logout")
+        response = email_logged_in_page.goto("/v1/admin/logout")
         if response:
             assert response.status in (200, 302, 303)
 
-        email_logged_in_page.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
+        email_logged_in_page.goto(f"/v1/admin?logout_check={uuid.uuid4().hex[:8]}")
         expect(email_logged_in_page).to_have_url(re.compile(r".*/admin/login.*"))
 
         jwt_cookie = next((cookie for cookie in email_logged_in_page.context.cookies() if cookie["name"] == "jwt_token"), None)
@@ -454,16 +454,16 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         page_one = email_logged_in_page
         page_two = page_one.context.new_page()
-        page_two.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        page_two.goto("/v1/admin", wait_until="domcontentloaded", timeout=60000)
         expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
 
-        logout_button = page_one.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = page_one.locator('form[action$="/v1/admin/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         page_one.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
         page_one.wait_for_load_state("domcontentloaded")
 
-        page_two.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
+        page_two.goto(f"/v1/admin?logout_check={uuid.uuid4().hex[:8]}")
         expect(page_two).to_have_url(re.compile(r".*/admin/login.*"))
         page_two.close()
 
@@ -471,16 +471,16 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, post-logout denial checks are not applicable.")
 
-        logout_button = email_logged_in_page.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = email_logged_in_page.locator('form[action$="/v1/admin/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         email_logged_in_page.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
         email_logged_in_page.wait_for_load_state("domcontentloaded")
 
-        response = email_logged_in_page.request.get("/auth/email/admin/users")
+        response = email_logged_in_page.request.get("/v1/auth/email/admin/users")
 
         if response.status == 200:
-            assert "/admin/login" in response.url or "Sign In" in response.text()
+            assert "/v1/admin/login" in response.url or "Sign In" in response.text()
         else:
             assert response.status in (401, 403, 302, 303)
 
@@ -493,7 +493,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         _set_jwt_cookie(context, expired_token)
 
         page = context.new_page()
-        response = page.goto("/admin")
+        response = page.goto("/v1/admin")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
         expect(page).to_have_url(re.compile(r".*/admin/login.*"))
@@ -507,16 +507,20 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         _set_jwt_cookie(context, non_admin_token)
 
         page = context.new_page()
-        response = page.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        response = page.goto("/v1/admin", wait_until="domcontentloaded", timeout=60000)
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
-        if "/admin/login" in page.url:
-            assert "error=admin_required" in page.url or "error=invalid_credentials" in page.url or page.url.rstrip("/").endswith("/admin/login")
+        if "/v1/admin/login" in page.url:
+            assert (
+                "error=admin_required" in page.url
+                or "error=invalid_credentials" in page.url
+                or page.url.rstrip("/").endswith("/v1/admin/login")
+            )
             return
 
         # Some deployments keep URL at /admin and render denied content; ensure admin-only API is blocked.
-        probe = page.request.get("/auth/email/admin/users")
+        probe = page.request.get("/v1/auth/email/admin/users")
         assert probe.status in (401, 403), f"Non-admin browser session should not access admin user API, got {probe.status}: {probe.text()}"
 
     def test_14_cookie_only_auth_is_rejected_for_api_calls(self, playwright):
@@ -532,7 +536,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
             },
         )
         try:
-            response = ctx.get("/servers")
+            response = ctx.get("/v1/servers")
             assert response.status == 401, f"Cookie-only API authentication should be rejected, got {response.status}: {response.text()}"
         finally:
             ctx.dispose()
@@ -573,7 +577,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
 
     def test_20_duplicate_visibility_query_params_do_not_expand_scope(self, playwright, scoped_server_matrix: dict[str, str]):
         token = _make_jwt("admin@example.com", is_admin=True)
-        ids = _server_ids_for_token(playwright, token, "/servers?visibility=public&visibility=team")
+        ids = _server_ids_for_token(playwright, token, "/v1/servers?visibility=public&visibility=team")
         assert scoped_server_matrix["team_server_id"] not in ids
 
     def test_21_non_admin_cannot_create_users(self, playwright):
@@ -581,7 +585,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
         ctx = _api_context(playwright, token)
         try:
             response = ctx.post(
-                "/auth/email/admin/users",
+                "/v1/auth/email/admin/users",
                 data={
                     "email": f"forbidden-{uuid.uuid4().hex[:8]}@example.com",
                     "password": "SecureP@ssw0rd!Test2026",  # pragma: allowlist secret
@@ -597,7 +601,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
         ctx = _api_context(playwright, token)
         try:
             response = ctx.post(
-                "/rbac/roles",
+                "/v1/rbac/roles",
                 data={"name": f"forbidden-role-{uuid.uuid4().hex[:8]}", "description": "should fail", "scope": "global", "permissions": ["tools.read"]},
             )
             assert response.status in (401, 403), f"Non-admin role creation should be denied, got {response.status}: {response.text()}"
@@ -608,7 +612,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
         token = _make_jwt(f"rbac-token-{uuid.uuid4().hex[:8]}@example.com", is_admin=False, teams=[])
         ctx = _api_context(playwright, token)
         try:
-            response = ctx.get("/tokens/admin/all")
+            response = ctx.get("/v1/tokens/admin/all")
             assert response.status in (401, 403), f"Non-admin token-admin endpoint access should be denied, got {response.status}: {response.text()}"
         finally:
             ctx.dispose()
@@ -618,7 +622,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
         created_server_id: str | None = None
         try:
             response = ctx.post(
-                "/servers",
+                "/v1/servers",
                 data={
                     "server": {"name": f"forbidden-create-{uuid.uuid4().hex[:8]}", "description": "scope enforcement"},
                     "team_id": None,
@@ -632,12 +636,12 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
             ctx.dispose()
             if created_server_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/servers/{created_server_id}")
+                    admin_api.delete(f"/v1/servers/{created_server_id}")
 
     def test_25_read_only_scoped_token_can_still_list_servers(self, playwright, read_only_scoped_token: dict[str, str]):
         ctx = _api_context(playwright, read_only_scoped_token["access_token"])
         try:
-            response = ctx.get("/servers")
+            response = ctx.get("/v1/servers")
             assert response.status == 200, f"Read-only scoped token should list servers, got {response.status}: {response.text()}"
         finally:
             ctx.dispose()
@@ -651,7 +655,7 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
             pytest.skip("Auth is disabled; unauthenticated rejection checks are not applicable.")
 
         response = anon_api.post(
-            f"/servers/{public_server_id}/message?session_id=security-e2e-{uuid.uuid4().hex[:8]}",
+            f"/v1/servers/{public_server_id}/message?session_id=security-e2e-{uuid.uuid4().hex[:8]}",
             data={"jsonrpc": "2.0", "id": "1", "method": "ping", "params": {}},
         )
         if response.status == 404:
@@ -662,7 +666,7 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
         ctx = _api_context(playwright, _make_jwt("admin@example.com", is_admin=True, teams=None))
         try:
             response = ctx.post(
-                f"/servers/{public_server_id}/message?session_id=security-e2e-{uuid.uuid4().hex[:8]}",
+                f"/v1/servers/{public_server_id}/message?session_id=security-e2e-{uuid.uuid4().hex[:8]}",
                 data={"jsonrpc": "2.0", "id": "2", "method": "ping", "params": {}},
             )
             if response.status == 404:
@@ -703,14 +707,14 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
     def test_30_xss_payloads_do_not_execute_in_login_errors_or_server_catalog(self, admin_api: APIRequestContext, admin_page):
         nonce = uuid.uuid4().hex[:8]
 
-        admin_page.page.goto(f"/admin/login?error=<img src=x onerror=window.__pw_xss_login_{nonce}=1>")
+        admin_page.page.goto(f"/v1/admin/login?error=<img src=x onerror=window.__pw_xss_login_{nonce}=1>")
         expect(admin_page.page.locator("#error-message")).to_be_visible()
         login_xss_marker = admin_page.page.evaluate(f"Boolean(window.__pw_xss_login_{nonce})")
         assert login_xss_marker is False, "Error query parameter executed JavaScript in login page."
 
         server_name = f"<script>window.__pw_xss_catalog_{nonce}=1</script>xss-{nonce}"
         create_resp = admin_api.post(
-            "/servers",
+            "/v1/servers",
             data={
                 "server": {"name": server_name, "description": "xss catalog probe"},
                 "team_id": None,
@@ -748,4 +752,4 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
         finally:
             if created_server_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/servers/{created_server_id}")
+                    admin_api.delete(f"/v1/servers/{created_server_id}")

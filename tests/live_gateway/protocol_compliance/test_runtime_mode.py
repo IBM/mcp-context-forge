@@ -46,7 +46,7 @@ def test_runtime_mode_off_rejects_flip(gateway_http_client, runtime_mode_state: 
     """
     if runtime_mode_state["boot_mode"] != "off":
         pytest.skip(f"gateway booted {runtime_mode_state['boot_mode']}; this rail only checked under boot_mode=off")
-    resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": "edge"})
+    resp = gateway_http_client.patch("/v1/admin/runtime/mcp-mode", json={"mode": "edge"})
     assert resp.status_code == 409, f"expected 409, got {resp.status_code}: {resp.text[:200]}"
     assert "boot_mode" in resp.text or "off" in resp.text, f"409 body should reference the boot_mode=off constraint: {resp.text[:200]}"
 
@@ -77,7 +77,7 @@ def test_runtime_mode_flip_to_shadow_mounts_python(flip_runtime_mode) -> None:
 def test_runtime_mode_rejects_unsupported(gateway_http_client, runtime_mode_state: dict) -> None:
     """Unsupported override modes (e.g. ``off``, ``full``, ``bogus``) return 400+."""
     for bad_mode in ("off", "full", "bogus"):
-        resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": bad_mode})
+        resp = gateway_http_client.patch("/v1/admin/runtime/mcp-mode", json={"mode": bad_mode})
         assert resp.status_code >= 400, f"expected rejection for mode={bad_mode!r}, got {resp.status_code}: {resp.text[:200]}"
 
 
@@ -90,7 +90,7 @@ def test_shadow_boot_rejects_edge_with_safety_flag_reason(gateway_http_client, r
     """
     if runtime_mode_state["boot_mode"] != "shadow":
         pytest.skip(f"gateway booted {runtime_mode_state['boot_mode']}; this rail only checked under boot_mode=shadow")
-    resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": "edge"})
+    resp = gateway_http_client.patch("/v1/admin/runtime/mcp-mode", json={"mode": "edge"})
     assert resp.status_code == 409, f"expected 409, got {resp.status_code}: {resp.text[:200]}"
     body = resp.text.lower()
     assert "safety" in body or "reuse" in body or "edge" in body, f"409 body should explain the safety-flag constraint: {resp.text[:300]}"
@@ -143,7 +143,7 @@ def test_health_mirrors_runtime_mode_state(gateway_http_client) -> None:
     admin = None
     mcp_rt = None
     while _time.monotonic() < deadline:
-        admin = gateway_http_client.get("/admin/runtime/mcp-mode").json()
+        admin = gateway_http_client.get("/v1/admin/runtime/mcp-mode").json()
         health = gateway_http_client.get("/health").json()
         mcp_rt = health.get("mcp_runtime")
         if mcp_rt is None:
@@ -229,7 +229,7 @@ def test_a2a_mode_endpoint_has_equivalent_shape(gateway_http_client) -> None:
     per-invocation path) where MCP uses ``mounted`` (the /mcp transport).
     Both name their boot/effective/override fields the same.
     """
-    resp = gateway_http_client.get("/admin/runtime/a2a-mode")
+    resp = gateway_http_client.get("/v1/admin/runtime/a2a-mode")
     if resp.status_code != 200:
         pytest.skip(f"a2a-mode admin endpoint unavailable ({resp.status_code}): {resp.text[:200]}")
     state = resp.json()

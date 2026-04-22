@@ -71,18 +71,18 @@ def hpp_servers(playwright: Playwright):
     team_server_id: str | None = None
     try:
         team_resp = admin_ctx.post(
-            "/teams/",
+            "/v1/teams/",
             data={"name": f"hpp-team-{uuid.uuid4().hex[:8]}", "description": "HPP test team", "visibility": "private"},
         )
         assert team_resp.status in (200, 201), f"Failed creating team for HPP test: {team_resp.status} {team_resp.text()}"
         team_id = team_resp.json()["id"]
 
         public_server_resp = admin_ctx.post(
-            "/servers",
+            "/v1/servers",
             data={"server": {"name": f"hpp-public-{uuid.uuid4().hex[:8]}"}, "team_id": None, "visibility": "public"},
         )
         team_server_resp = admin_ctx.post(
-            "/servers",
+            "/v1/servers",
             data={"server": {"name": f"hpp-team-{uuid.uuid4().hex[:8]}"}, "team_id": team_id, "visibility": "team"},
         )
         assert public_server_resp.status in (200, 201), f"Failed creating public server: {public_server_resp.status} {public_server_resp.text()}"
@@ -95,13 +95,13 @@ def hpp_servers(playwright: Playwright):
     finally:
         if team_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{team_server_id}")
+                admin_ctx.delete(f"/v1/servers/{team_server_id}")
         if public_server_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/servers/{public_server_id}")
+                admin_ctx.delete(f"/v1/servers/{public_server_id}")
         if team_id:
             with suppress(Exception):
-                admin_ctx.delete(f"/teams/{team_id}")
+                admin_ctx.delete(f"/v1/teams/{team_id}")
         admin_ctx.dispose()
 
 
@@ -111,7 +111,7 @@ class TestAPISecurityAbuseCases:
     def test_mass_assignment_cannot_override_token_owner(self, admin_api: APIRequestContext):
         token_name = f"mass-assign-{uuid.uuid4().hex[:8]}"
         response = admin_api.post(
-            "/tokens",
+            "/v1/tokens",
             data={
                 "name": token_name,
                 "expires_in_days": 1,
@@ -131,7 +131,7 @@ class TestAPISecurityAbuseCases:
 
         if token_id:
             with suppress(Exception):
-                admin_api.delete(f"/tokens/{token_id}")
+                admin_api.delete(f"/v1/tokens/{token_id}")
 
     def test_bola_user_cannot_read_or_revoke_another_users_token(self, admin_api: APIRequestContext, playwright: Playwright):
         email_a = f"bola-a-{uuid.uuid4().hex[:8]}@example.com"
@@ -143,7 +143,7 @@ class TestAPISecurityAbuseCases:
         try:
             for email in (email_a, email_b):
                 create_user_resp = admin_api.post(
-                    "/auth/email/admin/users",
+                    "/v1/auth/email/admin/users",
                     data={"email": email, "password": TEST_PASSWORD, "full_name": "BOLA Test User"},
                 )
                 assert create_user_resp.status in (200, 201), f"Failed creating {email}: {create_user_resp.status} {create_user_resp.text()}"
@@ -152,15 +152,15 @@ class TestAPISecurityAbuseCases:
             ctx_b = _api_context(playwright, _make_jwt(email_b, is_admin=False, teams=[]))
 
             create_token_resp = ctx_a.post(
-                "/tokens",
+                "/v1/tokens",
                 data={"name": f"bola-token-{uuid.uuid4().hex[:8]}", "expires_in_days": 1},
             )
             assert create_token_resp.status in (200, 201), f"User A failed to create token: {create_token_resp.status} {create_token_resp.text()}"
             created_token_id = _extract_token_id(create_token_resp.json())
             assert created_token_id
 
-            read_other_resp = ctx_b.get(f"/tokens/{created_token_id}")
-            revoke_other_resp = ctx_b.delete(f"/tokens/{created_token_id}")
+            read_other_resp = ctx_b.get(f"/v1/tokens/{created_token_id}")
+            revoke_other_resp = ctx_b.delete(f"/v1/tokens/{created_token_id}")
 
             assert read_other_resp.status in (403, 404), f"User B should not read User A token: {read_other_resp.status} {read_other_resp.text()}"
             assert revoke_other_resp.status in (403, 404), f"User B should not revoke User A token: {revoke_other_resp.status} {revoke_other_resp.text()}"
@@ -168,20 +168,20 @@ class TestAPISecurityAbuseCases:
             if ctx_a:
                 if created_token_id:
                     with suppress(Exception):
-                        ctx_a.delete(f"/tokens/{created_token_id}")
+                        ctx_a.delete(f"/v1/tokens/{created_token_id}")
                 ctx_a.dispose()
             if ctx_b:
                 ctx_b.dispose()
             with suppress(Exception):
-                admin_api.delete(f"/auth/email/admin/users/{email_a}")
+                admin_api.delete(f"/v1/auth/email/admin/users/{email_a}")
             with suppress(Exception):
-                admin_api.delete(f"/auth/email/admin/users/{email_b}")
+                admin_api.delete(f"/v1/auth/email/admin/users/{email_b}")
 
     def test_query_parameter_pollution_does_not_bypass_public_only_scope(self, hpp_servers: dict[str, str], playwright: Playwright):
         public_only_token = _make_jwt("admin@example.com", is_admin=True)
         ctx = _api_context(playwright, public_only_token)
         try:
-            response = ctx.get("/servers?visibility=public&visibility=team")
+            response = ctx.get("/v1/servers?visibility=public&visibility=team")
             status_code = response.status
             payload = response.json()
         finally:
@@ -193,7 +193,7 @@ class TestAPISecurityAbuseCases:
 
     def test_xss_payload_in_server_name_is_rejected_or_sanitized(self, admin_api: APIRequestContext):
         response = admin_api.post(
-            "/servers",
+            "/v1/servers",
             data={
                 "server": {"name": '<script>alert("xss")</script>', "description": "xss probe"},
                 "team_id": None,
@@ -211,11 +211,11 @@ class TestAPISecurityAbuseCases:
 
         if created_server_id:
             with suppress(Exception):
-                admin_api.delete(f"/servers/{created_server_id}")
+                admin_api.delete(f"/v1/servers/{created_server_id}")
 
     def test_path_traversal_payload_in_resource_uri_is_rejected(self, admin_api: APIRequestContext):
         response = admin_api.post(
-            "/resources",
+            "/v1/resources",
             data={
                 "resource": {"uri": "../../etc/passwd", "name": f"traversal-{uuid.uuid4().hex[:8]}", "content": "probe"},
                 "team_id": None,
@@ -229,7 +229,7 @@ class TestAPISecurityAbuseCases:
             created_id = body.get("id")
             if created_id:
                 with suppress(Exception):
-                    admin_api.delete(f"/resources/{created_id}")
+                    admin_api.delete(f"/v1/resources/{created_id}")
             pytest.fail("Traversal payload unexpectedly accepted without normalization/rejection")
 
         assert response.status in (400, 422), f"Traversal payload should be rejected, got {response.status}: {response.text()}"

@@ -287,7 +287,7 @@ class TestCookieSecurityAttributes:
         _ensure_admin_logged_in(page, base_url)
         csrf_cookie = _find_cookie(page, ADMIN_CSRF_COOKIE_NAME)
         assert csrf_cookie is not None, f"Expected {ADMIN_CSRF_COOKIE_NAME} cookie"
-        assert csrf_cookie["path"].startswith("/admin"), f"CSRF cookie path should start with /admin, got {csrf_cookie['path']}"
+        assert csrf_cookie["path"].startswith("/v1/admin"), f"CSRF cookie path should start with /admin, got {csrf_cookie['path']}"
 
     def test_ui_hide_cookie_samesite_matches_config(self, page: Page, base_url: str):
         """ui_hide_sections cookie has sameSite matching settings.cookie_samesite."""
@@ -664,7 +664,7 @@ class TestIframeFormSubmission:
         """Create a gateway via REST API using JSON. Returns gateway ID; skips on failure."""
         unique_url = self._get_unique_gateway_url(name)
         create_resp = admin_api.post(
-            "/gateways",
+            "/v1/gateways",
             headers={"Content-Type": "application/json"},
             data={"name": name, "url": unique_url, "transport": "HTTP"},
         )
@@ -678,7 +678,7 @@ class TestIframeFormSubmission:
     def _cleanup_gateway(self, admin_api, gw_id: str) -> None:
         """Best-effort gateway cleanup."""
         try:
-            admin_api.delete(f"/gateways/{gw_id}")
+            admin_api.delete(f"/v1/gateways/{gw_id}")
         except Exception:
             pass
 
@@ -722,7 +722,7 @@ class TestIframeFormSubmission:
 
             # Submit and wait for the POST response from the admin form handler.
             # The admin form uses JS fetch() so the page does NOT navigate.
-            with page.expect_response(lambda r: "/admin/gateways" in r.url and r.request.method == "POST", timeout=30000) as resp_info:
+            with page.expect_response(lambda r: "/v1/admin/gateways" in r.url and r.request.method == "POST", timeout=30000) as resp_info:
                 frame.locator('#add-gateway-form button[type="submit"]').click()
 
             post_resp = resp_info.value
@@ -730,7 +730,7 @@ class TestIframeFormSubmission:
                 pytest.skip(f"Gateway form submission returned HTTP {post_resp.status} — server may reject unreachable URLs")
 
             # Verify via API
-            resp = admin_api.get("/gateways/")
+            resp = admin_api.get("/v1/gateways/")
             assert resp.ok, f"GET /gateways/ failed: {resp.status}"
             gateways = resp.json()
             match = [g for g in gateways if g.get("name") == gw_name]
@@ -762,11 +762,11 @@ class TestIframeFormSubmission:
             frame.locator("#server-name").fill(srv_name)
 
             # Submit and wait for response
-            with page.expect_response(lambda r: "/admin/servers" in r.url and r.request.method == "POST", timeout=15000):
+            with page.expect_response(lambda r: "/v1/admin/servers" in r.url and r.request.method == "POST", timeout=15000):
                 frame.locator('#add-server-form button[type="submit"]').click()
 
             # Verify via API
-            resp = admin_api.get("/servers/")
+            resp = admin_api.get("/v1/servers/")
             assert resp.ok, f"GET /servers/ failed: {resp.status}"
             servers = resp.json()
             match = [s for s in servers if s.get("name") == srv_name]
@@ -776,7 +776,7 @@ class TestIframeFormSubmission:
             assert not console_errors, f"JS errors during server add: {console_errors}"
         finally:
             if srv_id:
-                admin_api.delete(f"/servers/{srv_id}")
+                admin_api.delete(f"/v1/servers/{srv_id}")
 
     def test_add_tool_via_iframe_form(self, page: Page, iframe_host: FrameLocator, console_errors: List[str], admin_api):
         """Fill and submit the add-tool form inside the iframe, verify entity via API."""
@@ -800,11 +800,11 @@ class TestIframeFormSubmission:
             frame.locator("#tool-url").fill(tool_url)
 
             # Submit and wait for response
-            with page.expect_response(lambda r: "/admin/tools" in r.url and r.request.method == "POST", timeout=15000):
+            with page.expect_response(lambda r: "/v1/admin/tools" in r.url and r.request.method == "POST", timeout=15000):
                 frame.locator('#add-tool-form button[type="submit"]').click()
 
             # Verify via API
-            resp = admin_api.get("/tools/")
+            resp = admin_api.get("/v1/tools/")
             assert resp.ok, f"GET /tools/ failed: {resp.status}"
             tools = resp.json()
             match = [t for t in tools if t.get("name") == tool_name]
@@ -814,7 +814,7 @@ class TestIframeFormSubmission:
             assert not console_errors, f"JS errors during tool add: {console_errors}"
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
     def test_edit_gateway_via_iframe_modal(self, page: Page, iframe_host: FrameLocator, console_errors: List[str], admin_api):
         """Pre-create a gateway via API, edit its description via the iframe modal, verify change."""
@@ -854,11 +854,11 @@ class TestIframeFormSubmission:
             desc_field.fill(new_description)
 
             # Submit edit form
-            with page.expect_response(lambda r: "/admin/gateways" in r.url and r.request.method == "POST", timeout=15000):
+            with page.expect_response(lambda r: "/v1/admin/gateways" in r.url and r.request.method == "POST", timeout=15000):
                 edit_form.locator('button[type="submit"]').click()
 
             # Verify via API
-            verify_resp = admin_api.get(f"/gateways/{gw_id}")
+            verify_resp = admin_api.get(f"/v1/gateways/{gw_id}")
             assert verify_resp.ok, f"GET /gateways/{gw_id} failed: {verify_resp.status}"
             assert verify_resp.json().get("description") == new_description, f"Description not updated to '{new_description}'"
 
@@ -890,13 +890,13 @@ class TestIframeFormSubmission:
             gw_row.scroll_into_view_if_needed()
             gw_row.locator("button[aria-expanded]").click()
             gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
-            delete_btn = frame.locator(f'form[action*="/gateways/{gw_id}/delete"] button[type="submit"]').first
+            delete_btn = frame.locator(f'form[action*="/v1/gateways/{gw_id}/delete"] button[type="submit"]').first
 
-            with page.expect_response(lambda r: f"/gateways/{gw_id}/delete" in r.url, timeout=15000):
+            with page.expect_response(lambda r: f"/v1/gateways/{gw_id}/delete" in r.url, timeout=15000):
                 delete_btn.click()
 
             # Verify gateway is gone
-            verify_resp = admin_api.get(f"/gateways/{gw_id}")
+            verify_resp = admin_api.get(f"/v1/gateways/{gw_id}")
             assert verify_resp.status in (404, 410), f"Expected 404/410 after delete, got {verify_resp.status}"
 
             assert not console_errors, f"JS errors during gateway delete: {console_errors}"
@@ -924,13 +924,13 @@ class TestIframeFormSubmission:
             gw_row.scroll_into_view_if_needed()
             gw_row.locator("button[aria-expanded]").click()
             gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
-            toggle_btn = frame.locator(f'form[action*="/gateways/{gw_id}/state"] button[type="submit"]')
+            toggle_btn = frame.locator(f'form[action*="/v1/gateways/{gw_id}/state"] button[type="submit"]')
 
-            with page.expect_response(lambda r: f"/gateways/{gw_id}/state" in r.url, timeout=15000):
+            with page.expect_response(lambda r: f"/v1/gateways/{gw_id}/state" in r.url, timeout=15000):
                 toggle_btn.first.click()
 
             # Verify gateway is now inactive
-            verify_resp = admin_api.get(f"/gateways/{gw_id}")
+            verify_resp = admin_api.get(f"/v1/gateways/{gw_id}")
             assert verify_resp.ok, f"GET /gateways/{gw_id} failed: {verify_resp.status}"
             gw_data = verify_resp.json()
             assert gw_data.get("enabled") is False, f"Expected enabled=False after toggle, got {gw_data.get('enabled')}"

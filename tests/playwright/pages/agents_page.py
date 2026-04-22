@@ -529,7 +529,7 @@ class AgentsPage(BasePage):
         self._open_action_dropdown(row)
         edit_btn = row.locator('button[role="menuitem"]:has-text("Edit")')
         with self.page.expect_response(
-            lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+            lambda resp: (re.search(r"/v1/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
             timeout=30000,
         ) as resp_info:
             edit_btn.click()

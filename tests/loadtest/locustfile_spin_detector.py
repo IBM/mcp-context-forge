@@ -640,7 +640,7 @@ class HealthCheckUser(BaseUser):
     def metrics_endpoint(self):
         """Check Prometheus metrics endpoint."""
         try:
-            with self.client.get("/metrics", headers=self.auth_headers, name="/metrics", catch_response=True) as response:
+            with self.client.get("/v1/metrics", headers=self.auth_headers, name="/v1/metrics", catch_response=True) as response:
                 self._validate_status(response)
         except Exception:
             pass  # Connection errors are recorded via catch_response
@@ -657,7 +657,7 @@ class ReadOnlyAPIUser(BaseUser):
     def list_tools(self):
         """List all tools."""
         try:
-            with self.client.get("/tools", headers=self.auth_headers, name="/tools", catch_response=True) as response:
+            with self.client.get("/v1/tools", headers=self.auth_headers, name="/v1/tools", catch_response=True) as response:
                 self._validate_json_response(response)
         except Exception:
             pass
@@ -667,7 +667,7 @@ class ReadOnlyAPIUser(BaseUser):
     def list_servers(self):
         """List all servers."""
         try:
-            with self.client.get("/servers", headers=self.auth_headers, name="/servers", catch_response=True) as response:
+            with self.client.get("/v1/servers", headers=self.auth_headers, name="/v1/servers", catch_response=True) as response:
                 self._validate_json_response(response)
         except Exception:
             pass
@@ -677,7 +677,7 @@ class ReadOnlyAPIUser(BaseUser):
     def list_gateways(self):
         """List all gateways."""
         try:
-            with self.client.get("/gateways", headers=self.auth_headers, name="/gateways", catch_response=True) as response:
+            with self.client.get("/v1/gateways", headers=self.auth_headers, name="/v1/gateways", catch_response=True) as response:
                 self._validate_json_response(response)
         except Exception:
             pass
@@ -687,7 +687,7 @@ class ReadOnlyAPIUser(BaseUser):
     def list_resources(self):
         """List all resources."""
         try:
-            with self.client.get("/resources", headers=self.auth_headers, name="/resources", catch_response=True) as response:
+            with self.client.get("/v1/resources", headers=self.auth_headers, name="/v1/resources", catch_response=True) as response:
                 self._validate_json_response(response)
         except Exception:
             pass
@@ -697,7 +697,7 @@ class ReadOnlyAPIUser(BaseUser):
     def list_prompts(self):
         """List all prompts."""
         try:
-            with self.client.get("/prompts", headers=self.auth_headers, name="/prompts", catch_response=True) as response:
+            with self.client.get("/v1/prompts", headers=self.auth_headers, name="/v1/prompts", catch_response=True) as response:
                 self._validate_json_response(response)
         except Exception:
             pass
@@ -709,7 +709,7 @@ class ReadOnlyAPIUser(BaseUser):
         if TOOL_IDS:
             try:
                 tool_id = random.choice(TOOL_IDS)
-                with self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]", catch_response=True) as response:
+                with self.client.get(f"/v1/tools/{tool_id}", headers=self.auth_headers, name="/v1/tools/[id]", catch_response=True) as response:
                     self._validate_json_response(response, allowed_codes=[200, 404])
             except Exception:
                 pass
@@ -721,7 +721,7 @@ class ReadOnlyAPIUser(BaseUser):
         if SERVER_IDS:
             try:
                 server_id = random.choice(SERVER_IDS)
-                with self.client.get(f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id]", catch_response=True) as response:
+                with self.client.get(f"/v1/servers/{server_id}", headers=self.auth_headers, name="/v1/servers/[id]", catch_response=True) as response:
                     self._validate_json_response(response, allowed_codes=[200, 404])
             except Exception:
                 pass
@@ -1003,7 +1003,7 @@ class WriteAPIUser(BaseUser):
         """Clean up created entities."""
         for tool_id in self.created_tools:
             try:
-                self.client.delete(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id] [cleanup]")
+                self.client.delete(f"/v1/tools/{tool_id}", headers=self.auth_headers, name="/v1/tools/[id] [cleanup]")
             except Exception:
                 pass
 
@@ -1021,7 +1021,7 @@ class WriteAPIUser(BaseUser):
             }
 
             with self.client.post(
-                "/tools",
+                "/v1/tools",
                 json=tool_data,
                 headers={**self.auth_headers, "Content-Type": "application/json"},
                 name="/tools [create]",
@@ -1032,7 +1032,7 @@ class WriteAPIUser(BaseUser):
                         data = response.json()
                         tool_id = data.get("id") or data.get("name") or tool_name
                         time.sleep(0.1)
-                        self.client.delete(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id] [delete]")
+                        self.client.delete(f"/v1/tools/{tool_id}", headers=self.auth_headers, name="/v1/tools/[id] [delete]")
                     except Exception:
                         pass
                 elif response.status_code in (409, 422):
@@ -1061,7 +1061,7 @@ class StressTestUser(BaseUser):
     def rapid_tools_list(self):
         """Rapid tools listing."""
         try:
-            self.client.get("/tools", headers=self.auth_headers, name="/tools [stress]")
+            self.client.get("/v1/tools", headers=self.auth_headers, name="/tools [stress]")
         except Exception:
             pass
 
@@ -1103,7 +1103,7 @@ class RealisticUser(BaseUser):
     def list_tools(self):
         """List tools."""
         try:
-            self.client.get("/tools", headers=self.auth_headers, name="/tools")
+            self.client.get("/v1/tools", headers=self.auth_headers, name="/v1/tools")
         except Exception:
             pass
 
@@ -1112,7 +1112,7 @@ class RealisticUser(BaseUser):
     def list_servers(self):
         """List servers."""
         try:
-            self.client.get("/servers", headers=self.auth_headers, name="/servers")
+            self.client.get("/v1/servers", headers=self.auth_headers, name="/v1/servers")
         except Exception:
             pass
 
@@ -1121,7 +1121,7 @@ class RealisticUser(BaseUser):
     def list_gateways(self):
         """List gateways."""
         try:
-            self.client.get("/gateways", headers=self.auth_headers, name="/gateways")
+            self.client.get("/v1/gateways", headers=self.auth_headers, name="/v1/gateways")
         except Exception:
             pass
 
@@ -1149,7 +1149,7 @@ class RealisticUser(BaseUser):
         if TOOL_IDS:
             try:
                 tool_id = random.choice(TOOL_IDS)
-                with self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]", catch_response=True) as response:
+                with self.client.get(f"/v1/tools/{tool_id}", headers=self.auth_headers, name="/v1/tools/[id]", catch_response=True) as response:
                     self._validate_json_response(response, allowed_codes=[200, 404])
             except Exception:
                 pass

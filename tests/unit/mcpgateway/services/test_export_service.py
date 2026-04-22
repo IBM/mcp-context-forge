@@ -746,9 +746,9 @@ async def test_export_servers_with_data(export_service, mock_db):
     assert server_data["name"] == "test_server"
     assert server_data["description"] == "Test server"
     assert server_data["tool_ids"] == ["tool1", "tool2"]
-    assert server_data["sse_endpoint"] == "/servers/server1/sse"
-    assert server_data["websocket_endpoint"] == "/servers/server1/ws"
-    assert server_data["jsonrpc_endpoint"] == "/servers/server1/jsonrpc"
+    assert server_data["sse_endpoint"] == "/v1/servers/server1/sse"
+    assert server_data["websocket_endpoint"] == "/v1/servers/server1/ws"
+    assert server_data["jsonrpc_endpoint"] == "/v1/servers/server1/jsonrpc"
     assert server_data["is_active"] == True
     assert server_data["tags"] == ["test", "api"]
     assert "capabilities" in server_data

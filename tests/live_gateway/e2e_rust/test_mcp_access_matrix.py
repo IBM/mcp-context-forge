@@ -84,7 +84,7 @@ def _request_json(
 
 def _resolve_role_id(admin_client: httpx.Client, role_name: str) -> str:
     """Resolve an RBAC role name to its UUID."""
-    roles = _request_json(admin_client, "GET", "/rbac/roles")
+    roles = _request_json(admin_client, "GET", "/v1/rbac/roles")
     for role in roles:
         if role.get("name") == role_name:
             return role["id"]
@@ -104,7 +104,7 @@ def _create_user_token(
     _request_json(
         admin_client,
         "POST",
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         json={
             "email": email,
             "password": TEST_PASSWORD,
@@ -120,7 +120,7 @@ def _create_user_token(
         _request_json(
             admin_client,
             "POST",
-            f"/teams/{team_id}/members",
+            f"/v1/teams/{team_id}/members",
             json={"email": email, "role": "member"},
         )
     if role_name and team_id:
@@ -128,7 +128,7 @@ def _create_user_token(
         _request_json(
             admin_client,
             "POST",
-            f"/rbac/users/{email}/roles",
+            f"/v1/rbac/users/{email}/roles",
             json={"role_id": role_id, "scope": "team", "scope_id": team_id},
         )
 
@@ -141,7 +141,7 @@ def _create_user_token(
         }
         if team_id:
             payload["team_id"] = team_id
-        token_response = _request_json(user_client, "POST", "/tokens", json=payload)
+        token_response = _request_json(user_client, "POST", "/v1/tokens", json=payload)
 
     token_obj = token_response.get("token", token_response)
     return {
@@ -158,9 +158,9 @@ def _cleanup_user(admin_client: httpx.Client, user_info: dict[str, Any]) -> None
     token_id = user_info.get("token_id")
     if token_id:
         with suppress(Exception):
-            admin_client.delete(f"/tokens/admin/{token_id}")
+            admin_client.delete(f"/v1/tokens/admin/{token_id}")
     with suppress(Exception):
-        admin_client.delete(f"/auth/email/admin/users/{user_info['email']}")
+        admin_client.delete(f"/v1/auth/email/admin/users/{user_info['email']}")
 
 
 def _mcp_post(
@@ -175,7 +175,7 @@ def _mcp_post(
 ) -> httpx.Response:
     """Send a direct MCP JSON-RPC POST to the server-scoped endpoint."""
     return client.post(
-        f"/servers/{server_id}/mcp/",
+        f"/v1/servers/{server_id}/mcp/",
         headers=_mcp_headers(token, session_id=session_id),
         json={
             "jsonrpc": "2.0",
@@ -326,7 +326,7 @@ def access_matrix_env(admin_client: httpx.Client) -> Generator[dict[str, Any], N
     team = _request_json(
         admin_client,
         "POST",
-        "/teams/",
+        "/v1/teams/",
         json={
             "name": f"{ACCESS_PREFIX}-team-{uuid.uuid4().hex[:8]}",
             "description": "Rust MCP access matrix team",
@@ -335,10 +335,10 @@ def access_matrix_env(admin_client: httpx.Client) -> Generator[dict[str, Any], N
     )
     team_id = team["id"]
 
-    tools = _request_json(admin_client, "GET", "/tools")
-    resources = _request_json(admin_client, "GET", "/resources")
-    prompts = _request_json(admin_client, "GET", "/prompts")
-    gateways = _request_json(admin_client, "GET", "/gateways")
+    tools = _request_json(admin_client, "GET", "/v1/tools")
+    resources = _request_json(admin_client, "GET", "/v1/resources")
+    prompts = _request_json(admin_client, "GET", "/v1/prompts")
+    gateways = _request_json(admin_client, "GET", "/v1/gateways")
     gateway = next(g for g in gateways if g["name"] == "fast_time")
     gateway_id = gateway["id"]
     tool_ids = [tool["id"] for tool in tools if (tool.get("gatewayId") or tool.get("gateway_id")) == gateway_id]
@@ -348,7 +348,7 @@ def access_matrix_env(admin_client: httpx.Client) -> Generator[dict[str, Any], N
     server = _request_json(
         admin_client,
         "POST",
-        "/servers",
+        "/v1/servers",
         json={
             "server": {
                 "name": f"{ACCESS_PREFIX}-server-{uuid.uuid4().hex[:8]}",
@@ -403,9 +403,9 @@ def access_matrix_env(admin_client: httpx.Client) -> Generator[dict[str, Any], N
     for user in users.values():
         _cleanup_user(admin_client, user)
     with suppress(Exception):
-        admin_client.delete(f"/servers/{server_id}")
+        admin_client.delete(f"/v1/servers/{server_id}")
     with suppress(Exception):
-        admin_client.delete(f"/teams/{team_id}")
+        admin_client.delete(f"/v1/teams/{team_id}")
 
 
 class TestMcpAccessMatrix:

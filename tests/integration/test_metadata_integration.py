@@ -157,7 +157,7 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        response = client.post("/tools/", json=tool_data, headers=auth_headers)
+        response = client.post("/v1/tools/", json=tool_data, headers=auth_headers)
         assert response.status_code == 200
 
         tool = response.json()
@@ -183,7 +183,7 @@ class TestMetadataIntegration:
         }
 
         # Simulate admin UI request
-        response = client.post("/admin/tools", data=tool_data, headers=auth_headers)
+        response = client.post("/v1/admin/tools", data=tool_data, headers=auth_headers)
 
         # Admin endpoint might return different status codes, just verify it doesn't crash
         assert response.status_code in [200, 400, 422, 500]  # Allow various responses
@@ -199,14 +199,14 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        create_response = client.post("/tools/", json=tool_data, headers=auth_headers)
+        create_response = client.post("/v1/tools/", json=tool_data, headers=auth_headers)
         assert create_response.status_code == 200
         tool_id = create_response.json()["id"]
 
         # Now update the tool
         update_data = {"description": "Updated description"}
 
-        update_response = client.put(f"/tools/{tool_id}", json=update_data, headers=auth_headers)
+        update_response = client.put(f"/v1/tools/{tool_id}", json=update_data, headers=auth_headers)
         assert update_response.status_code == 200
 
         updated_tool = update_response.json()
@@ -232,7 +232,7 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        response = client.post("/tools/", json=tool_data, headers=auth_headers)
+        response = client.post("/v1/tools/", json=tool_data, headers=auth_headers)
         assert response.status_code == 200
         tool = response.json()
 
@@ -281,7 +281,7 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        response = client.post("/tools/", json=tool_data, headers=auth_headers)
+        response = client.post("/v1/tools/", json=tool_data, headers=auth_headers)
         assert response.status_code == 200
 
         tool = response.json()
@@ -305,7 +305,7 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        response = client.post("/tools/", json=tool_data, headers=auth_headers)
+        response = client.post("/v1/tools/", json=tool_data, headers=auth_headers)
         assert response.status_code == 200
 
         tool = response.json()
@@ -337,10 +337,10 @@ class TestMetadataIntegration:
             "visibility": "private",
         }
 
-        client.post("/tools/", json=tool_data, headers=auth_headers)
+        client.post("/v1/tools/", json=tool_data, headers=auth_headers)
 
         # List tools
-        response = client.get("/tools/", headers=auth_headers)
+        response = client.get("/v1/tools/", headers=auth_headers)
         assert response.status_code == 200
 
         tools = response.json()
@@ -375,7 +375,7 @@ class TestMetadataIntegration:
         mock_request.client.host = "test-ip"
         mock_request.headers = {"user-agent": "test-agent"}
         mock_request.url = SimpleNamespace()
-        mock_request.url.path = "/admin/tools"
+        mock_request.url.path = "/v1/admin/tools"
 
         # Extract metadata
         metadata = MetadataCapture.extract_creation_metadata(mock_request, "service_test_user")

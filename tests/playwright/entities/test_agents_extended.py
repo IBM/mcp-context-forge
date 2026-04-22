@@ -41,7 +41,7 @@ def _open_view_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
     view_btn = row.locator('button[role="menuitem"]:has-text("View")')
     with agents_page.page.expect_response(
-        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+        lambda resp: (re.search(r"/v1/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,
     ) as resp_info:
         view_btn.click()
@@ -69,7 +69,7 @@ def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
     edit_btn = row.locator('button[role="menuitem"]:has-text("Edit")')
     with agents_page.page.expect_response(
-        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+        lambda resp: (re.search(r"/v1/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,
     ) as resp_info:
         edit_btn.click()
@@ -805,7 +805,7 @@ class TestA2AEditModal:
         # Save the agent and wait for the POST response + panel navigation
         save_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Save Changes")')
         with agents_page.page.expect_response(
-            lambda resp: "/admin/a2a/" in resp.url and "/edit" in resp.url and resp.request.method == "POST",
+            lambda resp: "/v1/admin/a2a/" in resp.url and "/edit" in resp.url and resp.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             save_btn.click()

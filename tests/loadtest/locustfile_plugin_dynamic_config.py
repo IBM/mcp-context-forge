@@ -269,7 +269,7 @@ class AdminUser(FastHttpUser):
         """Toggle global plugin state."""
         global _plugins_enabled  # pylint: disable=global-statement
         with self.client.put(
-            "/admin/plugins",
+            "/v1/admin/plugins",
             data=json.dumps({"enabled": enabled}),
             headers=self._admin_headers(),
             name="Admin: global toggle",
@@ -286,7 +286,7 @@ class AdminUser(FastHttpUser):
         """Change a plugin's mode."""
         global _rate_limiter_mode  # pylint: disable=global-statement
         with self.client.put(
-            f"/admin/plugins/{plugin}",
+            f"/v1/admin/plugins/{plugin}",
             data=json.dumps({"mode": mode}),
             headers=self._admin_headers(),
             name=f"Admin: {plugin} mode={mode}",
@@ -303,7 +303,7 @@ class AdminUser(FastHttpUser):
     def _verify_state(self) -> None:
         """Verify GET /admin/plugins reflects current expected state."""
         with self.client.get(
-            "/admin/plugins",
+            "/v1/admin/plugins",
             headers=self._admin_headers(),
             name="Admin: verify state",
             catch_response=True,
@@ -392,7 +392,7 @@ class ToolUser(FastHttpUser):
             return None
         try:
             with self.client.post(
-                f"/servers/{_server_id}/mcp",
+                f"/v1/servers/{_server_id}/mcp",
                 data=json.dumps(_jsonrpc(method, params)),
                 headers=self._headers(),
                 name=name,
@@ -507,7 +507,7 @@ class VerifierUser(FastHttpUser):
     def verify_state_consistency(self) -> None:
         """Check that the current replica matches expected global state."""
         with self.client.get(
-            "/admin/plugins",
+            "/v1/admin/plugins",
             headers=self._headers(),
             name=f"Verify: plugins_enabled={_plugins_enabled}",
             catch_response=True,
