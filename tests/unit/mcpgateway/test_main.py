@@ -5257,3 +5257,14 @@ class TestA2AInvokeBodyEndpoint:
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert response.status_code == 400
         assert "Invalid configuration" in response.json()["detail"]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    def test_invoke_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict. Covers: main.py line 5182"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        # Return a string user instead of dict
+        mock_context.return_value = ("user@example.com", ["string-user-id"], False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called

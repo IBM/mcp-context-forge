@@ -979,9 +979,3 @@ class TestIssueCascadeAgentDeactivationToTool:
         assert mock_db.execute.call_count == 2
         mock_cache.invalidate_tools.assert_not_called()
 
-
-# ========================================================================== #
-# UAID native_id Override Tests (PR #4342 coverage)                         #
-# ========================================================================== #
-
-
