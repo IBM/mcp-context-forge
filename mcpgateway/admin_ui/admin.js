@@ -8,6 +8,10 @@
  * for use by HTMX and Alpine.js in templates.
  */
 
+// Import HTMX and make it globally available
+import htmx from 'htmx.org';
+window.htmx = htmx;
+
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
 

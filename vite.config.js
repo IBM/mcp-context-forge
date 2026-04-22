@@ -50,7 +50,6 @@ export default defineConfig({
         globals: {
           marked: 'marked',
           DOMPurify: 'DOMPurify',
-          htmx: 'htmx',
           Alpine: 'Alpine',
           Chart: 'Chart',
           CodeMirror: 'CodeMirror',
@@ -59,7 +58,6 @@ export default defineConfig({
       external: [
         'marked',
         'DOMPurify',
-        'htmx',
         'Alpine',
         'Chart',
         'CodeMirror',

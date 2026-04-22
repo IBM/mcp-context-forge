@@ -126,7 +126,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <details>
 <summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
 
-* Admin UI built with HTMX + Alpine.js
+* Admin UI built with HTMX 2.0.3 (bundled) + Alpine.js
 * Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
