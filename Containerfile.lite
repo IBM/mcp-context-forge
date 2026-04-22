@@ -145,6 +145,11 @@ COPY --chown=1001:0 package.json package-lock.json ./
 # Install frontend dependencies
 RUN npm ci
 
+# Create directory structure with correct ownership before Vite build
+USER root
+RUN mkdir -p mcpgateway/static && chown -R 1001:0 mcpgateway
+USER 1001
+
 # Copy frontend source files
 COPY --chown=1001:0 mcpgateway/admin_ui/ mcpgateway/admin_ui/
 COPY --chown=1001:0 vite.config.js ./
