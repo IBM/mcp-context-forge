@@ -161,6 +161,28 @@ def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
     return team_id if team_id else None
 
 
+def _apply_tool_payload_to_global_context(
+    global_context: "GlobalContext",
+    tool_gateway_id: Optional[str],
+    app_user_email: Optional[str],
+    payload_tenant_id: Optional[str],
+) -> None:
+    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+
+    Populates server_id, user, and tenant_id on a GlobalContext that was
+    supplied by the plugin manager / middleware — filling gaps the upstream
+    propagation did not cover while never overwriting a value that was
+    already set there. Shared by the two tool-invocation call sites so they
+    stay in lockstep.
+    """
+    if tool_gateway_id and isinstance(tool_gateway_id, str):
+        global_context.server_id = tool_gateway_id
+    if not global_context.user and app_user_email and isinstance(app_user_email, str):
+        global_context.user = app_user_email
+    if not global_context.tenant_id and payload_tenant_id:
+        global_context.tenant_id = payload_tenant_id
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -3914,12 +3936,7 @@ class ToolService(BaseService):
 
         if plugin_global_context:
             hook_global_context = plugin_global_context
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                hook_global_context.server_id = tool_gateway_id
-            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                hook_global_context.user = app_user_email
-            if not hook_global_context.tenant_id and hook_tenant_id:
-                hook_global_context.tenant_id = hook_tenant_id
+            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
@@ -4561,15 +4578,7 @@ class ToolService(BaseService):
 
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id using local variable (not ORM access)
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                global_context.server_id = tool_gateway_id
-            # Propagate user email to global context for plugin access
-            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
-                global_context.user = app_user_email
-            # Fill tenant_id if middleware/auth propagation didn't cover it
-            if not global_context.tenant_id and payload_tenant_id:
-                global_context.tenant_id = payload_tenant_id
+            _apply_tool_payload_to_global_context(global_context, tool_gateway_id, app_user_email, payload_tenant_id)
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
