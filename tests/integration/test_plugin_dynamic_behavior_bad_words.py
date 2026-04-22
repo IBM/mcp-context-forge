@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for dynamic plugin configuration — behavioral verification.
+"""Integration tests for dynamic plugin mode changes — ReplaceBadWordsPlugin worked example.
 
-Verifies that runtime plugin mode changes via the admin API actually affect
-plugin behavior on tool calls, not just the reported admin state.
+One concrete example proving that runtime plugin mode changes via the admin API
+actually affect plugin behavior on tool calls, not just the reported admin state.
+To cover a different plugin, copy this file and swap the plugin name, trigger
+input, and expected-when-enforcing values — the surrounding propagation and
+burst-cycle machinery is intentionally self-contained here.
 
 Uses the ReplaceBadWordsPlugin (SearchReplacePlugin) with the fast-test-echo
 tool: the plugin replaces "crap" → "crud" → "yikes" in tool arguments and
@@ -12,9 +15,11 @@ Requirements:
     - Running gateway (docker-compose with 3 replicas)
     - NGINX load balancer on port 8080
     - fast-test-server registered (provides echo tool)
+    - ReplaceBadWordsPlugin configured in plugins/config.yaml with the above
+      replacement rules
 
 Usage:
-    uv run pytest tests/integration/test_plugin_dynamic_behavior.py -v --with-integration
+    uv run pytest tests/integration/test_plugin_dynamic_behavior_bad_words.py -v --with-integration
 """
 
 # Standard
