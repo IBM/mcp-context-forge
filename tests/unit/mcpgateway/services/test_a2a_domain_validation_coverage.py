@@ -123,3 +123,20 @@ class TestDomainValidationCoverage:
 
         # Test bracket extraction with path
         _validate_uaid_endpoint_domain("[::1]:8080/path", operation_context="test")
+
+    def test_colon_in_domain_but_not_port(self, monkeypatch):
+        """Test domain with colon but non-digit after colon."""
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com:notaport"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        # Should treat whole string as domain
+        _validate_uaid_endpoint_domain("example.com:notaport", operation_context="test")
+
+    def test_malformed_ipv6_missing_closing_bracket(self, monkeypatch):
+        """Test IPv6 with opening bracket but no closing bracket/colon."""
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["[test"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        # Malformed - should raise ValueError from urlparse
+        with pytest.raises(ValueError, match="Invalid IPv6 URL"):
+            _validate_uaid_endpoint_domain("[test", operation_context="test")
