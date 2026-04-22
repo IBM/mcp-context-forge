@@ -270,7 +270,7 @@ Before deploying token security changes:
 # 1. Login and get token
 curl -X POST http://localhost:4444/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"TestPassword123!"}'
+  -d '{"email":"test@example.com","password":"TestPassword123!"}'  # pragma: allowlist secret
 
 # 2. Use token
 curl http://localhost:4444/api/resource \
@@ -320,6 +320,7 @@ For issues or questions:
 
 ---
 
-**Last Updated**: 2026-04-21  
-**Test Coverage**: 95%+  
+**Last Updated**: 2026-04-21
+**Test Coverage**: 95%+
 **Status**: Active
+

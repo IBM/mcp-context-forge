@@ -99,10 +99,9 @@ class TokenBlocklistService:
             >>> # service.revoke_token(jti="abc-123", revoked_by="user@example.com", reason="logout")
         """
         try:
-            use_own_session = self.db is None
-            db = self.db or fresh_db_session().__enter__()
-
-            try:
+            if self.db is not None:
+                # Use provided session
+                db = self.db
                 # Check if already revoked
                 existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
@@ -115,31 +114,42 @@ class TokenBlocklistService:
 
                 db.add(revocation)
                 db.commit()
+            else:
+                # Create own session
+                with fresh_db_session() as db:
+                    # Check if already revoked
+                    existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
-                # Cache in Redis for fast lookup
-                redis_client = self._get_redis_client()
-                if redis_client:
-                    try:
-                        # Cache with TTL matching token expiry
-                        ttl_seconds = 86400  # Default 24 hours
-                        if token_expiry:
-                            ttl_seconds = int((token_expiry - utc_now()).total_seconds())
-                            ttl_seconds = max(ttl_seconds, 60)  # Minimum 1 minute
+                    if existing:
+                        logger.debug(f"Token {jti} already revoked")
+                        return True
 
-                        redis_client.setex(f"token:revoked:{jti}", ttl_seconds, "1")
-                    except Exception as e:
-                        logger.warning(f"Failed to cache revocation in Redis: {e}")
+                    # Create revocation record
+                    revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
 
-                logger.info(
-                    f"Token revoked: jti={jti}, reason={reason}, revoked_by={revoked_by}",
-                    extra={"security_event": "token_revocation", "security_severity": "medium", "jti": jti, "reason": reason, "revoked_by": revoked_by},
-                )
+                    db.add(revocation)
+                    db.commit()
 
-                return True
+            # Cache in Redis for fast lookup
+            redis_client = self._get_redis_client()
+            if redis_client:
+                try:
+                    # Cache with TTL matching token expiry
+                    ttl_seconds = 86400  # Default 24 hours
+                    if token_expiry:
+                        ttl_seconds = int((token_expiry - utc_now()).total_seconds())
+                        ttl_seconds = max(ttl_seconds, 60)  # Minimum 1 minute
 
-            finally:
-                if use_own_session:
-                    db.close()
+                    redis_client.setex(f"token:revoked:{jti}", ttl_seconds, "1")
+                except Exception as e:
+                    logger.warning(f"Failed to cache revocation in Redis: {e}")
+
+            logger.info(
+                f"Token revoked: jti={jti}, reason={reason}, revoked_by={revoked_by}",
+                extra={"security_event": "token_revocation", "security_severity": "medium", "jti": jti, "reason": reason, "revoked_by": revoked_by},
+            )
+
+            return True
 
         except Exception as e:
             logger.error(f"Failed to revoke token {jti}: {e}")
@@ -170,17 +180,13 @@ class TokenBlocklistService:
                     logger.debug(f"Redis cache check failed: {e}")
 
             # Fall back to database
-            use_own_session = self.db is None
-            db = self.db or fresh_db_session().__enter__()
-
-            try:
-                result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
-
+            if self.db is not None:
+                result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
                 return result is not None
-
-            finally:
-                if use_own_session:
-                    db.close()
+            else:
+                with fresh_db_session() as db:
+                    result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
+                    return result is not None
 
         except Exception as e:
             logger.error(f"Failed to check token revocation status: {e}")
@@ -282,15 +288,11 @@ class TokenBlocklistService:
         cutoff_time = utc_now() - timedelta(hours=hours_retention)
 
         try:
-            use_own_session = self.db is None
-            db = self.db or fresh_db_session().__enter__()
-
-            try:
-                # Delete tokens that expired before the cutoff time
-                result = db.execute(delete(TokenRevocation).where(TokenRevocation.token_expiry < cutoff_time))
-
+            if self.db is not None:
+                # Use provided session
+                result = self.db.execute(delete(TokenRevocation).where(TokenRevocation.token_expiry < cutoff_time))
                 deleted_count = result.rowcount
-                db.commit()
+                self.db.commit()
 
                 if deleted_count > 0:
                     logger.info(
@@ -299,10 +301,20 @@ class TokenBlocklistService:
                     )
 
                 return deleted_count
+            else:
+                # Create own session
+                with fresh_db_session() as db:
+                    result = db.execute(delete(TokenRevocation).where(TokenRevocation.token_expiry < cutoff_time))
+                    deleted_count = result.rowcount
+                    db.commit()
 
-            finally:
-                if use_own_session:
-                    db.close()
+                    if deleted_count > 0:
+                        logger.info(
+                            f"Cleaned up {deleted_count} expired tokens from blocklist",
+                            extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
+                        )
+
+                    return deleted_count
 
         except Exception as e:
             logger.error(f"Failed to cleanup expired tokens: {e}")
@@ -338,25 +350,31 @@ class TokenBlocklistService:
         try:
             # Import func at the top of the method
             # Third-Party
-            from sqlalchemy import func  # pylint: disable=import-outside-toplevel
+            from sqlalchemy import func  # pylint: disable=import-outside-toplevel,redefined-outer-name
 
-            use_own_session = self.db is None
-            db = self.db or fresh_db_session().__enter__()
-
-            try:
+            if self.db is not None:
+                # Use provided session
                 # Count total revocations
-                total = db.execute(select(func.count()).select_from(TokenRevocation)).scalar()
+                total = self.db.execute(select(func.count()).select_from(TokenRevocation)).scalar()  # pylint: disable=not-callable
 
                 # Count by reason
-                reason_counts = db.execute(select(TokenRevocation.reason, func.count(TokenRevocation.jti)).group_by(TokenRevocation.reason)).all()
+                reason_counts = self.db.execute(select(TokenRevocation.reason, func.count(TokenRevocation.jti)).group_by(TokenRevocation.reason)).all()  # pylint: disable=not-callable
 
-                stats = {"total_revoked": total or 0, "by_reason": {reason: count for reason, count in reason_counts}}
+                stats = {"total_revoked": total or 0, "by_reason": dict(reason_counts)}
 
                 return stats
+            else:
+                # Create own session
+                with fresh_db_session() as db:
+                    # Count total revocations
+                    total = db.execute(select(func.count()).select_from(TokenRevocation)).scalar()  # pylint: disable=not-callable
 
-            finally:
-                if use_own_session:
-                    db.close()
+                    # Count by reason
+                    reason_counts = db.execute(select(TokenRevocation.reason, func.count(TokenRevocation.jti)).group_by(TokenRevocation.reason)).all()  # pylint: disable=not-callable
+
+                    stats = {"total_revoked": total or 0, "by_reason": dict(reason_counts)}
+
+                    return stats
 
         except Exception as e:
             logger.error(f"Failed to get revocation stats: {e}")

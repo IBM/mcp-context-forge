@@ -4653,18 +4653,12 @@ async def _admin_logout(request: Request) -> Response:
                     exp_ts = payload.get("exp")
                     token_expiry = None
                     if exp_ts:
-                        # Standard
-                        from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
-
                         token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
 
                     # Get last activity if present
                     last_activity = None
                     last_activity_ts = payload.get("last_activity")
                     if last_activity_ts:
-                        # Standard
-                        from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
-
                         last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
 
                     blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
