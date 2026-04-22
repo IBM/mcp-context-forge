@@ -258,7 +258,7 @@ make test-js-coverage
 
 ### 3.4 Frontend CDN dependencies
 
-The Admin UI loads frontend libraries (Tailwind, HTMX, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync:
+The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
 
 | File | What it controls |
 |------|------------------|
