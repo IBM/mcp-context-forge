@@ -148,6 +148,41 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+
+def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
+    """Extract a valid tenant id from a raw tool payload team_id value.
+
+    Empty strings are treated as absent (None): a zero-length tenant prefix
+    would collapse tenant-scoped Redis keys onto the unscoped layout.
+    """
+    if team_id is not None and not isinstance(team_id, str):
+        logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
+        return None
+    return team_id if team_id else None
+
+
+def _apply_tool_payload_to_global_context(
+    global_context: "GlobalContext",
+    tool_gateway_id: Optional[str],
+    app_user_email: Optional[str],
+    payload_tenant_id: Optional[str],
+) -> None:
+    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+
+    Populates server_id, user, and tenant_id on a GlobalContext that was
+    supplied by the plugin manager / middleware — filling gaps the upstream
+    propagation did not cover while never overwriting a value that was
+    already set there. Shared by the two tool-invocation call sites so they
+    stay in lockstep.
+    """
+    if tool_gateway_id and isinstance(tool_gateway_id, str):
+        global_context.server_id = tool_gateway_id
+    if not global_context.user and app_user_email and isinstance(app_user_email, str):
+        global_context.user = app_user_email
+    if not global_context.tenant_id and payload_tenant_id:
+        global_context.tenant_id = payload_tenant_id
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -3892,17 +3927,21 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        # Derive tenant_id from the tool payload so rate limiting and other
+        # tenant-scoped plugin behaviour works on the fallback path where
+        # middleware didn't run and _propagate_tenant_id never got a chance
+        # to fill it in. Non-string team_id values are ignored defensively.
+        payload_team_id = tool_payload.get("team_id") if tool_payload else None
+        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
+
         if plugin_global_context:
             hook_global_context = plugin_global_context
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                hook_global_context.server_id = tool_gateway_id
-            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                hook_global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
             content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -4532,21 +4571,21 @@ class ToolService(BaseService):
 
         # Reuse existing global_context from middleware or create new one
         # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
+        # Derive tenant_id from the tool payload so by_tenant rate limiting
+        # and other tenant-scoped plugin behaviour works on the fallback
+        # path where middleware didn't run. Non-string values are ignored.
+        payload_tenant_id = _extract_tenant_id_from_payload(_tool_team_id)
+
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id using local variable (not ORM access)
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                global_context.server_id = tool_gateway_id
-            # Propagate user email to global context for plugin access
-            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
-                global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(global_context, tool_gateway_id, app_user_email, payload_tenant_id)
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             content_type = request_headers.get("content-type") if request_headers else None
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
