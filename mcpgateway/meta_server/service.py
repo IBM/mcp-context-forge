@@ -366,20 +366,52 @@ class MetaServerService:
                 kw_tools_list, _ = kw_result if isinstance(kw_result, tuple) else (kw_result, None)
 
                 query_lower = query.lower()
-                search_pattern = query_lower
+                # Tokenize query: split on whitespace, hyphens, underscores
+                import re as _re  # pylint: disable=import-outside-toplevel
+                tokens = [t for t in _re.split(r'[\s\-_]+', query_lower) if len(t) >= 2]
+                if not tokens:
+                    tokens = [query_lower]
+
                 for tool in kw_tools_list:
                     tool_name = getattr(tool, "name", "")
                     tool_desc = getattr(tool, "description", "") or ""
-                    # Filter to only matching tools
-                    if search_pattern not in tool_name.lower() and search_pattern not in tool_desc.lower():
+                    name_lower = tool_name.lower()
+                    desc_lower = tool_desc.lower()
+                    # Also tokenize tool name for token-level matching
+                    name_tokens = set(_re.split(r'[\s\-_/.]+', name_lower))
+
+                    # Count how many query tokens match (name or description)
+                    name_hits = 0
+                    desc_hits = 0
+                    for token in tokens:
+                        # Exact token match in name tokens or substring in full name
+                        if token in name_tokens or token in name_lower:
+                            name_hits += 1
+                        elif desc_lower and token in desc_lower:
+                            desc_hits += 1
+
+                    total_hits = name_hits + desc_hits
+                    if total_hits == 0:
                         continue
-                    # Score 1.0 for exact name match, 0.5 for partial match
-                    if tool_name.lower() == query_lower:
+
+                    # Score: ratio of matched tokens, with name hits weighted higher
+                    hit_ratio = total_hits / len(tokens)
+                    name_ratio = name_hits / len(tokens)
+
+                    if name_lower == query_lower:
                         score = 1.0
-                    elif query_lower in tool_name.lower():
-                        score = 0.7
+                    elif hit_ratio == 1.0 and name_ratio >= 0.5:
+                        # All tokens match, majority in name
+                        score = 0.95
+                    elif hit_ratio == 1.0:
+                        # All tokens match but mostly in description
+                        score = 0.85
+                    elif name_ratio >= 0.5:
+                        # At least half the tokens match in name
+                        score = 0.6 + (hit_ratio * 0.2)
                     else:
-                        score = 0.5
+                        # Partial match
+                        score = 0.3 + (hit_ratio * 0.3)
 
                     keyword_results.append(
                         ToolSearchResult(
@@ -387,7 +419,7 @@ class MetaServerService:
                             description=tool_desc,
                             server_id=getattr(tool, "gateway_id", None),
                             server_name=None,
-                            similarity_score=score,
+                            similarity_score=round(score, 3),
                         )
                     )
             finally:
