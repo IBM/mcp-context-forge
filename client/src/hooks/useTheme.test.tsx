@@ -5,7 +5,7 @@ import { ThemeProvider, useTheme } from "./useTheme";
 describe("useTheme", () => {
   beforeEach(() => {
     // Clear localStorage manually
-    Object.keys(localStorage).forEach(key => localStorage.removeItem(key));
+    Object.keys(localStorage).forEach((key) => localStorage.removeItem(key));
     document.documentElement.className = "";
   });
 
@@ -16,11 +16,11 @@ describe("useTheme", () => {
   it("should throw error when used outside ThemeProvider", () => {
     // Suppress console.error for this test
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    
+
     expect(() => {
       renderHook(() => useTheme());
     }).toThrow("useTheme must be used within a ThemeProvider");
-    
+
     consoleError.mockRestore();
   });
 
@@ -152,9 +152,12 @@ describe("useTheme", () => {
       });
 
       // Wait for state update
-      await waitFor(() => {
-        expect(result.current.resolvedTheme).toBe("dark");
-      }, { timeout: 2000 });
+      await waitFor(
+        () => {
+          expect(result.current.resolvedTheme).toBe("dark");
+        },
+        { timeout: 2000 },
+      );
     }
   });
 

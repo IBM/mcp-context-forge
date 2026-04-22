@@ -43,7 +43,10 @@ export function Login() {
         </h1>
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+            <label
+              htmlFor="email"
+              className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+            >
               {intl.formatMessage({ id: "auth.login.email" })}
             </label>
             <input
@@ -57,7 +60,10 @@ export function Login() {
             />
           </div>
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+            <label
+              htmlFor="password"
+              className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+            >
               {intl.formatMessage({ id: "auth.login.password" })}
             </label>
             <input

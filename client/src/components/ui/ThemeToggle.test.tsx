@@ -7,7 +7,7 @@ import { ThemeToggle } from "./ThemeToggle";
 describe("ThemeToggle", () => {
   beforeEach(() => {
     // Clear localStorage manually
-    Object.keys(localStorage).forEach(key => localStorage.removeItem(key));
+    Object.keys(localStorage).forEach((key) => localStorage.removeItem(key));
     document.documentElement.className = "";
   });
 
@@ -15,7 +15,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -28,7 +28,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -41,7 +41,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -54,7 +54,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -67,7 +67,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -102,7 +102,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -125,7 +125,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
@@ -137,7 +137,7 @@ describe("ThemeToggle", () => {
     render(
       <ThemeProvider>
         <ThemeToggle />
-      </ThemeProvider>
+      </ThemeProvider>,
     );
 
     const button = screen.getByRole("button");
