@@ -32,16 +32,7 @@
         };
       }
     </script>
-    <!-- HTMX for dynamic interactions -->
-    {% if ui_airgapped %}
-    <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
-    {% else %}
-    <script
-      src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
-      integrity="{{ sri_hashes.htmx }}"
-      crossorigin="anonymous">
-    </script>
-    {% endif %}
+    <!-- HTMX is now bundled in the main JS bundle -->
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
       document.addEventListener("htmx:beforeSwap", function (evt) {
@@ -66,7 +57,7 @@
       // Configure HTMX to include credentials and JWT tokens
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
-        evt.detail.credentials = "same-origin";
+        evt.detail.credentials = "same-origin"; // pragma: allowlist secret
         evt.detail.headers = evt.detail.headers || {};
 
         // Add JWT token from cookie if available
@@ -2995,7 +2986,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on::after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on:htmx:after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3067,7 +3058,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on:htmx:after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3134,7 +3125,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on:htmx:after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11343,7 +11334,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on:htmx:after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11418,7 +11409,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on:htmx:after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11485,7 +11476,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on:htmx:after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -12600,7 +12591,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH || ""}/admin/logs/export?${params}`,
             {
               headers: headers,
-              credentials: "same-origin",
+              credentials: "same-origin", // pragma: allowlist secret
             },
           );
 
@@ -12651,7 +12642,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH || ""}/admin/logs/file`,
             {
               headers: headers,
-              credentials: "same-origin",
+              credentials: "same-origin", // pragma: allowlist secret
             },
           );
 
@@ -14764,7 +14755,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // by Admin.initResourceSelect() and Admin.initPromptSelect() functions in admin.js.
       // Those functions properly fetch ALL IDs from the server and maintain state,
       // so items that load via pagination are also included in the selection.
-      // The handlers are attached via HTMX's hx-on::after-swap attribute.
+      // The handlers are attached via HTMX's hx-on:htmx:after-swap attribute.
 
       // Download sample JSON for bulk import
       function downloadSampleJSON() {
