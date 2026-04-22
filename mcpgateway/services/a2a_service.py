@@ -17,7 +17,7 @@ import binascii
 from datetime import datetime, timezone
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx

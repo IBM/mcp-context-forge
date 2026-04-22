@@ -4899,6 +4899,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod
