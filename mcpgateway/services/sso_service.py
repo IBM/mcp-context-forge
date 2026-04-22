@@ -1002,6 +1002,13 @@ class SSOService:
         means the provider has flagged the address as unverified and the user
         should be rejected.
 
+        Microsoft Entra ID Support:
+        In addition to the standard ``email_verified`` claim, this function also
+        checks for Microsoft-specific claims (``verified_primary_email`` and
+        ``verified_secondary_email``) which are used in Entra External ID and
+        B2B flows. If any of these claims are present and truthy, the email is
+        considered verified.
+
         Args:
             user_info: Normalized user-info payload from provider.
 
@@ -1010,18 +1017,33 @@ class SSOService:
             when it is explicitly set to a truthy value; ``False`` only when the
             provider explicitly indicates the address is *not* verified.
         """
-        if "email_verified" not in user_info:
-            # Claim not provided by IdP — treat as no restriction (pass through).
-            return True
+        # Check for standard OIDC email_verified claim
+        if "email_verified" in user_info:
+            claim_value = user_info.get("email_verified")
+            if isinstance(claim_value, bool):
+                return claim_value
+            if isinstance(claim_value, int):
+                return claim_value == 1
+            if isinstance(claim_value, str):
+                return claim_value.strip().lower() in {"1", "true", "yes", "on"}
+            return False
 
-        claim_value = user_info.get("email_verified")
-        if isinstance(claim_value, bool):
-            return claim_value
-        if isinstance(claim_value, int):
-            return claim_value == 1
-        if isinstance(claim_value, str):
-            return claim_value.strip().lower() in {"1", "true", "yes", "on"}
-        return False
+        # Check for Microsoft Entra ID alternative claims
+        # These are used in Entra External ID and B2B scenarios
+        for ms_claim in ["verified_primary_email", "verified_secondary_email"]:
+            if ms_claim in user_info:
+                claim_value = user_info.get(ms_claim)
+                if isinstance(claim_value, bool):
+                    return claim_value
+                if isinstance(claim_value, int):
+                    return claim_value == 1
+                if isinstance(claim_value, str):
+                    return claim_value.strip().lower() in {"1", "true", "yes", "on"}
+                # If claim exists but is not truthy, continue checking other claims
+                continue
+
+        # No verification claims found — treat as no restriction (pass through)
+        return True
 
     def get_authorization_url(
         self,
@@ -1638,8 +1660,16 @@ class SSOService:
             "provider": provider_name,
             "groups": list(set(groups)),
         }
+        # Propagate email verification claims
+        # Check standard OIDC claim first
         if "email_verified" in user_data:
             normalized["email_verified"] = user_data["email_verified"]
+        # Check Microsoft Entra ID alternative claims
+        elif "verified_primary_email" in user_data:
+            normalized["email_verified"] = user_data["verified_primary_email"]
+        elif "verified_secondary_email" in user_data:
+            normalized["email_verified"] = user_data["verified_secondary_email"]
+
         if extra:
             normalized.update(extra)
         return normalized
