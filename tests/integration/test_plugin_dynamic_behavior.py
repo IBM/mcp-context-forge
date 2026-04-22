@@ -26,6 +26,8 @@ import uuid
 import pytest
 import requests
 
+from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -36,7 +38,7 @@ GATEWAY_PASSWORD = os.environ.get("GATEWAY_PASSWORD", "changeme")
 
 # NGINX caches GET responses for ~6s. After an admin PUT, wait this long
 # before verifying behavior so all replicas serve the new state.
-PROPAGATION_WAIT = 7
+PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS)))
 
 # The plugin we toggle and the word it transforms
 PLUGIN_NAME = "ReplaceBadWordsPlugin"
@@ -173,12 +175,8 @@ class TestPluginEnforcingBehavior:
     def test_echo_with_trigger_word_is_transformed(self, server_id):
         """When plugin is enforcing, the trigger word is replaced in the response."""
         response_text = _call_echo(server_id, f"this is {TRIGGER_WORD} data")
-        assert TRIGGER_WORD not in response_text, (
-            f"Expected '{TRIGGER_WORD}' to be replaced, but got: {response_text}"
-        )
-        assert EXPECTED_WHEN_ENFORCING in response_text, (
-            f"Expected '{EXPECTED_WHEN_ENFORCING}' in response, but got: {response_text}"
-        )
+        assert TRIGGER_WORD not in response_text, f"Expected '{TRIGGER_WORD}' to be replaced, but got: {response_text}"
+        assert EXPECTED_WHEN_ENFORCING in response_text, f"Expected '{EXPECTED_WHEN_ENFORCING}' in response, but got: {response_text}"
 
     def test_echo_without_trigger_word_unchanged(self, server_id):
         """Normal text without the trigger word passes through unchanged."""
@@ -200,9 +198,7 @@ class TestPluginDisabledBehavior:
 
         # Now the trigger word should pass through unchanged
         text = _call_echo(server_id, f"test {TRIGGER_WORD}")
-        assert TRIGGER_WORD in text, (
-            f"Plugin should be disabled but '{TRIGGER_WORD}' was still replaced: {text}"
-        )
+        assert TRIGGER_WORD in text, f"Plugin should be disabled but '{TRIGGER_WORD}' was still replaced: {text}"
 
     def test_reenable_restores_transformation(self, server_id):
         """After re-enabling, the plugin transforms again."""
@@ -214,9 +210,7 @@ class TestPluginDisabledBehavior:
         # Re-enable
         _set_plugin_mode("enforce")
         text = _call_echo(server_id, f"test {TRIGGER_WORD}")
-        assert TRIGGER_WORD not in text, (
-            f"Plugin should be enforcing again but '{TRIGGER_WORD}' was not replaced: {text}"
-        )
+        assert TRIGGER_WORD not in text, f"Plugin should be enforcing again but '{TRIGGER_WORD}' was not replaced: {text}"
         assert EXPECTED_WHEN_ENFORCING in text
 
 
@@ -231,9 +225,7 @@ class TestCrossReplicaBehavior:
         for _ in range(6):
             text = _call_echo(server_id, f"check {TRIGGER_WORD}")
             results.append(TRIGGER_WORD not in text)
-        assert all(results), (
-            f"Expected all replicas to enforce, but got mixed results: {results}"
-        )
+        assert all(results), f"Expected all replicas to enforce, but got mixed results: {results}"
 
     def test_all_replicas_stop_after_disable(self, server_id):
         """After disabling, multiple requests (hitting all replicas) show no transformation."""
@@ -243,9 +235,7 @@ class TestCrossReplicaBehavior:
         for _ in range(6):
             text = _call_echo(server_id, f"check {TRIGGER_WORD}")
             results.append(TRIGGER_WORD in text)
-        assert all(results), (
-            f"Expected all replicas to be disabled, but some still transformed: {results}"
-        )
+        assert all(results), f"Expected all replicas to be disabled, but some still transformed: {results}"
 
 
 class TestModeToggleCycle:
@@ -342,22 +332,14 @@ class TestBadWordsToggleBurst:
         # Step 1: Disabled after previous enforce — all requests should pass through unchanged.
         _set_plugin_mode("disabled")
         r1 = _call_echo_burst(server_id, BURST_SIZE, "step1")
-        assert r1["transformed"] == 0, (
-            f"Step 1 (disabled after enforce): expected 0 transformed across {BURST_SIZE} requests, "
-            f"got {r1}"
-        )
+        assert r1["transformed"] == 0, f"Step 1 (disabled after enforce): expected 0 transformed across {BURST_SIZE} requests, " f"got {r1}"
 
         # Step 2: Enforce — all requests should be transformed.
         _set_plugin_mode("enforce")
         r2 = _call_echo_burst(server_id, BURST_SIZE, "step2")
-        assert r2["transformed"] == BURST_SIZE, (
-            f"Step 2 (enforce): expected all {BURST_SIZE} transformed, got {r2}"
-        )
+        assert r2["transformed"] == BURST_SIZE, f"Step 2 (enforce): expected all {BURST_SIZE} transformed, got {r2}"
 
         # Step 3: Disabled again — all requests should pass through unchanged.
         _set_plugin_mode("disabled")
         r3 = _call_echo_burst(server_id, BURST_SIZE, "step3")
-        assert r3["transformed"] == 0, (
-            f"Step 3 (disabled again): expected 0 transformed across {BURST_SIZE} requests, "
-            f"got {r3}"
-        )
+        assert r3["transformed"] == 0, f"Step 3 (disabled again): expected 0 transformed across {BURST_SIZE} requests, " f"got {r3}"

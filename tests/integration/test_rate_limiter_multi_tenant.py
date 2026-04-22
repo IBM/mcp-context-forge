@@ -32,11 +32,13 @@ import uuid
 import pytest
 import requests
 
+from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 GATEWAY_EMAIL = os.environ.get("GATEWAY_EMAIL", "admin@example.com")
 GATEWAY_PASSWORD = os.environ.get("GATEWAY_PASSWORD", "changeme")
 PLUGIN_NAME = "RateLimiterPlugin"
-PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", "7"))
+PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS)))
 
 
 def _get_session_token() -> str:
@@ -124,8 +126,10 @@ def _redis_keys(pattern: str) -> list[str]:
             timeout=5,
             check=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
         pytest.skip("Docker or Redis container not reachable")
+    if result.returncode != 0:
+        pytest.skip(f"Redis key query failed: {result.stderr.strip() or 'unknown error'}")
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return sorted(lines)
 
@@ -197,10 +201,7 @@ class TestTenantIdFlowsToPlugin:
         """
         server_id, tool_name, team_id = server_and_tool
         if not team_id:
-            pytest.skip(
-                "Detected server has no team_id — this deployment uses platform-owned tools. "
-                "Re-run against a deployment that has team-scoped servers to exercise G2."
-            )
+            pytest.skip("Detected server has no team_id — this deployment uses platform-owned tools. " "Re-run against a deployment that has team-scoped servers to exercise G2.")
 
         _set_plugin_mode("enforce")
         time.sleep(PROPAGATION_WAIT)
@@ -219,7 +220,4 @@ class TestTenantIdFlowsToPlugin:
         )
         # Defensive assertion — if we see unprefixed keys alongside prefixed ones,
         # something is calling the plugin without populated tenant_id.
-        assert not unprefixed_keys, (
-            f"Found rl:* keys without the team prefix: {unprefixed_keys!r}. "
-            f"Some code path is invoking the plugin without populating tenant_id."
-        )
+        assert not unprefixed_keys, f"Found rl:* keys without the team prefix: {unprefixed_keys!r}. " f"Some code path is invoking the plugin without populating tenant_id."

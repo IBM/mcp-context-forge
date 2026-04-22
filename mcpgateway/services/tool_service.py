@@ -148,6 +148,15 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+
+def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
+    """Extract a valid tenant id from a raw tool payload team_id value."""
+    if team_id is not None and not isinstance(team_id, str):
+        logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
+        return None
+    return team_id if team_id else None
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -3897,7 +3906,7 @@ class ToolService(BaseService):
         # middleware didn't run and _propagate_tenant_id never got a chance
         # to fill it in. Non-string team_id values are ignored defensively.
         payload_team_id = tool_payload.get("team_id") if tool_payload else None
-        hook_tenant_id: Optional[str] = payload_team_id if isinstance(payload_team_id, str) and payload_team_id else None
+        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
 
         if plugin_global_context:
             hook_global_context = plugin_global_context
@@ -4544,7 +4553,7 @@ class ToolService(BaseService):
         # Derive tenant_id from the tool payload so by_tenant rate limiting
         # and other tenant-scoped plugin behaviour works on the fallback
         # path where middleware didn't run. Non-string values are ignored.
-        payload_tenant_id: Optional[str] = _tool_team_id if isinstance(_tool_team_id, str) and _tool_team_id else None
+        payload_tenant_id = _extract_tenant_id_from_payload(_tool_team_id)
 
         if plugin_global_context:
             global_context = plugin_global_context

@@ -31,6 +31,8 @@ import uuid
 import pytest
 import requests
 
+from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ GATEWAY_PASSWORD = os.environ.get("GATEWAY_PASSWORD", "changeme")
 PLUGIN_NAME = "RateLimiterPlugin"
 
 # Wait after admin changes for propagation (NGINX cache TTL + pub/sub)
-PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", "7"))
+PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS)))
 
 # Number of requests to send per burst — must exceed the configured
 # by_user limit (30/m) to observe rate limiting
@@ -230,13 +232,8 @@ class TestRateLimiterDisabledAllowsAll:
         server_id, tool_name = server_and_tool
         result = _send_tool_burst(server_id, tool_name, BURST_SIZE)
 
-        assert result["rate_limited"] == 0, (
-            f"Rate limiter should be disabled but {result['rate_limited']}/{result['total']} "
-            f"requests were rate-limited"
-        )
-        assert result["allowed"] == result["total"] - result["errors"], (
-            f"All non-error requests should be allowed: {result}"
-        )
+        assert result["rate_limited"] == 0, f"Rate limiter should be disabled but {result['rate_limited']}/{result['total']} " f"requests were rate-limited"
+        assert result["allowed"] == result["total"] - result["errors"], f"All non-error requests should be allowed: {result}"
 
 
 class TestRateLimiterEnforceBlocks:
@@ -254,10 +251,7 @@ class TestRateLimiterEnforceBlocks:
         # Send burst — should exceed 30/m limit
         result = _send_tool_burst(server_id, tool_name, BURST_SIZE)
 
-        assert result["rate_limited"] > 0, (
-            f"Rate limiter should be enforcing (by_user: 30/m) but no requests were "
-            f"rate-limited out of {result['total']}: {result}"
-        )
+        assert result["rate_limited"] > 0, f"Rate limiter should be enforcing (by_user: 30/m) but no requests were " f"rate-limited out of {result['total']}: {result}"
 
 
 class TestRateLimiterRedisState:
@@ -266,9 +260,7 @@ class TestRateLimiterRedisState:
     def test_mode_stored_in_redis(self, server_and_tool):
         """PUT mode=enforce stores the mode in Redis with redis_persisted=true."""
         resp = _set_plugin_mode("enforce")
-        assert resp["redis_persisted"] is True, (
-            f"Mode change should be Redis-persisted: {resp}"
-        )
+        assert resp["redis_persisted"] is True, f"Mode change should be Redis-persisted: {resp}"
         assert resp["mode"] == "enforce"
 
     def test_mode_visible_in_admin_api_after_change(self, server_and_tool):
@@ -278,10 +270,8 @@ class TestRateLimiterRedisState:
 
         state = _get_plugin_state()
         plugins = {p["name"]: p for p in state.get("plugins", [])}
-        assert PLUGIN_NAME in plugins, f"RateLimiterPlugin not in plugin list"
-        assert plugins[PLUGIN_NAME]["mode"] == "enforce", (
-            f"Expected mode=enforce, got {plugins[PLUGIN_NAME]['mode']}"
-        )
+        assert PLUGIN_NAME in plugins, "RateLimiterPlugin not in plugin list"
+        assert plugins[PLUGIN_NAME]["mode"] == "enforce", f"Expected mode=enforce, got {plugins[PLUGIN_NAME]['mode']}"
 
     def test_mode_reverts_in_admin_api_after_disable(self, server_and_tool):
         """After disabling, GET /admin/plugins reflects disabled mode."""
