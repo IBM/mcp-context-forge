@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "aa1b2c3d4e5f"
+revision = "aa1b2c3d4e5f"  # pragma: allowlist secret
 down_revision = "z1a2b3c4d5e6"
 branch_labels = None
 depends_on = None

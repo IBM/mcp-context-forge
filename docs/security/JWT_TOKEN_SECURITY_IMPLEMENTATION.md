@@ -13,13 +13,13 @@ This document describes the comprehensive JWT token security improvements implem
 - **No Token Invalidation**: Old tokens remained valid when new ones were issued
 
 ### X-Force Red Recommendations Implemented
-✅ Server-side token blocklist with immediate invalidation  
-✅ Reduced token lifetime to 5-20 minutes (configurable)  
-✅ Idle timeout enforcement (60 minutes default)  
-✅ Logout endpoint with token revocation  
-✅ Automatic cleanup of expired blocklist entries  
-✅ Redis caching for performance  
-✅ Comprehensive audit logging  
+✅ Server-side token blocklist with immediate invalidation
+✅ Reduced token lifetime to 5-20 minutes (configurable)
+✅ Idle timeout enforcement (60 minutes default)
+✅ Logout endpoint with token revocation
+✅ Automatic cleanup of expired blocklist entries
+✅ Redis caching for performance
+✅ Comprehensive audit logging
 
 ## Implementation Details
 
@@ -55,7 +55,7 @@ Enhanced `TokenRevocation` model:
 ```python
 class TokenRevocation(Base):
     """Token revocation blacklist for immediate token invalidation."""
-    
+
     jti: str  # JWT ID (primary key)
     revoked_at: datetime  # Revocation timestamp
     revoked_by: str  # Email of user who revoked the token
@@ -92,7 +92,7 @@ Enhanced `create_access_token()`:
 ```python
 async def create_access_token(user: EmailUser, ...) -> tuple[str, int]:
     """Create JWT access token with security enhancements.
-    
+
     Security improvements:
     - Short-lived tokens (5-20 minutes)
     - JTI for revocation tracking
@@ -127,7 +127,7 @@ if last_activity_ts and settings.token_idle_timeout > 0:
         # Revoke token and reject request
         blocklist_service.revoke_token(jti, email, "idle_timeout", ...)
         raise HTTPException(401, "Token exceeded idle timeout")
-    
+
     # Update activity for valid tokens
     blocklist_service.update_activity(jti)
 ```
@@ -140,7 +140,7 @@ New `/auth/logout` endpoint:
 @auth_router.post("/logout")
 async def logout(request: Request, db: Session = Depends(get_db)):
     """Logout user and revoke session token.
-    
+
     Security:
     - Adds token to server-side blocklist
     - Token cannot be reused after logout
@@ -382,6 +382,6 @@ For questions or issues:
 
 ---
 
-**Last Updated**: 2026-04-21  
-**Version**: 1.0.0  
+**Last Updated**: 2026-04-21
+**Version**: 1.0.0
 **Status**: Implemented

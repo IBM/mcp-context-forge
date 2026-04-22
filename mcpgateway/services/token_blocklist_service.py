@@ -26,8 +26,7 @@ Security Compliance:
 
 # Standard
 from datetime import datetime, timedelta, timezone
-import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 # Third-Party
 from sqlalchemy import delete, select
