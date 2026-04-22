@@ -34,7 +34,7 @@ from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingFor
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
+router = APIRouter(prefix="/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
 
 _service = ToolPluginBindingService()
 
