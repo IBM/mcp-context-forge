@@ -243,7 +243,14 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     if not prefix:
         return ""
     normalized = "/" + str(prefix).strip().strip("/")
-    return "" if normalized == "/" else normalized
+    if normalized == "/":
+        return ""
+    # Strip the /v1 API version prefix to align with _normalize_path_for_matching.
+    if normalized == "/v1":
+        return ""
+    if normalized.startswith("/v1/"):
+        normalized = normalized[3:]
+    return normalized
 
 
 def _normalize_scope_path(scope_path: str, root_path: str) -> str:
@@ -341,7 +348,12 @@ class TokenScopingMiddleware:
         """
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
-            return f"/{normalized}"
+            normalized = f"/{normalized}"
+        # Strip the /v1 API version prefix so all patterns match unversioned paths.
+        if normalized.startswith("/v1/"):
+            normalized = normalized[3:]
+        elif normalized == "/v1":
+            normalized = "/"
         return normalized
 
     def _get_normalized_request_path(self, request: Request) -> str:

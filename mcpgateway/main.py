@@ -2567,10 +2567,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
 
     Exempts login-related paths and static assets:
-    - /admin/login - login page
-    - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
+    - /v1/admin/login - login page
+    - /v1/admin/logout - logout action
+    - /v1/admin/forgot-password - self-service password reset request page
+    - /v1/admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -2583,10 +2583,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     # Public paths under /admin that do not require prior authentication.
     EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
+        "/v1/admin/login",
+        "/v1/admin/logout",
+        "/v1/admin/forgot-password",
+        "/v1/admin/reset-password",
         "/admin/static",
     ]
 
@@ -2607,7 +2607,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
+            login_url = f"{root_path}/v1/admin/login" if root_path else "/v1/admin/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
             if is_htmx:

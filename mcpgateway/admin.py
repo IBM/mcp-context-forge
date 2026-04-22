@@ -4211,7 +4211,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
-            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -4224,11 +4224,11 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
+                return RedirectResponse(url=f"{root_path}/v1/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
-                return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
+                return RedirectResponse(url=f"{root_path}/v1/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -4281,7 +4281,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
                     return RedirectResponse(
-                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        url=f"{root_path}/v1/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
                     )
 
@@ -4299,7 +4299,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 set_auth_cookie(response, token, remember_me=False)
             except CookieTooLargeError:
                 return RedirectResponse(
-                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    url=f"{root_path}/v1/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                     status_code=303,
                 )
 
@@ -4313,11 +4313,11 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if settings.secure_cookies and settings.environment == "development":
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
-        return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=server_error", status_code=303)
 
 
 @admin_router.get("/forgot-password")
@@ -4332,7 +4332,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
     """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
     response = request.app.state.templates.TemplateResponse(
         request,
         "forgot-password.html",
@@ -4361,25 +4361,25 @@ async def admin_forgot_password_handler(request: Request, db: Session = Depends(
     """
     root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=password_reset_disabled", status_code=303)
 
     try:
         form = await request.form()
         email_val = form.get("email")
         email = str(email_val).strip() if email_val else ""
         if not email:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=missing_email", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=missing_email", status_code=303)
 
         auth_service = EmailAuthService(db)
         result = await auth_service.request_password_reset(email=email, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
         if result.rate_limited:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=rate_limited", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=reset_email_sent", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=rate_limited", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?notice=reset_email_sent", status_code=303)
     except Exception as exc:
         LOGGER.warning("Forgot-password request failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=server_error", status_code=303)
 
 
 @admin_router.get("/reset-password/{token}")
@@ -4396,9 +4396,9 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
     """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=password_reset_disabled", status_code=303)
 
     auth_service = EmailAuthService(db)
     token_valid = False
@@ -4441,34 +4441,34 @@ async def admin_reset_password_handler(token: str, request: Request, db: Session
     """
     root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=password_reset_disabled", status_code=303)
 
     try:
         form = await request.form()
         password = str(form.get("password", ""))
         confirm_password = str(form.get("confirm_password", ""))
         if not password or not confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
         if password != confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
 
         auth_service = EmailAuthService(db)
         await auth_service.reset_password_with_token(token=token, new_password=password, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=password_reset_success", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?notice=password_reset_success", status_code=303)
     except PasswordValidationError as exc:
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
     except AuthenticationError as exc:
         msg = str(exc).lower()
         if "expired" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_expired", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=reset_link_expired", status_code=303)
         if "used" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_used", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_invalid", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=reset_link_used", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/forgot-password?error=reset_link_invalid", status_code=303)
     except Exception as exc:
         LOGGER.warning("Password reset failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
 
 
 async def _admin_logout(request: Request) -> Response:
@@ -4477,7 +4477,7 @@ async def _admin_logout(request: Request) -> Response:
 
     Supports three logout scenarios:
     - POST: User-initiated logout from the UI (redirects to login page or Keycloak logout)
-    - GET with browser headers: Browser navigation to /admin/logout (redirects to login page)
+    - GET with browser headers: Browser navigation to /v1/admin/logout (redirects to login page)
     - GET without browser headers: OIDC front-channel logout callback from IdP (returns 200 OK)
 
     For OIDC front-channel logout (per OpenID Connect Front-Channel Logout 1.0 spec),
@@ -4559,7 +4559,7 @@ async def _admin_logout(request: Request) -> Response:
         Returns:
             Optional[str]: Absolute login URL when resolvable, otherwise ``None``.
         """
-        login_path = f"{root_path}/admin/login"
+        login_path = f"{root_path}/v1/admin/login"
         request_url = getattr(request, "url", None)
         scheme = getattr(request_url, "scheme", None) if request_url is not None else None
         netloc = getattr(request_url, "netloc", None) if request_url is not None else None
@@ -4671,7 +4671,7 @@ async def _admin_logout(request: Request) -> Response:
 
         if is_browser_request:
             # Browser navigation - redirect to login (cookies cleared below)
-            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+            response = RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
         else:
             # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
             # Reference: OpenID Connect Front-Channel Logout 1.0
@@ -4680,7 +4680,7 @@ async def _admin_logout(request: Request) -> Response:
             response = Response(content="Logged out", status_code=200)
     else:
         # POST requests (user-initiated) - redirect to login (cookies cleared below)
-        response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        response = RedirectResponse(url=f"{root_path}/v1/admin/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
         if auth_provider == "keycloak":
@@ -4872,7 +4872,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
 
         if not current_user:
-            return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -4905,7 +4905,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
-                    return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
+                    return RedirectResponse(url=f"{root_path}/v1/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
@@ -4918,7 +4918,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
                     return RedirectResponse(
-                        url=f"{root_path}/admin/login?error=token_too_large",
+                        url=f"{root_path}/v1/admin/login?error=token_too_large",
                         status_code=303,
                     )
 

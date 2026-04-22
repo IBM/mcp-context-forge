@@ -677,7 +677,7 @@ class TestTokenScopingMiddleware:
     def test_normalize_path_for_matching_adds_leading_slash(self, middleware, monkeypatch):
         """Relative normalized paths should be converted to absolute for matching."""
         monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "tools")
-        assert middleware._normalize_path_for_matching("/forge/tools") == "/v1/tools"
+        assert middleware._normalize_path_for_matching("/forge/tools") == "/tools"
 
     def test_get_normalized_request_path_handles_non_dict_scope_and_relative_path(self, middleware, mock_request, monkeypatch):
         """Non-dict scopes and relative normalized paths should be safely normalized."""
