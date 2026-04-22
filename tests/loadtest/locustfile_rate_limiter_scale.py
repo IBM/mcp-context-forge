@@ -291,6 +291,43 @@ def _scan_redis_pattern(pattern: str, timeout: int = 20) -> int:
         return 0
 
 
+def _scan_rl_dimension(dimension: str, timeout: int = 20) -> int:
+    """Count rate-limiter keys for a given dimension, regardless of tenant prefix.
+
+    After the tenant-scoping change in the gateway's tool-service (G1/G2 from
+    issue #4343), keys for team-owned tools land at
+    ``rl:{tenant_id}:{dimension}:{id}:{window}`` instead of
+    ``rl:{dimension}:{id}:{window}``. Single-tenant deployments keep the
+    unprefixed layout. Scan both so this test works before and after the
+    change, and against mixed deployments.
+    """
+    return _scan_redis_pattern(f"rl:{dimension}:*", timeout=timeout) + _scan_redis_pattern(
+        f"rl:*:{dimension}:*", timeout=timeout
+    )
+
+
+def _scan_rl_sample_keys(dimension: str, timeout: int = 15) -> list[str]:
+    """Return sample rate-limiter keys for a dimension, scanning both layouts.
+
+    Used by algorithm-detection to read a representative key's Redis data
+    type. Returns the union of unprefixed and tenant-prefixed keys.
+    """
+    keys: list[str] = []
+    for pattern in (f"rl:{dimension}:*", f"rl:*:{dimension}:*"):
+        try:
+            r = subprocess.run(
+                ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", pattern],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if r.returncode == 0:
+                keys.extend(line.strip() for line in r.stdout.splitlines() if line.strip())
+        except Exception:
+            continue
+    return keys
+
+
 def _poll_redis_once() -> dict[str, Any] | None:
     """Query Redis for key count and memory usage via docker exec.
 
@@ -308,8 +345,10 @@ def _poll_redis_once() -> dict[str, Any] | None:
         )
         total_keys = int(r_dbsize.stdout.strip()) if r_dbsize.returncode == 0 else 0
 
-        # RL-specific keys only (rl:user:* = per-user buckets, rl:tenant:* = per-team buckets)
-        rl_keys = _scan_redis_pattern("rl:user:*") + _scan_redis_pattern("rl:tenant:*")
+        # RL-specific keys only (per-user and per-team buckets). Scan both
+        # the unprefixed layout (rl:{dim}:*) and the tenant-prefixed layout
+        # (rl:{tenant}:{dim}:*) introduced by the G1/G2 fix in #4343.
+        rl_keys = _scan_rl_dimension("user") + _scan_rl_dimension("tenant")
 
         # INFO memory — used_memory in bytes
         r_mem = subprocess.run(
@@ -347,15 +386,12 @@ def _detect_algorithm_from_redis() -> str:
       hash    → token_bucket   (tokens + last_refill timestamp)
     """
     try:
-        r_scan = subprocess.run(
-            ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", "rl:user:*"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        sample_keys = [l.strip() for l in r_scan.stdout.splitlines() if l.strip()]
+        sample_keys = _scan_rl_sample_keys("user")
         if not sample_keys:
-            return f"unknown — no rl:user:* keys in Redis (expected for {RL_ALGORITHM}?)"
+            return (
+                f"unknown — no rl:user:* or rl:*:user:* keys in Redis "
+                f"(expected for {RL_ALGORITHM}?)"
+            )
 
         r_type = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "TYPE", sample_keys[0]],
