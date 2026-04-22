@@ -4895,6 +4895,87 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.post("/invoke", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_by_id(
+    request: Request,
+    agent_id: str = Body(..., description="Agent UUID or UAID"),
+    parameters: Dict[str, Any] = Body(default_factory=dict),
+    interaction_type: str = Body(default="query"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Invokes an A2A agent by UUID or UAID (passed in body to support forward slashes in UAID).
+
+    This endpoint accepts the agent identifier in the request body instead of the URL path,
+    which allows invoking agents by UAID even when the UAID contains forward slashes
+    (e.g., in the nativeId component).
+
+    Args:
+        request (Request): The FastAPI request object for team_id retrieval.
+        agent_id (str): The UUID or UAID of the agent to invoke.
+        parameters (Dict[str, Any]): Parameters for the agent interaction.
+        interaction_type (str): Type of interaction (query, execute, etc.).
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The response from the A2A agent.
+
+    Raises:
+        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+    """
+    try:
+        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Get filtering context from token (respects token scope)
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+        # Admin bypass - only when token has NO team restrictions
+        if is_admin and token_teams is None:
+            token_teams = None  # Admin unrestricted
+        elif token_teams is None:
+            token_teams = []  # Non-admin without teams = public-only
+
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        # Read the federation hop counter from the request header
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
+        # Extract bearer token for cross-gateway forwarding
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        return await a2a_service.invoke_agent(
+            db,
+            agent_name=None,  # Not using name lookup
+            parameters=parameters,
+            interaction_type=interaction_type,
+            agent_id=agent_id,  # Pass agent_id for UUID/UAID lookup
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 #############
 # Tool APIs #
 #############

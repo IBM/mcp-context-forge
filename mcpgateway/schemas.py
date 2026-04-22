@@ -4575,6 +4575,7 @@ class A2AAgentCreate(BaseModel):
     uaid_protocol: Optional[str] = Field(default="a2a", description="Protocol for UAID (a2a, mcp, rest, grpc)")
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod

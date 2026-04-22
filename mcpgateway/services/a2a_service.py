@@ -693,21 +693,39 @@ class A2AAgentService(BaseService):
                         # of agents that would bypass cross-gateway routing security.
                         _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="registration")
 
+                        # Determine native_id for UAID:
+                        # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                        # 2. Otherwise use endpoint_url (standard case)
+                        native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent_data.endpoint_url
+
+                        # Strip protocol from native_id (SSRF protection requirement)
+                        # Store just domain:port, not full URL with protocol
+                        native_id = native_id_source
+                        for prefix in ("https://", "http://"):
+                            if native_id.startswith(prefix):
+                                native_id = native_id[len(prefix):]
+                                break
+
+                        # Validate the native_id against allowlist (if it's different from endpoint_url)
+                        if native_id_source != agent_data.endpoint_url:
+                            _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override")
+
                         uaid = generate_uaid(
                             registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                             name=agent_data.name,
                             version=getattr(agent_data, "version", None) or "1.0.0",
                             protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            native_id=agent_data.endpoint_url,
+                            native_id=native_id,
                             skills=getattr(agent_data, "uaid_skills", None) or [],
                         )
 
                         # Store UAID in separate field, keep UUID for id (optimal indexing and URL routing)
+                        # Note: uaid_native_id stores the original endpoint_url (with protocol) for display
                         uaid_metadata = {
                             "uaid": uaid,
                             "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
                             "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            "uaid_native_id": agent_data.endpoint_url,
+                            "uaid_native_id": native_id_source,  # Store the routing address (may differ from endpoint_url)
                         }
                         logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
                     except Exception as uaid_error:
@@ -1550,12 +1568,29 @@ class A2AAgentService(BaseService):
                     # This prevents bypassing UAID_ALLOWED_DOMAINS security via edit form
                     _validate_uaid_endpoint_domain(agent.endpoint_url, operation_context="UAID generation during edit")
 
+                    # Determine native_id for UAID:
+                    # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                    # 2. Otherwise use endpoint_url (standard case)
+                    native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent.endpoint_url
+
+                    # Strip protocol from native_id (SSRF protection requirement)
+                    # Store just domain:port, not full URL with protocol
+                    native_id = native_id_source
+                    for prefix in ("https://", "http://"):
+                        if native_id.startswith(prefix):
+                            native_id = native_id[len(prefix):]
+                            break
+
+                    # Validate the native_id against allowlist (if it's different from endpoint_url)
+                    if native_id_source != agent.endpoint_url:
+                        _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override during edit")
+
                     uaid = generate_uaid(
                         registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                         name=agent.name,  # Use current agent name
                         version=getattr(agent_data, "version", None) or "1.0.0",
                         protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                        native_id=agent.endpoint_url,  # Use current endpoint_url
+                        native_id=native_id,  # Use native_id without protocol
                         skills=[],  # Empty skills list for now
                     )
 
@@ -1563,7 +1598,7 @@ class A2AAgentService(BaseService):
                     agent.uaid = uaid
                     agent.uaid_registry = getattr(agent_data, "uaid_registry", None) or "context-forge"
                     agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
-                    agent.uaid_native_id = agent.endpoint_url
+                    agent.uaid_native_id = native_id_source  # Store the routing address
 
                     logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
                 except Exception as uaid_error:
@@ -2397,17 +2432,23 @@ class A2AAgentService(BaseService):
             # malformed identifier containing `/`, `?`, or `#` cannot
             # smuggle extra path segments or query/fragment data. The
             # parser already validates structure; this is defence in depth.
+            #
+            # Use HTTP for localhost/127.0.0.1 endpoints (development/testing),
+            # HTTPS for all other endpoints (production security default).
+            scheme = "http" if endpoint.split(":")[0] in ("localhost", "127.0.0.1", "::1", "[::1]") else "https"
+
             if protocol == "a2a":
-                url = f"https://{endpoint}/a2a/{quote(uaid, safe='')}/invoke"
+                # Use the body-based /a2a/invoke endpoint to avoid path parameter issues with UAIDs containing forward slashes
+                url = f"{scheme}://{endpoint}/a2a/invoke"
             elif protocol == "mcp":
-                url = f"https://{endpoint}/mcp/tools/call"
+                url = f"{scheme}://{endpoint}/mcp/tools/call"
             else:
                 raise ValueError(f"Unsupported protocol in UAID: {protocol}")
 
-            # Prepare request payload — matches the receiving gateway's
-            # `/a2a/{agent_name}/invoke` body signature. The UAID is carried
-            # in the URL path; no need to duplicate it in the body.
+            # Prepare request payload — for A2A, pass agent_id in body instead of URL path
+            # to support UAIDs containing forward slashes (e.g., in nativeId component)
             request_data = {
+                "agent_id": uaid,
                 "parameters": parameters,
                 "interaction_type": interaction_type,
             }
