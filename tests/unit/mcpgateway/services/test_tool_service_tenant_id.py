@@ -80,3 +80,29 @@ def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
 
     assert ctx is existing_context
     assert ctx.tenant_id == "team_a", "existing GlobalContext with tenant_id=None must be filled from " f"tool_payload['team_id']; got tenant_id={ctx.tenant_id!r}"
+
+
+def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
+    """Existing GlobalContext with tenant_id already set is NOT overwritten by payload team_id.
+
+    This covers the branch where plugin_global_context exists AND has tenant_id,
+    so the condition `if not global_context.tenant_id and payload_tenant_id:` is False.
+    Line 4568 in tool_service.py.
+    """
+    service = ToolService()
+    existing_context = GlobalContext(request_id="request-1", tenant_id="team_middleware")
+
+    ctx = service._build_rust_tool_hook_global_context(
+        app_user_email="alice@example.com",
+        server_id=None,
+        tool_gateway_id=None,
+        plugin_global_context=existing_context,
+        tool_payload={"team_id": "team_payload", "name": "search"},
+        gateway_payload=None,
+        request_headers=None,
+    )
+
+    assert ctx is existing_context
+    assert ctx.tenant_id == "team_middleware", (
+        "existing GlobalContext with tenant_id already set must NOT be overwritten by " f"tool_payload['team_id']; expected 'team_middleware', got tenant_id={ctx.tenant_id!r}"
+    )
