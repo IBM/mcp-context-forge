@@ -449,7 +449,7 @@ class EmailAuthService:
         """
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/forgot-password"
+        return f"{app_domain}{root_path}/v1/admin/forgot-password"
 
     @staticmethod
     def _build_reset_password_url(token: str) -> str:
@@ -464,7 +464,7 @@ class EmailAuthService:
         safe_token = urllib.parse.quote(token, safe="")
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
+        return f"{app_domain}{root_path}/v1/admin/reset-password/{safe_token}"
 
     async def _invalidate_user_auth_cache(self, email: str) -> None:
         """Invalidate cached authentication data for a user.

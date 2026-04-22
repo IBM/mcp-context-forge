@@ -408,6 +408,15 @@ def main_app_with_admin_api():
         main_mod.app.include_router(admin_router)
         validate_section_permissions(admin_router)
 
+    # Ensure /v1/admin/well-known is mounted. When main was imported with
+    # admin disabled, build_v1_router() skips well_known_router, so the
+    # /v1/admin/well-known route is absent. Mount it now if missing.
+    well_known_admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "") == "/v1/admin/well-known"]
+    if not well_known_admin_routes:
+        from mcpgateway.routers.well_known import router as _well_known_router  # noqa: E402
+
+        main_mod.app.include_router(_well_known_router, prefix="/v1")
+
     yield main_mod.app
 
     # Restore prior env values. Leaves the mounted admin routes in place

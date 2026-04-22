@@ -283,28 +283,28 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
 # Routes on other routers (version.py, llm_admin_router, etc.) are excluded
 # from validation since they're mounted separately and have their own decorators.
 _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
-    "users": "/admin/users/partial",
-    "maintenance": "/admin/maintenance/partial",
-    "logs": "/admin/logs",
-    "export-import": "/admin/export/configuration",
-    "plugins": "/admin/plugins/partial",
-    "metrics": "/admin/metrics",
-    # "version-info": "/admin/version",  # Route is on version.py router, not admin_router
-    # "settings": "/admin/llm-settings",  # No such route exists
-    # "llm-providers": "/admin/llm/providers/html",  # Route is on llm_admin_router
-    # "llm-models": "/admin/llm/models/html",  # Route is on llm_admin_router
-    # "llm-api-info": "/admin/llm/api-info/html",  # Route is on llm_admin_router
-    "tools": "/admin/tools/partial",
-    "servers": "/admin/servers/partial",
-    "resources": "/admin/resources/partial",
-    "prompts": "/admin/prompts/partial",
-    "gateways": "/admin/gateways/partial",
-    "teams": "/admin/teams/partial",
-    "tokens": "/admin/tokens/partial",
-    "agents": "/admin/a2a/partial",
-    "overview": "/admin/overview/partial",
-    # "roots": "/admin/roots/partial",  # No such route exists on admin_router
-    "mcp-registry": "/admin/servers/partial",
+    "users": "/v1/admin/users/partial",
+    "maintenance": "/v1/admin/maintenance/partial",
+    "logs": "/v1/admin/logs",
+    "export-import": "/v1/admin/export/configuration",
+    "plugins": "/v1/admin/plugins/partial",
+    "metrics": "/v1/admin/metrics",
+    # "version-info": "/v1/admin/version",  # Route is on version.py router, not admin_router
+    # "settings": "/v1/admin/llm-settings",  # No such route exists
+    # "llm-providers": "/v1/admin/llm/providers/html",  # Route is on llm_admin_router
+    # "llm-models": "/v1/admin/llm/models/html",  # Route is on llm_admin_router
+    # "llm-api-info": "/v1/admin/llm/api-info/html",  # Route is on llm_admin_router
+    "tools": "/v1/admin/tools/partial",
+    "servers": "/v1/admin/servers/partial",
+    "resources": "/v1/admin/resources/partial",
+    "prompts": "/v1/admin/prompts/partial",
+    "gateways": "/v1/admin/gateways/partial",
+    "teams": "/v1/admin/teams/partial",
+    "tokens": "/v1/admin/tokens/partial",
+    "agents": "/v1/admin/a2a/partial",
+    "overview": "/v1/admin/overview/partial",
+    # "roots": "/v1/admin/roots/partial",  # No such route exists on admin_router
+    "mcp-registry": "/v1/admin/servers/partial",
 }
 
 
@@ -872,7 +872,7 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
             pass
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
     sep = "/?" if query else ""
-    return f"{root_path}/admin{sep}{query}#{fragment}"
+    return f"{root_path}/v1/admin{sep}{query}#{fragment}"
 
 
 def get_client_ip(request: Request) -> str:
@@ -1398,7 +1398,7 @@ def _admin_cookie_path(request: Request) -> str:
         non-/admin mutations can carry the same double-submit token.
     """
     root_path = _resolve_root_path(request)
-    return root_path or "/"
+    return f"{root_path}/v1/admin" if root_path else "/v1/admin"
 
 
 def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
@@ -1578,7 +1578,7 @@ async def enforce_admin_csrf(request: Request) -> None:
 
 
 admin_router = APIRouter(
-    prefix="/admin",
+    prefix="/v1/admin",
     tags=["Admin UI"],
     dependencies=[Depends(enforce_admin_csrf)],
 )
@@ -2692,7 +2692,7 @@ async def admin_servers_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/servers/partial"
+    base_url = f"{root_path}/v1/admin/servers/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -4019,7 +4019,7 @@ async def admin_ui(
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
         scope_root_path = _resolve_root_path(request)
-        ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
+        ui_cookie_path = f"{scope_root_path}/v1/admin" if scope_root_path else "/v1/admin"
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
         if cookie_action == "set":
@@ -4083,7 +4083,7 @@ async def admin_login_page(request: Request) -> Response:
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
     root_path = settings.app_root_path
 
@@ -4103,9 +4103,9 @@ async def admin_login_page(request: Request) -> Response:
 
                 # Preserve public-only denial invariant — same as AdminAuthMiddleware
                 if token_teams is not None and len(token_teams) == 0:
-                    pass  # Render login page; do not redirect to /admin
+                    pass  # Render login page; do not redirect to /v1/admin
                 elif auth_user.is_admin:
-                    return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                    return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
                 else:
                     # Non-admin with valid token: check RBAC admin permission
                     with SessionLocal() as db:
@@ -4116,7 +4116,7 @@ async def admin_login_page(request: Request) -> Response:
                             token_teams=token_teams,
                         )
                         if has_admin_access:
-                            return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                            return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
                         # else: render login page; token is valid but lacks admin access
             except Exception:
                 clear_invalid_cookies = True
@@ -4198,7 +4198,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
     root_path = _resolve_root_path(request)
 
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
     try:
         form = await request.form()
@@ -4274,7 +4274,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 token, _ = await create_access_token(user)
 
                 # Create redirect response to password change page
-                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+                response = RedirectResponse(url=f"{root_path}/v1/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
@@ -4292,7 +4292,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+            response = RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
             # Set JWT token as secure cookie
             try:
@@ -4772,7 +4772,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
     # Get root path for template
     root_path = _resolve_root_path(request)
@@ -4842,7 +4842,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
     root_path = _resolve_root_path(request)
 
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
     try:
         form = await request.form()
@@ -4855,10 +4855,10 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
 
         if not all([current_password, new_password, confirm_password]):
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
         try:
@@ -4901,7 +4901,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
-                            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+                            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
@@ -4911,7 +4911,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                response = RedirectResponse(url=f"{root_path}/v1/admin", status_code=303)
 
                 # Update JWT token cookie
                 try:
@@ -4925,20 +4925,20 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
 
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
-        return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/change-password-required?error=server_error", status_code=303)
 
 
 # ============================================================================ #
@@ -5307,7 +5307,7 @@ async def admin_teams_partial_html(
     root_path = _resolve_root_path(request)
 
     # Base URL for pagination links - preserve search query and relationship filter
-    base_url = f"{root_path}/admin/teams/partial"
+    base_url = f"{root_path}/v1/admin/teams/partial"
     query_parts = []
     if q:
         query_parts.append(f"q={urllib.parse.quote(q, safe='')}")
@@ -5555,7 +5555,7 @@ async def admin_list_teams(
         # Call list_teams logic (similar to admin_teams_partial_html but inline)
         if current_user.is_admin:
             # Default first page
-            base_url = f"{root_path}/admin/teams/partial"
+            base_url = f"{root_path}/v1/admin/teams/partial"
             if q:
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
@@ -5803,7 +5803,7 @@ async def admin_view_team_members(
                 </div>
 
                 <form id="team-members-form-{team.id}" data-team-id="{team.id}"
-                      hx-post="{root_path}/admin/teams/{team.id}/add-member"
+                      hx-post="{root_path}/v1/admin/teams/{team.id}/add-member"
                       hx-target="#team-edit-modal-content"
                       hx-swap="innerHTML"
                       class="px-6 py-4">
@@ -5824,7 +5824,7 @@ async def admin_view_team_members(
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
+                            hx-get="{root_path}/v1/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5959,7 +5959,7 @@ async def admin_add_team_members_view(
                 </div>
 
                 <div class="px-6 py-4">
-                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}/v1/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
                         <!-- Search box -->
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
@@ -5967,7 +5967,7 @@ async def admin_add_team_members_view(
                                 type="text"
                                 id="user-search-{team.id}"
                                 data-team-id="{team.id}"
-                                data-search-url="{root_path}/admin/users/search"
+                                data-search-url="{root_path}/v1/admin/users/search"
                                 data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -5983,7 +5983,7 @@ async def admin_add_team_members_view(
                             <div
                                 id="user-selector-container-{team.id}"
                                 class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
+                                hx-get="{root_path}/v1/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -6081,7 +6081,7 @@ async def admin_get_team_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
+            <form method="post" action="{root_path}/v1/admin/teams/{team_id}/update" hx-post="{root_path}/v1/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -6189,7 +6189,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote("Team name is required")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
 
         # Validate name and description for XSS (same validation as schema)
         if not re.match(settings.validation_name_pattern, name):
@@ -6203,7 +6203,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote("Team name contains invalid characters")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
@@ -6224,7 +6224,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote(str(ve))
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -6252,7 +6252,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote("Team cannot be updated")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -6268,7 +6268,7 @@ async def admin_update_team(
             response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshUnifiedTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
-        return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/#teams", status_code=303)
 
     except ValueError as e:
         # Rollback to discard any partial mutations (e.g. name/description set before max_members check failed)
@@ -6281,7 +6281,7 @@ async def admin_update_team(
             response.headers["HX-Reswap"] = "innerHTML"
             return response
         error_msg = urllib.parse.quote(str(e))
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -6293,7 +6293,7 @@ async def admin_update_team(
             return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}/v1/admin/?error={error_msg}#teams", status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -7192,7 +7192,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
         f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
         f"dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 "
         f"dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-        f'focus:ring-blue-500" hx-get="{root_path}/admin/users/{encoded_email}/edit" '
+        f'focus:ring-blue-500" hx-get="{root_path}/v1/admin/users/{encoded_email}/edit" '
         f'hx-target="#user-edit-modal-content">Edit</button>'
     ]
 
@@ -7202,7 +7202,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 '
                 f"dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 "
                 f"dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-indigo-500" hx-post="{root_path}/admin/users/{encoded_email}/unlock" '
+                f'focus:ring-indigo-500" hx-post="{root_path}/v1/admin/users/{encoded_email}/unlock" '
                 f'hx-confirm="Unlock this user account?" hx-target="closest .user-card" hx-swap="outerHTML">Unlock</button>'
             )
 
@@ -7211,7 +7211,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
                 f"dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 "
                 f"dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-orange-500" hx-post="{root_path}/admin/users/{encoded_email}/deactivate" '
+                f'focus:ring-orange-500" hx-post="{root_path}/v1/admin/users/{encoded_email}/deactivate" '
                 f'hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
             )
         else:
@@ -7219,7 +7219,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
                 f"dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 "
                 f"dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-green-500" hx-post="{root_path}/admin/users/{encoded_email}/activate" '
+                f'focus:ring-green-500" hx-post="{root_path}/v1/admin/users/{encoded_email}/activate" '
                 f'hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
             )
 
@@ -7233,7 +7233,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
                 f"dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 "
                 f"dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-yellow-500" hx-post="{root_path}/admin/users/{encoded_email}/force-password-change" '
+                f'focus:ring-yellow-500" hx-post="{root_path}/v1/admin/users/{encoded_email}/force-password-change" '
                 f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
                 f'hx-swap="outerHTML">Force Password Change</button>'
             )
@@ -7242,7 +7242,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 '
             f"dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 "
             f"dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-            f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
+            f'focus:ring-red-500" hx-delete="{root_path}/v1/admin/users/{encoded_email}" '
             f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
             f'hx-target="closest .user-card" hx-swap="outerHTML" '
             f'hx-on::after-request="handleDeleteUserError(event)">Delete</button>'
@@ -7453,7 +7453,7 @@ async def admin_users_partial_html(
                 },
             )
         elif render == "controls":
-            base_url = f"{_resolve_root_path(request)}/admin/users/partial"
+            base_url = f"{_resolve_root_path(request)}/v1/admin/users/partial"
             response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -7555,7 +7555,7 @@ async def admin_team_members_partial_html(
 
         root_path = _resolve_root_path(request)
         search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
-        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
+        next_page_url = f"{root_path}/v1/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -7663,7 +7663,7 @@ async def admin_team_non_members_partial_html(
 
         root_path = _resolve_root_path(request)
         search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
-        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
+        next_page_url = f"{root_path}/v1/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -7900,7 +7900,7 @@ async def admin_get_user_edit(
         <div id="user-edit-modal-content" class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
             <div id="edit-user-error"></div>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
+            <form hx-post="{root_path}/v1/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -8507,7 +8507,7 @@ async def admin_tools_partial_html(
 
     # Use unified pagination function (offset-based for UI compatibility)
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/tools/partial"
+    base_url = f"{root_path}/v1/admin/tools/partial"
     query_params_dict = {}
     if include_inactive:
         query_params_dict["include_inactive"] = "true"
@@ -8696,7 +8696,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{_resolve_root_path(request)}/admin/tool-ops/partial",
+        base_url=f"{_resolve_root_path(request)}/v1/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
@@ -9115,7 +9115,7 @@ async def admin_prompts_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/prompts/partial"
+    base_url = f"{root_path}/v1/admin/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -9331,7 +9331,7 @@ async def admin_gateways_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/gateways/partial"
+    base_url = f"{root_path}/v1/admin/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -9901,7 +9901,7 @@ async def admin_resources_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/resources/partial"
+    base_url = f"{root_path}/v1/admin/resources/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -10530,7 +10530,7 @@ async def admin_tokens_partial_html(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{settings.app_root_path}/admin/tokens/partial",
+        base_url=f"{settings.app_root_path}/v1/admin/tokens/partial",
         query_params=query_params,
         use_cursor_threshold=False,
     )
@@ -10539,7 +10539,7 @@ async def admin_tokens_partial_html(
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    base_url = f"{settings.app_root_path}/admin/tokens/partial"
+    base_url = f"{settings.app_root_path}/v1/admin/tokens/partial"
 
     if render == "controls":
         db.commit()
@@ -10842,7 +10842,7 @@ async def admin_a2a_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/a2a/partial"
+    base_url = f"{root_path}/v1/admin/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -13900,7 +13900,7 @@ async def admin_metrics_partial_html(
     """
     Return HTML partial for paginated top performers (HTMX endpoint).
 
-    Matches the /admin/tools/partial pattern for consistent pagination UX.
+    Matches the /v1/admin/tools/partial pattern for consistent pagination UX.
 
     Args:
         request: FastAPI request object
@@ -16065,7 +16065,7 @@ async def admin_set_a2a_agent_state(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/v1/admin#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
     error_message = None
@@ -16119,7 +16119,7 @@ async def admin_delete_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/v1/admin#a2a-agents", status_code=303)
 
     error_message = None
     is_inactive_checked = "false"
@@ -16821,7 +16821,7 @@ async def _sync_plugin_service_from_runtime(request: Request, plugin_service) ->
        toggle was flipped on.
     2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
        stale cache would persist forever — now the next GET repairs it.
-    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
+    3. A remote disable (``PUT /v1/admin/plugins {"enabled": false}`` on another
        worker) would leave this worker's ``app.state.plugin_manager``
        populated from a prior enable, making admin views serve plugin
        metadata the cluster had already turned off.
@@ -16983,8 +16983,8 @@ async def toggle_plugins_global(
 
     redis_persisted = await enable_plugins_shared(payload.enabled)
 
-    # Sync the admin-side cache so ``GET /admin/plugins`` and
-    # ``GET /admin/plugins/{name}`` reflect the toggle on a process that
+    # Sync the admin-side cache so ``GET /v1/admin/plugins`` and
+    # ``GET /v1/admin/plugins/{name}`` reflect the toggle on a process that
     # started with plugins disabled (``app.state.plugin_manager`` stayed unset
     # and ``PluginService`` was never wired). Without this, enabling plugins
     # at runtime leaves the admin surfaces reading stale/empty metadata until
@@ -17370,7 +17370,7 @@ async def register_catalog_server(
         <button
             id="{safe_server_id}-register-btn"
             class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
-            hx-post="{settings.app_root_path}/admin/mcp-registry/{safe_server_id}/register"
+            hx-post="{settings.app_root_path}/v1/admin/mcp-registry/{safe_server_id}/register"
             hx-target="#{safe_server_id}-button-container"
             hx-swap="innerHTML"
             hx-disabled-elt="this"
@@ -17570,7 +17570,7 @@ async def get_system_stats(
 
     Examples:
         >>> # Request system metrics via API
-        >>> # GET /admin/system/stats
+        >>> # GET /v1/admin/system/stats
         >>> # Returns JSON with users, teams, mcp_resources, tokens, sessions, metrics, security, workflow
     """
     try:
@@ -17644,7 +17644,7 @@ async def admin_generate_support_bundle(
 
     Examples:
         >>> # Request support bundle via API
-        >>> # GET /admin/support-bundle/generate?log_lines=500
+        >>> # GET /v1/admin/support-bundle/generate?log_lines=500
         >>> # Returns: mcpgateway-support-YYYY-MM-DD-HHMMSS.zip
     """
     try:

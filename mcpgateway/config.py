@@ -1794,6 +1794,7 @@ class Settings(BaseSettings):
             r"^/servers/[^/]+/sse$",
             r"^/servers/[^/]+/message$",
             r"^/a2a(?:/|$)",
+            r"^/v1/a2a(?:/|$)",  # versioned a2a endpoint
         ],
         description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
     )

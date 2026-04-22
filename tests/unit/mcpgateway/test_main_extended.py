@@ -692,7 +692,7 @@ class TestInternalTrustedMcpTransportBridge:
         await bridge.handle_streamable_http(scope, receive, send)
 
         assert observed["path"] == "/mcp/"
-        assert observed["modified_path"] == "/v1/servers/server-1/mcp"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
         assert observed["user_context"]["email"] == "user@example.com"
         assert observed["user_context"]["teams"] == ["team-a"]
         assert observed["user_context"]["auth_method"] == "jwt"
@@ -816,7 +816,7 @@ class TestInternalTrustedMcpTransportBridge:
         await bridge.handle_streamable_http(scope, receive, send)
 
         assert observed["method"] == "POST"
-        assert observed["modified_path"] == "/v1/servers/server-1/mcp"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
         assert observed["body"]["body"] == b'{"jsonrpc":"2.0","id":1}'
         assert events[0]["status"] == 200
 
@@ -2954,7 +2954,7 @@ class TestMCPPathRewriteMiddleware:
     async def test_rewrite_mcp_path(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {"type": "http", "path": "/v1/servers/123/mcp", "headers": []}
+        scope = {"type": "http", "path": "/servers/123/mcp", "headers": []}
         receive = AsyncMock()
         send = AsyncMock()
 
@@ -2968,7 +2968,7 @@ class TestMCPPathRewriteMiddleware:
     async def test_rewrite_auth_failure(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {"type": "http", "path": "/v1/servers/123/mcp", "headers": []}
+        scope = {"type": "http", "path": "/servers/123/mcp", "headers": []}
         receive = AsyncMock()
         send = AsyncMock()
 
@@ -2983,7 +2983,7 @@ class TestMCPPathRewriteMiddleware:
         response = StarletteResponse("ok")
         dispatch = AsyncMock(return_value=response)
         middleware = MCPPathRewriteMiddleware(app_mock, dispatch=dispatch)
-        scope = {"type": "http", "path": "/v1/servers/123/mcp", "headers": []}
+        scope = {"type": "http", "path": "/servers/123/mcp", "headers": []}
         receive = AsyncMock()
         send = AsyncMock()
 
@@ -2997,7 +2997,7 @@ class TestMCPPathRewriteMiddleware:
         """Middleware returns 404 for /servers//mcp (empty server ID)."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {"type": "http", "path": "/v1/servers//mcp", "headers": []}
+        scope = {"type": "http", "path": "/servers//mcp", "headers": []}
         receive = AsyncMock()
         sent = []
 
@@ -3095,7 +3095,7 @@ class TestMCPPathRewriteMiddleware:
 
         # modified_path MUST be app-relative (without root_path prefix)
         # so streamablehttp_transport can extract server_id via regex
-        assert scope["modified_path"] == "/v1/servers/abc123/mcp"
+        assert scope["modified_path"] == "/servers/abc123/mcp"
         # path is rewritten with root_path prefix preserved
         assert scope["path"] == "/gateway/mcp/"
         app_mock.assert_called_once()
@@ -3105,14 +3105,14 @@ class TestMCPPathRewriteMiddleware:
         """When no root_path, modified_path equals original path."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {"type": "http", "path": "/v1/servers/xyz789/mcp", "headers": []}
+        scope = {"type": "http", "path": "/servers/xyz789/mcp", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
             await middleware._call_streamable_http(scope, receive, send)
 
         # Without root_path, modified_path should equal the normalized path
-        assert scope["modified_path"] == "/v1/servers/xyz789/mcp"
+        assert scope["modified_path"] == "/servers/xyz789/mcp"
         assert scope["path"] == "/mcp/"
         app_mock.assert_called_once()
 

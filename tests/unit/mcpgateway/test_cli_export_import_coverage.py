@@ -329,7 +329,7 @@ async def test_make_authenticated_request_bearer_auth_success():
 
     assert result == {"ok": True}
     assert captured["headers"]["Authorization"] == "Bearer jwt-token"
-    assert fake_client.requests[0]["url"] == "http://localhost:8000/export"
+    assert fake_client.requests[0]["url"] == "http://localhost:8000/v1/export"
 
 
 @pytest.mark.asyncio

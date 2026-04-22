@@ -2652,14 +2652,22 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin")
+        # Check if this is an admin route (versioned /v1/admin/* or legacy /admin/*)
+        is_admin_route = scope_path.startswith("/admin") or scope_path.startswith("/v1/admin")
 
         if not is_admin_route:
             return await call_next(request)
 
+        # Normalize to unversioned path for exempt/permission checks so that
+        # both direct (/v1/admin/login) and proxy-prefixed (/qa/gateway/admin/login)
+        # paths are handled uniformly.
+        def _strip_v1(p: str) -> str:
+            return p[3:] if p.startswith("/v1") else p
+
+        check_path = _strip_v1(scope_path)
+
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        is_exempt = any(check_path.startswith(_strip_v1(p)) for p in self.EXEMPT_PATHS)
         if is_exempt:
             return await call_next(request)
 

@@ -63,7 +63,7 @@ def client(monkeypatch):
 
 def test_metrics_endpoint(client):
     """✅ /metrics endpoint returns Prometheus format data."""
-    response = client.get("/v1/metrics/prometheus")
+    response = client.get("/metrics/prometheus")
 
     assert response.status_code == 200, f"Expected HTTP 200 OK, got {response.status_code}"
     assert "text/plain" in response.headers["content-type"]
@@ -72,7 +72,7 @@ def test_metrics_endpoint(client):
 
 def test_metrics_contains_standard_metrics(client):
     """✅ Standard Prometheus metrics families exist."""
-    response = client.get("/v1/metrics/prometheus")
+    response = client.get("/metrics/prometheus")
     text = response.text
 
     # Check for basic Prometheus format
@@ -83,14 +83,14 @@ def test_metrics_contains_standard_metrics(client):
 def test_metrics_counters_increment(client):
     """✅ Counters increment after a request."""
     # Initial scrape
-    resp1 = client.get("/v1/metrics/prometheus")
+    resp1 = client.get("/metrics/prometheus")
     before_lines = len(resp1.text.splitlines())
 
     # Trigger another request
     client.get("/health")
 
     # Second scrape
-    resp2 = client.get("/v1/metrics/prometheus")
+    resp2 = client.get("/metrics/prometheus")
     after_lines = len(resp2.text.splitlines())
 
     # At minimum, metrics should be present
@@ -131,7 +131,7 @@ def test_metrics_excluded_paths(monkeypatch):
 
         # Hit the /health endpoint
         client.get("/health")
-        resp = client.get("/v1/metrics/prometheus")
+        resp = client.get("/metrics/prometheus")
 
         # Just verify we get a response - exclusion testing is complex
         assert resp.status_code == 200, "Metrics endpoint should be accessible"
@@ -150,7 +150,7 @@ def test_metrics_excluded_paths(monkeypatch):
 
 def test_metrics_prometheus_plain_text_response(client):
     """Non-gzip request returns plain Prometheus exposition text."""
-    response = client.get("/v1/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+    response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     assert "Content-Encoding" not in response.headers
@@ -184,7 +184,7 @@ def test_metrics_prometheus_multiprocess_registry(monkeypatch):
         with tempfile.TemporaryDirectory() as tmpdir:
             monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", tmpdir)
             client = TestClient(app)
-            response = client.get("/v1/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+            response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
             assert response.status_code == 200
             assert "text/plain" in response.headers["content-type"]
     finally:
@@ -222,7 +222,7 @@ def test_metrics_prometheus_requires_auth_when_enabled(monkeypatch):
         # NO auth override — simulates unauthenticated access
         client = TestClient(app, raise_server_exceptions=False)
 
-        resp = client.get("/v1/metrics/prometheus")
+        resp = client.get("/metrics/prometheus")
         assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
     finally:
         REGISTRY._collector_to_names.clear()
@@ -245,7 +245,7 @@ def test_metrics_prometheus_requires_auth_when_disabled(monkeypatch):
     # NO auth override
     client = TestClient(app, raise_server_exceptions=False)
 
-    resp = client.get("/v1/metrics/prometheus")
+    resp = client.get("/metrics/prometheus")
     assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
 
 
@@ -264,7 +264,7 @@ def test_metrics_prometheus_disabled_returns_503_with_auth(monkeypatch):
     app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
     client = TestClient(app)
 
-    resp = client.get("/v1/metrics/prometheus")
+    resp = client.get("/metrics/prometheus")
     assert resp.status_code == 503
     assert "Metrics collection is disabled" in resp.text
 

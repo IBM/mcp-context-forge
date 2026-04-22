@@ -266,6 +266,14 @@ def build_v1_router(  # noqa: C901 — deliberate single-function assembly, comp
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
             v1_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+
+            # Well-known admin status endpoint lives in the well_known router;
+            # include it here so /v1/admin/well-known is reachable alongside the
+            # unversioned /.well-known/* routes mounted on app directly.
+            from mcpgateway.routers.well_known import router as well_known_router  # pylint: disable=import-outside-toplevel
+
+            v1_router.include_router(well_known_router)
+            logger.info("Well-known router included in v1 (admin status endpoint)")
         except ImportError as e:
             logger.error(f"Admin router not available: {e}")
     else:

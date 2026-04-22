@@ -56,10 +56,10 @@ class TestObservabilitySkip:
             ("/message", False),
             ("/mcp", False),
             ("/mcp/", False),
-            ("/v1/servers/123/mcp", False),
-            ("/v1/servers/123/mcp/", False),
-            ("/v1/servers/123/sse", False),
-            ("/v1/servers/123/message", False),
+            ("/servers/123/mcp", False),
+            ("/servers/123/mcp/", False),
+            ("/servers/123/sse", False),
+            ("/servers/123/message", False),
             ("/v1/a2a", False),
             ("/v1/a2a/agents", False),
         ],
@@ -298,7 +298,7 @@ class TestObservabilityIncludeExclude:
         monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
         clear_all_caches()
 
-        assert should_skip_observability("/v1/admin") is False
+        assert should_skip_observability("/admin") is False
         assert should_skip_observability("/rpc") is True
 
         clear_all_caches()

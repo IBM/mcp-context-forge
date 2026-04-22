@@ -73,7 +73,7 @@ def test_format_text_log_and_json_log():
 
     text = dql._format_text_log(request_data, queries, issues)
     assert "POTENTIAL N+1" in text
-    assert "GET /tools" in text
+    assert "GET /v1/tools" in text
 
     json_text = dql._format_json_log(request_data, queries, issues)
     payload = orjson.loads(json_text)

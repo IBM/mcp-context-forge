@@ -1378,9 +1378,9 @@ async def test_export_selected_servers_success_and_empty_list(export_service, mo
 
     exported = await export_service._export_selected_servers(mock_db, ["server1"], root_path="/api")
     assert exported[0]["tool_ids"] == ["tool1", "tool2"]
-    assert exported[0]["sse_endpoint"] == "/api/servers/server1/sse"
-    assert exported[0]["websocket_endpoint"] == "/api/servers/server1/ws"
-    assert exported[0]["jsonrpc_endpoint"] == "/api/servers/server1/jsonrpc"
+    assert exported[0]["sse_endpoint"] == "/api/v1/servers/server1/sse"
+    assert exported[0]["websocket_endpoint"] == "/api/v1/servers/server1/ws"
+    assert exported[0]["jsonrpc_endpoint"] == "/api/v1/servers/server1/jsonrpc"
 
 
 @pytest.mark.asyncio

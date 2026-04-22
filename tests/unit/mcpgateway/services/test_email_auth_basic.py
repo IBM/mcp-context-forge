@@ -233,7 +233,7 @@ class TestEmailAuthBasic:
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok en")
 
-        assert forgot_url == "https://gateway.example.com/root/admin/forgot-password"
+        assert forgot_url == "https://gateway.example.com/root/v1/admin/forgot-password"
         assert reset_url.endswith("/v1/admin/reset-password/tok%20en")
 
     def test_recent_password_reset_request_count(self, service, mock_db):

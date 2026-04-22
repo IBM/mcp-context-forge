@@ -399,7 +399,7 @@ async def handle_sso_callback(
         return RedirectResponse(url=f"{root_path}/v1/admin/login?error=user_creation_failed", status_code=302)
 
     # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}/v1/admin", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
