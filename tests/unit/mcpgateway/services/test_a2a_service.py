@@ -5298,16 +5298,20 @@ class TestCrossGatewayRoutingCoverage:
             agent_id=uaid,
         )
 
-        # Verify cross-gateway routing was called. The UAID is URL-
-        # encoded in the path as a defence-in-depth measure against
-        # path-segment smuggling.
-        # Standard
-        from urllib.parse import quote  # pylint: disable=import-outside-toplevel
-
+        # Verify cross-gateway routing was called. The UAID is passed in
+        # the request body instead of the URL path to support UAIDs containing
+        # forward slashes (which break FastAPI path parameter matching).
         assert result == {"result": "cross-gateway success"}
         assert mock_client.post.called
         call_args = mock_client.post.call_args
-        assert f"https://agent.example.com/a2a/{quote(uaid, safe='')}/invoke" in str(call_args)
+
+        # Check URL is the body-based invoke endpoint (not path-based)
+        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+
+        # Check UAID is in request body as agent_id
+        sent_json = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        assert sent_json.get("agent_id") == uaid, f"UAID not in body: {sent_json}"
+
         # Hop counter must be stamped on outbound requests so the
         # receiving gateway can enforce `uaid_max_federation_hops`
         # and break recursion.  First outbound from a direct client

@@ -703,7 +703,7 @@ class A2AAgentService(BaseService):
                         native_id = native_id_source
                         for prefix in ("https://", "http://"):
                             if native_id.startswith(prefix):
-                                native_id = native_id[len(prefix):]
+                                native_id = native_id[len(prefix) :]
                                 break
 
                         # Validate the native_id against allowlist (if it's different from endpoint_url)
@@ -1578,7 +1578,7 @@ class A2AAgentService(BaseService):
                     native_id = native_id_source
                     for prefix in ("https://", "http://"):
                         if native_id.startswith(prefix):
-                            native_id = native_id[len(prefix):]
+                            native_id = native_id[len(prefix) :]
                             break
 
                     # Validate the native_id against allowlist (if it's different from endpoint_url)
