@@ -111,6 +111,42 @@ Generated profiling artifacts are written under:
 crates/mcp_runtime/profiles/
 ```
 
+## Configuration
+
+### Backend URL Validation
+
+Validates outgoing HTTP requests from Rust → Python backend services to protect against SSRF via misconfigured environment variables.
+
+**Scope**: Validates `BACKEND_RPC_URL` and derived backend service URLs (NOT incoming client requests)
+
+**Threat Model**: Defends against misconfigured environment variables pointing to cloud metadata endpoints or blocked internal networks. Does NOT defend against DNS poisoning (assumes operator-controlled infrastructure).
+
+**Environment Variables:**
+
+```bash
+BACKEND_VALIDATION_ENABLED=true                     # Enable validation (default: true)
+BACKEND_ALLOWED_HOSTS="localhost,127.0.0.1,0.0.0.0" # Approved backend hosts (default)
+BACKEND_BLOCKED_NETWORKS="169.254.169.254/32"       # CIDR ranges to block (default)
+BACKEND_MAX_URL_LENGTH=2048                          # Maximum URL length (default: 2048)
+```
+
+**Examples:**
+
+```bash
+# Production: strict allowlist
+BACKEND_ALLOWED_HOSTS="backend.internal,10.0.1.50" \\
+BACKEND_BLOCKED_NETWORKS="169.254.169.254/32,10.0.0.0/8" \\
+cargo run
+
+# Development: local only
+BACKEND_ALLOWED_HOSTS="localhost,127.0.0.1" cargo run
+
+# Disable validation (NOT recommended)
+BACKEND_VALIDATION_ENABLED=false cargo run
+```
+
+URLs not in the allowlist or IPs in blocked networks are rejected with a Bad Gateway response.
+
 ## Verify what is running
 
 ### Compose/gateway view

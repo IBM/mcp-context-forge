@@ -20,6 +20,7 @@ bytes.workspace = true
 clap.workspace = true
 deadpool-postgres = "0.14.1"
 futures-util.workspace = true
+ipnetwork = "0.21"
 opentelemetry = "0.31.0"
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
