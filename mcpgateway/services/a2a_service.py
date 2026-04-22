@@ -191,12 +191,11 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
                     # [::1]:8080 → ::1, 8080
                     host, port = domain.split("]:", 1)
                     return (host[1:], port)  # Remove leading [
-                elif domain.endswith("]"):
+                if domain.endswith("]"):
                     # [::1] → ::1, None
                     return (domain[1:-1], None)
-                else:
-                    # Malformed, treat as-is
-                    return (domain, None)
+                # Malformed, treat as-is
+                return (domain, None)
 
             # Count colons to distinguish IPv6 from hostname:port
             # IPv6 addresses have multiple colons (::1 has 2, 2001:db8::1 has 3+)
@@ -206,18 +205,16 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
             if colon_count == 0:
                 # No colons, just a hostname
                 return (domain, None)
-            elif colon_count == 1:
+            if colon_count == 1:
                 # Exactly one colon, likely hostname:port
                 parts = domain.split(":", 1)
                 # Verify the second part is a valid port number
                 if parts[1].isdigit():
                     return (parts[0], parts[1])
-                else:
-                    # Not a port, treat whole thing as hostname
-                    return (domain, None)
-            else:
-                # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
+                # Not a port, treat whole thing as hostname
                 return (domain, None)
+            # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
+            return (domain, None)
 
         endpoint_host, endpoint_port = parse_host_port(endpoint)
         allowed_host, allowed_port = parse_host_port(allowed)
@@ -235,9 +232,8 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         if allowed_port is None:
             # Allowed domain has no port, so port-agnostic matching
             return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
-        else:
-            # Allowed domain has a port, but endpoint doesn't - no match
-            return False
+        # Allowed domain has a port, but endpoint doesn't - no match
+        return False
 
     if not any(domain_matches(endpoint_domain, d) for d in allowed_domains):
         raise ValueError(
