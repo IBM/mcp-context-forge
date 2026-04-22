@@ -150,7 +150,11 @@ logger = logging_service.get_logger(__name__)
 
 
 def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
-    """Extract a valid tenant id from a raw tool payload team_id value."""
+    """Extract a valid tenant id from a raw tool payload team_id value.
+
+    Empty strings are treated as absent (None): a zero-length tenant prefix
+    would collapse tenant-scoped Redis keys onto the unscoped layout.
+    """
     if team_id is not None and not isinstance(team_id, str):
         logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
         return None

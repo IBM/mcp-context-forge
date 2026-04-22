@@ -39,6 +39,9 @@ GATEWAY_EMAIL = os.environ.get("GATEWAY_EMAIL", "admin@example.com")
 GATEWAY_PASSWORD = os.environ.get("GATEWAY_PASSWORD", "changeme")
 PLUGIN_NAME = "RateLimiterPlugin"
 PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS)))
+# docker-compose derives the container name from the project-name prefix + service
+# name; anyone running under a non-default project name needs to override this.
+REDIS_CONTAINER_NAME = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
 
 
 def _get_session_token() -> str:
@@ -120,7 +123,7 @@ def _redis_keys(pattern: str) -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["docker", "exec", "mcp-context-forge-redis-1", "redis-cli", "-n", "0", "KEYS", pattern],
+            ["docker", "exec", REDIS_CONTAINER_NAME, "redis-cli", "-n", "0", "KEYS", pattern],
             capture_output=True,
             text=True,
             timeout=5,
@@ -139,7 +142,7 @@ def _flush_rate_limiter_keys() -> None:
     keys = _redis_keys("rl:*")
     for key in keys:
         subprocess.run(
-            ["docker", "exec", "mcp-context-forge-redis-1", "redis-cli", "-n", "0", "DEL", key],
+            ["docker", "exec", REDIS_CONTAINER_NAME, "redis-cli", "-n", "0", "DEL", key],
             capture_output=True,
             timeout=5,
             check=False,
