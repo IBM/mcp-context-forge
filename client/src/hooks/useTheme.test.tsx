@@ -148,7 +148,7 @@ describe("useTheme", () => {
     // Simulate system preference change to dark
     if (mediaQueryListener) {
       act(() => {
-        mediaQueryListener({ matches: true } as MediaQueryListEvent);
+        mediaQueryListener!({ matches: true } as MediaQueryListEvent);
       });
 
       // Wait for state update
