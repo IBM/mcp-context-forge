@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 # First-Party
-from mcpgateway.routers.auth import LoginRequest, get_db, login
+from mcpgateway.routers.auth import get_current_user_info, get_db, login, LoginRequest, logout
 
 
 class TestLoginRequest:
