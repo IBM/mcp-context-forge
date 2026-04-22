@@ -13,8 +13,6 @@ CDN_RESOURCES = {
     # Tailwind is intentionally excluded:
     # - Play CDN is a JIT compiler endpoint (non-static script semantics)
     # - It does not provide stable CORS/SRI guarantees for integrity enforcement
-    # HTMX - Use canonical /dist/ path, not redirect URL
-    "htmx": "https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js",
     # Alpine.js
     "alpinejs": "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js",
     # Chart.js

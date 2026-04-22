@@ -51,7 +51,7 @@
             hx-get="{{ root_path }}/admin/users/{{ user.email | urlencode }}/edit"
             hx-target="#user-edit-modal-content"
             hx-swap="innerHTML show:top"
-            hx-on::before-request="const modal = document.getElementById('user-edit-modal'); if (modal) { modal.style.display = 'block'; modal.classList.remove('hidden'); void modal.offsetHeight; }"
+            hx-on:htmx:before-request="const modal = document.getElementById('user-edit-modal'); if (modal) { modal.style.display = 'block'; modal.classList.remove('hidden'); void modal.offsetHeight; }"
           >
             Edit
           </button>
@@ -113,7 +113,7 @@
             hx-confirm="Are you sure you want to delete this user? This action cannot be undone."
             hx-target="closest .user-card"
             hx-swap="outerHTML"
-            hx-on::after-request="Admin.handleDeleteUserError(event)"
+            hx-on:htmx:after-request="Admin.handleDeleteUserError(event)"
           >
             Delete
           </button>

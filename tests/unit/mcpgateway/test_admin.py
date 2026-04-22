@@ -21221,8 +21221,8 @@ class TestLoadSriHashes:
         admin_mod.load_sri_hashes.cache_clear()
         hashes = admin_mod.load_sri_hashes()
         assert "tailwindcss" not in hashes
-        assert "htmx" in hashes
-        assert hashes["htmx"].startswith("sha384-")
+        assert "alpinejs" in hashes
+        assert hashes["alpinejs"].startswith("sha384-")
 
 
 class TestAdminCsrfProtection:
