@@ -5201,6 +5201,46 @@ class TestUAIDGenerationCoverage:
         assert captured_agent is not None
         assert captured_agent.id is None  # Falls back to UUID generation
 
+    async def test_update_agent_with_uaid_validation(self, service, mock_db, sample_db_agent, monkeypatch, caplog):
+        """Test update_agent validates endpoint domain when regenerating UAID."""
+        # Standard
+        import logging
+        from unittest.mock import patch
+
+        # Set version attribute
+        sample_db_agent.version = 1
+
+        # Configure UAID allowlist
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["allowed.example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        # Mock get_for_update to return the agent
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+
+            # Mock the convert_agent_to_read method
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                # Try to update agent with UAID generation for a blocked domain
+                agent_update = A2AAgentUpdate(
+                    endpoint_url="https://blocked.example.com/agent",
+                    generate_uaid=True,
+                    uaid_registry="context-forge",
+                )
+
+                # Should trigger validation and fallback to continuing without UAID
+                with caplog.at_level(logging.WARNING):
+                    result = await service.update_agent(
+                        mock_db,
+                        agent_id=sample_db_agent.id,
+                        agent_data=agent_update,
+                        modified_by="test-user",
+                    )
+
+                # Verify validation was triggered (logged warning)
+                assert any("not in UAID_ALLOWED_DOMAINS" in record.message for record in caplog.records)
+                assert any("Continuing without UAID" in record.message for record in caplog.records)
+
 
 class TestCrossGatewayRoutingCoverage:
     """Test cross-gateway routing for UAID agents."""
