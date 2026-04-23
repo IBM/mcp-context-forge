@@ -3768,6 +3768,8 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
@@ -4450,6 +4452,8 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
         gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
@@ -4668,6 +4672,8 @@ class ToolService(BaseService):
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
+                            # REST invoke path: gateway ORM object is still attached to the
+                            # active session, so attribute access is safe here.
                             access_token = await self.oauth_manager.get_access_token(
                                 tool_oauth_config,
                                 ca_certificate=gateway.ca_certificate if gateway else None,

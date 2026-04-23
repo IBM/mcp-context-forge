@@ -241,6 +241,32 @@ class OAuthManager:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
         return credentials
 
+    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> httpx.Response:
+        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+
+        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
+        is created with the corresponding SSL context so that OAuth token
+        exchange works against self-signed or custom-CA upstream servers.
+        Otherwise the shared HTTP client (which respects the global
+        ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Args:
+            url: Token endpoint URL.
+            data: Form-encoded request body (dict or list of tuples for RFC 8707).
+            ca_certificate: Optional PEM-encoded CA certificate.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            The HTTP response from the token endpoint.
+        """
+        if ca_certificate:
+            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+            async with httpx.AsyncClient(verify=ssl_context) as client:
+                return await client.post(url, data=data, timeout=self.request_timeout)
+        client = await self._get_client()
+        return await client.post(url, data=data, timeout=self.request_timeout)
+
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
 
@@ -417,14 +443,7 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                if ca_certificate:
-                    ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-                    async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-                else:
-                    client = await self._get_client()
-                    response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -494,14 +513,7 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                if ca_certificate:
-                    ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-                    async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-                else:
-                    client = await self._get_client()
-                    response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -876,6 +888,7 @@ class OAuthManager:
 
         if settings.cache_type == "database":
             try:
+                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -951,6 +964,7 @@ class OAuthManager:
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
             try:
+                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1064,6 +1078,7 @@ class OAuthManager:
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
             try:
+                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1180,6 +1195,7 @@ class OAuthManager:
         # Try database
         if settings.cache_type == "database":
             try:
+                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
@@ -1426,14 +1442,7 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                if ca_certificate:
-                    ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-                    async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-                else:
-                    client = await self._get_client()
-                    response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -1522,13 +1531,7 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                if ca_certificate:
-                    ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-                    async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
-                        response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
-                else:
-                    client = await self._get_client()
-                    response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 if response.status_code == 200:
                     token_response = self._parse_token_response(response)
 

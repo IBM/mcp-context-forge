@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Add tool_plugin_bindings table for per-tool per-tenant plugin policies
 
-Revision ID: b1c2d3e4f5a6
+Revision ID: 592625561893
 Revises: cbedf4e580e0
 Create Date: 2026-04-03 00:00:00.000000
 
@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "b1c2d3e4f5a6"
-down_revision = "cbedf4e580e0"
+revision: str = "592625561893"  # pragma: allowlist secret
+down_revision = "cbedf4e580e0"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None
 

@@ -1,8 +1,8 @@
 # pylint: disable=no-member
 """Add tools.manage_plugins permission to team_admin role.
 
-Revision ID: c2d3e4f5a6b7
-Revises: b1c2d3e4f5a6
+Revision ID: 1a02944e2671
+Revises: 592625561893
 Create Date: 2025-07-01 00:00:00.000000
 
 Backfills the tools.manage_plugins permission into the team-scoped team_admin role
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "c2d3e4f5a6b7"
-down_revision: Union[str, Sequence[str], None] = "b1c2d3e4f5a6"
+revision: str = "1a02944e2671"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "592625561893"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

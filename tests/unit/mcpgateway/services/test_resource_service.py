@@ -17,6 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 from datetime import datetime, timezone
+import mimetypes
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -213,6 +214,22 @@ class TestResourceServiceLifecycle:
         await resource_service.initialize()
         # EventService handles subscribers internally now
         assert resource_service._template_cache == {}
+
+    def test_init_registers_missing_markdown_mime_types(self):
+        """ResourceService.__init__ registers .md/.markdown when the system MIME DB lacks them."""
+        original_guess = mimetypes.guess_type
+
+        def _no_markdown(url, strict=True):
+            if url.endswith((".md", ".markdown")):
+                return (None, None)
+            return original_guess(url, strict)
+
+        with patch("mcpgateway.services.resource_service.mimetypes.guess_type", side_effect=_no_markdown):
+            with patch("mcpgateway.services.resource_service.mimetypes.add_type") as mock_add:
+                ResourceService()
+                calls = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
+                assert ("text/markdown", ".md") in calls
+                assert ("text/markdown", ".markdown") in calls
 
     @pytest.mark.asyncio
     async def test_shutdown(self, resource_service):
