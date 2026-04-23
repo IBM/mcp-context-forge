@@ -32,7 +32,7 @@ permissions:
 jobs:
   build-package:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 20
 
     # Build the package under multiple Python versions to catch ABI issues early
