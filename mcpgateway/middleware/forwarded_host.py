@@ -51,10 +51,15 @@ class ForwardedHostMiddleware:
     * Replaces the ``host`` entry in ``scope["headers"]`` so that
       Starlette's ``request.base_url`` returns the proxy origin.
 
-    Only acts when the connecting client is in *trusted_hosts* (same
-    trust model as ``ProxyHeadersMiddleware``).  The gateway registers
-    both middlewares with ``trusted_hosts="*"``; deployments that
-    restrict trusted hosts should pass the same value here.
+    Only acts when ``trusted_hosts="*"`` (trust all proxies).  Per-IP trust
+    checking is not implemented — for non-wildcard values the middleware is a
+    no-op.  This is intentional: the gateway registers both this and
+    ``ProxyHeadersMiddleware`` with ``trusted_hosts="*"`` via a shared variable,
+    and this middleware is temporary until Uvicorn merges upstream support.
+
+    Default port values (80 for http/ws, 443 for https/wss) follow RFC 2616
+    and match the convention in Uvicorn PR #2811.  They populate
+    ``scope["server"]`` only when the ``X-Forwarded-Host`` header omits a port.
     """
 
     def __init__(
