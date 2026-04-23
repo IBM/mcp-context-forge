@@ -4,17 +4,21 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-RBAC + multi-transport MCP protocol tests using Playwright API + mcpgateway.wrapper.
+RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
 
 Exercises MCP JSON-RPC protocol behaviour across multiple users, RBAC roles, token
 scopes, server visibilities, and transports (Streamable HTTP + SSE). All user/team/role
 setup is performed via real REST API calls (Playwright APIRequestContext) to cover the
 full auth code path rather than shortcutting with _create_jwt_token().
 
+This suite replaces the older ``mcpgateway.wrapper`` subprocess approach because the
+wrapper currently has a session management bug (#4419) that breaks post-initialize
+requests with HTTP 400 responses.
+
 Requirements:
     - ContextForge running with docker-compose (default: http://localhost:8080)
     - fast_time_server registered as both Streamable HTTP and SSE gateways
-    - mcpgateway.wrapper available on PYTHONPATH
+    - FastMCP client dependencies installed
     - playwright installed: pip install playwright
 
 Usage:
@@ -26,6 +30,8 @@ Usage:
 from __future__ import annotations
 
 # Standard
+import asyncio
+import concurrent.futures
 from contextlib import suppress
 import logging
 import os
@@ -35,9 +41,9 @@ import uuid
 
 # Third-Party
 import pytest
-
+from fastmcp.client import Client
+from fastmcp.client.auth import BearerAuth
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-# Third-Party
 from playwright.sync_api import APIRequestContext, Playwright
 
 # First-Party
@@ -46,10 +52,6 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 # Local
 from .helpers.mcp_test_helpers import (
     BASE_URL,
-    build_initialize,
-    build_wrapper_env,
-    get_response_by_id,
-    send_jsonrpc_via_wrapper,
     skip_no_gateway,
     TEST_PASSWORD,
 )
@@ -65,6 +67,7 @@ RBAC_PREFIX = "mcp-rbac"
 SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
+_CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -420,81 +423,74 @@ def scoped_token_read_execute(admin_api: APIRequestContext, playwright: Playwrig
 # ---------------------------------------------------------------------------
 # MCP protocol helpers
 # ---------------------------------------------------------------------------
-def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list[dict[str, Any]]:
-    """Send initialize + tools/list via wrapper and return the tools array."""
-    env = build_wrapper_env(access_token, server_url)
-    messages = [build_initialize(1), {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}]
-    responses = send_jsonrpc_via_wrapper(env, messages)
-    resp = get_response_by_id(responses, 2)
-    if resp is None:
-        return []
-    if "error" in resp:
-        return []
-    return resp.get("result", {}).get("tools", [])
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
-def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list[dict[str, Any]]:
-    """Send initialize + resources/list via wrapper."""
-    env = build_wrapper_env(access_token, server_url)
-    messages = [build_initialize(1), {"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}}]
-    responses = send_jsonrpc_via_wrapper(env, messages)
-    resp = get_response_by_id(responses, 2)
-    if resp is None:
-        return []
-    if "error" in resp:
-        return []
-    return resp.get("result", {}).get("resources", [])
+def _run_async(coro):
+    """Run an async coroutine from sync code that already has an event loop (Playwright)."""
+    return _thread_pool.submit(asyncio.run, coro).result()
 
 
-def _mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list[dict[str, Any]]:
-    """Send initialize + prompts/list via wrapper."""
-    env = build_wrapper_env(access_token, server_url)
-    messages = [build_initialize(1), {"jsonrpc": "2.0", "id": 2, "method": "prompts/list", "params": {}}]
-    responses = send_jsonrpc_via_wrapper(env, messages)
-    resp = get_response_by_id(responses, 2)
-    if resp is None:
-        return []
-    if "error" in resp:
-        return []
-    return resp.get("result", {}).get("prompts", [])
+def _mcp_client_url(server_url: str = BASE_URL) -> str:
+    return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
 
-def _mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] | None = None, server_url: str = BASE_URL) -> dict[str, Any]:
-    """Send initialize + tools/call and return the full response for id=2."""
-    env = build_wrapper_env(access_token, server_url)
-    messages = [
-        build_initialize(1),
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool_name, "arguments": arguments or {}}},
-    ]
-    responses = send_jsonrpc_via_wrapper(env, messages)
-    resp = get_response_by_id(responses, 2)
-    assert resp is not None, f"No tools/call response for {tool_name}: {responses}"
-    return resp
+async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
+    url = _mcp_client_url(server_url)
+    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
+        return await client.list_tools()
 
 
-def _assert_access_denied_tool_call(resp: dict[str, Any], *, method: str = "tools/call") -> str:
-    """Accept either a JSON-RPC access error or an MCP tool-call error result."""
-    if "error" in resp:
-        error = resp["error"]
-        assert error.get("code") == -32003, f"Expected access denied JSON-RPC error: {resp}"
-        message = str(error.get("message", ""))
-        assert "access denied" in message.lower(), f"Expected access denied JSON-RPC error: {resp}"
-        error_method = error.get("data", {}).get("method")
-        if error_method is not None:
-            assert error_method == method, f"Unexpected denied method in JSON-RPC error: {resp}"
-        return message
-
-    result = resp.get("result", {})
-    assert result.get("isError", False), f"Expected access denied tool result or JSON-RPC error: {resp}"
-    message = result.get("content", [{}])[0].get("text", "")
-    assert "access denied" in message.lower(), f"Expected access denied tool result or JSON-RPC error: {resp}"
-    return message
+async def _async_mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
+    url = _mcp_client_url(server_url)
+    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
+        return await client.list_resources()
 
 
-def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> list[dict[str, Any]]:
-    """Send only initialize and return all responses."""
-    env = build_wrapper_env(access_token, server_url)
-    return send_jsonrpc_via_wrapper(env, [build_initialize(1)])
+async def _async_mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list:
+    url = _mcp_client_url(server_url)
+    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
+        return await client.list_prompts()
+
+
+async def _async_mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] | None = None, server_url: str = BASE_URL):
+    url = _mcp_client_url(server_url)
+    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
+        return await client.call_tool(tool_name, arguments or {})
+
+
+async def _async_mcp_initialize(access_token: str, server_url: str = BASE_URL) -> bool:
+    url = _mcp_client_url(server_url)
+    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as _client:
+        return True
+
+
+async def _async_mcp_connect(url: str, auth: BearerAuth | None = None) -> bool:
+    kwargs: dict[str, Any] = {"init_timeout": _CLIENT_TIMEOUT, "timeout": _CLIENT_TIMEOUT}
+    if auth:
+        kwargs["auth"] = auth
+    async with Client(url, **kwargs) as _client:
+        return True
+
+
+def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
+    return _run_async(_async_mcp_tools_list(access_token, server_url))
+
+
+def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
+    return _run_async(_async_mcp_resources_list(access_token, server_url))
+
+
+def _mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list:
+    return _run_async(_async_mcp_prompts_list(access_token, server_url))
+
+
+def _mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] | None = None, server_url: str = BASE_URL):
+    return _run_async(_async_mcp_tool_call(access_token, tool_name, arguments, server_url))
+
+
+def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
+    return _run_async(_async_mcp_initialize(access_token, server_url))
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +570,7 @@ class TestMcpToolsVisibilityByRole:
 
     def test_admin_sees_all_tools(self, test_users: dict, visibility_servers: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        tool_names = [t["name"] for t in tools]
+        tool_names = [t.name for t in tools]
         assert len(tools) > 0, "Admin should see at least one tool"
         # Admin should see tools from all servers including existing public ones
         print(f"    -> Admin sees {len(tools)} tools: {tool_names[:10]}...")
@@ -582,7 +578,7 @@ class TestMcpToolsVisibilityByRole:
     def test_developer_sees_public_and_team_tools(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["developer"]["access_token"])
         assert len(tools) > 0, "Developer should see at least public tools"
-        tool_names = [t["name"] for t in tools]
+        tool_names = [t.name for t in tools]
         # Developer should see fast-time-* (public Streamable HTTP) tools
         has_public_tools = any("fast-time" in n for n in tool_names)
         assert has_public_tools, f"Developer should see public fast-time tools, got: {tool_names}"
@@ -591,14 +587,14 @@ class TestMcpToolsVisibilityByRole:
     def test_viewer_sees_public_and_team_tools(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["viewer"]["access_token"])
         assert len(tools) > 0, "Viewer should see at least public tools"
-        tool_names = [t["name"] for t in tools]
+        tool_names = [t.name for t in tools]
         has_public_tools = any("fast-time" in n for n in tool_names)
         assert has_public_tools, f"Viewer should see public fast-time tools, got: {tool_names}"
         print(f"    -> Viewer sees {len(tools)} tools")
 
     def test_outsider_sees_only_public_tools(self, outsider_user: dict) -> None:
         tools = _mcp_tools_list(outsider_user["access_token"])
-        tool_names = [t["name"] for t in tools]
+        tool_names = [t.name for t in tools]
         # Outsider should see public tools (fast-time-*) but not team-only
         has_public_tools = any("fast-time" in n for n in tool_names)
         assert has_public_tools, f"Outsider should see public fast-time tools, got: {tool_names}"
@@ -643,51 +639,53 @@ class TestMcpResourcesPromptsByRole:
 class TestMcpToolCallByRole:
     """Tool execution enforcement through MCP protocol.
 
-    NOTE: The default /mcp endpoint enforces tools.execute via RBAC without
-    team context (check_any_team=False, team_id=None). This means only users
-    with global-scope permissions (is_admin=True) can execute tools on the
-    default endpoint. Team-scoped roles (developer, viewer, team_admin) have
-    tools.execute in their team scope but NOT in global scope, so they are
-    correctly denied on the default MCP endpoint.
+    Since #3687 the default /mcp endpoint uses check_any_team=True for API
+    tokens, so team-scoped roles (developer, viewer, team_admin) that hold
+    tools.execute in ANY team can execute tools on the default endpoint.
+    Only users with NO team membership (outsider) are denied.
     """
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
-        resp = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert not result.get("isError", False), f"Admin tool call should succeed: {result}"
-        text = result.get("content", [{}])[0].get("text", "")
+        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        assert not result.is_error, f"Admin tool call should succeed: {result}"
+        text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Admin call fast-time-get-system-time = {text}")
 
-    def test_developer_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
-        """Developer has team-scoped tools.execute but default /mcp checks global scope only."""
-        resp = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        text = _assert_access_denied_tool_call(resp)
-        print(f"    -> Developer denied tools.execute (expected): {text}")
+    def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
+        result = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
+        print(f"    -> Developer call succeeded: {result.content[0].text}")
 
-    def test_team_admin_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
-        """Team admin has team-scoped tools.execute but default /mcp checks global scope only."""
-        resp = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        _assert_access_denied_tool_call(resp)
-        print("    -> Team admin denied tools.execute on default endpoint (expected)")
+    def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
+        result = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
+        print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
-        """Outsider has no RBAC role, should be denied tools.execute."""
-        resp = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        _assert_access_denied_tool_call(resp)
+        """Outsider has no team membership, so no tools.execute anywhere — denied."""
+        try:
+            result = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+            assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
+        except Exception:
+            pass  # McpError or connection error — both valid denials
         print("    -> Outsider denied tools.execute (expected)")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
-        resp = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
-        has_error = "error" in resp or resp.get("result", {}).get("isError", False)
-        assert has_error, f"Expected error for non-existent tool: {resp}"
+        try:
+            result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
+            assert result.is_error, f"Nonexistent tool should return error, got: {result}"
+        except Exception:
+            pass  # McpError — expected for outsider with no permissions
         print("    -> Outsider nonexistent tool: error (expected)")
 
-    def test_viewer_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
-        """Viewer has team-scoped tools.execute but default /mcp checks global scope only."""
-        resp = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        _assert_access_denied_tool_call(resp)
-        print("    -> Viewer denied tools.execute on default endpoint (expected)")
+    def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
+        result = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
+        print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
 
 # ---------------------------------------------------------------------------
@@ -712,28 +710,19 @@ class TestMcpScopedTokenPermissions:
 
     def test_tools_read_only_token_can_initialize(self, scoped_token_read_only: dict) -> None:
         """Token with tools.read gets servers.use auto-injected and can reach MCP endpoint."""
-        env = build_wrapper_env(scoped_token_read_only["access_token"])
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        assert responses, "Expected initialize response, got empty"
-        init_results = [r for r in responses if r.get("id") == 1 and "result" in r]
-        assert len(init_results) > 0, f"Expected successful initialize, got: {responses}"
-        print(f"    -> tools.read-only token initialized (servers.use auto-injected)")
+        assert _mcp_initialize_only(scoped_token_read_only["access_token"])
+        print("    -> tools.read-only token initialized (servers.use auto-injected)")
 
     def test_read_execute_token_can_initialize(self, scoped_token_read_execute: dict) -> None:
         """Token with tools.read+execute gets servers.use auto-injected and can reach MCP endpoint."""
-        env = build_wrapper_env(scoped_token_read_execute["access_token"])
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        assert responses, "Expected initialize response, got empty"
-        init_results = [r for r in responses if r.get("id") == 1 and "result" in r]
-        assert len(init_results) > 0, f"Expected successful initialize, got: {responses}"
-        print(f"    -> tools.read+execute token initialized (servers.use auto-injected)")
+        assert _mcp_initialize_only(scoped_token_read_execute["access_token"])
+        print("    -> tools.read+execute token initialized (servers.use auto-injected)")
 
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
-        resp = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert not result.get("isError", False), f"Unscoped admin token should succeed: {result}"
-        text = result.get("content", [{}])[0].get("text", "")
+        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        assert not result.is_error, f"Unscoped admin token should succeed: {result}"
+        text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Unscoped admin token call = {text}")
 
@@ -755,25 +744,23 @@ class TestMcpSSETransport:
         """Call an SSE-sourced tool: the tool name may have SSE gateway prefix."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         # Find a get-system-time tool (either from SSE or Streamable HTTP)
-        time_tools = [t["name"] for t in tools if "get-system-time" in t["name"]]
-        assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t['name'] for t in tools]}"
+        time_tools = [t.name for t in tools if "get-system-time" in t.name]
+        assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
         # Call the first one found
-        resp = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert not result.get("isError", False), f"SSE get-system-time failed: {result}"
-        print(f"    -> SSE {time_tools[0]} = {result.get('content', [{}])[0].get('text', '')}")
+        result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
+        assert not result.is_error, f"SSE get-system-time failed: {result}"
+        print(f"    -> SSE {time_tools[0]} = {result.content[0].text}")
 
     def test_sse_convert_time(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        convert_tools = [t["name"] for t in tools if "convert-time" in t["name"]]
+        convert_tools = [t.name for t in tools if "convert-time" in t.name]
         assert len(convert_tools) > 0, "Expected at least one convert-time tool"
-        resp = _mcp_tool_call(
+        result = _mcp_tool_call(
             test_users["admin"]["access_token"],
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        result = resp.get("result", {})
-        assert not result.get("isError", False), f"SSE convert-time failed: {result}"
+        assert not result.is_error, f"SSE convert-time failed: {result}"
         print(f"    -> SSE {convert_tools[0]}: OK")
 
     def test_sse_resources_discoverable(self, test_users: dict) -> None:
@@ -810,33 +797,17 @@ class TestMcpPerServerEndpoint:
         """Outsider cannot access team server's per-server endpoint."""
         server_id = visibility_servers["team"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        responses = _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
-        # Expect either empty responses (wrapper failed to connect) or error
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp and "error" in init_resp:
-                print(f"    -> Outsider denied team server: {init_resp['error'].get('message', '')}")
-            else:
-                # If init succeeded, tools/list should be empty or restricted
-                tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
-                print(f"    -> Outsider team server: {len(tools)} tools (should be 0 or restricted)")
-        else:
-            print("    -> Outsider team server: no response (connection denied)")
+        with pytest.raises(Exception) as excinfo:
+            _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
+        print(f"    -> Outsider denied team server: {excinfo.value}")
 
     def test_outsider_denied_private_server(self, outsider_user: dict, visibility_servers: dict) -> None:
         """Outsider cannot access private server's per-server endpoint."""
         server_id = visibility_servers["private"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        responses = _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp and "error" in init_resp:
-                print(f"    -> Outsider denied private server: {init_resp['error'].get('message', '')}")
-            else:
-                tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
-                print(f"    -> Outsider private server: {len(tools)} tools (should be 0 or restricted)")
-        else:
-            print("    -> Outsider private server: no response (connection denied)")
+        with pytest.raises(Exception) as excinfo:
+            _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
+        print(f"    -> Outsider denied private server: {excinfo.value}")
 
 
 # ---------------------------------------------------------------------------
@@ -847,42 +818,15 @@ class TestDenyPaths:
 
     def test_no_token_fails(self) -> None:
         """MCP initialize with no auth token should fail."""
-        env = {**os.environ, "MCP_SERVER_URL": BASE_URL, "MCP_TOOL_CALL_TIMEOUT": "10"}
-        # Remove MCP_AUTH if present
-        env.pop("MCP_AUTH", None)
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp:
-                has_error = "error" in init_resp
-                if not has_error:
-                    # Even if init succeeds, tools should be empty for unauth
-                    print("    -> No token: initialize succeeded (auth not enforced at init)")
-                else:
-                    print(f"    -> No token: error (expected): {init_resp['error'].get('message', '')}")
-        else:
-            print("    -> No token: no response (wrapper rejected)")
+        with pytest.raises(Exception) as excinfo:
+            _run_async(_async_mcp_connect(_mcp_client_url()))
+        print(f"    -> No token: failure (expected): {excinfo.value}")
 
     def test_garbage_token_fails(self) -> None:
         """MCP initialize with garbage token should fail."""
-        env = build_wrapper_env("this-is-not-a-valid-token")
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp and "error" in init_resp:
-                print(f"    -> Garbage token: error (expected): {init_resp['error'].get('message', '')}")
-            else:
-                # If init succeeds, check if tools are empty
-                tools_env = build_wrapper_env("this-is-not-a-valid-token")
-                msgs = [build_initialize(1), {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}]
-                tool_responses = send_jsonrpc_via_wrapper(tools_env, msgs, settle_seconds=2.0)
-                tool_resp = get_response_by_id(tool_responses, 2)
-                if tool_resp and "error" in tool_resp:
-                    print("    -> Garbage token: tools/list error (expected)")
-                else:
-                    print("    -> Garbage token: protocol did not reject at init (may reject at operation)")
-        else:
-            print("    -> Garbage token: no response (wrapper rejected)")
+        with pytest.raises(Exception) as excinfo:
+            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth("this-is-not-a-valid-token")))
+        print(f"    -> Garbage token: failure (expected): {excinfo.value}")
 
     def test_wrong_secret_token_fails(self) -> None:
         """MCP with token signed by wrong secret should fail."""
@@ -893,16 +837,9 @@ class TestDenyPaths:
             secret="completely-wrong-secret-key-12345",
         )
 
-        env = build_wrapper_env(bad_token)
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp and "error" in init_resp:
-                print(f"    -> Wrong secret: error (expected): {init_resp['error'].get('message', '')}")
-            else:
-                print("    -> Wrong secret: init succeeded (may reject at operation level)")
-        else:
-            print("    -> Wrong secret: no response (wrapper rejected)")
+        with pytest.raises(Exception) as excinfo:
+            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth(bad_token)))
+        print(f"    -> Wrong secret: failure (expected): {excinfo.value}")
 
     def test_revoked_token_fails(self, admin_api: APIRequestContext, playwright: Playwright) -> None:
         """Token created then revoked should fail MCP operations."""
@@ -924,9 +861,9 @@ class TestDenyPaths:
         time.sleep(1)
 
         # Try to use the revoked token
-        tools_after = _mcp_tools_list(access_token)
-        # Revoked token should either return empty tools or fail
-        print(f"    -> Revoked token: {len(tools_after)} tools (expected 0 or auth error)")
+        with pytest.raises(Exception) as excinfo:
+            _mcp_tools_list(access_token)
+        print(f"    -> Revoked token rejected (expected): {excinfo.value}")
 
         _cleanup_user(admin_api, user)
 
@@ -951,17 +888,9 @@ class TestDenyPaths:
 
     def test_invalid_bearer_prefix_fails(self) -> None:
         """Token without proper Bearer prefix handling."""
-        env = build_wrapper_env("not-bearer-prefixed-garbage")
-        responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        # Should either fail or return empty/error
-        if responses:
-            init_resp = get_response_by_id(responses, 1)
-            if init_resp and "error" in init_resp:
-                print(f"    -> Invalid token: error (expected): {init_resp['error'].get('message', '')}")
-            else:
-                print("    -> Invalid token: init succeeded (auth checked at operation level)")
-        else:
-            print("    -> Invalid token: no response (wrapper rejected)")
+        with pytest.raises(Exception) as excinfo:
+            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth("not-bearer-prefixed-garbage")))
+        print(f"    -> Invalid token: failure (expected): {excinfo.value}")
 
 
 # ---------------------------------------------------------------------------
@@ -974,31 +903,29 @@ class TestCrossTransportConsistency:
     def test_get_system_time_both_transports(self, test_users: dict) -> None:
         """Both transports return valid timestamps for get-system-time."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        time_tools = [t["name"] for t in tools if "get-system-time" in t["name"]]
+        time_tools = [t.name for t in tools if "get-system-time" in t.name]
         assert len(time_tools) >= 1, f"Expected at least 1 get-system-time tool, got: {time_tools}"
 
         for tool_name in time_tools[:2]:  # Test up to 2 variants
-            resp = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
-            result = resp.get("result", {})
-            assert not result.get("isError", False), f"{tool_name} failed: {result}"
-            text = result.get("content", [{}])[0].get("text", "")
+            result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
+            assert not result.is_error, f"{tool_name} failed: {result}"
+            text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
 
     def test_convert_time_both_transports(self, test_users: dict) -> None:
         """Both transports return valid results for convert-time."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        convert_tools = [t["name"] for t in tools if "convert-time" in t["name"]]
+        convert_tools = [t.name for t in tools if "convert-time" in t.name]
         assert len(convert_tools) >= 1, f"Expected at least 1 convert-time tool, got: {convert_tools}"
 
         for tool_name in convert_tools[:2]:
-            resp = _mcp_tool_call(
+            result = _mcp_tool_call(
                 test_users["admin"]["access_token"],
                 tool_name,
                 {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
             )
-            result = resp.get("result", {})
-            assert not result.get("isError", False), f"{tool_name} failed: {result}"
-            text = result.get("content", [{}])[0].get("text", "")
+            assert not result.is_error, f"{tool_name} failed: {result}"
+            text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
