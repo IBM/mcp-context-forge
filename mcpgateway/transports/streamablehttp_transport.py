@@ -55,6 +55,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -66,7 +67,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import Server as DbServer, SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.models import UserContext
@@ -916,6 +917,47 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
     if not base:
         return ""
     return f"{base}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
+
+
+def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session) -> None:
+    """Persist the ``aud`` claim from a verified OAuth token as ``resource``.
+
+    Called after successful signature + issuer verification. The token's
+    ``aud`` claim is trustworthy at this point and represents the IdP's
+    authoritative audience value. Always overwrites the existing ``resource``
+    so that IdP-side changes (client_id rotation, application migration)
+    are picked up automatically.
+
+    This is a best-effort operation: failures are logged but do not affect
+    the current request's authentication outcome.
+
+    Args:
+        server_id: Virtual-server identifier.
+        verified_claims: Decoded and *signature-verified* JWT claims.
+        db: Active database session.
+    """
+    raw_aud = verified_claims.get("aud")
+    if not raw_aud:
+        return
+
+    try:
+        server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+        if server is None or not server.oauth_config:
+            return
+
+        if server.oauth_config.get("resource") == raw_aud:
+            return  # Already correct
+
+        updated_config = dict(server.oauth_config)
+        updated_config["resource"] = raw_aud
+        server.oauth_config = updated_config
+        db.flush()
+        logger.info(
+            "Learned and persisted audience for server %s from verified token",
+            sanitize_for_log(server_id),
+        )
+    except Exception:
+        logger.warning("Failed to persist learned audience for server %s", server_id, exc_info=True)
 
 
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
@@ -5189,12 +5231,6 @@ class _StreamableHttpAuthHandler:
         server_id = match.group("server_id")
         server_id_log = sanitize_for_log(server_id)
 
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-        # First-Party
-        from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-
         try:
             async with get_db() as db:
                 server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
@@ -5254,34 +5290,28 @@ class _StreamableHttpAuthHandler:
             )
             return OAuthAuthResult.NOT_APPLICABLE
 
-        # Per RFC 8707/9728, the resource URL is the canonical audience for an
-        # access token bound to this MCP server. We MUST enforce it so that a
-        # token minted for a different API cannot authenticate here just
-        # because it was signed by an allowed issuer. Additional audiences may
-        # be declared explicitly in oauth_config (``resource``, or — for
-        # backward compat — ``client_id``) to accommodate IdPs that issue
-        # tokens with the client_id in ``aud``.
-        resource_url = _build_server_resource_url(self.scope, server_id)
-        if not resource_url:
-            # Can't build a canonical audience — fail closed rather than
-            # accept a token we cannot bind to this resource.
-            logger.warning("Unable to derive resource URL for server %s; rejecting OAuth token", server_id)
-            await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": "Bearer"})
-            return OAuthAuthResult.FAILED
+        # Audience enforcement: if ``resource`` is configured (learned or
+        # manual), enforce it.  Otherwise skip audience and learn from the
+        # verified token.
+        configured_resource = server.oauth_config.get("resource")
+        if configured_resource:
+            claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=configured_resource)
+        else:
+            claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=None)
 
-        expected_audiences: list[str] = [resource_url]
-        extra_audience = server.oauth_config.get("resource") or server.oauth_config.get("client_id")
-        if isinstance(extra_audience, str) and extra_audience.strip():
-            expected_audiences.append(extra_audience.strip())
-        elif isinstance(extra_audience, list):
-            expected_audiences.extend(s.strip() for s in extra_audience if isinstance(s, str) and s.strip())
-
-        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audiences)
         if claims is None:
             resource_metadata = _build_resource_metadata_url(self.scope, server_id)
             www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
             await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
             return OAuthAuthResult.FAILED
+
+        # Always persist the token's aud as resource — keeps the stored value
+        # in sync if the IdP changes its audience (e.g. client_id rotation).
+        try:
+            async with get_db() as db:
+                _persist_learned_server_audience(server_id, claims, db)
+        except Exception:
+            logger.warning("Failed to persist learned audience for server %s (caller guard)", server_id, exc_info=True)
 
         # Resolve user identity from verified claims
         user_email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
