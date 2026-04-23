@@ -71,7 +71,7 @@ from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
 # Third-Party
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from starlette.requests import Request
@@ -99,6 +99,40 @@ security = HTTPBearer(auto_error=False)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _SYNC_REDIS_LOCK = threading.Lock()
 _SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+
+async def get_current_user_from_cookie(
+    jwt_token: Optional[str] = Cookie(default=None),
+    request: Request = None,  # type: ignore[assignment]
+) -> EmailUser:
+    """Get current authenticated user from httpOnly cookie (browser clients only).
+
+    This dependency is specifically for cookie-based authentication endpoints
+    like /auth/me and /auth/logout. It does NOT accept Bearer tokens.
+
+    Args:
+        jwt_token: JWT token from httpOnly cookie
+        request: Optional request object for plugin hooks
+
+    Returns:
+        EmailUser: Authenticated user
+
+    Raises:
+        HTTPException: 401 if no cookie or authentication fails
+    """
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Cookie authentication required",
+            headers={"WWW-Authenticate": "Cookie"},
+        )
+
+    # Create credentials object from cookie token
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+
+    # Delegate to standard get_current_user with the cookie-derived credentials
+    return await get_current_user(credentials=credentials, request=request)
+
 
 # Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
 _LAST_USED_CACHE: dict = {}

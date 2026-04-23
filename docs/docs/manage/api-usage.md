@@ -92,18 +92,18 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 
 ### Cookie-based Authentication (Browser Clients)
 
-For browser-based clients, use the `/auth/login` endpoint to obtain a secure httpOnly cookie:
+For browser-based clients, use the `/auth/browser-login` endpoint to obtain a secure httpOnly cookie:
 
 ```bash
 # Login and receive authentication cookie
 curl -c cookies.txt -X POST \
   -H "Content-Type: application/json" \
   -d '{
-    "username": "admin@example.com",
+    "email": "admin@example.com",
     "password": "changeme",
     "remember_me": true
   }' \
-  $BASE_URL/auth/login
+  $BASE_URL/auth/browser-login
 
 # Use cookie for subsequent requests
 curl -b cookies.txt $BASE_URL/auth/me
@@ -119,16 +119,15 @@ curl -b cookies.txt $BASE_URL/auth/me
 
 #### POST /auth/login
 
-Authenticate and receive both JWT token (response body) and httpOnly cookie.
+API-focused login endpoint that returns JWT token in response body. Use this for CLI tools, scripts, and non-browser clients.
 
 **Request:**
 ```bash
-curl -c cookies.txt -X POST \
+curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "username": "admin@example.com",
-    "password": "changeme",
-    "remember_me": false
+    "password": "changeme"
   }' \
   $BASE_URL/auth/login | jq '.'
 ```
@@ -136,7 +135,6 @@ curl -c cookies.txt -X POST \
 **Parameters:**
 - `username` (required): User email
 - `password` (required): User password
-- `remember_me` (optional): Extend cookie to 30 days (default: false, 1 hour)
 
 **Response:**
 ```json
@@ -151,7 +149,46 @@ curl -c cookies.txt -X POST \
 }
 ```
 
-Also sets `jwt_token` httpOnly cookie for browser clients.
+Use the `access_token` in the `Authorization: Bearer` header for subsequent requests.
+
+#### POST /auth/browser-login
+
+Browser-specific login endpoint that sets a secure httpOnly cookie. Use this for web applications and browser-based clients.
+
+**Request:**
+```bash
+curl -c cookies.txt -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@example.com",
+    "password": "changeme",
+    "remember_me": false
+  }' \
+  $BASE_URL/auth/browser-login | jq '.'
+```
+
+**Parameters:**
+- `email` (required): User email address
+- `password` (required): User password
+- `remember_me` (optional): Extend cookie to 30 days (default: false, 1 hour)
+
+**Response:**
+```json
+{
+  "message": "Login successful",
+  "user": {
+    "email": "admin@example.com",
+    "full_name": "Admin User",
+    "is_admin": true,
+    "teams": ["team-123"],
+    "roles": {
+      "team-123": ["team_admin"]
+    }
+  }
+}
+```
+
+Sets `jwt_token` httpOnly cookie for subsequent requests.
 
 #### GET /auth/me
 
