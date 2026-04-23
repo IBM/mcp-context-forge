@@ -80,10 +80,10 @@ export function NewMCPServerModal({
                 Connect MCP server
               </h2>
             </div>
-            
+
             <p className="text-sm leading-6 text-neutral-600">
-              Context Forge will discover the server's tools, resources, and prompts.
-              The MCP server should be running and reachable. Or, choose a server from the{" "}
+              Context Forge will discover the server's tools, resources, and prompts. The MCP server
+              should be running and reachable. Or, choose a server from the{" "}
               <button
                 type="button"
                 onClick={() => {
@@ -132,7 +132,10 @@ export function NewMCPServerModal({
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="server-name" className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900">
+              <label
+                htmlFor="server-name"
+                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900"
+              >
                 Name<span className="text-red-500">*</span>
               </label>
               <Input
@@ -181,9 +184,7 @@ export function NewMCPServerModal({
                 className="inline-flex w-fit items-center gap-2 text-sm font-medium text-neutral-700 transition hover:text-neutral-950"
                 aria-expanded={advancedOpen}
               >
-                <ChevronDown
-                  className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`}
-                />
+                <ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} />
                 Advanced options
               </button>
 

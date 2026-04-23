@@ -13,7 +13,9 @@ export function Servers() {
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-orange-500 text-white shadow-sm">
               <MCPIcon className="h-5 w-5 [&_path]:fill-white" />
             </div>
-            <h2 className="text-xl font-semibold text-neutral-950 dark:text-neutral-50">Connect MCP server</h2>
+            <h2 className="text-xl font-semibold text-neutral-950 dark:text-neutral-50">
+              Connect MCP server
+            </h2>
           </div>
 
           <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
@@ -28,7 +30,11 @@ export function Servers() {
             .
           </p>
 
-          <NewMCPServerModal triggerLabel="Connect" triggerVariant="default" showTriggerIcon={true} />
+          <NewMCPServerModal
+            triggerLabel="Connect"
+            triggerVariant="default"
+            showTriggerIcon={true}
+          />
         </div>
       </div>
     </div>
