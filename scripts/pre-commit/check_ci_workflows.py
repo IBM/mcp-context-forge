@@ -164,12 +164,97 @@ def _check_pytest_rust_workflow() -> list[str]:
     return violations
 
 
+def _check_docker_scan_workflow() -> list[str]:
+    """Verify docker-scan workflow trigger paths."""
+    violations: list[str] = []
+    workflow = _load_workflow("docker-scan.yml")
+    if workflow is None:
+        return []
+
+    on_block = workflow.get("on", workflow.get(True, {}))
+    pr_paths = on_block.get("pull_request", {}).get("paths", [])
+    required = [
+        "Containerfile.lite",
+        "crates/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "a2a-agents/go/a2a-echo-agent/**",
+        "mcp-servers/python/python_sandbox_server/docker/**",
+        "docker-compose.yml",
+        "docker-compose-embedded.yml",
+        "docker-compose-verbose-logging.yml",
+    ]
+    for path in required:
+        if path not in pr_paths:
+            violations.append(f"docker-scan.yml: pull_request paths missing {path}")
+
+    return violations
+
+
+def _check_license_check_workflow() -> list[str]:
+    """Verify license-check workflow trigger paths."""
+    violations: list[str] = []
+    workflow = _load_workflow("license-check.yml")
+    if workflow is None:
+        return []
+
+    on_block = workflow.get("on", workflow.get(True, {}))
+    pr_paths = on_block.get("pull_request", {}).get("paths", [])
+    required = [
+        "pyproject.toml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/**",
+        "mcp-servers/rust/**",
+        "package.json",
+        "package-lock.json",
+        "license-policy.toml",
+        "scripts/license_checker.py",
+        ".github/workflows/license-check.yml",
+    ]
+    for path in required:
+        if path not in pr_paths:
+            violations.append(f"license-check.yml: pull_request paths missing {path}")
+
+    return violations
+
+
+def _check_wrapper_workflow() -> list[str]:
+    """Verify wrapper workflow trigger paths (exact match)."""
+    violations: list[str] = []
+    workflow = _load_workflow("wrapper.yml")
+    if workflow is None:
+        return []
+
+    on_block = workflow.get("on", workflow.get(True, {}))
+    pr_paths = set(on_block.get("pull_request", {}).get("paths", []))
+    expected = {
+        "crates/wrapper/**",
+        "mcp-servers/go/fast-time-server/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".github/workflows/wrapper.yml",
+    }
+    missing = expected - pr_paths
+    extra = pr_paths - expected
+    for path in sorted(missing):
+        violations.append(f"wrapper.yml: pull_request paths missing {path}")
+    for path in sorted(extra):
+        violations.append(f"wrapper.yml: pull_request paths has unexpected {path}")
+
+    return violations
+
+
 def main() -> int:
     violations: list[str] = []
     violations.extend(_check_sha_pinning())
     violations.extend(_check_rust_workflow())
     violations.extend(_check_go_toolchain())
     violations.extend(_check_pytest_rust_workflow())
+    violations.extend(_check_docker_scan_workflow())
+    violations.extend(_check_license_check_workflow())
+    violations.extend(_check_wrapper_workflow())
 
     if violations:
         print("CI workflow violations:", file=sys.stderr)
