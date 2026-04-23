@@ -97,6 +97,11 @@ class SSOService:
     _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
     _STATE_BINDING_SEPARATOR = "."
     _STATE_BINDING_HEX_LEN = 64
+    _EMAIL_VERIFIED_CLAIMS: Tuple[str, ...] = (
+        "email_verified",
+        "verified_primary_email",
+        "verified_secondary_email",
+    )
 
     def __init__(self, db: Session):
         """Initialize SSO service with database session.
@@ -991,37 +996,74 @@ class SSOService:
         return hmac.compare_digest(signature, expected_signature)
 
     @staticmethod
+    def _coerce_email_verified_claim(value: Any) -> Optional[bool]:
+        """Coerce an IdP email-verification claim value to a bool.
+
+        Returns ``None`` for unrecognized types so the caller can fail
+        securely rather than silently treating the value as truthy/falsy.
+
+        Args:
+            value: Raw claim value from the provider payload.
+
+        Returns:
+            ``True``/``False`` for recognized bool/int/str values; ``None``
+            when the value is of an unrecognized type.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value == 1
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return None
+
+    @staticmethod
     def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
         """Evaluate email verification claim when provided by the IdP.
 
-        When the ``email_verified`` claim is **absent** from ``user_info`` (e.g.
-        Microsoft Entra ID and GitHub do not include it for work / school
-        accounts) the function returns ``True`` so that those providers are not
-        incorrectly blocked.  The check is only enforced when the IdP
-        *explicitly* supplies the claim — a ``False``/``0``/``"false"`` value
-        means the provider has flagged the address as unverified and the user
-        should be rejected.
+        When none of the supported claims are present in ``user_info`` (e.g.
+        Microsoft Entra ID and GitHub omit them for work / school accounts) the
+        function returns ``True`` so those providers are not incorrectly
+        blocked.  The check is only enforced when the IdP *explicitly* supplies
+        a claim — a ``False``/``0``/``"false"`` value means the provider has
+        flagged the address as unverified and the user should be rejected.
+
+        Claims are checked in precedence order: the standard OIDC
+        ``email_verified`` first, then Microsoft Entra ID's
+        ``verified_primary_email`` (used in External ID / B2B flows), then
+        ``verified_secondary_email``.  The first claim present decides the
+        outcome; later claims are not consulted.  Unrecognized value types
+        (e.g. ``None``, dict) fail secure — the user is rejected.
 
         Args:
             user_info: Normalized user-info payload from provider.
 
         Returns:
-            ``True`` when the claim is absent (provider does not restrict) or
-            when it is explicitly set to a truthy value; ``False`` only when the
-            provider explicitly indicates the address is *not* verified.
+            ``True`` when no supported claim is present, or when the first
+            present claim is explicitly truthy; ``False`` when the first
+            present claim is explicitly falsy or of an unrecognized type.
         """
-        if "email_verified" not in user_info:
-            # Claim not provided by IdP — treat as no restriction (pass through).
-            return True
-
-        claim_value = user_info.get("email_verified")
-        if isinstance(claim_value, bool):
-            return claim_value
-        if isinstance(claim_value, int):
-            return claim_value == 1
-        if isinstance(claim_value, str):
-            return claim_value.strip().lower() in {"1", "true", "yes", "on"}
-        return False
+        provider = user_info.get("provider", "unknown")
+        for claim in SSOService._EMAIL_VERIFIED_CLAIMS:
+            if claim not in user_info:
+                continue
+            coerced = SSOService._coerce_email_verified_claim(user_info[claim])
+            if coerced is None:
+                logger.warning(
+                    "SSO claim '%s' has unrecognized type %s from provider '%s'; rejecting as unverified.",
+                    claim,
+                    type(user_info[claim]).__name__,
+                    provider,
+                )
+                return False
+            if claim != "email_verified":
+                logger.info(
+                    "SSO email verified via non-standard claim '%s' for provider '%s'.",
+                    claim,
+                    provider,
+                )
+            return coerced
+        return True
 
     def get_authorization_url(
         self,
@@ -1608,9 +1650,10 @@ class SSOService:
 
         Provider-specific branches call this with overrides only for fields
         that deviate from the standard OIDC claim mapping.  The
-        ``email_verified`` claim is propagated only when the IdP explicitly
-        includes it so that ``_is_email_verified_claim``'s
-        absent-means-pass-through logic applies correctly.
+        ``email_verified`` key is populated (as a coerced ``bool``) only when
+        the IdP supplies one of the supported verification claims listed in
+        ``_EMAIL_VERIFIED_CLAIMS``, so ``_is_email_verified_claim``'s
+        absent-means-pass-through logic still applies when none are present.
 
         Pass ``None`` explicitly to force a field to ``None``; omit the
         argument (default ``_UNSET``) to fall back to the standard claim.
@@ -1638,8 +1681,9 @@ class SSOService:
             "provider": provider_name,
             "groups": list(set(groups)),
         }
-        if "email_verified" in user_data:
-            normalized["email_verified"] = user_data["email_verified"]
+        if any(claim in user_data for claim in SSOService._EMAIL_VERIFIED_CLAIMS):
+            normalized["email_verified"] = SSOService._is_email_verified_claim({**user_data, "provider": provider_name})
+
         if extra:
             normalized.update(extra)
         return normalized
