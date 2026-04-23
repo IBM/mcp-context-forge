@@ -95,6 +95,28 @@ class TestUAIDEndpointParsing:
 
 
 
+class TestDomainMatchingHelpers:
+    """Test coverage for domain matching helper functions that parse host:port."""
+
+    def test_domain_with_port_parsing(self, monkeypatch):
+        """Test line 207-216: parse_host_port helper function for domain matching."""
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", False)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+
+        # Test domain matching with port (exercises parse_host_port logic)
+        # Endpoint has port, allowed domain has no port -> should match (port-agnostic)
+        _validate_uaid_endpoint_domain("example.com:8080", operation_context="test")
+
+    def test_ipv6_without_brackets_matching(self, monkeypatch):
+        """Test line 216: IPv6 without brackets (multiple colons) -> returns as-is."""
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", False)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["::1", "2001:db8::1"])
+
+        # IPv6 without brackets - multiple colons, treated as hostname
+        _validate_uaid_endpoint_domain("::1", operation_context="test")
+        _validate_uaid_endpoint_domain("2001:db8::1", operation_context="test")
+
+
 class TestUserIdParsing:
     """Test coverage for user ID parsing in main.py."""
 
