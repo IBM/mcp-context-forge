@@ -466,7 +466,7 @@ preview = true
 
 # Ignore D1 (docstring checks) in tests and other non-production code
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D1", "D417"]
+"tests/**/*.py" = ["D1", "D417", "E402"]
 "scripts/**/*.py" = ["D1", "D417"]
 "mcp-servers/**/*.py" = ["D1", "D417"]
 ".github/**/*.py" = ["D1", "D417"]
