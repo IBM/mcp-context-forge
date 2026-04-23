@@ -878,6 +878,35 @@ class Settings(BaseSettings):
     secure_cookies: bool = Field(default=True)
     cookie_samesite: str = Field(default="lax")
 
+    @field_validator("cookie_samesite")
+    @classmethod
+    def validate_cookie_samesite(cls, v: str, info) -> str:
+        """Validate cookie_samesite setting for security.
+
+        Args:
+            v: The cookie_samesite value to validate
+            info: Validation context with other field values
+
+        Returns:
+            Normalized lowercase samesite value
+
+        Raises:
+            ValueError: If value is invalid or "none" without secure_cookies=True
+        """
+        normalized = v.lower().strip()
+        valid_values = {"strict", "lax", "none"}
+
+        if normalized not in valid_values:
+            raise ValueError(f"cookie_samesite must be one of {valid_values}, got: {v}")
+
+        # If SameSite=None, Secure must be True (browser requirement)
+        if normalized == "none":
+            secure_cookies = info.data.get("secure_cookies", True)
+            if not secure_cookies:
+                raise ValueError("cookie_samesite='none' requires secure_cookies=True to prevent CSRF attacks")
+
+        return normalized
+
     # CORS settings
     cors_allow_credentials: bool = Field(default=True)
 

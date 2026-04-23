@@ -18,7 +18,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
+from mcpgateway.admin import rate_limit
+from mcpgateway.auth import get_current_user_from_cookie
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
@@ -123,11 +124,14 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
-    """Authenticate user and return session JWT token.
+async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    """Authenticate user and return session JWT token (API clients).
 
-    This endpoint provides Tier 1 authentication for session-based access.
-    The returned JWT token should be used for UI access and API key management.
+    This endpoint is for API clients that will use the Bearer token in the
+    Authorization header. The token is returned in the response body only.
+    No cookie is set.
+
+    For browser clients, use POST /auth/browser-login instead.
 
     Supports both cookie-based (browser) and Bearer token (API) authentication.
     Cookie is set automatically for browser clients; API clients use token from response body.
@@ -178,10 +182,7 @@ async def login(login_request: LoginRequest, request: Request, response: Respons
         # Create session JWT token (Tier 1 authentication)
         access_token, expires_in = await create_access_token(user)
 
-        # Set httpOnly cookie for browser clients (React SPA)
-        set_auth_cookie(response, access_token, remember_me=login_request.remember_me)
-
-        logger.info(f"User {email} authenticated successfully")
+        logger.info("User authenticated successfully")
 
         # Return session token for UI access and API key management
         # Token in response body maintains retro-compatibility with API clients
@@ -199,63 +200,129 @@ async def login(login_request: LoginRequest, request: Request, response: Respons
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
-@auth_router.get("/me", response_model=EmailUserResponse)
-async def get_current_user_info(current_user: EmailUser = Depends(get_current_user)) -> EmailUserResponse:
-    """Get current user profile information.
+@auth_router.post("/browser-login")
+@rate_limit(requests_per_minute=10)
+async def browser_login(login_request: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Authenticate user and set httpOnly cookie (browser clients).
 
-    Supports both cookie-based (browser) and Bearer token (API) authentication.
-    Authentication is handled automatically by the auth middleware.
+    This endpoint is for browser clients. It sets an httpOnly cookie with the
+    JWT token and returns minimal user info. The token is NOT included in the
+    response body, preventing JavaScript access.
+
+    For API clients that need the token in the response, use POST /auth/login instead.
 
     Args:
-        current_user: Currently authenticated user (injected by dependency)
+        login_request: Login credentials (email/username + password)
+        request: FastAPI request object
+        response: FastAPI response object for setting cookies
+        db: Database session
 
     Returns:
-        EmailUserResponse: User profile information including email, name, admin status, teams, and roles
+        dict: Success message and user info (no token in body)
 
     Raises:
-        HTTPException: 401 if user is not authenticated
+        HTTPException: If authentication fails
 
     Examples:
-        Cookie-based (browser):
-            GET /auth/me
-            Cookie: jwt_token=<token>
+        {
+          "email": "admin@example.com",
+          "password": "ChangeMe_12345678$"
+        }
+    """
+    from mcpgateway.utils.security_cookies import CookieTooLargeError
 
-        Bearer token (API):
-            GET /auth/me
-            Authorization: Bearer <token>
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    try:
+        # Extract email from request
+        email = login_request.get_email()
+
+        # Authenticate user
+        user = await auth_service.authenticate_user(email=email, password=login_request.password, ip_address=ip_address, user_agent=user_agent)
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
+        if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password authentication is restricted to admin accounts while SSO is enabled.")
+
+        # Create session JWT token
+        access_token, expires_in = await create_access_token(user)
+
+        # Set httpOnly cookie (token NOT in response body)
+        try:
+            set_auth_cookie(response, access_token, max_age=expires_in)
+        except CookieTooLargeError as e:
+            logger.error(f"Cookie too large for user: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Authentication token too large. Please contact administrator to reduce team memberships.",
+            )
+
+        logger.info("User authenticated successfully via cookie")
+
+        # Return success without token in body
+        return {
+            "message": "Authenticated successfully",
+            "user": EmailUserResponse.from_email_user(user).model_dump(),
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"Login validation error: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
+
+
+@auth_router.get("/me", response_model=EmailUserResponse)
+async def get_me(current_user: EmailUser = Depends(get_current_user_from_cookie)):
+    """Get current authenticated user profile (cookie-based auth only).
+
+    This endpoint is designed for browser clients using httpOnly cookies.
+    It does NOT accept Bearer tokens from the Authorization header.
+
+    Returns:
+        EmailUserResponse: Current user profile information
+
+    Raises:
+        HTTPException: 401 if no cookie or authentication fails
+
+    Examples:
+        Browser request with httpOnly cookie set by /auth/browser-login
     """
     return EmailUserResponse.from_email_user(current_user)
 
 
 @auth_router.post("/logout")
-async def logout(response: Response, current_user: EmailUser = Depends(get_current_user)) -> dict:
+async def logout(response: Response, current_user: EmailUser = Depends(get_current_user_from_cookie)):
     """Logout current user by clearing authentication cookie.
 
-    Clears the httpOnly JWT cookie. Note: JWT remains valid until expiry (stateless design).
-    For immediate revocation, use short token expiry times.
+    This endpoint is designed for browser clients using httpOnly cookies.
+    It does NOT accept Bearer tokens from the Authorization header.
 
-    Supports both cookie-based (browser) and Bearer token (API) authentication.
-    Cookie is cleared for browser clients; API clients should discard the token.
+    Stateless logout: Only clears the browser cookie. The JWT token itself
+    remains valid until expiration (no server-side revocation).
 
     Args:
-        response: FastAPI response object (for clearing cookie)
-        current_user: Currently authenticated user (injected by dependency)
+        response: FastAPI response object for setting cookies
+        current_user: Current authenticated user (from cookie)
 
     Returns:
         dict: Success message
 
     Raises:
-        HTTPException: 401 if user is not authenticated
+        HTTPException: 401 if no cookie or authentication fails
 
     Examples:
-        Cookie-based (browser):
-            POST /auth/logout
-            Cookie: jwt_token=<token>
-
-        Bearer token (API):
-            POST /auth/logout
-            Authorization: Bearer <token>
+        Browser request with httpOnly cookie
     """
+
     clear_auth_cookie(response)
-    logger.info(f"User {current_user.email} logged out")
+    logger.info("User logged out successfully")
+
     return {"message": "Logged out successfully"}
