@@ -46,7 +46,7 @@ class TestObservabilityServiceAdapter:
 
         assert result == "span-42"
         mock_service.start_span.assert_called_once_with(
-            db=mock_session,
+            obs_db=mock_session,
             trace_id="trace-1",
             name="plugin.execute.my_plugin",
             kind="internal",
@@ -69,7 +69,7 @@ class TestObservabilityServiceAdapter:
             adapter.end_span(span_id="span-42", status="ok", attributes={"k": "v"})
 
         mock_service.end_span.assert_called_once_with(
-            db=mock_session,
+            obs_db=mock_session,
             span_id="span-42",
             status="ok",
             attributes={"k": "v"},
