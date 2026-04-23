@@ -601,7 +601,7 @@ repos:
       - id: check-ci-workflows
         name: 🔐 Check CI Workflows
         description: Verifies CI workflow YAML structure and SHA pinning.
-        entry: uv run python3 scripts/pre-commit/check_ci_workflows.py
+        entry: uv run --no-project --with pyyaml python3 scripts/pre-commit/check_ci_workflows.py
         language: system
         pass_filenames: false
         files: ^\.github/workflows/|^Makefile$
