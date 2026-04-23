@@ -430,12 +430,26 @@ class OAuthManager:
         token_url = runtime_credentials["token_url"]
         scopes = runtime_credentials.get("scopes", [])
 
-        # Prepare token request data
-        token_data = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token request data and headers
+        token_data = {"grant_type": "client_credentials"}
+        headers = {}
+
+        if use_basic_auth:
+            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
+            # Encode client_id:client_secret as base64
+            credentials_str = f"{client_id}:{client_secret}"
+            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -1412,17 +1426,32 @@ class OAuthManager:
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
-        # Prepare token exchange data
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token exchange data and headers
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": client_id,
         }
+        headers = {}
 
-        # Only include client_secret if present (public clients don't have secrets)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if use_basic_auth and client_secret:
+            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
+            # Encode client_id:client_secret as base64
+            credentials_str = f"{client_id}:{client_secret}"
+            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            # Only include client_secret if present (public clients don't have secrets)
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
@@ -1506,16 +1535,31 @@ class OAuthManager:
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
 
-        # Prepare token refresh request
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token refresh request and headers
         token_data = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": client_id,
         }
+        headers = {}
 
-        # Add client_secret if available (some providers require it)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if use_basic_auth and client_secret:
+            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
+            # Encode client_id:client_secret as base64
+            credentials_str = f"{client_id}:{client_secret}"
+            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            # Add client_secret if available (some providers require it)
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type

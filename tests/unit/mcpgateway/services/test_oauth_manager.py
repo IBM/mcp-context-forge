@@ -176,6 +176,37 @@ async def test_client_credentials_flow_success_form_encoded(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_client_credentials_flow_with_basic_auth(oauth_manager):
+    """Test client credentials flow with HTTP Basic Auth (token_endpoint_auth_method=client_secret_basic)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "basic-auth-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch.object(oauth_manager, "_get_client", return_value=mock_client):
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "token_url": "https://example.com/token",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }
+        result = await oauth_manager._client_credentials_flow(credentials)
+
+    assert result == "basic-auth-tok"
+    # Verify Basic Auth header was set
+    call_args = mock_client.post.call_args
+    assert "headers" in call_args.kwargs
+    assert "Authorization" in call_args.kwargs["headers"]
+    assert call_args.kwargs["headers"]["Authorization"].startswith("Basic ")
+    # Verify credentials NOT in POST body
+    assert "client_id" not in call_args.kwargs["data"]
+    assert "client_secret" not in call_args.kwargs["data"]
+
+
+@pytest.mark.asyncio
 async def test_client_credentials_flow_with_scopes(oauth_manager):
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -451,6 +482,38 @@ async def test_exchange_code_for_token_success(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_exchange_code_for_token_with_basic_auth(oauth_manager):
+    """Test authorization code exchange with HTTP Basic Auth (token_endpoint_auth_method=client_secret_basic)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "basic-code-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "token_url": "https://example.com/token",
+            "redirect_uri": "https://example.com/callback",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }
+        result = await oauth_manager._exchange_code_for_tokens(credentials, code="auth-code")
+
+    assert result["access_token"] == "basic-code-tok"
+    # Verify Basic Auth header was set
+    call_args = mock_client.post.call_args
+    assert "headers" in call_args.kwargs
+    assert "Authorization" in call_args.kwargs["headers"]
+    assert call_args.kwargs["headers"]["Authorization"].startswith("Basic ")
+    # Verify credentials NOT in POST body
+    assert "client_id" not in call_args.kwargs["data"]
+    assert "client_secret" not in call_args.kwargs["data"]
+
+
+@pytest.mark.asyncio
 async def test_exchange_code_for_token_no_secret(oauth_manager):
     """Public client without client_secret."""
     mock_response = MagicMock()
@@ -484,6 +547,37 @@ async def test_refresh_token_success(oauth_manager):
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})
     assert result["access_token"] == "new-tok"
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_with_basic_auth(oauth_manager):
+    """Test refresh token with HTTP Basic Auth (token_endpoint_auth_method=client_secret_basic)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "new-basic-tok", "refresh_token": "new-rt"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "token_url": "https://example.com/token",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }
+        result = await oauth_manager.refresh_token("old-rt", credentials)
+
+    assert result["access_token"] == "new-basic-tok"
+    # Verify Basic Auth header was set
+    call_args = mock_client.post.call_args
+    assert "headers" in call_args.kwargs
+    assert "Authorization" in call_args.kwargs["headers"]
+    assert call_args.kwargs["headers"]["Authorization"].startswith("Basic ")
+    # Verify credentials NOT in POST body
+    assert "client_id" not in call_args.kwargs["data"]
+    assert "client_secret" not in call_args.kwargs["data"]
 
 
 @pytest.mark.asyncio
