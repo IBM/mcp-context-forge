@@ -323,11 +323,13 @@ class EmailAuthService:
 
         return True
 
-    def validate_password(self, password: str) -> bool:
-        """Validate password against policy requirements.
+    def validate_password(self, password: str, email: Optional[str] = None, is_privileged: bool = False) -> bool:
+        """Validate password against comprehensive policy requirements.
 
         Args:
             password: Password to validate
+            email: User's email address (for username-based validation)
+            is_privileged: Whether this is a privileged account
 
         Returns:
             bool: True if password meets policy
@@ -337,28 +339,7 @@ class EmailAuthService:
 
         Examples:
             >>> service = EmailAuthService(None)
-            >>> service.validate_password("Password123!")  # Meets all requirements
-            True
-            >>> service.validate_password("ValidPassword123!")
-            True
-            >>> service.validate_password("Shortpass!")  # 8+ chars with requirements
-            True
-            >>> service.validate_password("VeryLongPasswordThatMeetsMinimumRequirements!")
-            True
-            >>> try:
-            ...     service.validate_password("")
-            ... except PasswordValidationError as e:
-            ...     "Password is required" in str(e)
-            True
-            >>> try:
-            ...     service.validate_password(None)
-            ... except PasswordValidationError as e:
-            ...     "Password is required" in str(e)
-            True
-            >>> try:
-            ...     service.validate_password("short")  # Only 5 chars, should fail with default min_length=8
-            ... except PasswordValidationError as e:
-            ...     "characters long" in str(e)
+            >>> service.validate_password("SecureP@ssw0rd!", "alice@example.com")
             True
         """
         if not password:
@@ -368,29 +349,43 @@ class EmailAuthService:
         if not getattr(settings, "password_policy_enabled", True):
             return True
 
-        # Get password policy settings
-        min_length = getattr(settings, "password_min_length", 8)
-        require_uppercase = getattr(settings, "password_require_uppercase", False)
-        require_lowercase = getattr(settings, "password_require_lowercase", False)
-        require_numbers = getattr(settings, "password_require_numbers", False)
-        require_special = getattr(settings, "password_require_special", False)
+        # Use new comprehensive password policy service
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
-        if len(password) < min_length:
-            raise PasswordValidationError(f"Password must be at least {min_length} characters long")
+            policy_service = PasswordPolicyService(self.db)
+            return policy_service.validate_user_password(password, email, is_privileged)
+        except PasswordPolicyError as e:
+            # Wrap PasswordPolicyError in PasswordValidationError for consistency
+            raise PasswordValidationError(str(e)) from e
+        except ImportError:
+            # Fallback to legacy validation if new service not available
+            logger.warning("PasswordPolicyService not available, using legacy validation")
 
-        if require_uppercase and not re.search(r"[A-Z]", password):
-            raise PasswordValidationError("Password must contain at least one uppercase letter")
+            # Legacy validation (kept for backward compatibility)
+            min_length = getattr(settings, "password_min_length", 8)
+            require_uppercase = getattr(settings, "password_require_uppercase", False)
+            require_lowercase = getattr(settings, "password_require_lowercase", False)
+            require_numbers = getattr(settings, "password_require_numbers", False)
+            require_special = getattr(settings, "password_require_special", False)
 
-        if require_lowercase and not re.search(r"[a-z]", password):
-            raise PasswordValidationError("Password must contain at least one lowercase letter")
+            if len(password) < min_length:
+                raise PasswordValidationError(f"Password must be at least {min_length} characters long")
 
-        if require_numbers and not re.search(r"[0-9]", password):
-            raise PasswordValidationError("Password must contain at least one number")
+            if require_uppercase and not re.search(r"[A-Z]", password):
+                raise PasswordValidationError("Password must contain at least one uppercase letter")
 
-        if require_special and not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-            raise PasswordValidationError("Password must contain at least one special character")
+            if require_lowercase and not re.search(r"[a-z]", password):
+                raise PasswordValidationError("Password must contain at least one lowercase letter")
 
-        return True
+            if require_numbers and not re.search(r"[0-9]", password):
+                raise PasswordValidationError("Password must contain at least one number")
+
+            if require_special and not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+                raise PasswordValidationError("Password must contain at least one special character")
+
+            return True
 
     @staticmethod
     def _hash_reset_token(token: str) -> str:
@@ -686,7 +681,9 @@ class EmailAuthService:
         # Validate inputs
         self.validate_email(email)
         if not skip_password_validation:
-            self.validate_password(password)
+            # Determine if this is a privileged account
+            is_privileged_account = is_admin or auth_provider != "local"
+            self.validate_password(password, email, is_privileged_account)
 
         # Hash before the first DB read so PgBouncer transaction pooling does not
         # hold an idle transaction open across the async hashing call.
@@ -1243,16 +1240,45 @@ class EmailAuthService:
             raise AuthenticationError("Current password is incorrect")
 
         # Validate new password
-        self.validate_password(new_password)
+        self.validate_password(new_password, email, user.is_admin)
 
-        # Check if new password is same as old (optional policy)
-        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
-            raise PasswordValidationError("New password must be different from current password")
+        # Check password history (prevents reuse of last N passwords and current password)
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db)
+            history_count = getattr(settings, "password_history_count", 5)
+            await policy_service.check_password_history(email, new_password, history_count, user.password_hash)
+        except ImportError:
+            # Fallback to simple current password check
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+                raise PasswordValidationError("New password must be different from current password")
+        except Exception as e:
+            # If it's a PasswordPolicyError, re-raise it and wrap in PasswordValidationError
+            if "PasswordPolicyError" in str(type(e).__name__):
+                raise PasswordValidationError(str(e)) from e
+            # Otherwise log and continue with fallback
+            logger.warning(f"Password history check failed: {e}")
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+                raise PasswordValidationError("New password must be different from current password")
 
         success = False
         try:
             # Hash new password and update
             new_password_hash = await self.password_service.hash_password_async(new_password)
+
+            # Save old password to history before updating
+            try:
+                # First-Party
+                from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                policy_service = PasswordPolicyService(self.db)
+                await policy_service.save_password_to_history(email, user.password_hash)
+            except Exception as history_error:
+                logger.warning(f"Failed to save password to history for {SecurityValidator.sanitize_log_message(email)}: {history_error}")
+                # Continue with password change even if history save fails
+
             user.password_hash = new_password_hash
             # Clear the flag that requires the user to change password
             user.password_change_required = False
