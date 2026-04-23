@@ -75,7 +75,7 @@ class TokenValidationResult:
             >>> r.audience_match = False
             >>> r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
             >>> r.blocking_errors
-            ["Token audience mismatch: token aud does not match expected resource or gateway URL"]
+            ['Token audience mismatch: token aud does not match expected resource or gateway URL']
         """
         if not self.warnings:
             return []
