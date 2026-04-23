@@ -7,6 +7,12 @@ criteria = "safe-to-deploy"
 delta = "0.103.11 -> 0.103.12"
 notes = "Security patch update for RUSTSEC-2026-0098; reviewed upstream diff for URI name-constraint handling change."
 
+[[audits.rustls-webpki]]
+who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.12 -> 0.103.13"
+notes = "Security patch update for RUSTSEC-2026-0104; fixes reachable panic in CRL parsing for empty BIT STRING in IssuingDistributionPoint extension. Reviewed upstream diff - minimal change, only affects CRL parsing logic."
+
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
 user-id = 189 # Andrew Gallant (BurntSushi)

@@ -78,6 +78,13 @@ user-id = 267
 user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
+[[publisher.block-buffer]]
+version = "0.10.4"
+when = "2023-03-09"
+user-id = 5059
+user-login = "newpavlov"
+user-name = "Artyom Pavlov"
+
 [[publisher.bumpalo]]
 version = "3.20.2"
 when = "2026-02-19"
@@ -181,6 +188,13 @@ user-id = 11235
 user-login = "baloo"
 user-name = "Arthur Gautier"
 
+[[publisher.digest]]
+version = "0.10.7"
+when = "2023-05-19"
+user-id = 267
+user-login = "tarcieri"
+user-name = "Tony Arcieri"
+
 [[publisher.fallible-iterator]]
 version = "0.2.0"
 when = "2019-03-10"
@@ -255,13 +269,6 @@ when = "2026-04-12"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
-
-[[publisher.hyper-tls]]
-version = "0.6.0"
-when = "2023-11-27"
-user-id = 359
-user-login = "seanmonstar"
-user-name = "Sean McArthur"
 
 [[publisher.hyper-util]]
 version = "0.1.20"
@@ -338,6 +345,13 @@ user-id = 2915
 user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
+[[publisher.md-5]]
+version = "0.10.6"
+when = "2023-09-22"
+user-id = 5059
+user-login = "newpavlov"
+user-name = "Artyom Pavlov"
+
 [[publisher.memchr]]
 version = "2.8.0"
 when = "2026-02-06"
@@ -358,13 +372,6 @@ when = "2026-03-27"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
-
-[[publisher.native-tls]]
-version = "0.2.18"
-when = "2026-02-18"
-user-id = 988
-user-login = "kornelski"
-user-name = "Kornel"
 
 [[publisher.num-bigint]]
 version = "0.4.6"
@@ -472,8 +479,8 @@ user-login = "JohnTitor"
 user-name = "Yuki Okushi"
 
 [[publisher.postgres-protocol]]
-version = "0.6.11"
-when = "2026-03-30"
+version = "0.6.10"
+when = "2026-01-14"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
@@ -729,6 +736,13 @@ when = "2026-03-31"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
+
+[[publisher.sha2]]
+version = "0.10.9"
+when = "2025-04-30"
+user-id = 5059
+user-login = "newpavlov"
+user-name = "Artyom Pavlov"
 
 [[publisher.slab]]
 version = "0.4.12"
@@ -2596,6 +2610,11 @@ delta = "0.2.17 -> 0.3.0"
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.3 -> 0.3.4"
+
+[[audits.isrg.audits.hmac]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+version = "0.12.1"
 
 [[audits.isrg.audits.once_cell]]
 who = "Brandon Pitman <bran@bran.land>"
