@@ -197,7 +197,6 @@ exclude vitest.config.js
 exclude .stylelintrc.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt
-exclude .pyspelling.yml
 exclude .prospector.yaml
 exclude .hadolint.yaml
 exclude .ruff.toml

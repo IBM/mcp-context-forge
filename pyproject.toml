@@ -9,7 +9,22 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
-exclude-newer-package = { "cpex-url-reputation" = "2026-04-20T23:59:59Z", "cpex-rate-limiter" = "2026-04-22T23:59:59Z", "cpex-encoded-exfil-detection" = "2026-04-09T23:59:59Z", "cpex-pii-filter" = "2026-04-21T23:59:59Z", "cpex-retry-with-backoff" = "2026-04-09T23:59:59Z", "cpex-secrets-detection" = "2026-04-20T23:59:59Z", "cryptography" = "2026-04-11T23:59:59Z", "langchain-core" = "2026-04-11T23:59:59Z", "uv" = "2026-04-11T23:59:59Z", "authlib" = "2026-04-19T23:59:59Z" }
+
+[tool.uv.exclude-newer-package]
+cpex-url-reputation = "2026-04-20T23:59:59Z"
+cpex-rate-limiter = "2026-04-22T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
+cpex-pii-filter = "2026-04-21T23:59:59Z"
+cpex-retry-with-backoff = "2026-04-09T23:59:59Z"
+cpex-secrets-detection = "2026-04-20T23:59:59Z"
+cryptography = "2026-04-11T23:59:59Z"
+langchain-core = "2026-04-22T23:59:59Z"
+uv = "2026-04-11T23:59:59Z"
+authlib = "2026-04-19T23:59:59Z"
+Mako = "2026-04-22T23:59:59Z"
+python-multipart = "2026-04-22T23:59:59Z"
+langsmith = "2026-04-22T23:59:59Z"
+langchain-openai = "2026-04-22T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
@@ -79,7 +94,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.12.1",
     "python-json-logger>=4.1.0",
-    "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); dependabot/81
+    "python-multipart>=0.0.26", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "requests==2.33.0", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
@@ -90,6 +105,7 @@ dependencies = [
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
+    "Mako>=1.3.11", # Transitive pin (alembic)
 ]
 
 # ----------------------------------------------------------------
@@ -127,8 +143,7 @@ dev = [
     "pyrefly>=0.35.0",
     "pyright>=1.1.406",
     "pyroma>=5.0",
-    "pyspelling>=2.11",
-    "pytest>=8.4.2",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "pytest-env>=1.1.5",
@@ -136,7 +151,7 @@ dev = [
     "pytest-httpx>=0.35.0",
     "pytest-instafail>=0.5.0",
     "pytest-integration-mark>=0.2.0",
-    "pytest-md-report>=0.7.0",
+    # "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=16.0.1",
     "pytest-timeout>=2.4.0",
     "pytest-trio>=0.8.0",
@@ -199,8 +214,9 @@ llmchat = [
     "langchain-core>=1.2.28",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-ollama>=1.0.1",
-    "langchain-openai>=1.1.12",
+    "langchain-openai>=1.1.14",
     "langgraph>=1.1.6",
+    "langsmith>=0.7.31", # Transitive pin (langchain-core)
 ]
 
 # Fuzzing and property-based testing
@@ -730,7 +746,6 @@ ignore_unused = [
   "pyre-check",
   "pyright",
   "pyroma",
-  "pyspelling",
   "pytest",
   "pytest-asyncio",
   "pytest-cov",
