@@ -4,14 +4,6 @@
 name: Build Python Package
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "mcpgateway/**"
-      - "pyproject.toml"
-      - "Makefile"
-      - "MANIFEST.in"
-      - ".github/workflows/python-package.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: [ "main" ]
