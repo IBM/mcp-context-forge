@@ -5561,20 +5561,30 @@ class ToolService(BaseService):
                             response_data = None
                             response_text = str(e)
 
-                        if status_code == 200:
+                        if http_response.status_code == 200:
+                            response_data = http_response.json()
+
+                            # Detect JSONRPC error envelope or application-level error indicators
+                            # JSONRPC 2.0: {"error": {"code": -32600, "message": "..."}}
+                            # Application-level: {"isError": true} or {"is_error": true}
+                            is_jsonrpc_error = isinstance(response_data, dict) and "error" in response_data
+                            is_app_error = isinstance(response_data, dict) and (response_data.get("isError") is True or response_data.get("is_error") is True)
+
                             if isinstance(response_data, dict) and "response" in response_data:
                                 val = response_data["response"]
                                 content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
                             elif response_data is not None:
                                 content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
-                            else:
-                                content = [TextContent(type="text", text=response_text)]
-                            tool_result = ToolResult(content=content, is_error=False)
-                            success = True
+
+                            # Route through canonical coercion to ensure uniform is_error handling
+                            # This mirrors the fix applied to REST (line 4819) and direct-proxy (line 5412) paths in #4202
+                            tool_result = self._coerce_to_tool_result({"content": content, "isError": is_jsonrpc_error or is_app_error})
+                            success = not tool_result.is_error
                         else:
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                            success = False  # Explicit assignment instead of relying on scope fall-through
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -5599,13 +5609,22 @@ class ToolService(BaseService):
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
+                                # Preserve plugin intent for is_error state (Trap 2 fix)
+                                # Check both camelCase (MCP SDK) and snake_case (gateway) aliases
+                                is_error = modified_result.get("isError", modified_result.get("is_error", False))
+
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:
                                     tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
                                 except Exception:
                                     tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+
+                            # Re-sync success flag with plugin-modified state (Trap 2 fix)
+                            # Previously, success was frozen before plugin invocation and never updated,
+                            # causing metrics divergence when plugins flip error state
+                            success = not tool_result.is_error
 
                     # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling.
                     # retry_attempt is 0-based (0 = original call).  The condition allows retry_attempt

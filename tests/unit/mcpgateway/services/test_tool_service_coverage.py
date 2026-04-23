@@ -7228,6 +7228,219 @@ class TestInvokeToolGatewayQueryParams:
 
 
 # ---------------------------------------------------------------------------
+# invoke_tool — A2A error handling regression guards (Trap 1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolA2AErrorHandling:
+    """Regression guards for Trap 1: A2A 200-OK branch must detect JSONRPC error envelopes.
+
+    Before the fix, the A2A branch unconditionally set is_error=False and success=True
+    for all 200-OK responses, regardless of whether the body contained a JSONRPC error
+    envelope or application-level error indicator. This caused metrics to record
+    success=True for responses the caller sees as errors, inflating tool success rates
+    and masking real failures in observability.
+
+    The fix routes A2A responses through _coerce_to_tool_result and computes
+    success = not tool_result.is_error, symmetric with the REST and direct-proxy paths.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a2a_jsonrpc_error_envelope_records_success_false_in_metrics(self, tool_service):
+        """A2A agent returning JSONRPC error envelope in 200-OK must record success=False.
+
+        Regression guard for Trap 1. Before the fix, the A2A 200-OK branch set
+        is_error=False and success=True unconditionally, causing every JSONRPC error
+        to be recorded as a successful invocation in metrics.
+
+        The fix detects {"error": {...}} envelopes and routes through _coerce_to_tool_result
+        to ensure is_error=True and success=False are recorded correctly.
+        """
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        # Mock A2A agent returning JSONRPC 2.0 error envelope
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(
+            return_value={
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request"},
+                "id": 1,
+            }
+        )
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        # Capture metrics calls
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        # User-visible payload reflects the error
+        assert result.is_error is True
+        assert "Invalid Request" in result.content[0].text or "error" in result.content[0].text.lower()
+
+        # Metrics recorded with success=False (the primary invariant)
+        assert metrics_record.called, "record_tool_metric was not invoked"
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is False, (
+            f"Expected metrics success=False for A2A JSONRPC error envelope, got {recorded_success}. "
+            "This regression would silently inflate A2A tool success rates."
+        )
+
+    @pytest.mark.asyncio
+    async def test_a2a_application_level_is_error_true_records_success_false(self, tool_service):
+        """A2A agent returning application-level isError=true must record success=False.
+
+        Regression guard for Trap 1. Some A2A agents use application-level error
+        indicators like {"isError": true} or {"is_error": true} instead of JSONRPC
+        error envelopes. The fix detects both patterns.
+        """
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(
+            return_value={
+                "isError": True,
+                "response": "Rate limit exceeded",
+            }
+        )
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is True
+        assert "Rate limit exceeded" in result.content[0].text
+
+        assert metrics_record.called
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is False
+
+    @pytest.mark.asyncio
+    async def test_a2a_non_200_response_explicitly_sets_success_false(self, tool_service):
+        """A2A agent returning non-200 HTTP status must explicitly set success=False.
+
+        Regression guard for Trap 1. Before the fix, the non-200 branch created
+        is_error=True but never explicitly set success=False, relying on scope
+        fall-through. The fix adds explicit success=False assignment.
+        """
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 500
+        mock_http_response.text = "Internal Server Error"
+        mock_http_response.json = MagicMock(side_effect=Exception("No JSON body"))
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is True
+        assert "HTTP 500" in result.content[0].text
+
+        assert metrics_record.called
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is False
+
+
+
+# ---------------------------------------------------------------------------
 # invoke_tool — Plugin global_context update (lines 2742-2748)
 # ---------------------------------------------------------------------------
 
@@ -7440,6 +7653,180 @@ class TestInvokeToolPluginPostInvokeSerialization:
         # str() on a set produces something like "{'unserializable', 'set', 'values'}"
         assert isinstance(text, str)
         assert len(text) > 0
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — Plugin TOOL_POST_INVOKE error state preservation (Trap 2 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolPluginPostInvokeErrorState:
+    """Regression guards for Trap 2: Plugin TOOL_POST_INVOKE must preserve is_error state.
+
+    Before the fix, the plugin post-invoke reconstruction dropped is_error entirely
+    (Pydantic defaults it to False), and the success flag computed before plugin
+    invocation was never re-synced with the plugin-modified state. This caused:
+
+    1. Validation plugins that flip success→error to have their intent erased
+    2. Recovery plugins that flip error→success to still record success=False
+    3. Metrics divergence between user-visible payload and recorded success flag
+
+    The fix preserves is_error during reconstruction and re-syncs success after
+    the plugin runs, symmetric with the A2A and REST fixes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_flips_error_to_success_records_success_true(self, tool_service):
+        """Plugin flipping is_error True→False must record success=True in metrics.
+
+        Regression guard for Trap 2. A recovery plugin that transforms an upstream
+        error into a successful fallback response should have success=True recorded
+        in metrics, not success=False from the pre-plugin state.
+        """
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        # Mock upstream returning an error
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"isError": True, "content": [{"type": "text", "text": "Upstream failed"}]})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke flips error to success (recovery plugin pattern)
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            # First-Party
+            from mcpgateway.plugins.framework import ToolHookType
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        modified_payload = SimpleNamespace(
+            result={
+                "content": [{"type": "text", "text": "Recovered with fallback"}],
+                "isError": False,  # Plugin flips error to success
+            }
+        )
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, retry_delay_ms=0), {}))
+
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # User-visible payload reflects plugin recovery
+        assert result.is_error is False
+        assert "Recovered with fallback" in result.content[0].text
+
+        # Metrics recorded with success=True (the primary invariant)
+        assert metrics_record.called, "record_tool_metric was not invoked"
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is True, (
+            f"Expected metrics success=True after plugin flipped error→success, got {recorded_success}. "
+            "This regression would cause recovery plugins to be invisible in success metrics."
+        )
+
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_flips_success_to_error_records_success_false(self, tool_service):
+        """Plugin flipping is_error False→True must record success=False in metrics.
+
+        Regression guard for Trap 2. A validation plugin that detects an uncaught
+        bad response and transforms it into an error should have success=False
+        recorded in metrics, not success=True from the pre-plugin state.
+        """
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        # Mock upstream returning success
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"data": "invalid-format"})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke detects invalid response and flips to error (validation plugin pattern)
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            # First-Party
+            from mcpgateway.plugins.framework import ToolHookType
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        modified_payload = SimpleNamespace(
+            result={
+                "content": [{"type": "text", "text": "Validation failed: invalid response format"}],
+                "isError": True,  # Plugin flips success to error
+            }
+        )
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, retry_delay_ms=0), {}))
+
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # User-visible payload reflects plugin validation error
+        assert result.is_error is True
+        assert "Validation failed" in result.content[0].text
+
+        # Metrics recorded with success=False (the primary invariant)
+        assert metrics_record.called, "record_tool_metric was not invoked"
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is False, (
+            f"Expected metrics success=False after plugin flipped success→error, got {recorded_success}. "
+            "This regression would silently inflate success rates when validation plugins catch bad responses."
+        )
+
 
 
 class TestInvokeToolPluginMetadataFromPayload:
