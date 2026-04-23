@@ -434,7 +434,8 @@ async def send_request_to_session(
         await session.send_message(message)
         return {"status": "sent", "session_id": session_id}
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
+        logger.debug("Failed to send request to session %s: %s", session_id, e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
 
 
 def _get_user_from_credentials(credentials: str | dict) -> tuple[str | None, bool]:

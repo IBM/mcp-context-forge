@@ -253,7 +253,8 @@ async def query_traces_advanced(
         )
         return traces
     except (ValidationError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+        logger.debug("Invalid observability request body: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid request body")
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
@@ -646,7 +647,8 @@ async def export_traces(
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
     except (ValueError, Exception) as e:
-        raise HTTPException(status_code=400, detail=f"Export failed: {e}")
+        logger.exception("Trace export failed")
+        raise HTTPException(status_code=400, detail="Export failed")
 
 
 @router.get("/analytics/query-performance")
