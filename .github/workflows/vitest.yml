@@ -10,14 +10,6 @@
 name: JavaScript Tests (Vitest)
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/static/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/vitest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

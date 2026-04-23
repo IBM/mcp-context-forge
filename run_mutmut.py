@@ -3,6 +3,10 @@
 """
 Workaround script for mutmut v3 stats collection failure.
 Generates mutants and then runs them despite stats failure.
+
+Do not import the ``os`` module in this file. Use ``subprocess`` with
+``shell=False`` by default; if a shell is required for pipelines, the
+command must be built from literal strings, never from user input.
 """
 
 # Standard

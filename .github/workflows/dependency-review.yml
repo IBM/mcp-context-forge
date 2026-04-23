@@ -24,15 +24,6 @@
 name: Dependency Review
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "pyproject.toml"
-      - "Cargo.lock"
-      - "package.json"
-      - "package-lock.json"
-      - "requirements*.txt"
-      - ".github/workflows/dependency-review.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

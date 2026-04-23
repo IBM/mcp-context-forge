@@ -10,21 +10,14 @@
 name: Lint & Static Analysis
 
 on:
-  push:
-    branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "plugins/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/lint.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "plugins/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/lint.yml"
+    paths:
+      - "mcpgateway/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - ".github/workflows/lint.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

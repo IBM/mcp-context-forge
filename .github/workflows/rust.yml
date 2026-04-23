@@ -3,21 +3,6 @@
 name: Rust CI
 
 on:
-  push:
-    branches: [main, develop]
-    tags:
-      - "v*"
-    paths:
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "deny.toml"
-      - "Makefile"
-      - "mcpgateway/db.py"
-      - "mcpgateway/alembic/**"
-      - "supply-chain/**"
-      - ".github/workflows/rust.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: [main, develop]

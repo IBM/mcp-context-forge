@@ -1,13 +1,6 @@
 name: Playwright CI Smoke
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/**"
-      - "tests/playwright/**"
-      - "pyproject.toml"
-      - ".github/workflows/playwright.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

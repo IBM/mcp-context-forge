@@ -1,19 +1,6 @@
 name: License Check
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "pyproject.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
-      - "mcp-servers/rust/**"
-      - "package.json"
-      - "package-lock.json"
-      - "license-policy.toml"
-      - "scripts/license_checker.py"
-      - ".github/workflows/license-check.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

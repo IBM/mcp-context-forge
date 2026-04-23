@@ -8,12 +8,6 @@ on:
       - "mcpgateway/alembic/**"
       - "scripts/ci/run_upgrade_validation.sh"
       - ".github/workflows/alembic-upgrade-validation.yml"
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/alembic/**"
-      - "scripts/ci/run_upgrade_validation.sh"
-      - ".github/workflows/alembic-upgrade-validation.yml"
   workflow_dispatch:
     inputs:
       base_image:
