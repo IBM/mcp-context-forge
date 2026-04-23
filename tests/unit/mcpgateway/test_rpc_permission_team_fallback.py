@@ -69,10 +69,7 @@ async def test_ensure_rpc_permission_grants_session_token_with_team_role():
     # Verify has_permission was called with check_any_team=True
     mock_checker.has_permission.assert_called_once()
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Expected check_any_team=True for session token without explicit team_id; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team") is True, "Expected check_any_team=True for session token without explicit team_id; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -113,10 +110,7 @@ async def test_ensure_rpc_permission_api_token_without_team_id_uses_check_any_te
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "API tokens without team_id must use check_any_team=True; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team") is True, "API tokens without team_id must use check_any_team=True; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -140,14 +134,31 @@ async def test_ensure_rpc_permission_api_token_with_team_id_passes_team_id():
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("team_id") == "team-abc", (
-        "Single-team API tokens must pass team_id to has_permission; "
-        "got call_kwargs=%r" % call_kwargs
-    )
-    assert call_kwargs.get("check_any_team") is False, (
-        "When team_id is available, check_any_team should be False; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("team_id") == "team-abc", "Single-team API tokens must pass team_id to has_permission; " "got call_kwargs=%r" % call_kwargs
+    assert call_kwargs.get("check_any_team") is False, "When team_id is available, check_any_team should be False; " "got call_kwargs=%r" % call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_api_token_with_team_id_denied():
+    """API token with team_id where RBAC denies must raise JSONRPCError."""
+    user = {
+        "email": "user@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": ["team-abc"],
+        "team_id": "team-abc",
+    }
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=False)
+
+    with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        with pytest.raises(JSONRPCError) as exc_info:
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    assert exc_info.value.code == -32003
+    call_kwargs = mock_checker.has_permission.call_args.kwargs
+    assert call_kwargs.get("team_id") == "team-abc"
+    assert call_kwargs.get("check_any_team") is False
 
 
 @pytest.mark.asyncio
@@ -202,10 +213,7 @@ async def test_ensure_rpc_permission_admin_session_token_calls_has_permission():
 
     mock_checker.has_permission.assert_called_once()
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Admin session tokens are still session tokens — expected check_any_team=True; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team") is True, "Admin session tokens are still session tokens — expected check_any_team=True; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -223,9 +231,7 @@ async def test_ensure_rpc_permission_token_scope_cap_blocks_at_layer1():
 
     with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
         with pytest.raises(JSONRPCError) as exc_info:
-            await _ensure_rpc_permission(
-                user, db, "tools.execute", "tools/call", request=mock_request
-            )
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=mock_request)
 
     assert exc_info.value.code == -32003
     assert "Access denied" in exc_info.value.message

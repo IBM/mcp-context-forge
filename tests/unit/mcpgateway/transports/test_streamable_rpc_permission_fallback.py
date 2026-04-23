@@ -65,9 +65,7 @@ async def test_check_streamable_permission_session_token_passes_check_any_team_t
     assert result is True
     mock_ps.check_permission.assert_called_once()
     call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Expected check_any_team=True to be threaded through to PermissionService"
-    )
+    assert call_kwargs.get("check_any_team") is True, "Expected check_any_team=True to be threaded through to PermissionService"
 
 
 @pytest.mark.asyncio
@@ -195,9 +193,7 @@ async def test_servers_use_check_passes_check_any_team_for_session_token():
                     # Verify _check_streamable_permission was called with check_any_team=True
                     mock_perm.assert_called_once()
                     call_kwargs = mock_perm.call_args.kwargs
-                    assert call_kwargs.get("check_any_team") is True, (
-                        f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
-                    )
+                    assert call_kwargs.get("check_any_team") is True, f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
                     assert call_kwargs.get("permission") == "servers.use"
             finally:
                 user_context_var.reset(token)
@@ -212,7 +208,7 @@ async def test_call_tool_raises_permission_error_when_session_token_denied():
     if PermissionService denies the request, call_tool must raise PermissionError
     and not proceed to tool execution.
     """
-    # Standard
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool
 
     session_user_ctx = {
