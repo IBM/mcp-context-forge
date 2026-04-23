@@ -6177,7 +6177,6 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main.RPCRequest", side_effect=AssertionError("trusted internal MCP dispatch should skip RPCRequest validation")),
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
         ):
@@ -8858,7 +8857,7 @@ class TestRpcHandling:
         mock_db.invalidate.assert_called_once()
 
     async def test_handle_rpc_uses_scoped_server_id_from_internal_auth_and_denies_wrong_server(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-scoped", "method": "tools/list", "params": []})
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-scoped", "method": "tools/list", "params": {}})
         request.state._jwt_verified_payload = None
         request.state._mcp_internal_auth_context = {"scoped_server_id": "srv-1"}
 

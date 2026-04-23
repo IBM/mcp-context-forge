@@ -1378,6 +1378,8 @@ def _has_version_admin_access(user: Any) -> bool:
     """Return True when diagnostics access is permitted for the authenticated user.
 
     Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
+    When ``require_admin_auth`` is the upstream dependency it returns a plain email string
+    after having already verified admin status, so strings are accepted as authorized.
 
     Args:
         user: Authenticated user payload from the auth dependency.
@@ -1385,6 +1387,9 @@ def _has_version_admin_access(user: Any) -> bool:
     Returns:
         bool: ``True`` when unrestricted admin diagnostics access is allowed.
     """
+    if isinstance(user, str):
+        # require_admin_auth already verified admin status and returns the email string
+        return True
     if not isinstance(user, dict):
         return False
 

@@ -160,7 +160,7 @@ def test_version_requires_admin_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from mcpgateway import version as ver_mod
 
-    app.dependency_overrides[ver_mod.require_auth] = _viewer
+    app.dependency_overrides[ver_mod.require_admin_auth] = _viewer
     rsp = TestClient(app).get("/version")
     assert rsp.status_code == 403
 
