@@ -1676,7 +1676,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@mkdir -p reports
-	@echo "   Using image $${IMAGE_LOCAL}"
+	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
