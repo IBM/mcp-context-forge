@@ -183,10 +183,10 @@ class TokenBlocklistService:
             if self.db is not None:
                 result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
                 return result is not None
-            else:
-                with fresh_db_session() as db:
-                    result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
-                    return result is not None
+
+            with fresh_db_session() as db:
+                result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
+                return result is not None
 
         except Exception as e:
             logger.error(f"Failed to check token revocation status: {e}")
@@ -301,20 +301,20 @@ class TokenBlocklistService:
                     )
 
                 return deleted_count
-            else:
-                # Create own session
-                with fresh_db_session() as db:
-                    result = db.execute(delete(TokenRevocation).where(TokenRevocation.token_expiry < cutoff_time))
-                    deleted_count = result.rowcount
-                    db.commit()
 
-                    if deleted_count > 0:
-                        logger.info(
-                            f"Cleaned up {deleted_count} expired tokens from blocklist",
-                            extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
-                        )
+            # Create own session
+            with fresh_db_session() as db:
+                result = db.execute(delete(TokenRevocation).where(TokenRevocation.token_expiry < cutoff_time))
+                deleted_count = result.rowcount
+                db.commit()
 
-                    return deleted_count
+                if deleted_count > 0:
+                    logger.info(
+                        f"Cleaned up {deleted_count} expired tokens from blocklist",
+                        extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
+                    )
+
+                return deleted_count
 
         except Exception as e:
             logger.error(f"Failed to cleanup expired tokens: {e}")
@@ -363,18 +363,18 @@ class TokenBlocklistService:
                 stats = {"total_revoked": total or 0, "by_reason": dict(reason_counts)}
 
                 return stats
-            else:
-                # Create own session
-                with fresh_db_session() as db:
-                    # Count total revocations
-                    total = db.execute(select(func.count()).select_from(TokenRevocation)).scalar()  # pylint: disable=not-callable
 
-                    # Count by reason
-                    reason_counts = db.execute(select(TokenRevocation.reason, func.count(TokenRevocation.jti)).group_by(TokenRevocation.reason)).all()  # pylint: disable=not-callable
+            # Create own session
+            with fresh_db_session() as db:
+                # Count total revocations
+                total = db.execute(select(func.count()).select_from(TokenRevocation)).scalar()  # pylint: disable=not-callable
 
-                    stats = {"total_revoked": total or 0, "by_reason": dict(reason_counts)}
+                # Count by reason
+                reason_counts = db.execute(select(TokenRevocation.reason, func.count(TokenRevocation.jti)).group_by(TokenRevocation.reason)).all()  # pylint: disable=not-callable
 
-                    return stats
+                stats = {"total_revoked": total or 0, "by_reason": dict(reason_counts)}
+
+                return stats
 
         except Exception as e:
             logger.error(f"Failed to get revocation stats: {e}")

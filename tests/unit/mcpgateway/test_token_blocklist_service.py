@@ -118,6 +118,33 @@ class TestTokenRevocation:
 
         assert result is True
 
+    def test_revoke_token_duplicate_without_db_session(self, test_db):
+        """Test revoking an already revoked token without db session."""
+        # Create service without db to test fresh_db_session path
+        service = TokenBlocklistService(db=None)
+        jti = str(uuid.uuid4())
+
+        # Mock fresh_db_session to use test_db
+        with patch('mcpgateway.services.token_blocklist_service.fresh_db_session') as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Revoke once
+            service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            # Revoke again - should succeed (idempotent) and hit the duplicate check path
+            result = service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            assert result is True
+
     def test_revoke_token_with_last_activity(self, blocklist_service, test_db):
         """Test token revocation with last activity timestamp."""
         jti = str(uuid.uuid4())
@@ -182,6 +209,47 @@ class TestRevocationCheck:
 
         # Check revocation (should hit Redis cache)
         assert blocklist_service.is_token_revoked(jti) is True
+
+    @patch('mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client')
+    def test_revoke_token_redis_cache_error(self, mock_redis, blocklist_service, test_db):
+        """Test token revocation when Redis caching fails."""
+        jti = str(uuid.uuid4())
+
+        # Mock Redis client to raise error on setex
+        redis_mock = MagicMock()
+        redis_mock.setex.side_effect = Exception("Redis connection failed")
+        mock_redis.return_value = redis_mock
+
+        # Should still succeed even if Redis caching fails
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout",
+            token_expiry=utc_now() + timedelta(hours=1)
+        )
+
+        assert result is True
+
+        # Verify token is still in database
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+        assert revocation is not None
+
+    def test_is_token_revoked_without_db_session(self):
+        """Test checking revocation without db session."""
+        service = TokenBlocklistService(db=None)
+        jti = str(uuid.uuid4())
+
+        # Revoke token first
+        service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        # Check if revoked (should use fresh_db_session)
+        assert service.is_token_revoked(jti) is True
 
 
 class TestIdleTimeout:
@@ -350,6 +418,62 @@ class TestCleanup:
 
         assert deleted_count == 0
 
+    def test_cleanup_expired_tokens_without_db_session(self, test_db):
+        """Test cleanup of expired tokens without db session."""
+        service = TokenBlocklistService(db=None)
+
+        # Create expired token
+        expired_jti = str(uuid.uuid4())
+        expired_time = utc_now() - timedelta(hours=48)
+
+        revocation = TokenRevocation(
+            jti=expired_jti,
+            revoked_by="test@example.com",
+            reason="logout",
+            token_expiry=expired_time
+        )
+        test_db.add(revocation)
+        test_db.commit()
+
+        # Mock fresh_db_session to use test_db
+        with patch('mcpgateway.services.token_blocklist_service.fresh_db_session') as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Cleanup with 24-hour retention (should use fresh_db_session)
+            deleted_count = service.cleanup_expired_tokens(hours_retention=24)
+
+            assert deleted_count == 1
+
+        # Verify token is gone
+        expired = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == expired_jti)
+        ).scalar_one_or_none()
+        assert expired is None
+
+    def test_cleanup_expired_tokens_with_logging(self, blocklist_service, test_db):
+        """Test cleanup logs when tokens are deleted."""
+        # Create expired token
+        expired_jti = str(uuid.uuid4())
+        expired_time = utc_now() - timedelta(hours=48)
+
+        revocation = TokenRevocation(
+            jti=expired_jti,
+            revoked_by="test@example.com",
+            reason="logout",
+            token_expiry=expired_time
+        )
+        test_db.add(revocation)
+        test_db.commit()
+
+        # Cleanup should log the deletion
+        with patch('mcpgateway.services.token_blocklist_service.logger') as mock_logger:
+            deleted_count = blocklist_service.cleanup_expired_tokens(hours_retention=24)
+
+            assert deleted_count == 1
+            # Verify info log was called
+            mock_logger.info.assert_called()
+
 
 class TestStatistics:
     """Tests for revocation statistics."""
@@ -392,6 +516,35 @@ class TestStatistics:
 
         assert stats["total_revoked"] == 0
         assert stats["by_reason"] == {}
+
+    def test_get_revocation_stats_without_db_session(self, test_db):
+        """Test getting revocation statistics without db session."""
+        # Create revocations
+        reasons = ["logout", "idle_timeout"]
+
+        for reason in reasons:
+            jti = str(uuid.uuid4())
+            revocation = TokenRevocation(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason=reason
+            )
+            test_db.add(revocation)
+        test_db.commit()
+
+        # Mock fresh_db_session to use test_db
+        service = TokenBlocklistService(db=None)
+
+        with patch('mcpgateway.services.token_blocklist_service.fresh_db_session') as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Get stats without db session (should use fresh_db_session)
+            stats = service.get_revocation_stats()
+
+            assert stats["total_revoked"] >= 2
+            assert "logout" in stats["by_reason"]
+            assert "idle_timeout" in stats["by_reason"]
 
 
 class TestSingletonService:
@@ -553,3 +706,33 @@ class TestErrorHandling:
             result = blocklist_service.get_last_activity(jti)
 
             assert result is None
+
+    def test_cleanup_expired_tokens_error(self, blocklist_service):
+        """Test cleanup handles database errors gracefully."""
+        with patch.object(blocklist_service.db, 'execute') as mock_execute:
+            mock_execute.side_effect = Exception("Database error")
+
+            # Should handle error and return 0
+            result = blocklist_service.cleanup_expired_tokens()
+            assert result == 0
+
+    def test_revoke_user_tokens_placeholder(self, blocklist_service):
+        """Test revoke_user_tokens placeholder method."""
+        # This is a placeholder method that logs a warning
+        result = blocklist_service.revoke_user_tokens(
+            user_email="test@example.com",
+            revoked_by="admin@example.com",
+            reason="security"
+        )
+
+        # Should return 0 (not implemented yet)
+        assert result == 0
+
+    def test_get_revocation_stats_error(self, blocklist_service):
+        """Test get_revocation_stats handles database errors gracefully."""
+        with patch.object(blocklist_service.db, 'execute') as mock_execute:
+            mock_execute.side_effect = Exception("Database error")
+
+            # Should handle error and return empty stats
+            result = blocklist_service.get_revocation_stats()
+            assert result == {"total_revoked": 0, "by_reason": {}}
