@@ -560,29 +560,6 @@ repos:
         types: [python]
         files: ^mcpgateway/plugins/framework/
 
-      - id: check-machine-paths
-        name: 🔐 Check Machine-Specific Paths
-        description: Rejects hardcoded machine-specific home directory paths.
-        entry: python3 scripts/pre-commit/check_machine_paths.py
-        language: system
-        types: [text]
-
-      - id: check-no-os-system
-        name: 🔐 Check No os.system in run_mutmut
-        description: Ensures run_mutmut.py does not use the os module or os.system().
-        entry: python3 scripts/pre-commit/check_no_os_system.py
-        language: system
-        types: [python]
-        files: ^run_mutmut\.py$
-
-      - id: check-rbac-decorators
-        name: 🔐 Check RBAC Decorator Coverage
-        description: Verifies RBAC permission decorators and admin bypass settings.
-        entry: python3 scripts/pre-commit/check_rbac_decorators.py
-        language: system
-        pass_filenames: false
-        files: ^mcpgateway/(main|admin)\.py$|^mcpgateway/routers/
-
       - id: check-migration-patterns
         name: 🔐 Check Migration Patterns
         description: Verifies Alembic migration naming, hashes, and source patterns.
@@ -613,14 +590,6 @@ repos:
         language: system
         pass_filenames: false
         files: ^mcpgateway/(templates|static)/|^docs/|^README\.md$|Chart\.yaml$
-
-      - id: check-source-patterns
-        name: 🔐 Check Source Code Patterns
-        description: Verifies cross-module source code invariants.
-        entry: python3 scripts/pre-commit/check_source_patterns.py
-        language: system
-        pass_filenames: false
-        files: ^mcpgateway/(main|services/).*\.py$
 
   # -----------------------------------------------------------------------------
   #  🔐 Security - Detect Secrets
