@@ -4,10 +4,15 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "mcpgateway/**"
-      - "plugins/**"
-      - "pyproject.toml"
-      - ".github/workflows/linting-full.yml"
+      - ".github/workflows/**"
+      - "charts/**"
+      - "mcp-servers/**/*.go"
+      - "mcp-servers/**/go.mod"
+      - "mcp-servers/**/go.sum"
+      - "a2a-agents/**/*.go"
+      - "a2a-agents/**/go.mod"
+      - "a2a-agents/**/go.sum"
+      - "Makefile"
   workflow_dispatch:
 
 concurrency:
