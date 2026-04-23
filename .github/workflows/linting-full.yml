@@ -1,6 +1,13 @@
 name: linting-full
 
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - ".github/workflows/linting-full.yml"
   workflow_dispatch:
 
 concurrency:
