@@ -52,8 +52,7 @@ PORT_GATEWAY = 4444  # HTTPS container
 PORT_TIME_SERVER = 8002  # mcpgateway.translate
 DOCKER_CONTAINER = "mcpgateway"
 PROJECT_NAME = "mcpgateway"
-VENVS_DIR = os.getenv("VENVS_DIR", os.path.join(os.path.expanduser("~"), ".venv"))
-PROJECT_VENV_DIR = os.getenv("VENV_DIR", os.path.join(VENVS_DIR, PROJECT_NAME))
+PROJECT_VENV_DIR = os.getenv("VENV_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv"))
 PROJECT_VENV_PYTHON = os.path.join(PROJECT_VENV_DIR, "bin", "python")
 
 MAKE_VENV_CMD = ["make", "venv", "install", "install-dev"]

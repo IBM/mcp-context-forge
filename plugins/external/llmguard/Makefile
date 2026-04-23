@@ -10,8 +10,7 @@ PROJECT_NAME = llmguardplugin
 TARGET ?= llmguardplugin
 
 # Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+VENV_DIR ?= $(CURDIR)/.venv
 
 # =============================================================================
 # Linters
@@ -311,7 +310,7 @@ show-runtime:
 .PHONY: venv
 venv:
 	@rm -Rf "$(VENV_DIR)"
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@mkdir -p "$(VENV_DIR)"
 	@python3 -m venv "$(VENV_DIR)"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
