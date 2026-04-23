@@ -1245,7 +1245,7 @@ class EmailAuthService:
         # Check password history (prevents reuse of last N passwords and current password)
         try:
             # First-Party
-            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel,unused-import
 
             policy_service = PasswordPolicyService(self.db)
             history_count = getattr(settings, "password_history_count", 5)
@@ -1254,10 +1254,10 @@ class EmailAuthService:
             # Fallback to simple current password check
             if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
                 raise PasswordValidationError("New password must be different from current password")
+        except PasswordPolicyError as e:
+            # Wrap PasswordPolicyError in PasswordValidationError for consistency
+            raise PasswordValidationError(str(e)) from e
         except Exception as e:
-            # If it's a PasswordPolicyError, re-raise it and wrap in PasswordValidationError
-            if "PasswordPolicyError" in str(type(e).__name__):
-                raise PasswordValidationError(str(e)) from e
             # Otherwise log and continue with fallback
             logger.warning(f"Password history check failed: {e}")
             if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
