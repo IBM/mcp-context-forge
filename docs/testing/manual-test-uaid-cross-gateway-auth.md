@@ -77,7 +77,7 @@ BASIC_AUTH_PASSWORD=testpass
 
 # A2A and UAID Security
 MCPGATEWAY_A2A_ENABLED=true
-UAID_ALLOWED_DOMAINS=["localhost:4444", "127.0.0.1:4444", "localhost:4445", "127.0.0.1:4445"]
+UAID_ALLOWED_DOMAINS=["localhost:4444", "127.0.0.1:4444", "localhost:4445", "127.0.0.1:4445", "localhost:9100", "127.0.0.1:9100"]
 UAID_ALLOW_ALL_DOMAINS=false
 UAID_FORWARD_AUTH=true
 
@@ -118,7 +118,7 @@ BASIC_AUTH_PASSWORD=testpass
 
 # A2A and UAID Security
 MCPGATEWAY_A2A_ENABLED=true
-UAID_ALLOWED_DOMAINS=["localhost:4444", "127.0.0.1:4444", "localhost:4445", "127.0.0.1:4445"]
+UAID_ALLOWED_DOMAINS=["localhost:4444", "127.0.0.1:4444", "localhost:4445", "127.0.0.1:4445", "localhost:9100", "127.0.0.1:9100"]
 UAID_ALLOW_ALL_DOMAINS=false
 UAID_FORWARD_AUTH=true
 
@@ -133,6 +133,33 @@ LOG_LEVEL=INFO
 ---
 
 ## Test Scenarios
+
+### Cross-Gateway Routing Architecture
+
+**Important Changes in This PR:**
+
+1. **New `/a2a/invoke` Endpoint**: Accepts `agent_id` in request body instead of URL path to support UAIDs containing forward slashes
+2. **UAID nativeId Override**: New `uaid_native_id_override` field separates routing address from invocation address
+3. **Protocol Stripping**: UAID generation automatically strips `http://`/`https://` from nativeId for SSRF protection
+4. **Localhost HTTP**: Cross-gateway routing uses HTTP for localhost/127.0.0.1 endpoints (development), HTTPS for others
+
+**Test Architecture:**
+```
+Gateway A (port 4444)
+  ↓ routes to nativeId=127.0.0.1:4445
+Gateway B (port 4445)
+  ↓ invokes endpoint_url=localhost:9100
+Echo Agent (port 9100)
+```
+
+**UAID Format:**
+```
+uaid:aid:{hash};uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1:4445
+```
+- `nativeId`: Where Gateway A routes to (Gateway B)
+- `endpoint_url` (stored in agent record): Where Gateway B invokes (Echo Agent)
+
+---
 
 ### Test 1: Startup Validation (Fail-Closed Warning)
 
@@ -265,25 +292,33 @@ export AUTH_USER="Authorization: Bearer $TOKEN_USER"
 
 **Purpose:** Create an agent that will be invoked via cross-gateway routing
 
+**Prerequisites:**
+- Start echo agent: `cd a2a-agents/go/a2a-echo-agent && go run main.go -port 9100`
+- Echo agent will be running on port 9100
+
 **Steps:**
 
 ```bash
 # Start Gateway B in another terminal
 ENV_FILE=.env.test-b make dev
 
-# Register an A2A agent on Gateway B
-curl -X POST http://localhost:4445/a2a/agents \
+# Register an A2A agent on Gateway B with cross-gateway routing support
+# Uses uaid_native_id_override to separate routing address (Gateway B) from invocation address (echo agent)
+curl -X POST http://localhost:4445/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "test-agent-b",
-    "description": "Test agent on Gateway B",
-    "endpoint_url": "http://localhost:4445/a2a/test-agent-b",
-    "auth_type": "none",
-    "capabilities": ["search", "query"],
-    "enabled": true,
-    "enable_uaid": true,
-    "uaid_registry": "context-forge"
+    "agent": {
+      "name": "test-agent-echo",
+      "description": "Echo agent with cross-gateway routing",
+      "endpoint_url": "http://localhost:9100",
+      "uaid_native_id_override": "http://127.0.0.1:4445",
+      "capabilities": {"search": true, "query": true},
+      "enabled": true,
+      "generate_uaid": true,
+      "uaid_registry": "context-forge"
+    },
+    "visibility": "public"
   }' | jq
 ```
 
@@ -292,9 +327,10 @@ curl -X POST http://localhost:4445/a2a/agents \
 ```json
 {
   "id": "<uuid>",
-  "name": "test-agent-b",
-  "uaid": "uaid:aid:...",
-  "uaid_native_id": "localhost:4445",
+  "name": "test-agent-echo",
+  "uaid": "uaid:aid:...;nativeId=127.0.0.1:4445",
+  "uaidNativeId": "http://127.0.0.1:4445",
+  "endpointUrl": "http://localhost:9100",
   ...
 }
 ```
@@ -302,14 +338,17 @@ curl -X POST http://localhost:4445/a2a/agents \
 **Save UAID for later tests:**
 
 ```bash
-# Copy UAID from response and export
-export UAID_AGENT_B="<paste-uaid-here>"
+# Extract and export UAID
+export UAID_AGENT_B=$(curl -s -H "$AUTH_ADMIN" http://localhost:4445/a2a | jq -r '.[] | select(.name == "test-agent-echo") | .uaid')
+echo "UAID: $UAID_AGENT_B"
 ```
 
 **Verification Checklist:**
 
-- [ ] Agent registered successfully
-- [ ] UAID generated with correct nativeId
+- [ ] Echo agent running on port 9100
+- [ ] Agent registered successfully on Gateway B
+- [ ] UAID generated with `nativeId=127.0.0.1:4445` (Gateway B's address)
+- [ ] Agent `endpointUrl=http://localhost:9100` (echo agent's address)
 - [ ] UAID saved to environment variable
 
 ---
@@ -322,25 +361,50 @@ export UAID_AGENT_B="<paste-uaid-here>"
 
 ```bash
 # From Gateway A, invoke agent on Gateway B using UAID
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+# Note: Uses /a2a/invoke endpoint with agent_id in body (not path) to support UAIDs with forward slashes
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d "{
-    \"agent_name\": \"$UAID_AGENT_B\",
+    \"agent_id\": \"$UAID_AGENT_B\",
     \"parameters\": {
       \"query\": \"test cross-gateway auth\"
     }
   }" | jq
 ```
 
+**Expected Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "artifacts": [{
+      "artifactId": "task-...",
+      "description": "Echo response",
+      "name": "echo",
+      "parts": [{"text": "test cross-gateway auth"}]
+    }],
+    "status": {
+      "state": "TASK_STATE_COMPLETED",
+      ...
+    }
+  }
+}
+```
+
 **Expected Behavior:**
 
 1. Gateway A extracts bearer token from `Authorization` header
-2. Gateway A validates domain against allowlist: `localhost:4445` ✅
-3. Gateway A forwards request to Gateway B with `Authorization: Bearer <token>`
-4. Gateway B validates token (shared JWT secret)
-5. Gateway B enforces RBAC based on token claims
-6. Response returns through Gateway A
+2. Gateway A parses UAID and extracts `nativeId=127.0.0.1:4445`
+3. Gateway A validates domain against allowlist: `127.0.0.1:4445` ✅
+4. Gateway A calls `http://127.0.0.1:4445/a2a/invoke` with UAID in body and forwarded bearer token
+5. Gateway B validates token (shared JWT secret)
+6. Gateway B looks up agent by UAID locally
+7. Gateway B invokes `http://localhost:9100` (echo agent)
+8. Echo agent responds with A2A protocol response
+9. Response returns through Gateway B → Gateway A
 
 **Check Gateway A Logs:**
 
@@ -353,14 +417,15 @@ Cross-gateway routing forwards bearer tokens when available...
 
 ```
 INFO: Authenticated user: admin@example.com
-INFO: Agent invoked: test-agent-b
+INFO: Cross-gateway invocation from Gateway A
 ```
 
 **Verification Checklist:**
 
 - [ ] Request succeeds (200 OK)
+- [ ] Echo agent response received with echoed query text
 - [ ] Token forwarded (check Gateway B auth logs)
-- [ ] Audit headers present (`X-Contextforge-Source-Gateway`)
+- [ ] Audit headers present (`X-Contextforge-UAID-Hop`)
 - [ ] RBAC enforced on Gateway B
 
 ---
@@ -373,10 +438,10 @@ INFO: Agent invoked: test-agent-b
 
 ```bash
 # From Gateway A, invoke WITHOUT bearer token
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -d "{
-    \"agent_name\": \"$UAID_AGENT_B\",
+    \"agent_id\": \"$UAID_AGENT_B\",
     \"parameters\": {
       \"query\": \"unauthenticated test\"
     }
@@ -421,16 +486,18 @@ ERROR: Authentication required but no token provided
 
 ```bash
 # Register agent with disallowed domain on Gateway A
-curl -X POST http://localhost:4444/a2a/agents \
+curl -X POST http://localhost:4444/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "blocked-agent",
-    "description": "Agent with blocked domain",
-    "endpoint_url": "http://evil.example.com/agent",
-    "auth_type": "none",
-    "enable_uaid": true,
-    "uaid_registry": "context-forge"
+    "agent": {
+      "name": "blocked-agent",
+      "description": "Agent with blocked domain",
+      "endpoint_url": "http://evil.example.com/agent",
+      "generate_uaid": true,
+      "uaid_registry": "context-forge"
+    },
+    "visibility": "public"
   }'
 ```
 
@@ -465,16 +532,18 @@ echo "UAID_ALLOW_ALL_DOMAINS=true" >> .env.test-a
 ENV_FILE=.env.test-a make dev
 
 # Now try registering agent with arbitrary domain
-curl -X POST http://localhost:4444/a2a/agents \
+curl -X POST http://localhost:4444/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "bypass-test-agent",
-    "description": "Agent with arbitrary domain (bypass enabled)",
-    "endpoint_url": "http://test.example.com/agent",
-    "auth_type": "none",
-    "enable_uaid": true,
-    "uaid_registry": "context-forge"
+    "agent": {
+      "name": "bypass-test-agent",
+      "description": "Agent with arbitrary domain (bypass enabled)",
+      "endpoint_url": "http://test.example.com/agent",
+      "generate_uaid": true,
+      "uaid_registry": "context-forge"
+    },
+    "visibility": "public"
   }' | jq
 ```
 
@@ -521,40 +590,46 @@ WARNING: ⚠️  Configuration conflict: UAID_ALLOW_ALL_DOMAINS=true bypasses th
 ENV_FILE=.env.test-a make dev
 
 # Test 1: Exact match
-curl -X POST http://localhost:4444/a2a/agents \
+curl -X POST http://localhost:4444/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "exact-match",
-    "endpoint_url": "http://example.com/agent",
-    "auth_type": "none",
-    "enable_uaid": true
+    "agent": {
+      "name": "exact-match",
+      "endpoint_url": "http://example.com/agent",
+      "generate_uaid": true
+    },
+    "visibility": "public"
   }' | jq
 
 # Should succeed ✅
 
 # Test 2: Subdomain match
-curl -X POST http://localhost:4444/a2a/agents \
+curl -X POST http://localhost:4444/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "subdomain-match",
-    "endpoint_url": "http://api.example.com/agent",
-    "auth_type": "none",
-    "enable_uaid": true
+    "agent": {
+      "name": "subdomain-match",
+      "endpoint_url": "http://api.example.com/agent",
+      "generate_uaid": true
+    },
+    "visibility": "public"
   }' | jq
 
 # Should succeed ✅
 
 # Test 3: Suffix attack prevention
-curl -X POST http://localhost:4444/a2a/agents \
+curl -X POST http://localhost:4444/a2a \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d '{
-    "name": "evil-suffix",
-    "endpoint_url": "http://evilexample.com/agent",
-    "auth_type": "none",
-    "enable_uaid": true
+    "agent": {
+      "name": "evil-suffix",
+      "endpoint_url": "http://evilexample.com/agent",
+      "generate_uaid": true
+    },
+    "visibility": "public"
   }' | jq
 
 # Should FAIL ❌ (not a proper subdomain)
@@ -668,7 +743,7 @@ ENV_FILE=.env.test-b make dev  # Terminal 2
 # Restart Gateway B
 
 # From Gateway A, invoke agent on Gateway B
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d "{
@@ -711,7 +786,7 @@ TOKEN_EXPIRED=$(python -m mcpgateway.utils.create_jwt_token \
   --secret shared-test-secret-12345)
 
 # Try cross-gateway call with expired token
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_EXPIRED" \
   -d "{
@@ -751,7 +826,7 @@ curl -X POST http://localhost:4444/a2a/agents/invoke \
 ENV_FILE=.env.test-b make dev
 
 # Try cross-gateway call
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d "{
@@ -792,7 +867,7 @@ curl -X POST http://localhost:4444/a2a/agents/invoke \
 ENV_FILE=.env.test-a make dev
 
 # Try cross-gateway call
-curl -X POST http://localhost:4444/a2a/agents/invoke \
+curl -X POST "http://localhost:4444/a2a/invoke" \
   -H "Content-Type: application/json" \
   -H "$AUTH_ADMIN" \
   -d "{
