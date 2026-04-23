@@ -36,14 +36,17 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50">
-      <div className="w-full max-w-sm bg-white border border-neutral-200 rounded-lg p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-neutral-900 mb-6">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-neutral-900">
+      <div className="w-full max-w-sm bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg p-8 shadow-sm">
+        <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100 mb-6">
           {intl.formatMessage({ id: "auth.login.title" })}
         </h1>
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-neutral-700 mb-1">
+            <label
+              htmlFor="email"
+              className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+            >
               {intl.formatMessage({ id: "auth.login.email" })}
             </label>
             <input
@@ -53,11 +56,14 @@ export function Login() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full border border-neutral-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+              className="w-full border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
           </div>
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-neutral-700 mb-1">
+            <label
+              htmlFor="password"
+              className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+            >
               {intl.formatMessage({ id: "auth.login.password" })}
             </label>
             <input
@@ -67,7 +73,7 @@ export function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full border border-neutral-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+              className="w-full border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
           </div>
           {error && (
@@ -78,7 +84,7 @@ export function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-neutral-900 text-white rounded px-3 py-2 text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition-colors"
+            className="w-full bg-neutral-900 dark:bg-neutral-700 text-white rounded px-3 py-2 text-sm font-medium hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:opacity-50 transition-colors"
           >
             {loading
               ? intl.formatMessage({ id: "auth.login.submitting" })
@@ -88,7 +94,7 @@ export function Login() {
         <div className="mt-4 text-center">
           <button
             onClick={() => navigate("/app/forgot-password")}
-            className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors"
+            className="text-sm text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
           >
             {intl.formatMessage({ id: "auth.login.forgotPassword" })}
           </button>
