@@ -6177,7 +6177,6 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main.RPCRequest", side_effect=AssertionError("trusted internal MCP dispatch should skip RPCRequest validation")),
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
         ):
@@ -8858,7 +8857,7 @@ class TestRpcHandling:
         mock_db.invalidate.assert_called_once()
 
     async def test_handle_rpc_uses_scoped_server_id_from_internal_auth_and_denies_wrong_server(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-scoped", "method": "tools/list", "params": []})
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-scoped", "method": "tools/list", "params": {}})
         request.state._jwt_verified_payload = None
         request.state._mcp_internal_auth_context = {"scoped_server_id": "srv-1"}
 
@@ -9748,7 +9747,42 @@ class TestRpcHandling:
         payload_missing_method = {"jsonrpc": "2.0", "id": "err-1", "params": {}}
         request_missing_method = self._make_request(payload_missing_method)
         result = await handle_rpc(request_missing_method, db=MagicMock(), user={"email": "user@example.com"})
-        assert result["error"]["message"] == "Internal error"
+        assert result["error"]["code"] == -32600
+        assert result["error"]["message"] == "Invalid Request"
+
+    async def test_handle_rpc_session_owner_check_not_found(self, monkeypatch):
+        """RPC should return -32002 when stateful session is not found."""
+        monkeypatch.setattr(settings, "use_stateful_sessions", True)
+
+        payload = {"jsonrpc": "2.0", "id": "s-1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {"mcp-session-id": "sess-gone"}
+
+        async def _deny(req, user, sid):
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        with patch("mcpgateway.main._assert_session_owner_or_admin", new=_deny):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["code"] == -32002
+        assert "Session not found" in result["error"]["message"]
+
+    async def test_handle_rpc_session_owner_check_forbidden(self, monkeypatch):
+        """RPC should return -32003 when session access is denied."""
+        monkeypatch.setattr(settings, "use_stateful_sessions", True)
+
+        payload = {"jsonrpc": "2.0", "id": "s-2", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {"mcp-session-id": "sess-owned"}
+
+        async def _deny(req, user, sid):
+            raise HTTPException(status_code=403, detail="Session access denied")
+
+        with patch("mcpgateway.main._assert_session_owner_or_admin", new=_deny):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "attacker@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert "Session access denied" in result["error"]["message"]
 
     async def test_handle_rpc_tools_call_cancel_callback_cancels_task(self, monkeypatch):
         """Cover inner cancel_tool_task() callback cancelling a live asyncio task."""

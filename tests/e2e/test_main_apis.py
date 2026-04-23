@@ -455,8 +455,7 @@ class TestProtocolAPIs:
 
         response = await client.post("/protocol/ping", json=request_body, headers=TEST_AUTH_HEADER)
 
-        # The endpoint returns 500 for invalid method
-        assert response.status_code == 500
+        assert response.status_code == 400
         result = response.json()
         assert "error" in result
 

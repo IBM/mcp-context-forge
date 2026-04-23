@@ -62,7 +62,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -71,6 +71,7 @@ from sqlalchemy import text
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -1373,6 +1374,36 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 </body></html>"""
 
 
+def _has_version_admin_access(user: Any) -> bool:
+    """Return True when diagnostics access is permitted for the authenticated user.
+
+    Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
+    When ``require_admin_auth`` is the upstream dependency it returns a plain email string
+    after having already verified admin status, so strings are accepted as authorized.
+
+    Args:
+        user: Authenticated user payload from the auth dependency.
+
+    Returns:
+        bool: ``True`` when unrestricted admin diagnostics access is allowed.
+    """
+    if isinstance(user, str):
+        # require_admin_auth already verified admin status and returns the email string
+        return True
+    if not isinstance(user, dict):
+        return False
+
+    is_admin = bool(user.get("is_admin", False))
+    if not is_admin:
+        nested_user = user.get("user", {})
+        if isinstance(nested_user, dict):
+            is_admin = bool(nested_user.get("is_admin", False))
+    if not is_admin:
+        return False
+
+    return normalize_token_teams(user) is None
+
+
 # Endpoint
 @router.get("/version", summary="Diagnostics (admin only)")
 async def version_endpoint(
@@ -1400,6 +1431,9 @@ async def version_endpoint(
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
 
+    Raises:
+        HTTPException: If the caller does not have required admin diagnostics access.
+
     Examples:
         >>> import asyncio
         >>> from unittest.mock import Mock, AsyncMock, patch
@@ -1410,12 +1444,14 @@ async def version_endpoint(
         >>> mock_request = Mock(spec=Request)
         >>> mock_request.headers = {"accept": "application/json"}
         >>>
+        >>> admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        >>>
         >>> # Test JSON response (default)
         >>> async def test_json():
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
         ...         with patch('mcpgateway.version._build_payload') as mock_build:
         ...             mock_build.return_value = {"test": "data"}
-        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user="testuser")
+        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user=admin_user)
         ...             return response
         >>>
         >>> response = asyncio.run(test_json())
@@ -1429,7 +1465,7 @@ async def version_endpoint(
         ...             with patch('mcpgateway.version._render_html') as mock_render:
         ...                 mock_build.return_value = {"test": "data"}
         ...                 mock_render.return_value = "<html>test</html>"
-        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user="testuser")
+        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user=admin_user)
         ...                 return response
         >>>
         >>> response = asyncio.run(test_html_fmt())
@@ -1457,7 +1493,7 @@ async def version_endpoint(
         ...                 with patch('mcpgateway.version.get_redis_client', mock_get_redis_client):
         ...                     with patch('mcpgateway.version._build_payload') as mock_build:
         ...                         mock_build.return_value = {"redis": {"version": "7.0.5"}}
-        ...                         response = await version_endpoint(mock_request, _user="testuser")
+        ...                         response = await version_endpoint(mock_request, _user=admin_user)
         ...                         # Verify Redis info was retrieved
         ...                         mock_redis.info.assert_called_once()
         ...                         # Verify payload was built with Redis info
@@ -1469,6 +1505,9 @@ async def version_endpoint(
         >>> isinstance(response, JSONResponse)
         True
     """
+    if not _has_version_admin_access(_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+
     # Redis health check - use shared client from factory
     redis_ok = False
     redis_version: Optional[str] = None
