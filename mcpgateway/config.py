@@ -340,7 +340,7 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
     )
-    token_expiry: int = 10080  # minutes
+    token_expiry: int = 15  # minutes (X-Force Red security audit recommends 5-20 min for session tokens)
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
@@ -1165,9 +1165,17 @@ class Settings(BaseSettings):
         if self.cors_enabled and "*" in self.allowed_origins:
             warnings.append("🌐 CORS allows all origins (*) - this is a security risk")
 
-        # Token warnings
-        if self.token_expiry > 10080:  # More than 7 days
-            warnings.append("⏱️  JWT token expiry is very long - consider shorter duration")
+        # Token warnings (X-Force Red security audit: Session token security)
+        if self.token_expiry > 1440:  # More than 24 hours
+            warnings.append(
+                f"🔐 [CRITICAL] Session tokens valid for >{self.token_expiry/1440:.1f} days. " f"This is a critical security risk per X-Force Red audit. Use API tokens for long-lived access instead."
+            )
+        elif self.token_expiry > 20:  # More than 20 minutes (X-Force Red max)
+            warnings.append(
+                f"🔐 [SECURITY] TOKEN_EXPIRY is {self.token_expiry} minutes. "
+                f"X-Force Red security audit recommends maximum 20 minutes for session tokens. "
+                f"For automation, use API tokens (POST /tokens) instead."
+            )
 
         # Database warnings
         if self.database_url.startswith("sqlite") and not self.dev_mode:

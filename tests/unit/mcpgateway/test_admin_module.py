@@ -689,7 +689,25 @@ async def test_admin_logout_without_auth_provider_falls_back_to_local_redirect(m
     request.cookies = {"jwt_token": "jwt-token"}
     request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
 
-    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {}}))
+    # Mock verify_jwt_token_cached at the source where it's imported from
+    # Include required fields: sub, jti, token_use, but no auth_provider (test scenario)
+    mock_verify = AsyncMock(return_value={
+        "user": {},  # No auth_provider in user object
+        "sub": "test@example.com",
+        "jti": "test-jti-123",
+        "token_use": "session"
+        # No auth_provider at top level either
+    })
+    monkeypatch.setattr("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", mock_verify)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", mock_verify)
+
+    # Mock database operations for token revocation
+    mock_db = MagicMock()
+    mock_db.__enter__ = MagicMock(return_value=mock_db)
+    mock_db.__exit__ = MagicMock(return_value=False)
+    mock_db.query.return_value.filter.return_value.first.return_value = None  # No existing revocation
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: mock_db)
+
     monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
     monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
     monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")

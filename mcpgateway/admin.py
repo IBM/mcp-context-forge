@@ -4630,6 +4630,60 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
+    # X-Force Red Security Fix: Revoke session token server-side before clearing cookies
+    # This prevents token replay attacks after logout (pen test finding)
+    try:
+        # Extract JWT from cookie
+        token = request.cookies.get("jwt_token")
+
+        if token:
+            # Import TokenRevocation here to avoid circular dependency
+            # First-Party
+            from mcpgateway.db import fresh_db_session, TokenRevocation
+
+            try:
+                # Decode token to extract JTI (verify_jwt_token_cached imported at module level)
+                payload = await verify_jwt_token_cached(token, request)
+                jti = payload.get("jti")
+                user_email = payload.get("sub")
+                token_use = payload.get("token_use")
+
+                # Only revoke session tokens (not API tokens)
+                if jti and user_email and token_use == "session":  # nosec B105
+                    # Check if already revoked
+                    with fresh_db_session() as db:
+                        existing = db.query(TokenRevocation).filter(TokenRevocation.jti == jti).first()
+
+                        if not existing:
+                            # Add to revocation blocklist
+                            revocation = TokenRevocation(jti=jti, revoked_by=user_email, reason="Admin UI logout")
+                            db.add(revocation)
+                            db.commit()
+
+                            # Invalidate cache
+                            try:
+                                # First-Party
+                                from mcpgateway.cache.auth_cache import auth_cache
+
+                                await auth_cache.invalidate_revocation(jti)
+                            except Exception as cache_error:
+                                LOGGER.debug(f"Cache invalidation failed (non-critical): {cache_error}")
+
+                            LOGGER.info(
+                                f"Admin UI logout: Revoked session token for {user_email} (X-Force Red fix)",
+                                extra={"security_event": "admin_logout", "user_email": user_email, "jti": jti, "xforce_red_fix": True},
+                            )
+                        else:
+                            LOGGER.debug(f"Token {jti} already revoked during admin logout")
+
+            except Exception as decode_error:
+                # Best effort - continue with logout even if token invalid
+                LOGGER.warning(f"Could not decode token during logout (continuing): {decode_error}")
+
+    except Exception as revocation_error:
+        # Best effort - don't block logout if revocation fails
+        LOGGER.warning(f"Token revocation failed during admin logout (continuing): {revocation_error}")
+
     # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
         # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)

@@ -666,7 +666,8 @@ def test_get_security_warnings_long_token():
     """Very long token expiry should generate a warning."""
     s = Settings(token_expiry=20160, _env_file=None)
     warnings = s.get_security_warnings()
-    assert any("token expiry" in w for w in warnings)
+    # Check for token expiry warning (case-insensitive)
+    assert any("token" in w.lower() and ("expiry" in w.lower() or "session tokens" in w.lower()) for w in warnings)
 
 
 def test_get_security_warnings_high_rate_limit():

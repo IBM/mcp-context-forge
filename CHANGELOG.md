@@ -2,6 +2,142 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+#### **🔐 Session Token Security Fixes (X-Force Red Audit)** ([#4324](https://github.com/IBM/mcp-context-forge/issues/4324), ICACF-22)
+
+**SECURITY**: X-Force Red penetration testing identified critical session token vulnerabilities. This release addresses both findings with breaking changes to token lifetime.
+
+**Findings:**
+1. ❌ Session tokens had excessive lifetime (~30 days vs recommended 5-20 minutes)
+2. ❌ Tokens remained valid after logout, enabling replay attacks
+
+**Fixes:**
+1. ✅ **Session token lifetime reduced**: 10,080 minutes (7 days) → **15 minutes** (configurable)
+2. ✅ **Server-side token revocation**: New `POST /auth/logout` endpoint + admin UI logout now revokes tokens
+3. ✅ **Revocation blocklist**: Tokens immediately rejected after logout (cached in Redis)
+
+**Action Required:**
+
+**For Interactive Users (Web UI):**
+- ✅ No action needed
+- You'll be prompted to re-authenticate every 15 minutes (standard for secure applications)
+- This is normal security practice (banking, enterprise SaaS)
+
+**For API Automation:**
+- ⚠️ **Scripts using session tokens will break after 15 minutes**
+- **Migration**: Use API tokens instead of session tokens for automation
+
+```bash
+# ❌ OLD WAY (breaks after 15 minutes):
+SESSION_TOKEN=$(curl -X POST /auth/login -d '{"email":"...","password":"..."}' | jq -r .access_token)  # pragma: allowlist secret
+curl -H "Authorization: Bearer $SESSION_TOKEN" /tools  # Fails after 15 min
+
+# ✅ NEW WAY (long-lived API token):
+# 1. Get session token (short-lived)
+SESSION_TOKEN=$(curl -X POST /auth/login -d '{"email":"...","password":"..."}' | jq -r .access_token)
+
+# 2. Create long-lived API token
+API_TOKEN=$(curl -X POST /tokens \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -d '{"name":"ci-token","expires_in_days":90}' | jq -r .token)
+
+# 3. Use API_TOKEN for automation (valid for 90 days)
+curl -H "Authorization: Bearer $API_TOKEN" /tools
+```
+
+**Configuration:**
+
+```bash
+# .env - Session token expiry (X-Force Red recommends 5-20 minutes)
+TOKEN_EXPIRY=15  # minutes (default changed from 10080)
+
+# WARNING: Values >20 minutes trigger security warnings
+# Values >24 hours trigger CRITICAL warnings
+```
+
+**Temporary Workaround (NOT RECOMMENDED for production):**
+
+```bash
+# Only for testing/migration - increases security risk
+TOKEN_EXPIRY=1440  # 24 hours - will trigger security warning
+```
+
+**Why This Change?**
+
+X-Force Red Finding: *"Token expiry was 2,592,000 seconds (~30 days). It was noted that when the user was logged out, the token was still useable."*
+
+- Stolen/compromised session tokens were valid for 30 days
+- Logout did not invalidate tokens (replay attack vulnerability)
+- Industry standard: 5-20 minutes for session tokens
+
+**Token Type Distinction:**
+
+| Type | Created By | Lifetime | Purpose | Revocation |
+|------|-----------|----------|---------|------------|
+| **Session Token** | `POST /auth/login` | 15 min | Interactive UI | `POST /auth/logout` |
+| **API Token** | `POST /tokens` | Days/months | Automation | `DELETE /tokens/{id}` |
+
+**Security Benefits:**
+- Stolen session tokens have 15-minute window (vs 30 days)
+- Logout immediately invalidates tokens (prevents replay attacks)
+- API tokens available for legitimate long-lived access
+
+**Migration Resources:**
+- Token types: Session tokens vs API tokens (see updated auth docs)
+- API token creation: `POST /tokens` endpoint
+- Security advisory: X-Force Red audit findings
+
+**Testing:**
+
+```bash
+# Verify token lifetime
+curl -X POST /auth/login -d '{"email":"test@example.com","password":"..."}' | jq '.expires_in'
+# Should return 900 (15 minutes)
+
+# Verify logout revocation
+TOKEN="..."
+curl -X POST /auth/logout -H "Authorization: Bearer $TOKEN"
+curl -H "Authorization: Bearer $TOKEN" /gateways
+# Should return 401 Unauthorized (not 200 OK)
+```
+
+### Security
+
+- **[SECURITY]** Fixed session token replay vulnerability after logout (X-Force Red finding) - tokens now revoked server-side via `TokenRevocation` blocklist
+- **[SECURITY]** Reduced session token lifetime from 7 days (10,080 min) to 15 minutes per X-Force Red maximum recommendation (5-20 min)
+- **[SECURITY]** Added validation warnings for excessive `TOKEN_EXPIRY` values (>20 min triggers warning, >24 hours triggers critical alert)
+- **[SECURITY]** Added `POST /auth/logout` endpoint for programmatic token revocation with immediate Redis cache invalidation
+- **[SECURITY]** Updated admin UI logout to revoke session tokens server-side before clearing cookies (prevents client-side-only logout)
+
+### Added
+
+- New endpoint: `POST /auth/logout` - Revoke session token with server-side blocklist (X-Force Red fix)
+- Security tests: `tests/unit/mcpgateway/test_auth.py` - X-Force Red vulnerability regression tests
+- Configuration validation: Startup warnings for excessive session token lifetime
+
+### Changed
+
+- **[BREAKING]** `TOKEN_EXPIRY` default: 10,080 minutes (7 days) → 15 minutes (X-Force Red security fix)
+- `.env.example`: Updated `TOKEN_EXPIRY` documentation with session vs API token distinction
+- Admin UI logout: Now revokes tokens server-side (not just cookie clearing)
+- Auth flow: Existing revocation checks now enforced for session token logout (already present in codebase)
+
+### Documentation
+
+- Updated `.env.example` with X-Force Red security context and migration guidance
+- Added inline documentation distinguishing session tokens from API tokens
+- Security event logging: Logout operations tagged with `xforce_red_fix: true` for audit queries
+
+**References:**
+- X-Force Red Report: Internal security audit
+- JIRA: ICACF-22
+- GitHub Issue: [#4324](https://github.com/IBM/mcp-context-forge/issues/4324)
+
+---
+
 ## [1.0.0-RC3] - 2026-04-14 - Auth Hardening, Plugin Multi-Tenancy, Rust Runtime & Multi-Arch
 
 ### Overview
