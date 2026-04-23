@@ -20,7 +20,7 @@ import logging
 import re
 import secrets
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
 import httpx
@@ -440,8 +440,8 @@ class OAuthManager:
 
         if use_basic_auth:
             # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # Encode client_id:client_secret as base64
-            credentials_str = f"{client_id}:{client_secret}"
+            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
+            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
             encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
             headers["Authorization"] = f"Basic {encoded_credentials}"
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
@@ -1440,11 +1440,16 @@ class OAuthManager:
 
         if use_basic_auth and client_secret:
             # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # Encode client_id:client_secret as base64
-            credentials_str = f"{client_id}:{client_secret}"
+            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
+            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
             encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
             headers["Authorization"] = f"Basic {encoded_credentials}"
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        elif use_basic_auth and not client_secret:
+            # Public PKCE clients can't use Basic Auth (no secret to encode)
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
+            token_data["client_id"] = client_id
+            logger.debug("Using POST body for token endpoint authentication")
         else:
             # Default: client credentials in POST body (client_secret_post)
             token_data["client_id"] = client_id
@@ -1548,11 +1553,16 @@ class OAuthManager:
 
         if use_basic_auth and client_secret:
             # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # Encode client_id:client_secret as base64
-            credentials_str = f"{client_id}:{client_secret}"
+            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
+            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
             encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
             headers["Authorization"] = f"Basic {encoded_credentials}"
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        elif use_basic_auth and not client_secret:
+            # Misconfiguration: Basic Auth requested but no secret available
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
+            token_data["client_id"] = client_id
+            logger.debug("Using POST body for token endpoint authentication")
         else:
             # Default: client credentials in POST body (client_secret_post)
             token_data["client_id"] = client_id
