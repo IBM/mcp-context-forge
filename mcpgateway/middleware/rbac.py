@@ -682,7 +682,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
             # First, check if any plugins want to handle permission checking
             # First-Party
-            from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins.framework import get_plugin_manager, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
             plugin_manager = await get_plugin_manager()
             if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):

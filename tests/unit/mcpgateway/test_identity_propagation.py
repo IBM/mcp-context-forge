@@ -150,7 +150,7 @@ class TestBuildIdentityHeaders:
         mock_settings.identity_propagation_mode = "both"
         mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
         mock_settings.identity_sign_claims = True
-        mock_settings.identity_claims_secret = "test-secret"
+        mock_settings.identity_claims_secret = "test-secret"  # pragma: allowlist secret
         mock_settings.identity_sensitive_attributes = []
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
         headers = build_identity_headers(uc)
@@ -460,7 +460,7 @@ class TestSignClaims:
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = "my-secret"
+        mock_settings.identity_claims_secret = "my-secret" # pragma: allowlist secret
         sig = _sign_claims("test-payload")
         assert len(sig) == 64  # SHA-256 hex
 
@@ -1113,7 +1113,7 @@ class TestOAuthTokenExchange:
                 token_url="https://auth.example.com/token",
                 subject_token="token",
                 client_id="client",
-                client_secret="raw-secret",
+                client_secret="raw-secret",  # pragma: allowlist secret
             )
             assert result["access_token"] == "tok"
 
@@ -1214,12 +1214,12 @@ class TestTokenExchangeEncryptedSecret:
             patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings,
             patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_encryption),
         ):
-            mock_settings.return_value.auth_encryption_secret = "test-salt"
+            mock_settings.return_value.auth_encryption_secret = "test-salt"  # pragma: allowlist secret
             result = await mgr.token_exchange(
                 token_url="https://auth.example.com/token",
                 subject_token="subj-tok",
                 client_id="client-1",
-                client_secret="encrypted:abc123",
+                client_secret="encrypted:abc123",  # pragma: allowlist secret
             )
 
         assert result["access_token"] == "tok-123"
@@ -1559,7 +1559,7 @@ class TestOAuthManagerAdditionalTokenExchangeCoverage:
                 token_url="https://auth.example.com/token",
                 subject_token="subject-token",
                 client_id="client-id",
-                client_secret="encrypted-secret",
+                client_secret="encrypted-secret",  # pragma: allowlist secret
             )
 
         post_data = mock_client.post.call_args.kwargs["data"]
