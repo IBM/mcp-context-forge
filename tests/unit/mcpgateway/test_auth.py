@@ -6179,7 +6179,7 @@ class TestLogoutEndpoint:
 
         with patch("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", new_callable=AsyncMock, return_value=mock_payload):
             mock_credentials = MagicMock()
-            mock_credentials.credentials = "session_token"
+            mock_credentials.credentials = "session_token"  # pragma: allowlist secret
             mock_request = MagicMock()
 
             import asyncio

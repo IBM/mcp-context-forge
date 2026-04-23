@@ -37,7 +37,7 @@ curl -H "Authorization: Bearer $SESSION_TOKEN" /tools  # Fails after 15 min
 
 # ✅ NEW WAY (long-lived API token):
 # 1. Get session token (short-lived)
-SESSION_TOKEN=$(curl -X POST /auth/login -d '{"email":"...","password":"..."}' | jq -r .access_token)
+SESSION_TOKEN=$(curl -X POST /auth/login -d '{"email":"...","password":"..."}' | jq -r .access_token)  # pragma: allowlist secret
 
 # 2. Create long-lived API token
 API_TOKEN=$(curl -X POST /tokens \
@@ -94,7 +94,7 @@ X-Force Red Finding: *"Token expiry was 2,592,000 seconds (~30 days). It was not
 
 ```bash
 # Verify token lifetime
-curl -X POST /auth/login -d '{"email":"test@example.com","password":"..."}' | jq '.expires_in'
+curl -X POST /auth/login -d '{"email":"test@example.com","password":"..."}' | jq '.expires_in'  # pragma: allowlist secret
 # Should return 900 (15 minutes)
 
 # Verify logout revocation
