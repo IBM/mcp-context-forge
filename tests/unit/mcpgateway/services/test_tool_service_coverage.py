@@ -8541,7 +8541,7 @@ class TestInvokeToolMcpSse:
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_authorization_code_missing_token_raises(self, tool_service):
-        """When no stored token is found for authorization_code flow, a ToolInvocationError is raised."""
+        """When no stored token is found for authorization_code flow, plugins can inject auth; upstream returns 401 if no auth provided."""
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
         db = MagicMock()
@@ -8555,6 +8555,8 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.sse_client") as mock_sse_client,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8562,8 +8564,11 @@ class TestInvokeToolMcpSse:
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
             mock_mbuf.return_value = MagicMock()
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
+            # Mock SSE client to simulate upstream returning 401 (no auth provided)
+            mock_sse_client.return_value.__aenter__ = AsyncMock(side_effect=Exception("401 Unauthorized"))
 
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+            # Should not raise ToolInvocationError immediately - will try to connect and upstream will reject
+            with pytest.raises(Exception, match="401 Unauthorized"):
                 await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
 
     @pytest.mark.asyncio
