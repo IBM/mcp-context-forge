@@ -58,21 +58,26 @@ jobs:
         target: [mcpgateway, plugins]
         tool:
           - id: ruff
+            runner: ubuntu-slim
             cmd: "uv tool run ruff==$RUFF_VERSION check $TARGET"
           - id: vulture
+            runner: ubuntu-slim
             cmd: 'uv tool run vulture==$VULTURE_VERSION $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
           - id: pylint
+            runner: ubuntu-latest
             cmd: >-
               uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION
               pylint==$PYLINT_VERSION $TARGET
               --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10 --jobs=0
           - id: interrogate
+            runner: ubuntu-slim
             cmd: "uv tool run interrogate==$INTERROGATE_VERSION -vv $TARGET --fail-under 100"
           - id: radon
+            runner: ubuntu-slim
             cmd: "uv tool run radon==$RADON_VERSION cc $TARGET --min C --show-complexity && uv tool run radon==$RADON_VERSION mi $TARGET --min B"
 
     name: "${{ matrix.tool.id }} (${{ matrix.target }})"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.tool.runner }}
     timeout-minutes: 20
 
     steps:
@@ -126,7 +131,7 @@ jobs:
                 xargs -0 -I{} uv tool run tomlcheck==$TOMLCHECK_VERSION "{}"
 
     name: ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
 
     steps:
