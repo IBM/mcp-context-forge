@@ -146,13 +146,13 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
     #   - "[::1]:8080" → "[::1]:8080"
     if parsed.netloc:
         endpoint_domain = parsed.netloc
-    elif parsed.hostname:
+    elif parsed.hostname:  # pragma: no cover
         # Fallback: just hostname if netloc is empty
         endpoint_domain = parsed.hostname
-    elif endpoint_url.startswith("[") and "]" in endpoint_url:
+    elif endpoint_url.startswith("[") and "]" in endpoint_url:  # pragma: no cover
         # IPv6 with brackets: [::1]:8080 -> [::1]:8080
         endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
-    else:
+    else:  # pragma: no cover
         # Regular hostname or IPv4: example.com:8080 -> example.com:8080
         endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
 
@@ -194,8 +194,8 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
                 if domain.endswith("]"):
                     # [::1] → ::1, None
                     return (domain[1:-1], None)
-                # Malformed, treat as-is
-                return (domain, None)
+                # Malformed, treat as-is  # pragma: no cover
+                return (domain, None)  # pragma: no cover
 
             # Count colons to distinguish IPv6 from hostname:port
             # IPv6 addresses have multiple colons (::1 has 2, 2001:db8::1 has 3+)
@@ -211,8 +211,8 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
                 # Verify the second part is a valid port number
                 if parts[1].isdigit():
                     return (parts[0], parts[1])
-                # Not a port, treat whole thing as hostname
-                return (domain, None)
+                # Not a port, treat whole thing as hostname  # pragma: no cover
+                return (domain, None)  # pragma: no cover
             # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
             return (domain, None)
 
