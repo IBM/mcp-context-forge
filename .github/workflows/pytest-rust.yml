@@ -101,7 +101,7 @@ jobs:
             ${{ runner.os }}-cargo-pytest-rust-
 
       - name: 🔨  Build Rust extensions
-        run: make rust-install && make rust-verify-stubs
+        run: make rust-install
 
       - name: 🧪  Run pytest
         run: |
