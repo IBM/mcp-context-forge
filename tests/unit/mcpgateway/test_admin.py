@@ -198,7 +198,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_latency_heatmap,
     get_latency_percentiles,
     get_maintenance_partial,
-    get_mcp_session_pool_metrics,
     get_observability_metrics_partial,
     get_observability_partial,
     get_observability_query,
@@ -250,7 +249,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
@@ -3337,7 +3335,6 @@ class TestAdminGatewayRoutes:
             call_count += 1
             if call_count == 1:
                 raise Exception("Gateway is being modified by another process")
-            return None
 
         mock_toggle_status.side_effect = side_effect
 
@@ -5528,7 +5525,7 @@ class TestA2AAgentManagement:
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
-        assert "Hello from ContextForge Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
+        assert params["query"] == "Hello from ContextForge Admin UI test!"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -13149,29 +13146,6 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
 
 
 @pytest.mark.asyncio
-async def test_get_mcp_session_pool_metrics_paths(monkeypatch, mock_db, allow_permission):
-    request = MagicMock(spec=Request)
-    request.client = SimpleNamespace(host="10.0.0.1")
-
-    monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is False
-
-    monkeypatch.setattr(settings, "mcp_session_pool_enabled", True)
-    pool = MagicMock()
-    pool.get_metrics.return_value = {"hits": 1, "misses": 0}
-    monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: pool)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is True
-    assert result["hits"] == 1
-
-    monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
-    assert result["enabled"] is True
-    assert result["message"] == "Pool not yet initialized"
-
-
-@pytest.mark.asyncio
 async def test_read_request_json_paths():
     request = MagicMock(spec=Request)
     request.body = AsyncMock(return_value=b'{"a": 1}')
@@ -13205,7 +13179,7 @@ async def test_get_system_stats_htmx_and_json(monkeypatch, mock_db, allow_permis
         async def get_comprehensive_stats_cached(self, _db):
             return {"users": 1}
 
-    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", lambda: StubStatsService())
+    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", StubStatsService)
 
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
@@ -13229,7 +13203,7 @@ async def test_get_system_stats_exception_raises_http_500(monkeypatch, mock_db, 
         async def get_comprehensive_stats_cached(self, _db):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", lambda: StubStatsService())
+    monkeypatch.setattr("mcpgateway.services.system_stats_service.SystemStatsService", StubStatsService)
     request = MagicMock(spec=Request)
     request.headers = {}
     request.scope = {"root_path": ""}
@@ -18430,11 +18404,11 @@ class TestMaintenanceMisc:
         request.is_disconnected = AsyncMock(return_value=True)
 
         mock_gateway_service = MagicMock()
-        mock_gateway_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
+        mock_gateway_service.subscribe_events = MagicMock(return_value=aiter(AsyncMock()))
         monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: mock_gateway_service)
 
         mock_tool_service = MagicMock()
-        mock_tool_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
+        mock_tool_service.subscribe_events = MagicMock(return_value=aiter(AsyncMock()))
         monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: mock_tool_service)
 
         result = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
@@ -18458,8 +18432,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         assert isinstance(response, StreamingResponse)
@@ -18486,8 +18460,8 @@ class TestMaintenanceMisc:
         async def tool_events():
             yield {"type": "tool", "data": {"b": 2}}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         chunks = [chunk async for chunk in response.body_iterator]
@@ -18506,8 +18480,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
 
         async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
             # Close the Queue.get coroutine so it doesn't warn as "never awaited".
@@ -18536,8 +18510,8 @@ class TestMaintenanceMisc:
             if False:  # pragma: no cover
                 yield {}
 
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())  # noqa: PLW0108
 
         async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
             if hasattr(awaitable, "close"):
@@ -18568,8 +18542,8 @@ class TestMaintenanceMisc:
         logger.debug = MagicMock()
         logger.error = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.LOGGER", logger, raising=True)
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())  # noqa: PLW0108
+        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())  # noqa: PLW0108
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
         chunks = [chunk async for chunk in response.body_iterator]
@@ -19515,6 +19489,104 @@ class TestTemplateButtonGating:
         html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="other@example.com")
         assert "editGateway" not in html
         assert "/delete" not in html
+
+    def test_gateways_oauth_authorize_visible_for_team_member(self, jinja_env):
+        """Team member (non-owner) can see Authorize button on OAuth team gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(
+            jinja_env, gw_data, current_user_email="member@example.com", user_team_roles={"team-1": "member"}
+        )
+        assert "Authorize" in html
+        assert "editGateway" not in html
+        assert "/delete" not in html
+
+    def test_gateways_oauth_authorize_visible_for_public_gateway(self, jinja_env):
+        """Any user can see Authorize button on public OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="anyone@example.com")
+        assert "Authorize" in html
+        assert "editGateway" not in html
+        assert "/delete" not in html
+
+    def test_gateways_oauth_authorize_visible_for_owner(self, jinja_env):
+        """Regression: owner still sees Authorize button on OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="owner@example.com")
+        assert "Authorize" in html
+        assert "editGateway" in html
+
+    def test_gateways_oauth_authorize_visible_for_admin(self, jinja_env):
+        """Regression: admin still sees Authorize button on OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="admin@example.com", is_admin=True)
+        assert "Authorize" in html
+        assert "editGateway" in html
+
+    def test_gateways_oauth_authorize_hidden_for_non_member_team_gateway(self, jinja_env):
+        """Non-member cannot see Authorize button on team OAuth gateway."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "team",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "oauth",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="outsider@example.com")
+        assert "Authorize" not in html
 
     def test_servers_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editServer in HTML."""
@@ -20842,7 +20914,7 @@ class TestAdminTokensPartialSearch:
             response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
             assert "password_mismatch" in response.headers["location"]
 
-        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"}))
+        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"})) # pragma: allowlist secret
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
@@ -21149,8 +21221,8 @@ class TestLoadSriHashes:
         admin_mod.load_sri_hashes.cache_clear()
         hashes = admin_mod.load_sri_hashes()
         assert "tailwindcss" not in hashes
-        assert "htmx" in hashes
-        assert hashes["htmx"].startswith("sha384-")
+        assert "alpinejs" in hashes
+        assert hashes["alpinejs"].startswith("sha384-")
 
 
 class TestAdminCsrfProtection:

@@ -39,6 +39,13 @@ Important nuance:
   compatibility input translated by [docker-entrypoint.sh](../../docker-entrypoint.sh).
   Prefer `RUST_MCP_MODE` unless you are intentionally testing a specific
   override path.
+- When the boot mode is `edge` an authorized admin can flip the public
+  `/mcp` ingress between `shadow` and `edge` at runtime via
+  `PATCH /admin/runtime/mcp-mode` (and `/admin/runtime/a2a-mode` for A2A).
+  `off`, `shadow`, and `full` are not flippable — `shadow` did not opt
+  into the session-auth-reuse safety invariant; see the architecture doc.
+  see [docs/docs/architecture/rust-mcp-runtime.md](../../docs/docs/architecture/rust-mcp-runtime.md#runtime-mode-override)
+  for the full operator contract and cluster propagation behavior.
 
 ## Quick reference
 
@@ -62,7 +69,7 @@ make testing-up-rust-full
 
 ```bash
 make test
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load
@@ -346,7 +353,7 @@ For the full-Rust public path:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-session-isolation
 cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml
@@ -366,7 +373,7 @@ For the safe fallback path:
 
 ```bash
 make testing-rebuild-rust-shadow
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 ```
 

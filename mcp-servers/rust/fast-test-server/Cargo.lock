@@ -224,7 +224,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
- "rand 0.8.5",
+ "rand 0.9.3",
  "rand_distr",
  "rmcp",
  "schemars 0.8.22",

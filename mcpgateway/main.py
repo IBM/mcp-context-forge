@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,7 +59,6 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -81,6 +80,9 @@ from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2APushNotificationConfig
+from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
@@ -104,6 +106,8 @@ from mcpgateway.plugins.framework import (
     PromptHookType,
     ResourceHookType,
     shutdown_plugin_manager_factory,
+    start_plugin_invalidation_listener,
+    stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -112,6 +116,7 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -122,6 +127,8 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
+    HealthCheckResponse,
+    HealthStatusItem,
     JsonPathModifier,
     MetricsResponse,
     PromptCreate,
@@ -142,6 +149,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
@@ -170,13 +178,14 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
     user_context_var,
 )
+from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.paths import resolve_root_path
-from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
+from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
@@ -409,7 +418,15 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     """
     runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
     client_host = getattr(getattr(request, "client", None), "host", None)
-    return runtime_marker == "rust" and _has_valid_internal_mcp_runtime_auth_header(request) and client_host in ("127.0.0.1", "::1")
+    if runtime_marker != "rust" or not _has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
+        return False
+    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
+    # A2A support is disabled, even from an otherwise-trusted local sidecar.
+    # A legitimate sidecar should not be running when the feature is off.
+    path = getattr(getattr(request, "url", None), "path", "") or ""
+    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return True
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -1504,57 +1521,6 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
-def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
-    """Create JWT identity extractor function for session pool.
-
-    Extracts stable user ID from JWT token to prevent bucket explosion
-    when using short-lived JWTs with rotating jti/exp/iat claims.
-
-    Returns:
-        Callable that extracts stable user identifier from request headers,
-        or None if extraction fails.
-    """
-
-    def jwt_identity_extractor(headers: dict) -> Optional[str]:
-        """Extract stable user ID from JWT token.
-
-        Decodes JWT without signature verification to extract sub, email, or user_id claim.
-        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
-
-        Args:
-            headers: Request headers dict (case-insensitive lookup handled by caller).
-
-        Returns:
-            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
-        """
-        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
-        if not auth_header:
-            return None
-
-        # Extract token from "Bearer <token>" format
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        else:
-            token = auth_header.strip()
-        if not token:
-            return None
-
-        try:
-            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
-            # This is NOT a security boundary - authentication happens separately via get_current_user.
-            # We only extract stable identity (sub/email/user_id) to group sessions by user.
-            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
-            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
-            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
-            # Try standard claims in order of preference
-            return claims.get("sub") or claims.get("email") or claims.get("user_id")
-        except Exception as e:
-            logger.debug(f"JWT identity extraction failed: {e}")
-            return None
-
-    return jwt_identity_extractor
-
-
 async def attempt_to_bootstrap_sso_providers():
     """
     Try to bootstrap SSO provider services based on settings.
@@ -1657,6 +1623,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 
+    # Register the Redis provider with the plugin framework so framework
+    # modules can reach Redis without importing mcpgateway.utils directly
+    # (isolation enforced by scripts/pre-commit/check_framework_imports.py).
+    # First-Party
+    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+
+    set_shared_redis_provider(get_redis_client)
+
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
     from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
@@ -1667,47 +1641,66 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, "update_http_pool_metrics"):
         app.state.update_http_pool_metrics()
 
-    # Initialize MCP session pool (for session reuse across tool invocations)
-    # Also initialize if session affinity is enabled (needs the ownership registry)
-    if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
-        # First-Party
-        from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
+    # Initialize the session-affinity service (Redis-backed worker mapping,
+    # heartbeat, session-owner forwarding). Cross-worker upstream
+    # ``ClientSession`` state lives in ``UpstreamSessionRegistry`` —
+    # SessionAffinity owns only the affinity layer.
+    # Always initialize SessionAffinity, regardless of
+    # ``mcpgateway_session_affinity_enabled``. The affinity flag controls
+    # cross-worker Redis routing; the GET /mcp listener-claim dict
+    # (ADR-052) is single-node bookkeeping that lives on the same instance
+    # and needs to be a process-wide singleton even with affinity off.
+    # Without the always-init, the GET handler would fall back to a fresh
+    # ``SessionAffinity()`` per request → each request gets its own
+    # ``_listener_claims`` dict → two concurrent GETs both win the claim
+    # and the single-listener invariant is broken in the default
+    # single-node deployment.
+    #
+    # The Redis-backed background tasks (heartbeat, RPC listener) are
+    # internally gated on the affinity flag, so always-init is safe.
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
 
-        # Auto-align pool health check interval to min of pool and gateway settings
-        effective_health_check_interval = min(
-            settings.health_check_interval,
-            settings.mcp_session_pool_health_check_interval,
+    # Use enable_notifications=False here so we don't double-init the
+    # notification service — main.lifespan does that explicitly below.
+    init_session_affinity(enable_notifications=False)
+    logger.info(
+        "Session-affinity service initialized (affinity_enabled=%s)",
+        settings.mcpgateway_session_affinity_enabled,
+    )
+
+    # Initialize the upstream session registry (#4205). 1:1 binding between a
+    # downstream MCP session and its upstream session per gateway, replacing
+    # the old identity-keyed sharing semantics. Always on — no feature flag.
+    #
+    # Wire a notification handler factory so server-initiated messages can be
+    # forwarded to GET /mcp listeners (ADR-052). The factory bakes
+    # downstream_session_id into the per-session handler closure.
+    # First-Party
+    from mcpgateway.services.notification_service import init_notification_service  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.upstream_session_registry import init_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+    _notification_svc = init_notification_service()
+    # Initialize the worker before any session is wired through it.
+    # Without this, list_changed notifications enqueue into a service
+    # whose `_process_refresh_queue` worker never runs and refreshes
+    # silently never fire. The gateway_service is wired here
+    # unconditionally — the affinity branch's
+    # `start_affinity_notification_service` only re-runs under affinity,
+    # and without this hand-off the single-node default would leave
+    # `_gateway_service is None` and drop every refresh.
+    await _notification_svc.initialize(gateway_service=gateway_service)
+
+    def _notification_handler_factory(url: str, gateway_id, *, downstream_session_id: str):  # type: ignore[no-untyped-def]
+        """Per-session message handler that routes upstream notifications and forwards server-initiated messages to the GET /mcp listener (ADR-052)."""
+        return _notification_svc.create_message_handler(
+            gateway_id or url,
+            url,
+            downstream_session_id=downstream_session_id,
         )
 
-        max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
-
-        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
-        identity_extractor = None
-        if settings.mcp_session_pool_jwt_identity_extraction:
-            identity_extractor = _create_jwt_identity_extractor()
-            logger.info("JWT identity extraction enabled for session pool")
-
-        init_mcp_session_pool(
-            max_sessions_per_key=max_sessions_per_key,
-            session_ttl_seconds=settings.mcp_session_pool_ttl,
-            health_check_interval_seconds=effective_health_check_interval,
-            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
-            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
-            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
-            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
-            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
-            identity_extractor=identity_extractor,
-            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-            # Use dedicated transport timeout (default 30s to match MCP SDK default).
-            # This is separate from health_check_timeout to allow long-running tool calls.
-            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
-            # Configurable health check chain - ordered list of methods to try.
-            health_check_methods=settings.mcp_session_pool_health_check_methods,
-            health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
-            max_total_keys=settings.mcp_session_pool_max_total_keys,
-            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
-        )
-        logger.info("MCP session pool initialized")
+    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    logger.info("Upstream session registry initialized (notification fanout enabled)")
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
@@ -1726,11 +1719,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
-        # Initialize plugin manager factory if plugins are enabled
-        if settings.plugins.enabled:
-            # First-Party
-            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+        # Initialize the plugin manager factory whenever the YAML config is
+        # available. We used to gate this on ``settings.plugins.enabled`` but
+        # that broke runtime enable-from-disabled: a node that boots with the
+        # flag off would never create the factory, so a later shared-toggle
+        # flip to "enabled" from a peer worker left this node unable to run
+        # plugins until restart. Keep initialisation unconditional; gate
+        # *execution* on the shared toggle in ``get_plugin_manager``.
+        # First-Party
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
 
+        try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
                 timeout=settings.plugins.plugin_timeout,
@@ -1739,6 +1738,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 db_factory=SessionLocal,
             )
             logger.info("Plugin manager factory initialized")
+        except Exception as init_exc:
+            if settings.plugins.enabled:
+                # Operator asked for plugins — a failed init (bad YAML, missing
+                # plugin module, validation error) must be a hard boot failure
+                # rather than a silent no-op. Preserve the original loud-crash
+                # semantics; the outer lifespan handler logs and re-raises.
+                logger.error("Plugin manager factory initialization failed: %s", init_exc, exc_info=True)
+                raise
+            # Plugins disabled locally; we init opportunistically so a later
+            # shared-toggle flip from a peer worker can turn the subsystem on
+            # without restarting this node. If that opportunistic init fails,
+            # the gateway still boots — but mark the node degraded so
+            # ``get_plugin_manager`` emits an ERROR the first time the shared
+            # toggle asks us to serve plugins we can't actually run.
+            logger.warning(
+                "Plugin manager factory init failed (%s); runtime-enable from a peer worker will require this node to restart",
+                init_exc,
+            )
+            # First-Party
+            from mcpgateway.plugins.framework import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
+
+            mark_factory_init_degraded()
 
         try:
             plugin_manager = await get_plugin_manager()
@@ -1755,6 +1776,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as diag_exc:
             logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
             raise
+
+        # Always start the invalidation listener when a factory is live, even
+        # if the local ``plugins.enabled`` setting is false. The listener
+        # early-exits when no Redis provider is registered, so single-node
+        # deployments don't spin.
+        await start_plugin_invalidation_listener()
+        logger.info("Plugin invalidation listener started")
 
         # Wire observability adapter to plugin manager if observability is enabled
         if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
@@ -1775,22 +1803,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
-        # Start notification service for event-driven refresh (after gateway_service is ready)
-        if settings.mcp_session_pool_enabled:
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import start_pool_notification_service  # pylint: disable=import-outside-toplevel
-
-            await start_pool_notification_service(gateway_service)
-
-        # Start heartbeat and RPC listener for multi-worker session affinity.
-        # This must be outside the mcp_session_pool_enabled guard because
-        # affinity-only deployments (pool disabled, affinity enabled) still
-        # need heartbeat and RPC forwarding.
+        # Start heartbeat, RPC listener, and notification service for
+        # multi-worker session affinity. The upstream-session pool is
+        # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
+        # only the cross-worker affinity machinery is gated here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+                get_session_affinity,
+                start_affinity_notification_service,
+            )
 
-            pool = get_mcp_session_pool()
+            await start_affinity_notification_service(gateway_service)
+            pool = get_session_affinity()
             pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
             logger.info("Multi-worker session affinity heartbeat and RPC listener started")
@@ -1860,6 +1885,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about unsafe UAID configuration if A2A is enabled
+        if settings.mcpgateway_a2a_enabled:
+            uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if not uaid_allowed_domains:
+                logger.warning(
+                    "⚠️  SECURITY: UAID_ALLOWED_DOMAINS is empty - cross-gateway routing is unrestricted. "
+                    "This allows UAID-based routing to ANY domain, including internal networks. "
+                    "Production deployments MUST configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted.example.com","gateway.example.org"]'
+                )
+
         _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
@@ -1868,6 +1904,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         cache_invalidation_subscriber = get_cache_invalidation_subscriber()
         await cache_invalidation_subscriber.start()
+
+        # Start runtime-mode coordinator for cluster-wide override propagation
+        # First-Party
+        from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+        runtime_state_coordinator = get_runtime_state_coordinator()
+        await runtime_state_coordinator.start()
 
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
@@ -1944,6 +1987,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 with suppress(asyncio.CancelledError):
                     await task
 
+        # Stop the plugin invalidation listener before the factory so in-flight
+        # messages don't race with a half-torn-down cache.
+        try:
+            await stop_plugin_invalidation_listener()
+        except Exception as e:
+            logger.debug(f"Error stopping plugin invalidation listener: {e}")
+
         # Shutdown global plugin manager factory (no-op when plugins were never initialised)
         try:
             await shutdown_plugin_manager_factory()
@@ -1960,6 +2010,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
+        # Stop runtime-mode coordinator
+        try:
+            # First-Party
+            from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+            await get_runtime_state_coordinator().stop()
+        except Exception as e:
+            logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -2021,13 +2080,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await shutdown_services(services_to_shutdown)
 
-        # Shutdown MCP session pool (before shared HTTP client)
-        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
-        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+        # Shutdown session-affinity service (before shared HTTP client).
+        if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import close_session_affinity  # pylint: disable=import-outside-toplevel
 
-            await close_mcp_session_pool()
+            await close_session_affinity()
+
+        # Drain upstream session registry (#4205): every (downstream_session_id,
+        # gateway_id) → upstream ClientSession owned by this worker is closed.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        await shutdown_upstream_session_registry()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
@@ -2114,6 +2179,23 @@ def validate_security_configuration():
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     log_critical_issues(critical_issues)
+
+    # UAID Cross-Gateway Routing Security Check
+    if not settings.uaid_allowed_domains:
+        if not settings.auth_required:
+            logger.error(
+                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+            )
+        else:
+            logger.warning(
+                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                "Any UAID-based agent can route to any remote gateway endpoint. "
+                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+            )
 
     # Warn about ephemeral storage without strict user-in-DB mode
     if not getattr(settings, "require_user_in_db", False):
@@ -3009,6 +3091,10 @@ class MCPPathRewriteMiddleware:
         # We need to strip this prefix to correctly match the /servers/ pattern.
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
+
+        # Update modified_path to the app-relative path (without root_path prefix).
+        # This ensures streamablehttp_transport can extract server_id via regex (#4266).
+        scope["modified_path"] = app_path
 
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
@@ -4958,6 +5044,14 @@ async def invoke_a2a_agent(
         else:
             user_id = str(user)
 
+        # Read the federation hop counter from the request header using
+        # the shared parser so Python and Rust behave identically: strict
+        # ASCII-digit decoding with saturation on overflow, warn on
+        # malformed input.  `invoke_agent` rejects at `uaid_max_federation_hops`
+        # before any UAID or agent dispatch, breaking both A→B→A loops
+        # and self-referential `endpoint_url` loops.
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4966,6 +5060,7 @@ async def invoke_a2a_agent(
             user_id=user_id,
             user_email=user_email,
             token_teams=token_teams,
+            hop_count=hop_count,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -7339,10 +7434,10 @@ async def handle_internal_mcp_session_delete(request: Request):
     if settings.mcpgateway_session_affinity_enabled:
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.cleanup_streamable_http_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.cleanup_session_owner(mcp_session_id)
         except RuntimeError:
             pass
 
@@ -8870,6 +8965,594 @@ async def handle_internal_mcp_prompts_get_authz(request: Request):
     )
 
 
+# ---------------------------------------------------------------------------
+# Internal A2A authorization endpoints (Rust A2A runtime sidecar)
+# ---------------------------------------------------------------------------
+
+
+@utility_router.post("/_internal/a2a/authenticate/")
+@utility_router.post("/_internal/a2a/authenticate")
+async def handle_internal_a2a_authenticate(request: Request):
+    """Authenticate an inbound A2A request for Rust runtime execution.
+
+    Delegates to the shared MCP authenticate handler — the auth flow is
+    identical (validate credentials, return auth context).
+    """
+    return await handle_internal_mcp_authenticate(request)
+
+
+async def _authorize_internal_a2a_method(
+    request: Request,
+    *,
+    permission: str,
+    method: str,
+) -> Response:
+    """Authorize a trusted internal A2A method for Rust module execution.
+
+    Reuses the core authorization machinery from the MCP runtime path.
+    """
+    db = SessionLocal()
+    try:
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission=permission,
+            method=method,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        logger.exception("Internal A2A authz error for method=%s permission=%s", method, permission)
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
+    """Return scoped visibility context for trusted internal A2A requests."""
+    user = _build_internal_mcp_forwarded_user(request)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    if is_admin and token_teams is None:
+        return user_email, None
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
+@utility_router.post("/_internal/a2a/invoke/authz/")
+@utility_router.post("/_internal/a2a/invoke/authz")
+async def handle_internal_a2a_invoke_authz(request: Request):
+    """Authorize trusted A2A invoke requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.invoke", method="a2a/invoke")
+
+
+@utility_router.post("/_internal/a2a/list/authz/")
+@utility_router.post("/_internal/a2a/list/authz")
+async def handle_internal_a2a_list_authz(request: Request):
+    """Authorize trusted A2A list requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/list")
+
+
+@utility_router.post("/_internal/a2a/get/authz/")
+@utility_router.post("/_internal/a2a/get/authz")
+async def handle_internal_a2a_get_authz(request: Request):
+    """Authorize trusted A2A get requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/get")
+
+
+# DbA2AAgent.id is `uuid.uuid4().hex` — 32 lower-case hex chars, no dashes.
+# Used to detect when a resolve identifier is a primary-key reference vs a
+# plain name; kept here (not in uaid module) because it's specific to the
+# internal resolve endpoint's lookup dispatch.
+_UUID_HEX_RE = re.compile(r"[0-9a-f]{32}")
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve")
+async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
+    """Resolve an A2A agent record for Rust module execution.
+
+    Returns the agent's endpoint, auth configuration (encrypted), and
+    protocol version so the Rust sidecar can invoke it directly.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        # Reject leading/trailing whitespace outright rather than silently
+        # falling through to the name branch — a malicious caller could
+        # otherwise wrap a UAID or UUID in spaces to bypass the kind
+        # dispatch (e.g., ` <32-hex>` probes the name column instead of
+        # id). Names in the DB never carry flanking whitespace either, so
+        # this can't false-positive on legitimate input.
+        if agent_name != agent_name.strip():
+            logger.warning("A2A agent resolve rejected: identifier has surrounding whitespace (%r)", agent_name)
+            return ORJSONResponse(status_code=400, content={"error": "agent identifier must not contain leading or trailing whitespace"})
+
+        # Dispatch lookup on identifier kind so a collision across the
+        # name / id / uaid columns can't silently cross-select the wrong
+        # agent. UAID prefix and 32-hex UUIDs are distinctive; everything
+        # else falls through to name.
+        agent = None
+        if uaid_utils.is_uaid(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.uaid == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        elif _UUID_HEX_RE.fullmatch(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        if agent is None:
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        if not agent:
+            a2a_server_service = A2AServerService()
+            server_agent = a2a_server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
+            if server_agent:
+                return ORJSONResponse(status_code=200, content=server_agent)
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        if not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+            # Surface visibility-denial as 403 to the trusted sidecar
+            # caller (inside _is_trusted_internal_mcp_runtime_request
+            # above) so it can avoid falling through to UAID
+            # cross-gateway dispatch for agents that exist locally but
+            # the requester cannot see. The sidecar is expected to
+            # translate this back to 404 when responding to the end
+            # user so existence of private agents is not leaked.
+            logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on resolve", agent_name, user_email, token_teams)
+            return ORJSONResponse(status_code=403, content={"error": f"access denied to agent '{agent_name}'"})
+
+        result = {
+            "agent_id": agent.id,
+            "name": agent.name,
+            "endpoint_url": agent.endpoint_url,
+            "agent_type": agent.agent_type,
+            "protocol_version": agent.protocol_version,
+            "auth_type": agent.auth_type,
+        }
+        # Return encrypted auth values — Rust decrypts them with the shared secret.
+        if agent.auth_value:
+            result["auth_value_encrypted"] = agent.auth_value
+        if agent.auth_query_params:
+            result["auth_query_params_encrypted"] = agent.auth_query_params
+
+        return ORJSONResponse(status_code=200, content=result)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card")
+async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
+    """Return the A2A AgentCard for an agent.
+
+    Called by the Rust sidecar to serve GetExtendedAgentCard /
+    agent/getExtendedCard / agent/getAuthenticatedExtendedCard requests.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+
+        # Check agent visibility before building the card to avoid loading
+        # sensitive relationship data for agents the caller cannot see.
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        card = None
+        if agent is not None:
+            if service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+                card = service.get_agent_card(db, agent_name)
+            else:
+                logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
+        if card is None:
+            a2a_server_service = A2AServerService()
+            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+        if card is None:
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        return ORJSONResponse(status_code=200, content=card)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/get/")
+@utility_router.post("/_internal/a2a/tasks/get")
+async def handle_internal_a2a_tasks_get(request: Request):
+    """Retrieve an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task = service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/list/")
+@utility_router.post("/_internal/a2a/tasks/list")
+async def handle_internal_a2a_tasks_list(request: Request):
+    """List A2A tasks for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        state = body.get("state")
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+        if state is not None and not isinstance(state, str):
+            return ORJSONResponse(status_code=400, content={"error": "state must be a string"})
+        limit = min(int(body.get("limit", 100)), 1000)
+        offset = max(int(body.get("offset", 0)), 0)
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset, user_email=user_email, token_teams=token_teams)
+        return ORJSONResponse(status_code=200, content={"tasks": tasks})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/cancel/")
+@utility_router.post("/_internal/a2a/tasks/cancel")
+async def handle_internal_a2a_tasks_cancel(request: Request):
+    """Cancel an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task = service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/create/")
+@utility_router.post("/_internal/a2a/push/create")
+async def handle_internal_a2a_push_create(request: Request):
+    """Create a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        if not body.get("a2a_agent_id") or not body.get("task_id") or not body.get("webhook_url"):
+            return ORJSONResponse(status_code=400, content={"error": "a2a_agent_id, task_id, and webhook_url are required"})
+
+        # Validate webhook URL through the schema to enforce SSRF protection.
+        try:
+            validated = A2APushNotificationConfigCreate(**body)
+        except Exception as validation_err:
+            return ORJSONResponse(status_code=400, content={"error": f"invalid push config: {validation_err}"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        if not service._check_agent_access_by_id(db, body["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A agent_id=%s visibility-denied for user=%s teams=%s on push/create", body["a2a_agent_id"], user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": "agent not found"})
+        cfg = service.create_push_config(db, validated.model_dump())
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/get/")
+@utility_router.post("/_internal/a2a/push/get")
+async def handle_internal_a2a_push_get(request: Request):
+    """Retrieve a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        cfg = service.get_push_config(db, task_id, agent_id=agent_id)
+        if cfg is None:
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
+        if not service._check_agent_access_by_id(db, cfg["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/get", task_id, cfg["a2a_agent_id"], user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/list/")
+@utility_router.post("/_internal/a2a/push/list")
+async def handle_internal_a2a_push_list(request: Request):
+    """List push notification configs for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        task_id = body.get("task_id")
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        # Use the dispatch-oriented listing so the Rust sidecar receives
+        # plaintext auth_token values decrypted from the encrypted DB column.
+        # Visibility is enforced in SQL via ``_visible_agent_ids`` — no
+        # Python-side post-filter needed.
+        configs = service.list_push_configs_for_dispatch(
+            db,
+            agent_id=agent_id,
+            task_id=task_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return ORJSONResponse(status_code=200, content={"configs": configs})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/delete/")
+@utility_router.post("/_internal/a2a/push/delete")
+async def handle_internal_a2a_push_delete(request: Request):
+    """Delete a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        config_id = body.get("config_id")
+        if not config_id:
+            return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        if cfg and not service._check_agent_access_by_id(db, cfg.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/delete", config_id, cfg.a2a_agent_id, user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
+        deleted = service.delete_push_config(db, config_id)
+        if not deleted:
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
+        return ORJSONResponse(status_code=200, content={"deleted": True})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/flush/")
+@utility_router.post("/_internal/a2a/events/flush")
+async def handle_internal_a2a_events_flush(request: Request):
+    """Batch-insert streaming events to PG for durability."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        events = body.get("events", [])
+        if not events:
+            return ORJSONResponse(status_code=200, content={"count": 0})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+
+        # Verify the caller has access to the agents that own the referenced tasks.
+        # Unknown task_ids (no matching row) previously slipped past this
+        # check — a caller could flush events for a task_id that does not
+        # exist yet, bypassing visibility entirely.  Reject the batch when
+        # any referenced task_id has no owning agent row.
+        task_ids = {e["task_id"] for e in events if "task_id" in e}
+        if task_ids:
+            tasks = db.query(DbA2ATask).filter(DbA2ATask.task_id.in_(task_ids)).all()
+            known_task_ids = {t.task_id for t in tasks}
+            unknown_task_ids = task_ids - known_task_ids
+            if unknown_task_ids:
+                logger.warning(
+                    "A2A events/flush denied: user=%s teams=%s references unknown task_id(s) %s",
+                    user_email,
+                    token_teams,
+                    sorted(unknown_task_ids),
+                )
+                return ORJSONResponse(
+                    status_code=400,
+                    content={"error": "events reference unknown task_ids", "unknown_task_ids": sorted(unknown_task_ids)},
+                )
+            agent_ids = {t.a2a_agent_id for t in tasks}
+            for agent_id in agent_ids:
+                if not service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
+                    logger.warning("A2A events/flush denied: user=%s teams=%s lacks access to agent_id=%s (referenced by a flushed event)", user_email, token_teams, agent_id)
+                    return ORJSONResponse(status_code=403, content={"error": "access denied for one or more referenced tasks"})
+
+        count = service.flush_events(db, events)
+        return ORJSONResponse(status_code=200, content={"count": count})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/replay/")
+@utility_router.post("/_internal/a2a/events/replay")
+async def handle_internal_a2a_events_replay(request: Request):
+    """Replay events from PG for stream reconnection."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        after_sequence = int(body.get("after_sequence", 0))
+        limit = min(int(body.get("limit", 1000)), 10000)
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task_row = db.query(DbA2ATask).filter(DbA2ATask.task_id == task_id).first()
+        if task_row is None:
+            return ORJSONResponse(status_code=404, content={"error": "task not found"})
+        if not service._check_agent_access_by_id(db, task_row.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on events/replay", task_id, task_row.a2a_agent_id, user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": "task not found"})
+        events = service.replay_events(db, task_id, after_sequence, limit=limit)
+        return ORJSONResponse(status_code=200, content={"events": events})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
 async def _maybe_forward_affinitized_rpc_request(
     request: Request,
     *,
@@ -8899,9 +9582,9 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-        if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+        if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
@@ -8909,9 +9592,9 @@ async def _maybe_forward_affinitized_rpc_request(
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
@@ -8927,7 +9610,7 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
@@ -8976,10 +9659,10 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.register_pool_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.register_session_owner(mcp_session_id)
             logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
@@ -10512,56 +11195,97 @@ def healthcheck(response: Response = None):
         db.close()
 
 
-@app.get("/ready")
-async def readiness_check():
+def _check_db_ready() -> tuple[bool, str | None]:
     """
-    Perform a readiness check to verify if the application is ready to receive traffic.
-
-    Creates and manages its own session inside the worker thread to ensure all DB
-    operations (create, execute, commit, rollback, close) happen in the same thread.
-    This avoids cross-thread session issues and double-commit from get_db.
+    Check database connectivity in a thread-safe manner.
 
     Returns:
-        JSONResponse with status 200 if ready, 503 if not.
+        tuple: (success: bool, error_message: str | None)
     """
-
-    def _check_db() -> str | None:
-        """Check database connectivity by executing a simple query.
-
-        Returns:
-            None if successful, error message string if failed.
-        """
-        # Create session in this thread - all DB operations stay in the same thread.
-        db = SessionLocal()
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        # Explicitly commit to release PgBouncer backend connection in transaction mode.
+        db.commit()
+        return (True, None)
+    except Exception as e:
+        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
-            db.execute(text("SELECT 1"))
-            # Explicitly commit to release PgBouncer backend connection.
-            db.commit()
-            return None  # Success
-        except Exception as e:
-            # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
+            db.rollback()
+        except Exception:
             try:
-                db.rollback()
+                db.invalidate()
             except Exception:
-                try:
-                    db.invalidate()
-                except Exception:
-                    pass  # nosec B110 - Best effort cleanup on connection failure
-            return str(e)
-        finally:
-            db.close()
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return (False, str(e))
+    finally:
+        db.close()
 
-    # Run the blocking DB check in a thread to avoid blocking the event loop.
-    error = await asyncio.to_thread(_check_db)
-    if error:
-        error_message = f"Readiness check failed: {error}"
+
+@app.get("/ready", response_model=HealthCheckResponse)
+async def readiness_check(response: Response):
+    """
+    Perform a comprehensive readiness check to verify all dependencies.
+
+    This endpoint checks:
+    - Database connectivity (via asyncio.to_thread to avoid blocking)
+    - Cache availability (if enabled)
+
+    Returns HTTP 200 when ready, HTTP 503 when not ready.
+
+    Args:
+        response: Response object used to attach runtime-mode headers and status code.
+
+    Returns:
+        A HealthCheckResponse with detailed component health status.
+        HTTP 200 if all components are healthy (ready).
+        HTTP 503 if any component is unhealthy (not ready).
+    """
+    status_items = []
+
+    # Database health check (run in thread to avoid blocking event loop)
+    db_success, db_error = await asyncio.to_thread(_check_db_ready)
+
+    if db_success:
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
+    else:
+        error_message = f"Database health check failed: {db_error}"
         logger.error(error_message)
-        response = ORJSONResponse(content={"status": "not ready", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}, status_code=503)
-        _apply_runtime_mode_headers(response)
-        return response
-    response = ORJSONResponse(content={"status": "ready", "mcp_runtime": _mcp_runtime_status_payload()}, status_code=200)
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
+
+    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
+    redis_enabled = settings.cache_type == "redis" and settings.redis_url
+    if redis_enabled:
+        try:
+            # is_redis_available() checks if Redis is available and responding to ping.
+            if await is_redis_available():
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="Cache Connection Successful"))
+            else:
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+        except Exception as e:
+            logger.error(f"Redis health check failed: {str(e)}")
+            status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+
+    # Determine overall status:
+    # - "ready" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unready" if Database is unhealthy (503) OR Redis is unhealthy when enabled
+    database_status = next((item for item in status_items if item.name == "Database"), None)
+    redis_status = next((item for item in status_items if item.name == "Cache"), None)
+
+    # Check database health
+    database_healthy = database_status and database_status.status_code == 200
+
+    # Redis is healthy if: not enabled OR (enabled AND status is 200)
+    redis_healthy = not redis_enabled or (redis_status and redis_status.status_code == 200)
+
+    is_ready = database_healthy and redis_healthy
+    overall_status = "ready" if is_ready else "unready"
+
+    # Set HTTP status code: 200 for ready, 503 for unready
+    response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+
     _apply_runtime_mode_headers(response)
-    return response
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 
 @app.get("/health/security", tags=["health"])
@@ -11236,6 +11960,12 @@ if ADMIN_API_ENABLED:
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
+
+    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
@@ -11297,12 +12027,107 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
-def _build_mcp_transport_app():
-    """Choose the MCP transport app for the mounted /mcp path.
+def _select_mcp_ingress(_scope: dict) -> str:
+    """Pick the registered MCPIngressMount ingress to serve a request.
+
+    Single source of truth for the dispatch policy:
+
+    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
+      the Python transport or the plain Rust proxy is mounted directly
+      from ``_build_mcp_transport_app``.
+    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
+      that satisfies the safety invariant: route to the Rust ingress
+      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
+      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
+    - Override forces ``shadow``, OR safety invariant is unmet: route to
+      the Python transport (the always-safe fallback).
+
+    The ``"rust-public"`` ingress is only registered on ``boot=edge``
+    (the public listener isn't bound on shadow boot per the entrypoint
+    flow). On any other boot mode the selector transparently downgrades
+    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
+    routing to an unregistered name; the misconfig itself is surfaced
+    as a boot-time error in ``_build_mcp_transport_app``.
+
+    Args:
+        _scope: ASGI scope (unused today; reserved so future selectors
+            can route by method/path/headers without changing the
+            mount's API).
 
     Returns:
-        Transport app object that should be mounted at the public ``/mcp`` path.
+        The ingress name to look up in the mount's registry.
     """
+    if not _should_mount_public_rust_transport():
+        return "python"
+    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
+        return "rust-public"
+    return "rust-internal"
+
+
+def _build_mcp_transport_app():
+    """Build the ASGI app to mount at public ``/mcp``.
+
+    Returns:
+        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
+        with the Python transport, the trusted-internal Rust proxy, and
+        (when supported) the nginx-style Rust public proxy registered.
+        For boot ``full``: the plain trusted-internal Rust proxy mounted
+        directly (no dispatcher — flipping ``full`` would orphan
+        Rust-held session/event-store state). For boot ``off``: the
+        Python transport. The ``/mcp`` mount calls
+        ``returned_app.handle_streamable_http`` (legacy interface kept
+        for backward compatibility with the existing mount line).
+    """
+    # First-Party
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
+
+    boot_mode = version_module.boot_mcp_runtime_mode()
+    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+
+    if boot_mode in ("shadow", "edge"):
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+
+        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
+        ingress.register("python", python_transport.handle_streamable_http)
+        ingress.register("rust-internal", rust_internal.handle_streamable_http)
+
+        # Public-listener proxy is only meaningful when the safety invariant
+        # is met (i.e. boot=edge); shadow boot doesn't bind the public
+        # listener. Register it on edge so an operator can flip
+        # `settings.mcp_rust_ingress = "public"` without a restart.
+        if boot_mode == "edge":
+            # First-Party
+            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
+
+            ingress.register("rust-public", build_rust_public_proxy_app())
+        elif settings.mcp_rust_ingress == "public":
+            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
+            # Rust public listener isn't bound on shadow boot, so the
+            # selector deliberately downgrades to "rust-internal". Logged
+            # at error severity so it survives the default LOG_LEVEL=ERROR
+            # — a warning here would be invisible in most production
+            # deployments and the operator would never know their setting
+            # is being silently overridden.
+            logger.error(
+                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
+                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
+            )
+
+        logger.warning(
+            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            _current_mcp_runtime_mode(),
+            boot_mode,
+            ingress.names(),
+            _select_mcp_ingress({}),
+        )
+        # The legacy mount line calls .handle_streamable_http on the returned
+        # app; expose that name on a tiny shim so the mount line can stay
+        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
+        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
+        return ingress
+
     if _should_mount_public_rust_transport():
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
@@ -11319,18 +12144,6 @@ def _build_mcp_transport_app():
 
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 
-    if settings.experimental_rust_mcp_runtime_enabled:
-        logger.warning(
-            "MCP runtime mode: %s. Rust sidecar remains enabled, but public /mcp stays on the Python transport because MCP session auth reuse is disabled. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            _current_mcp_runtime_mode(),
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
-
     if _rust_build_included():
         logger.warning(
             "MCP runtime mode: %s. Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp remains on the Python transport. Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust runtime with the simple env flow.",
@@ -11339,7 +12152,7 @@ def _build_mcp_transport_app():
     else:
         logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
 
-    return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+    return python_transport
 
 
 class InternalTrustedMCPTransportBridge:

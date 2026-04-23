@@ -27,6 +27,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
+from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -349,10 +350,10 @@ class TestModuleGetattr:
         old = ts_module._tool_service_instance
         ts_module._tool_service_instance = None
         try:
-            instance = ts_module.__getattr__("tool_service")
+            instance = getattr(ts_module, "tool_service")
             assert isinstance(instance, ToolService)
             # Second access should return the same instance
-            instance2 = ts_module.__getattr__("tool_service")
+            instance2 = getattr(ts_module, "tool_service")
             assert instance is instance2
         finally:
             ts_module._tool_service_instance = old
@@ -363,7 +364,7 @@ class TestModuleGetattr:
         import mcpgateway.services.tool_service as ts_module
 
         with pytest.raises(AttributeError, match="has no attribute"):
-            ts_module.__getattr__("nonexistent_attr")
+            getattr(ts_module, "nonexistent_attr")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1811,7 +1812,6 @@ class TestValidatorClassAndCheck:
                 if call_count["n"] <= 1:
                     raise jsonschema.exceptions.SchemaError("primary fail")
                 # Second call in final fallback path - just return OK
-                return None
 
         class FallbackFail:
             @staticmethod
@@ -2773,7 +2773,7 @@ class TestCreateToolFromA2AAgent:
         tool_service.register_tool = AsyncMock(return_value=mock_tool_read)
         db.get.return_value = MagicMock()
 
-        result = await tool_service.create_tool_from_a2a_agent(db, agent, created_by="admin")
+        await tool_service.create_tool_from_a2a_agent(db, agent, created_by="admin")
 
         # Verify register_tool was called
         tool_service.register_tool.assert_awaited_once()
@@ -2923,7 +2923,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-token"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer my-token"}),
         ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert result == {"data": "custom"}
@@ -2977,7 +2977,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real_key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.example.com/?api_key=real_key"),
             patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.example.com/?api_key=***"),
         ):
@@ -3055,9 +3055,9 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
-            result = await tool_service._call_a2a_agent(agent, {"query": "test"})
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
         call_kwargs = mock_client.post.call_args
         assert "Bearer my-api-key" in call_kwargs[1]["headers"]["Authorization"]
 
@@ -3081,7 +3081,7 @@ class TestRecordToolMetricSync:
             def __exit__(self, *args):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(tool_service, "_record_tool_metric_by_id") as mock_record:
             tool_service._record_tool_metric_sync("t1", 1.0, True, None)
@@ -3527,23 +3527,19 @@ class TestCallA2AAgentCoverage:
 
     @pytest.mark.asyncio
     async def test_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service):
-        """If preparing JSONRPC request data fails, the error is logged and re-raised."""
+        """If preparing request data fails, the error propagates to the caller."""
         agent = self._make_agent(agent_type="jsonrpc")
 
         def _info_side_effect(msg, *args, **kwargs):
-            # Allow the initial "Calling A2A agent..." log, but force an exception for the JSONRPC request_data log.
-            if "JSONRPC request_data prepared" in str(msg):
+            # Allow the initial "Calling A2A agent..." log, but force an exception for the request_data log.
+            if "invoke tool request_data prepared" in str(msg):
                 raise RuntimeError("logger boom")
-            return None
 
         with patch("mcpgateway.services.tool_service.logger") as mock_logger:
             mock_logger.info.side_effect = _info_side_effect
-            mock_logger.error = MagicMock()
 
             with pytest.raises(RuntimeError, match="logger boom"):
                 await tool_service._call_a2a_agent(agent, {"query": "hello"})
-
-        mock_logger.error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_custom_agent_format(self, tool_service):
@@ -3571,7 +3567,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer secret-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "secret-key"}),  # pragma: allowlist secret
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3588,7 +3584,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3604,7 +3600,10 @@ class TestCallA2AAgentCoverage:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_resp
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+        ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer dict-token"
@@ -3621,7 +3620,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3639,7 +3638,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3657,9 +3656,9 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decryption failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decryption failed")),
         ):
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(Exception, match="Decryption failed"):
                 await tool_service._call_a2a_agent(agent, {"query": "test"})
 
     @pytest.mark.asyncio
@@ -3673,9 +3672,9 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real-key"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
-            patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
+            patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert mock_client.post.call_args[0][0] == "http://agent.test/api?api_key=real-key"
@@ -4336,7 +4335,7 @@ class TestExtractAndValidateErrorResponses:
     - Egress-side counterpart guard:
       ``tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress``
     - End-to-end regression:
-      ``tests/e2e/test_mcp_cli_protocol.py::test_tools_call_schema_error_preserves_payload``
+      ``tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload``
     """
 
     def test_skip_validation_for_error_response_is_error(self, tool_service):
@@ -6671,7 +6670,6 @@ class TestInvokeToolRestSuccess:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7487,7 +7485,7 @@ class TestInvokeToolPluginContext:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
 
-            result = await tool_service.invoke_tool(
+            await tool_service.invoke_tool(
                 db,
                 "test_tool",
                 {},
@@ -7977,7 +7975,7 @@ class TestInvokeToolMcpSessionAffinity:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
 
-            result = await tool_service.invoke_tool(
+            await tool_service.invoke_tool(
                 db,
                 "test_tool",
                 {},
@@ -8160,6 +8158,76 @@ class TestInvokeToolA2A:
         assert "False" not in result.content[0].text
 
     @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_rust_runtime_text_fallback(self, tool_service):
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": None, "text": "text-only"})
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
+                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is False
+        assert result.content[0].text == "text-only"
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_rust_runtime_error_response(self, tool_service):
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(side_effect=RustA2ARuntimeError("runtime failed"))
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
+                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is True
+        assert "runtime failed" in result.content[0].text
+
+    @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):
         """A2A JSONRPC agent invocation without query uses raw params."""
         tp = _make_tool_payload(
@@ -8337,7 +8405,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8348,7 +8416,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Bearer my-api-key"
 
     @pytest.mark.asyncio
@@ -8488,8 +8556,9 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"token": "decrypted_val"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"token": "decrypted_val"}),
+            patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
+            patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://a2a-agent:9000/?token=***"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -8591,7 +8660,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Bearer dict-token"
 
     @pytest.mark.asyncio
@@ -8623,7 +8692,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8634,7 +8703,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Basic decrypted-value"
 
     @pytest.mark.asyncio
@@ -8666,7 +8735,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8677,7 +8746,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("X-Custom-Auth") == "custom-value"
 
     @pytest.mark.asyncio
@@ -8700,7 +8769,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decrypt failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decrypt failed")),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8710,7 +8779,7 @@ class TestInvokeToolA2A:
 
             tool_service._http_client = AsyncMock()
 
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(ToolInvocationError, match="Tool invocation failed: Decrypt failed"):
                 await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
 
     @pytest.mark.asyncio
@@ -8844,7 +8913,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8961,7 +9029,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9024,7 +9091,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9099,7 +9165,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9166,7 +9231,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("no encryption")),
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9234,7 +9298,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.validate_signature", return_value=False) as mock_vs,
             patch.object(settings, "enable_ed25519_signing", True),
             patch.object(settings, "ed25519_public_key", "pubkey"),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9302,9 +9365,10 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_cached_ssl_context", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
         ):
+            # No downstream Mcp-Session-Id in request_headers_var → registry path is
+            # skipped, fallback per-call session is taken, and the correlation-id /
+            # session-id headers are injected as usual.
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
             mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -9322,8 +9386,11 @@ class TestInvokeToolMcpSse:
         assert captured_headers["X-Correlation-ID"] == "corr-1"
 
     @pytest.mark.asyncio
-    async def test_mcp_sse_uses_session_pool_when_available(self, tool_service):
-        """When session pool is enabled and initialized, MCP SSE uses pooled sessions."""
+    async def test_mcp_sse_uses_registry_when_downstream_session_id_present(self, tool_service):
+        """MCP SSE uses the UpstreamSessionRegistry when a downstream Mcp-Session-Id is in scope (#4205)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(
             auth_type="oauth",
@@ -9335,54 +9402,61 @@ class TestInvokeToolMcpSse:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        captured_pool_kwargs: dict[str, object] = {}
+        captured_acquire_kwargs: dict[str, object] = {}
 
-        pooled_session = AsyncMock()
-        pooled_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                # Exercise the factory to cover get_httpx_client_factory
-                httpx_factory = captured_pool_kwargs.get("httpx_client_factory")
+                httpx_factory = captured_acquire_kwargs.get("httpx_client_factory")
                 if callable(httpx_factory):
-                    httpx_factory(headers=captured_pool_kwargs.get("headers"))
-                return SimpleNamespace(session=pooled_session)
+                    httpx_factory(headers=captured_acquire_kwargs.get("headers"))
+                return SimpleNamespace(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        def pool_session(**kwargs):
-            captured_pool_kwargs.update(kwargs)
-            return _PooledCM()
+        def fake_acquire(**kwargs):
+            captured_acquire_kwargs.update(kwargs)
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = pool_session
+        registry = MagicMock()
+        registry.acquire = fake_acquire
 
-        with (
-            _setup_cache_for_invoke(tp, gp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _rh, h, *_a, **_k: h),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_cached_ssl_context,
-            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-xyz"})
+        try:
+            with (
+                _setup_cache_for_invoke(tp, gp),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+                patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+                patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+                patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _rh, h, *_a, **_k: h),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_cached_ssl_context,
+                patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+                patch.object(settings, "enable_ed25519_signing", False),
+            ):
+                mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+                mock_trace.get = MagicMock(return_value=None)
+                mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+                mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+                mock_mbuf.return_value = MagicMock()
 
-            result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+                result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
         assert result is not None
         assert mock_cached_ssl_context.call_count == 0
-        assert captured_pool_kwargs.get("transport_type") is not None
+        # The registry received the downstream session id + gateway id — this is the
+        # 1:1 binding that prevents cross-session upstream state leakage (#4205).
+        assert captured_acquire_kwargs.get("downstream_session_id") == "downstream-xyz"
+        assert captured_acquire_kwargs.get("gateway_id") == "gw-uuid-1"
+        assert captured_acquire_kwargs.get("transport_type") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -9447,7 +9521,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9503,7 +9576,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9575,8 +9647,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # No downstream session id in scope → registry is skipped, fallback taken.
             patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
             patch.object(tool_service, "_pydantic_gateway_from_payload", return_value=None),
         ):
@@ -9592,10 +9663,11 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         plugin_manager.invoke_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_streamablehttp_uses_session_pool_and_modified_payload_with_headers_none(self, tool_service):
-        """Covers pooled StreamableHTTP path + modified_payload headers=None branch."""
+    async def test_streamablehttp_uses_registry_and_modified_payload_with_headers_none(self, tool_service):
+        """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
         # First-Party
         from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9612,42 +9684,45 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
         plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
 
-        pooled_session = AsyncMock()
-        pooled_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return SimpleNamespace(session=pooled_session)
+                return SimpleNamespace(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        pool = MagicMock()
-        pool.session = MagicMock(return_value=_PooledCM())
+        registry = MagicMock()
+        registry.acquire = MagicMock(return_value=_AcquireCM())
 
-        with (
-            _setup_cache_for_invoke(tp, gp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sh"})
+        try:
+            with (
+                _setup_cache_for_invoke(tp, gp),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+                patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+                patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+                patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            ):
+                mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+                mock_trace.get = MagicMock(return_value=None)
+                mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+                mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+                mock_mbuf.return_value = MagicMock()
 
-            result = await tool_service.invoke_tool(db, "test_tool", {})
+                result = await tool_service.invoke_tool(db, "test_tool", {})
+        finally:
+            request_headers_var.reset(headers_token)
 
         assert result is not None
-        assert pool.session.called
+        assert registry.acquire.called
 
     @pytest.mark.asyncio
     async def test_streamablehttp_timeout_triggers_post_hook_without_context(self, tool_service):
@@ -9702,7 +9777,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -9757,7 +9831,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)

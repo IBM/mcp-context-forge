@@ -482,10 +482,12 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    def test_health_check_db_error(self):
+    @pytest.mark.asyncio
+    async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -508,8 +510,10 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = mcpgateway_main.healthcheck()
-        assert response["status"] == "unhealthy"
+            response_obj = FastAPIResponse()
+            result = mcpgateway_main.healthcheck(response_obj)
+        assert result["status"] == "unhealthy"
+        assert "error" in result
         assert session.invalidate_called is True
 
     @pytest.mark.asyncio
@@ -517,6 +521,7 @@ class TestHealthAndInfrastructure:
         """Test readiness check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -538,12 +543,11 @@ class TestHealthAndInfrastructure:
                 pass
 
         session = DummySession()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=session),
-            patch("mcpgateway.main.asyncio.to_thread", side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)),
-        ):
-            response = await mcpgateway_main.readiness_check()
-        assert response.status_code == 503
+        with patch("mcpgateway.main.SessionLocal", return_value=session):
+            response_obj = FastAPIResponse()
+            result = await mcpgateway_main.readiness_check(response_obj)
+        assert result.status == "unready"
+        assert response_obj.status_code == 503
         assert session.invalidate_called is True
 
     def test_root_redirect(self, test_client):
@@ -3121,6 +3125,45 @@ class TestA2AAgentEndpoints:
         )
         assert response.status_code == 200
         mock_service.invoke_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_parses_hop_header(self, mock_service, test_client, auth_headers):
+        """The handler must read `X-Contextforge-UAID-Hop` and forward it as
+        the `hop_count` kwarg to ``invoke_agent``.  This is the HTTP-edge
+        plumbing that the service-layer test can't cover — a regression
+        that drops the kwarg silently reopens the federation loop.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers={**auth_headers, "X-Contextforge-UAID-Hop": "2"},
+        )
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 2
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_defaults_hop_to_zero(self, mock_service, test_client, auth_headers):
+        """Missing or unparseable `X-Contextforge-UAID-Hop` must yield hop_count=0.
+        An attacker sending a garbage value must not confuse the counter
+        into skipping the guard."""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        # No header
+        test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers=auth_headers,
+        )
+        assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 0
+        mock_service.invoke_agent.reset_mock()
+        # Garbage value
+        test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers={**auth_headers, "X-Contextforge-UAID-Hop": "not-a-number"},
+        )
+        assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 0
 
 
 # ----------------------------------------------------- #

@@ -1,5 +1,8 @@
+title: Observability
 nav:
-  - Overview: observability.md
-  - Internal Observability: internal-observability.md
-  - Langfuse Integration: langfuse.md
-  - Phoenix Integration: phoenix.md
+  - index.md
+  - opentelemetry.md
+  - internal.md
+  - prometheus.md
+  - langfuse.md
+  - phoenix.md

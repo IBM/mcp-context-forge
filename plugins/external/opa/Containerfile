@@ -30,20 +30,21 @@ RUN mkdir -p ${APP_HOME} && \
     mkdir -p ${HOME}/resources/config && \
     chown -R 1001:0 ${HOME}/resources/config
 
-# Install opa in container
-RUN curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/v${OPASERVER_VERSION}/opa_linux_${TARGETARCH}_static
-RUN chmod +x /usr/local/bin/opa
-RUN opa version
+# Install OPA binary and verify — single layer.
+RUN curl -fsSL -o /usr/local/bin/opa \
+        "https://openpolicyagent.org/downloads/v${OPASERVER_VERSION}/opa_linux_${TARGETARCH}_static" \
+    && chmod +x /usr/local/bin/opa \
+    && opa version
 
 USER 1001
 
 
-# Install plugin package
+# Install plugin package and create writable cache directory — single layer.
 COPY . .
-RUN pip install --no-cache-dir uv && python -m uv pip install .
-
-# Make default cache directory writable
-RUN mkdir -p -m 0776 ${HOME}/.cache
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir uv \
+    && python -m uv pip install . \
+    && mkdir -p -m 0776 ${HOME}/.cache
 
 # Update labels
 LABEL maintainer="ContextForge Team" \

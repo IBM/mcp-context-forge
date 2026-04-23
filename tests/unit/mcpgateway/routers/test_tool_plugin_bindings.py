@@ -19,7 +19,7 @@ Tests cover:
 
 # Standard
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, status
@@ -39,7 +39,6 @@ from mcpgateway.routers.tool_plugin_bindings import (
 )
 from mcpgateway.schemas import (
     PluginBindingMode,
-    PluginId,
     PluginPolicyItem,
     TeamPolicies,
     ToolPluginBindingListResponse,
@@ -49,7 +48,6 @@ from mcpgateway.schemas import (
 from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,15 +89,28 @@ def user_ctx(db_session):
 # ---------------------------------------------------------------------------
 
 _OLG: dict = {
-    "min_chars": 0, "max_chars": 2000, "min_tokens": 0, "max_tokens": None,
-    "chars_per_token": 4, "limit_mode": "character", "strategy": "truncate",
-    "ellipsis": "\u2026", "word_boundary": False, "max_text_length": 1_000_000,
-    "max_structure_size": 10_000, "max_recursion_depth": 100,
+    "min_chars": 0,
+    "max_chars": 2000,
+    "min_tokens": 0,
+    "max_tokens": None,
+    "chars_per_token": 4,
+    "limit_mode": "character",
+    "strategy": "truncate",
+    "ellipsis": "\u2026",
+    "word_boundary": False,
+    "max_text_length": 1_000_000,
+    "max_structure_size": 10_000,
+    "max_recursion_depth": 100,
 }
 _RL: dict = {
-    "by_user": None, "by_tenant": None, "by_tool": None,
-    "algorithm": "fixed_window", "backend": "memory",
-    "redis_url": None, "redis_key_prefix": "rl", "redis_fallback": True,
+    "by_user": None,
+    "by_tenant": None,
+    "by_tool": None,
+    "algorithm": "fixed_window",
+    "backend": "memory",
+    "redis_url": None,
+    "redis_key_prefix": "rl",
+    "redis_fallback": True,
 }
 
 
@@ -111,7 +122,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                 policies=[
                     PluginPolicyItem(
                         tool_names=["tool_x"],
-                        plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                        plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
                         config=dict(_OLG),
@@ -130,7 +141,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                 policies=[
                     PluginPolicyItem(
                         tool_names=["tool_x"],
-                        plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                        plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
                         priority=50,
                         config=dict(_OLG),
@@ -141,7 +152,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                 policies=[
                     PluginPolicyItem(
                         tool_names=["tool_y"],
-                        plugin_id=PluginId.RATE_LIMITER,
+                        plugin_id="RateLimiterPlugin",
                         mode=PluginBindingMode.PERMISSIVE,
                         priority=30,
                         config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
@@ -185,7 +196,7 @@ class TestToolPluginBindingsRouter:
         binding = result.bindings[0]
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
-        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
         assert binding.priority == 50
         assert binding.created_by == "admin@example.com"
@@ -204,7 +215,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
                             priority=99,
                             config={**_OLG, "max_chars": 500, "strategy": "block"},
@@ -350,7 +361,7 @@ class TestToolPluginBindingsRouter:
 
         team_a = by_team["team-a"]
         assert team_a.tool_name == "tool_x"
-        assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert team_a.plugin_id == "OutputLengthGuardPlugin"
         assert team_a.mode == "enforce"
         assert team_a.priority == 50
         assert team_a.config == _OLG
@@ -358,7 +369,7 @@ class TestToolPluginBindingsRouter:
 
         team_b = by_team["team-b"]
         assert team_b.tool_name == "tool_y"
-        assert team_b.plugin_id == "RATE_LIMITER"
+        assert team_b.plugin_id == "RateLimiterPlugin"
         assert team_b.mode == "permissive"
         assert team_b.priority == 30
         assert team_b.config == {**_RL, "by_user": "60/m", "by_tenant": "600/m"}
@@ -387,7 +398,7 @@ class TestToolPluginBindingsRouter:
         binding = result.bindings[0]
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
-        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
         assert binding.priority == 50
         assert binding.config == _OLG
@@ -548,7 +559,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x", "tool_y"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ext-ref-001",
                         )
@@ -599,7 +610,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-alpha",
                         )
@@ -613,7 +624,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_y"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-beta",
                         )
@@ -649,7 +660,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x", "tool_y"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-cache-test",
                         )
@@ -657,9 +668,7 @@ class TestToolPluginBindingsRouter:
                 )
             }
         )
-        await upsert_tool_plugin_bindings(
-            request=ref_request, current_user_ctx=user_ctx, db=db_session
-        )
+        await upsert_tool_plugin_bindings(request=ref_request, current_user_ctx=user_ctx, db=db_session)
 
         with patch(
             "mcpgateway.routers.tool_plugin_bindings.reload_plugin_context",
@@ -687,7 +696,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-001",
                         )
@@ -701,7 +710,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_y"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="ref-002",
                         )
@@ -731,7 +740,7 @@ class TestToolPluginBindingsRouter:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            plugin_id="OutputLengthGuardPlugin",
                             config=dict(_OLG),
                             binding_reference_id="cross-team-ref",
                         )
@@ -753,3 +762,63 @@ class TestToolPluginBindingsRouter:
         assert result.total == 1
         assert result.bindings[0].team_id == "team-a"
         assert result.bindings[0].binding_reference_id == "cross-team-ref"
+
+
+class TestWildcardInvalidation:
+    """Regression pin on the wildcard branch of ``_invalidate_and_broadcast``.
+
+    When a binding's ``tool_name == "*"`` the router must sweep every cached
+    context for that team and emit a team-scoped pub/sub frame rather than a
+    per-context one — otherwise peers converge only for contexts they've
+    already built, and the new tenant-wide policy never applies to
+    not-yet-requested tools.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wildcard_binding_invalidates_team_and_broadcasts(self):
+        from mcpgateway.routers.tool_plugin_bindings import _invalidate_and_broadcast
+
+        mock_factory = MagicMock()
+        mock_factory.invalidate_team = AsyncMock()
+
+        wildcard = MagicMock()
+        wildcard.tool_name = "*"
+        wildcard.team_id = "team-a"
+        specific = MagicMock()
+        specific.tool_name = "search"
+        specific.team_id = "team-b"
+
+        with (
+            patch("mcpgateway.routers.tool_plugin_bindings.get_plugin_manager_factory", return_value=mock_factory),
+            patch("mcpgateway.routers.tool_plugin_bindings.reload_plugin_context", new_callable=AsyncMock) as mock_reload,
+            patch("mcpgateway.routers.tool_plugin_bindings.publish_binding_change", new_callable=AsyncMock) as mock_pub_ctx,
+            patch("mcpgateway.routers.tool_plugin_bindings.publish_team_binding_change", new_callable=AsyncMock) as mock_pub_team,
+        ):
+            await _invalidate_and_broadcast([wildcard, specific])
+
+        # Specific context path: reload + per-context publish.
+        mock_reload.assert_awaited_once()
+        mock_pub_ctx.assert_awaited_once()
+        # Wildcard path: factory.invalidate_team + team-scoped publish.
+        mock_factory.invalidate_team.assert_awaited_once()
+        team_arg, sep_arg = mock_factory.invalidate_team.call_args.args
+        assert team_arg == "team-a"
+        assert sep_arg  # CONTEXT_ID_SEPARATOR passed through
+        mock_pub_team.assert_awaited_once_with("team-a")
+
+    @pytest.mark.asyncio
+    async def test_wildcard_still_broadcasts_when_factory_is_none(self):
+        """Nodes where opportunistic factory init failed must still publish so healthy peers converge."""
+        from mcpgateway.routers.tool_plugin_bindings import _invalidate_and_broadcast
+
+        wildcard = MagicMock()
+        wildcard.tool_name = "*"
+        wildcard.team_id = "team-a"
+
+        with (
+            patch("mcpgateway.routers.tool_plugin_bindings.get_plugin_manager_factory", return_value=None),
+            patch("mcpgateway.routers.tool_plugin_bindings.publish_team_binding_change", new_callable=AsyncMock) as mock_pub_team,
+        ):
+            await _invalidate_and_broadcast([wildcard])
+
+        mock_pub_team.assert_awaited_once_with("team-a")

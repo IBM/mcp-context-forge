@@ -15,28 +15,10 @@
 name: Docker Security Scan
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - 'Containerfile'
-      - 'Containerfile.lite'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'a2a-agents/go/a2a-echo-agent/**'
-      - 'mcp-servers/python/python_sandbox_server/docker/**'
-      - 'docker-compose.yml'
-      - 'docker-compose-embedded.yml'
-      - 'docker-compose-verbose-logging.yml'
-      - 'mcpgateway/**'
-      - 'plugins/**'
-      - 'pyproject.toml'
-      - '.github/workflows/docker-scan.yml'
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
-      - 'Containerfile'
       - 'Containerfile.lite'
       - 'crates/**'
       - 'Cargo.toml'
@@ -72,10 +54,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: main
-            context: .
-            file: Containerfile
-            tag: mcp-context-forge-main-smoke:scan
           - name: a2a-echo-agent
             context: a2a-agents/go/a2a-echo-agent
             file: a2a-agents/go/a2a-echo-agent/Dockerfile

@@ -10,14 +10,6 @@
 name: JavaScript Tests (Vitest)
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/static/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/vitest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
@@ -39,7 +31,7 @@ jobs:
   vitest:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: vitest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 15
 
     steps:

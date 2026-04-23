@@ -97,7 +97,7 @@ git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
 # Optional local build for testing
-podman build -t mcp-context-forge:dev -f Containerfile .
+podman build -t mcp-context-forge:dev -f Containerfile.lite .
 ```
 
 !!! note "Production deployments"

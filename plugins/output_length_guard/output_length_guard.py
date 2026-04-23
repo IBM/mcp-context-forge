@@ -244,11 +244,11 @@ class OutputLengthGuardPlugin(Plugin):
         cfg = self._cfg
         policy = self._policy
 
-        # PRIORITY CHECK: Process structuredContent first if present
+        # PRIORITY CHECK: Process structuredContent first if present (and not None/null)
         struct_key = None
-        if "structuredContent" in result:
+        if "structuredContent" in result and result["structuredContent"] is not None:
             struct_key = "structuredContent"
-        elif "structured_content" in result:
+        elif "structured_content" in result and result["structured_content"] is not None:
             struct_key = "structured_content"
 
         if struct_key:

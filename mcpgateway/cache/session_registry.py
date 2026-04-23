@@ -584,8 +584,10 @@ class SessionRegistry(SessionBackend):
                     logger.error("Some stuck tasks could not be cancelled during shutdown")
 
         # Close Redis pubsub (but not the shared client)
-        # Use timeout to prevent blocking if pubsub doesn't close cleanly
-        cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
+        # Use timeout to prevent blocking if pubsub doesn't close cleanly.
+        # 5s is well above typical pubsub close latency but bounded enough
+        # that a stuck Redis connection can't stall shutdown indefinitely.
+        cleanup_timeout = 5.0
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
                 await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
@@ -1239,6 +1241,30 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error removing session {session_id}: {e}")
 
+        # #4205: close any upstream MCP sessions this downstream session owned.
+        # Wrapped because (a) the registry may not be initialized in tests or
+        # very early bootstrap, and (b) an eviction failure must not interfere
+        # with downstream-session teardown. Eviction failure is logged at
+        # warning rather than debug because it leaves an orphaned upstream
+        # session whose presence is otherwise invisible to ops.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
+            get_upstream_session_registry,
+            RegistryNotInitializedError,
+        )
+
+        try:
+            await get_upstream_session_registry().evict_session(session_id)
+        except RegistryNotInitializedError:
+            pass  # Nothing to evict — tests or very-early bootstrap.
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Upstream session eviction for downstream session %s failed (%s: %s); an orphaned upstream session may persist until its owner task exits",
+                session_id,
+                type(exc).__name__,
+                exc,
+            )
+
         logger.info(f"Removed session: {session_id}")
 
     async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
@@ -1404,9 +1430,9 @@ class SessionRegistry(SessionBackend):
 
             # Register the session mapping with the pool
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             await pool.register_session_mapping(
                 session_id,
                 gateway_url,
@@ -1571,7 +1597,7 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
                 # Pubsub cleanup first - use timeouts to prevent blocking
-                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
+                cleanup_timeout = 5.0
                 try:
                     await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=cleanup_timeout)
                 except asyncio.TimeoutError:

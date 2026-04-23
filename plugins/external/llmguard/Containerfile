@@ -29,20 +29,18 @@ RUN mkdir -p ${APP_HOME} && \
 
 USER 1001
 
-# Install plugin package
+# Install plugin package + cryptography pin, create cache dir — single layer.
 COPY . .
-RUN pip install --no-cache-dir uv && python -m uv pip install .
-RUN pip install "cryptography>=44.0.3"
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir uv \
+    && python -m uv pip install . \
+    && python -m uv pip install "cryptography>=44.0.3" \
+    && mkdir -p -m 0776 ${HOME}/.cache
 
-
-
-# Make default cache directory writable
-RUN mkdir -p -m 0776 ${HOME}/.cache
-
-# download tokenizers
+# Download tokenizers and wire up APP_HOME symlinks in a single layer.
 COPY --chmod=0776 ./cache_tokenizers.py ${HOME}/cache_tokenizers.py
-RUN python ${HOME}/cache_tokenizers.py
-RUN ln -s ${HOME}/* ${APP_HOME}
+RUN python ${HOME}/cache_tokenizers.py \
+    && ln -s ${HOME}/* ${APP_HOME}
 
 # Update labels
 LABEL maintainer="ContextForge Team" \

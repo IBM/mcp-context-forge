@@ -279,6 +279,50 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
+    mcp_rust_ingress: Literal["internal", "public"] = Field(
+        default="internal",
+        description=(
+            "Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
+            "edge or full and no shadow override is in effect. 'internal' (default) uses "
+            "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
+            "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
+            "proxy to the Rust public listener at MCP_RUST_PUBLIC_LISTEN_HTTP — useful "
+            "for single-process deployments without nginx in front. Pydantic rejects "
+            "any other value at config load."
+        ),
+    )
+    mcp_rust_public_proxy_upstream: str = Field(
+        default="http://127.0.0.1:8787",
+        description=(
+            "Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the " "loopback address that matches docker-entrypoint.sh's " "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
+        ),
+    )
+    experimental_rust_a2a_runtime_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
+    )
+    experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
+        default=False,
+        description="Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_managed: bool = Field(
+        default=True,
+        description="Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
+    )
+    experimental_rust_a2a_runtime_url: str = Field(
+        default="http://127.0.0.1:8788",
+        description="Base URL for the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
+    )
+    experimental_rust_a2a_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -530,6 +574,41 @@ class Settings(BaseSettings):
             "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
             "are rejected. When false, unresolvable hostnames are allowed through "
             "(hostname blocklist still applies)."
+        ),
+    )
+
+    # UAID Cross-Gateway Routing Security
+    uaid_allowed_domains: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain allowlist for UAID cross-gateway routing. When not empty, only UAIDs with endpoints "
+            "ending in these domains will be allowed for cross-gateway routing. Empty list = allow all domains."
+        ),
+    )
+
+    uaid_max_length: int = Field(
+        default=2048,
+        ge=512,  # Minimum: accommodate shortest valid UAID
+        le=2048,  # Maximum: MUST match database column length (a2a_agents.uaid String(2048))
+        description=(
+            "Maximum allowed length for UAID strings. Used to prevent DoS attacks via "
+            "excessively long UAID parsing. Must not exceed database column limit (2048). "
+            "Default 2048 matches database capacity. Operators can reduce for stricter DoS "
+            "protection but cannot exceed database schema limit."
+        ),
+    )
+
+    uaid_max_federation_hops: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum UAID cross-gateway federation hops. Each outbound hop stamps "
+            "`X-Contextforge-UAID-Hop: N+1`; inbound calls at hop >= this limit are "
+            "rejected with 404 to break recursion. Covers both A→B→A loops and "
+            "self-referential `endpoint_url` loops. Default 5 accommodates "
+            "multi-tenant partner chains (Prod → Partner1 → Partner2 → Partner3) "
+            "while still terminating loops quickly (a ping-pong trips in 4 hops)."
         ),
     )
 
@@ -1644,49 +1723,6 @@ class Settings(BaseSettings):
         description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
     )
 
-    # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
-    # Disabled by default for safety. Enable explicitly in production after testing.
-    mcp_session_pool_enabled: bool = False
-    mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
-    mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
-    mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check (aligned with health_check_interval)
-    mcp_session_pool_acquire_timeout: float = 30.0  # Timeout waiting for session slot
-    mcp_session_pool_create_timeout: float = 30.0  # Timeout creating new session
-    mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
-    mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
-    mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
-    # Transport timeout for pooled sessions (default 30s to match MCP SDK default).
-    # This timeout applies to all HTTP operations (connect, read, write) on pooled sessions.
-    # Use a higher value for deployments with long-running tool calls.
-    mcp_session_pool_transport_timeout: float = 30.0
-    # Force explicit RPC (list_tools) on gateway health checks even when session is fresh.
-    # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
-    # Enable for stricter health verification at the cost of ~5ms latency per check.
-    mcp_session_pool_explicit_health_rpc: bool = False
-    # Configurable health check chain - ordered list of methods to try.
-    # Options: ping, list_tools, list_prompts, list_resources, skip
-    # Default: ping,skip - try lightweight ping, skip if unsupported (for legacy servers)
-    mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
-    # Timeout in seconds for each health check attempt
-    mcp_session_pool_health_check_timeout: float = 5.0
-    mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
-    # Global session caps to prevent resource exhaustion (0 = unlimited for backwards compat)
-    mcp_session_pool_max_total_keys: int = 0  # Max total pool keys across all buckets (0 = unlimited)
-    # Soft cap with eventual enforcement - in high-concurrency scenarios, multiple concurrent
-    # acquire() calls may pass the check before sessions are added to _active, temporarily
-    # overshooting the limit. Prevents unbounded growth but not strict at exact threshold.
-    mcp_session_pool_max_total_sessions: int = 0  # Max total active sessions across all buckets (0 = unlimited, soft cap)
-    # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
-    # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
-    # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
-    mcp_session_pool_jwt_identity_extraction: bool = True
-    # Timeout for session/transport cleanup operations (__aexit__ calls).
-    # This prevents CPU spin loops when internal tasks (like post_writer waiting on
-    # memory streams) don't respond to cancellation. Does NOT affect tool execution
-    # time - only cleanup of idle/released sessions. Increase if you see frequent
-    # "cleanup timed out" warnings; decrease for faster recovery from spin loops.
-    mcp_session_pool_cleanup_timeout: float = 5.0
-
     # Timeout for SSE task group cleanup (seconds).
     # When an SSE connection is cancelled, this controls how long to wait for
     # internal tasks to respond before forcing cleanup. Shorter values reduce
@@ -1722,10 +1758,11 @@ class Settings(BaseSettings):
     # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
     anyio_cancel_delivery_max_iterations: int = 100
 
-    # Session Affinity
+    # Session Affinity (multi-worker downstream-session → worker routing).
+    # The upstream-session pooling surface that used to share this section is
+    # gone as of #4205 — see mcpgateway.services.upstream_session_registry.
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
-    mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
 
     # Prompts
@@ -1734,7 +1771,7 @@ class Settings(BaseSettings):
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    # Interval in seconds between health checks (aligned with mcp_session_pool_health_check_interval)
+    # Interval in seconds between gateway health checks.
     health_check_interval: int = 60
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5
@@ -1867,6 +1904,28 @@ class Settings(BaseSettings):
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
+
+    # GET /mcp server-to-client stream (ADR-052)
+    # When True, GET /mcp returns an SSE stream that delivers server-initiated
+    # JSON-RPC messages (notifications and server-initiated requests) for the
+    # session identified by Mcp-Session-Id. Requires use_stateful_sessions=True.
+    # Backend (Redis vs in-memory) follows cache_type — see ADR-052 for the
+    # single-node vs multi-node fallback contract.
+    mcp_get_stream_enabled: bool = True
+    # TTL for the per-session listener claim. Refreshed by heartbeat while the
+    # GET handler holds the connection; expires shortly after disconnect so a
+    # client can reconnect without operator intervention.
+    mcp_get_stream_listener_ttl_seconds: int = 30
+    # Soft cap (bytes) on how much the body-peek helpers will buffer
+    # before stopping the peek and falling through to the SDK's
+    # streaming receive path. The request is NEVER rejected — the
+    # cap only bounds peek-path memory. Bare-uvicorn deployments
+    # without an upstream nginx have no other body cap; the body-peek
+    # path runs on every POST that has a pending request or hits a
+    # no-session MCP path. 4 MiB matches typical RPC payload sizes
+    # and stops trickle attacks dead without stranding legitimate
+    # large ``sampling/createMessage`` responses.
+    mcp_body_peek_max_bytes: int = 4 * 1024 * 1024
 
     # Development
     dev_mode: bool = False
@@ -2077,13 +2136,14 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
-    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @field_validator("experimental_rust_mcp_runtime_uds", "experimental_rust_a2a_runtime_uds", mode="after")
     @classmethod
-    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+    def _validate_experimental_rust_runtime_uds(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        """Validate the optional UDS path used for a Rust sidecar runtime.
 
         Args:
             value: Candidate UDS path from configuration.
+            info: Pydantic field metadata for the current field.
 
         Returns:
             The normalized absolute UDS path, or ``None`` when unset.
@@ -2094,11 +2154,12 @@ Disallow: /
         if value in (None, ""):
             return None
 
+        field_name = info.field_name or "experimental_rust_runtime_uds"
         uds_path = Path(value).expanduser()
         if not uds_path.is_absolute():
-            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+            raise ValueError(f"{field_name} must be an absolute path")
         if not uds_path.parent.exists():
-            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+            raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
         return str(uds_path)
 
     # -------------------------------

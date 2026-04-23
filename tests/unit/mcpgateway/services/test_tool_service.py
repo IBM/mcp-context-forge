@@ -300,7 +300,7 @@ class TestToolServiceHelpersExtended:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(service, "_record_tool_metric_by_id") as mock_record:
             service._record_tool_metric_sync("tool-1", 1.23, True, None)
@@ -366,6 +366,40 @@ def mock_gateway():
     gw.enabled = True
     gw.reachable = True
     return gw
+
+
+class TestToolServiceA2A:
+    """Focused tests for A2A helper paths inside tool_service."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_call_a2a_agent_uses_v1_send_message_payload(self, mock_get_client, tool_service):
+        """A2A tool calls should default to A2A v1 payloads for v1 agents."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            name="a2a-agent",
+            endpoint_url="https://example.com/",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+        )
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"ok": True}
+        outbound_json = mock_client.post.call_args.kwargs["json"]
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_json["method"] == "SendMessage"
+        assert outbound_json["params"]["message"]["role"] == "ROLE_USER"
+        assert outbound_json["params"]["message"]["parts"] == [{"text": "hello"}]
+        assert outbound_headers["A2A-Version"] == "1.0"
 
 
 @pytest.fixture
@@ -2487,6 +2521,168 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call streamablehttp client.
+
+        Covers tool_service.py:5241-5242 — the `except RegistryNotInitializedError: use_registry = False`
+        branch on the StreamableHTTP code path.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Pin a downstream session id so use_registry=True and the RegistryNotInitializedError
+        # branch actually fires. Without this, the registry-init try/except is skipped.
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-abc"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        # The per-call streamablehttp client path still reached call_tool successfully.
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "fallback ok"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_sse_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call sse_client (#4205 SSE branch).
+
+        Covers tool_service.py:5063-5065 — mirror of the StreamableHTTP test above.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/sse",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="SSE",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="sse fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_sse_client(*_args, **_kwargs):
+            yield ("read", "write")
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.sse_client", mock_sse_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "sse fallback ok"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp_creates_client_lifecycle_spans(self, tool_service, mock_tool, test_db):
         """Non-pooled MCP calls should emit client call, initialize, and request spans in order."""
         # Standard
@@ -2583,8 +2779,15 @@ class TestToolService:
         assert "mcp.client.response" in span_names
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_mcp_pooled_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
-        """Pooled MCP sessions must NOT receive traceparent/tracestate to prevent context pollution."""
+    async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
+        """Registry-reused MCP sessions must NOT receive traceparent/tracestate (#4205).
+
+        The registry reuses one upstream ClientSession across multiple tool calls
+        in a downstream session. Per-request trace headers would be pinned to the
+        first call and replayed on unrelated later ones, corrupting distributed
+        traces. The tool_service therefore skips per-request header injection
+        on the registry path.
+        """
         mock_gateway = SimpleNamespace(
             id="42",
             name="test_gateway",
@@ -2622,46 +2825,161 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(content=[TextContent(type="text", text="pooled ok")])
-        pooled_session_mock = AsyncMock()
-        pooled_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
 
-        captured_pool_headers = {}
+        captured_registry_headers = {}
 
         @asynccontextmanager
-        async def mock_pool_session(**kwargs):
-            captured_pool_headers.update(kwargs.get("headers") or {})
-            pooled = SimpleNamespace(session=pooled_session_mock)
-            yield pooled
+        async def mock_registry_acquire(**kwargs):
+            captured_registry_headers.update(kwargs.get("headers") or {})
+            upstream = SimpleNamespace(session=upstream_session_mock)
+            yield upstream
 
-        mock_pool = MagicMock()
-        mock_pool.session = mock_pool_session
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_registry_acquire
 
         @contextmanager
         def noop_span(name, _attributes=None):
             yield MagicMock()
 
+        # Pin a downstream session id in the ContextVar so the registry path is taken.
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sess-xyz"})
+
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
+                patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+            ):
+                mock_settings.default_passthrough_headers = []
+                mock_settings.tool_timeout = 60
+
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result.content[0].text == "registry ok"
+        # Core assertion (#4205 trace-pinning trade-off): the registry path must not
+        # receive per-request trace headers, since the reused transport will carry
+        # the first call's headers on every subsequent call.
+        assert "traceparent" not in captured_registry_headers, "traceparent must not be injected into registry-reused sessions"
+        assert "tracestate" not in captured_registry_headers, "tracestate must not be injected into registry-reused sessions"
+        assert "X-Correlation-ID" not in captured_registry_headers, "X-Correlation-ID must not be injected into registry-reused sessions"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_two_downstream_sessions_hit_registry_with_distinct_ids(self, tool_service, mock_tool, test_db):
+        """Two downstream MCP sessions must key the registry separately — the #4205 invariant.
+
+        Today's regression: the old pool keyed upstream sessions by user identity,
+        so two browser tabs held by the same user shared an upstream session and
+        leaked counter state between each other. This test pins the fix in
+        tool_service: each downstream Mcp-Session-Id makes the service ask the
+        registry for a DIFFERENT upstream session.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="gw-42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        def make_returns():
+            return [mock_tool, mock_gateway, mock_gateway]
+
+        returns = []
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected = ToolResult(content=[TextContent(type="text", text="ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+
+        observed_keys: list[tuple[str, str]] = []
+
+        @asynccontextmanager
+        async def mock_acquire(**kwargs):
+            observed_keys.append((kwargs["downstream_session_id"], kwargs["gateway_id"]))
+            yield SimpleNamespace(session=upstream_session_mock)
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_acquire
+
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
-            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
-            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
         ):
-            mock_settings.mcp_session_pool_enabled = True
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            # Downstream session A
+            returns[:] = make_returns()
+            token_a = request_headers_var.set({"mcp-session-id": "downstream-A"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_a)
 
-        assert result.content[0].text == "pooled ok"
-        # The critical assertion: pooled path must NOT have traceparent/tracestate
-        assert "traceparent" not in captured_pool_headers, "traceparent must not be injected into pooled sessions"
-        assert "tracestate" not in captured_pool_headers, "tracestate must not be injected into pooled sessions"
-        # Correlation ID must also be absent from pooled headers (pinned transport)
-        assert "X-Correlation-ID" not in captured_pool_headers, "X-Correlation-ID must not be injected into pooled sessions"
+            # Downstream session B (same user, same gateway)
+            returns[:] = make_returns()
+            token_b = request_headers_var.set({"mcp-session-id": "downstream-B"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_b)
+
+        # The registry was asked for two distinct keys, one per downstream session
+        # — and both pointed at the same gateway. This is exactly the isolation
+        # #4205's reproducer needs.
+        assert len(observed_keys) == 2
+        session_ids = [k[0] for k in observed_keys]
+        gateway_ids = [k[1] for k in observed_keys]
+        assert session_ids == ["downstream-A", "downstream-B"]
+        assert gateway_ids[0] == gateway_ids[1]
+        assert gateway_ids[0]  # non-empty
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
@@ -3073,7 +3391,6 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.settings.mcp_session_pool_enabled", False),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
             # ------------------------------------------------------------------
@@ -3440,7 +3757,7 @@ class TestToolService:
 
         # Start subscription in background
         subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        subscription_task = asyncio.create_task(anext(subscriber))
 
         # Give a moment for subscription to be registered
         await asyncio.sleep(0.01)
@@ -5065,6 +5382,7 @@ class TestRestToolQueryParamHandling:
     @pytest.mark.asyncio
     async def test_rest_tool_get_param_conflict_logs_warning(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """GET request logs warning when input args conflict with URL query params."""
+        # Standard
         import logging
 
         caplog.set_level(logging.WARNING)
@@ -5087,14 +5405,7 @@ class TestRestToolQueryParamHandling:
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
-            await tool_service.invoke_tool(
-                test_db,
-                "test_tool",
-                {
-                    "api_key": "input_value", # pragma: allowlist secret
-                    "q": "search"
-                },
-                request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"api_key": "input_value", "q": "search"}, request_headers=None)  # pragma: allowlist secret
 
             assert "conflicting parameters" in caplog.text.lower()
             assert "api_key" in caplog.text
@@ -5139,6 +5450,7 @@ class TestRestToolNonJsonResponses:
     @pytest.mark.asyncio
     async def test_rest_tool_handles_html_error_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """REST tool handles HTML error pages gracefully without crashing."""
+        # Third-Party
         import httpx
 
         mock_tool.integration_type = "REST"
@@ -5155,6 +5467,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
         mock_response.status_code = 500
         mock_response.text = "<html><body>Internal Server Error</body></html>"
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5187,6 +5500,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = "Plain text response"
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5215,6 +5529,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = '<?xml version="1.0"?><data>value</data>'
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5269,6 +5584,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = ""
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5300,6 +5616,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = large_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5332,6 +5649,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = small_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5362,6 +5680,7 @@ class TestRestToolNonJsonResponses:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.text = large_text
+        # Standard
         import json
 
         mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
@@ -5576,7 +5895,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()

@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationError, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -4565,6 +4565,13 @@ class A2AAgentCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
+    # UAID (Universal Agent ID) generation fields
+    generate_uaid: bool = Field(default=False, description="Generate UAID (Universal Agent ID) instead of UUID for zero-config cross-gateway routing")
+    uaid_registry: Optional[str] = Field(default="context-forge", description="Registry name for UAID generation (e.g., 'context-forge')")
+    uaid_protocol: Optional[str] = Field(default="a2a", description="Protocol for UAID (a2a, mcp, rest, grpc)")
+    uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
+    version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -4881,6 +4888,12 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+
+    # UAID (Universal Agent ID) generation fields - allow adding UAID to agents that don't have one
+    generate_uaid: Optional[bool] = Field(default=False, description="Generate UAID if agent doesn't already have one (UAID is immutable once set)")
+    uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
+    uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
+    version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
 
     @field_validator("tags")
     @classmethod
@@ -5233,6 +5246,12 @@ class A2AAgentRead(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
+    # UAID (Universal Agent ID) fields
+    uaid: Optional[str] = Field(None, description="Full UAID string (if UAID-based agent)")
+    uaid_registry: Optional[str] = Field(None, description="Registry name from UAID")
+    uaid_proto: Optional[str] = Field(None, description="Protocol from UAID (a2a, mcp, rest, grpc)")
+    uaid_native_id: Optional[str] = Field(None, description="Native endpoint from UAID for cross-gateway routing")
+
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
@@ -5479,6 +5498,191 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         """
         SecurityValidator.validate_json_depth(v)
         return v
+
+
+# ---------------------------------------------------------------------------
+# A2A Task Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2ATaskState(str, Enum):
+    """Finite state machine for A2A task lifecycle per the A2A v1 spec.
+
+    Terminal states (``completed``, ``canceled``, ``failed``, ``rejected``)
+    are the only states for which ``completed_at`` should be set; the
+    model-validators on :class:`A2ATaskCreate` and :class:`A2ATaskUpdate`
+    enforce this invariant.
+    """
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    INPUT_REQUIRED = "input-required"
+    AUTH_REQUIRED = "auth-required"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+    @classmethod
+    def terminal(cls) -> "frozenset[A2ATaskState]":
+        """Return the set of terminal states."""
+        return frozenset({cls.COMPLETED, cls.CANCELED, cls.FAILED, cls.REJECTED})
+
+    def is_terminal(self) -> bool:
+        """Whether this state is a terminal state."""
+        return self in self.terminal()
+
+
+class A2ATaskCreate(BaseModel):
+    """Schema for recording a new A2A task state."""
+
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: A2ATaskState = A2ATaskState.SUBMITTED
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+
+
+class A2ATaskRead(BaseModel):
+    """Schema for reading A2A task state."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: str
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class A2ATaskUpdate(BaseModel):
+    """Schema for updating A2A task state.
+
+    The validator rejects ``completed_at`` paired with a non-terminal
+    ``state``.  The reverse (terminal ``state`` without ``completed_at``)
+    is **not** enforced here — the service layer (e.g. ``cancel_task``)
+    stamps ``completed_at`` itself when transitioning into a terminal
+    state, so callers may legitimately omit the timestamp.
+    """
+
+    state: Optional[A2ATaskState] = None
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    completed_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _enforce_completed_at_iff_terminal(self) -> "A2ATaskUpdate":
+        """Reject ``completed_at`` paired with a non-terminal state."""
+        if self.completed_at is not None and self.state is not None and not self.state.is_terminal():
+            raise ValueError(f"completed_at is only valid with a terminal state (got state={self.state.value!r})")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Server Interface Schemas
+# ---------------------------------------------------------------------------
+
+
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a server interface."""
+
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool = True
+    config: Optional[Dict[str, Any]] = None
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a server interface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool
+    config: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# A2A Push Notification Config Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2APushNotificationConfigCreate(BaseModel):
+    """Schema for creating a push notification webhook configuration."""
+
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
+
+class A2APushNotificationConfigRead(BaseModel):
+    """Schema for reading a push notification webhook configuration."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = Field(default=None, exclude=True)
+    events: Optional[List[str]] = None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class A2ATaskEventCreate(BaseModel):
+    """Schema for creating a task event log entry."""
+
+    a2a_agent_id: Optional[str] = None
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+
+
+class A2ATaskEventRead(BaseModel):
+    """Schema for reading a task event log entry."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: Optional[str] = None
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -7326,10 +7530,40 @@ class PluginDetail(PluginSummary):
 class PluginListResponse(BaseModel):
     """Response for plugin list endpoint."""
 
+    plugins_globally_enabled: bool = Field(True, description="Whether the plugin subsystem is globally enabled at runtime")
     plugins: List[PluginSummary] = Field(..., description="List of plugins")
     total: int = Field(..., description="Total number of plugins")
     enabled_count: int = Field(0, description="Number of enabled plugins")
     disabled_count: int = Field(0, description="Number of disabled plugins")
+
+
+class PluginToggleRequest(BaseModel):
+    """Request body for ``PUT /admin/plugins`` — toggles the plugin subsystem globally."""
+
+    enabled: bool = Field(..., description="Activate plugins when true, deactivate when false")
+
+
+class PluginToggleResponse(BaseModel):
+    """Response body for the global plugin toggle endpoint."""
+
+    plugins_enabled: bool = Field(..., description="Effective plugin subsystem state after the toggle")
+    redis_persisted: bool = Field(..., description="True when the shared Redis toggle accepted the write")
+
+
+class PluginModeUpdateRequest(BaseModel):
+    """Request body for ``PUT /admin/plugins/{name}`` — drives the Pydantic enum validation."""
+
+    # Mirrors PluginMode.value; importing the enum here would create a cycle
+    # (schemas -> plugins.framework -> services -> schemas), so use a Literal.
+    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled")
+
+
+class PluginModeUpdateResponse(BaseModel):
+    """Response body for the per-plugin mode update endpoint."""
+
+    plugin: str = Field(..., description="Plugin name whose mode was updated")
+    mode: str = Field(..., description="New plugin mode")
+    redis_persisted: bool = Field(..., description="True when the shared Redis override accepted the write")
 
 
 class PluginStatsResponse(BaseModel):
@@ -7865,6 +8099,22 @@ class CacheMetricsSchema(BaseModel):
     keyspace_misses: int = Field(0, description="Failed key lookups")
 
 
+class HealthStatusItem(BaseModel):
+    """Individual health status item for a service component."""
+
+    name: str = Field(..., description="Component name (e.g., 'Database', 'Cache')")
+    status_code: int = Field(..., description="HTTP status code (200 for healthy, 503 for unhealthy)")
+    message: str = Field(..., description="Status message describing the component state")
+
+
+class HealthCheckResponse(BaseModel):
+    """Health check response containing status of all monitored components."""
+
+    status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
+    status_items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
+    mcp_runtime: Dict[str, Any] = Field(default_factory=dict, description="MCP runtime diagnostics and configuration")
+
+
 class GunicornMetricsSchema(BaseModel):
     """Gunicorn server metrics."""
 
@@ -7966,180 +8216,12 @@ class PerformanceHistoryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PluginId(str, Enum):
-    """Supported plugin identifiers for tool plugin bindings."""
-
-    OUTPUT_LENGTH_GUARD = "OUTPUT_LENGTH_GUARD"
-    RATE_LIMITER = "RATE_LIMITER"
-    SECRETS_DETECTION = "SECRETS_DETECTION"
-
-
-# Maps PluginId enum values (stored in DB) to plugin class names used by the
-# plugin framework's PluginConfigOverride.name field.
-PLUGIN_ID_TO_NAME: dict[str, str] = {
-    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
-    PluginId.RATE_LIMITER: "RateLimiterPlugin",
-    PluginId.SECRETS_DETECTION: "SecretsDetection",
-}
-
-
 class PluginBindingMode(str, Enum):
     """Plugin execution mode for tool plugin bindings."""
 
     ENFORCE = "enforce"
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
-
-
-# --- Plugin-specific config schemas ---
-
-
-class OutputLengthGuardConfig(BaseModel):
-    """Config schema for OUTPUT_LENGTH_GUARD plugin.
-
-    Attributes:
-        min_chars: Minimum character count (>= 0).
-        max_chars: Maximum character count. None disables the check.
-        min_tokens: Minimum token count (0 disables).
-        max_tokens: Maximum token count. None disables the check.
-        chars_per_token: Characters per token ratio for estimation (1-10).
-        limit_mode: Enforcement mode — 'character' or 'token'.
-        strategy: What to do when limit is exceeded.
-        ellipsis: Suffix appended when truncating.
-        word_boundary: Truncate at word boundaries to avoid mid-word cuts.
-        max_text_length: Maximum text size to process (bytes). Prevents memory exhaustion.
-        max_structure_size: Maximum items in list/dict. Prevents DoS attacks.
-        max_recursion_depth: Maximum nesting depth. Prevents stack overflow.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    min_chars: int = Field(default=0, ge=0, description="Minimum character count, must be >= 0")
-    max_chars: Optional[int] = Field(default=None, description="Maximum character count; None or 0 disables the check")
-    min_tokens: int = Field(default=0, ge=0, description="Minimum token count; 0 disables")
-    max_tokens: Optional[int] = Field(default=None, description="Maximum token count; None or 0 disables")
-    chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation")
-    limit_mode: Literal["character", "token"] = Field(default="character", description="Enforcement mode: 'character' or 'token'")
-    strategy: Literal["truncate", "block"] = Field(default="truncate", description="Action when limit exceeded")
-    ellipsis: str = Field(default="\u2026", max_length=20, description="Suffix appended on truncation")
-    word_boundary: bool = Field(default=False, description="Truncate at word boundaries to avoid mid-word cuts")
-    max_text_length: int = Field(default=1_000_000, ge=1, description="Maximum text size to process; prevents memory exhaustion")
-    max_structure_size: int = Field(default=10_000, ge=1, description="Maximum items in list/dict; prevents DoS")
-    max_recursion_depth: int = Field(default=100, ge=1, description="Maximum nesting depth; prevents stack overflow")
-
-    @model_validator(mode="after")
-    def min_less_than_max(self) -> "OutputLengthGuardConfig":
-        """Validate min < max for both chars and tokens when the max is set.
-
-        Returns:
-            self after validation.
-
-        Raises:
-            ValueError: If min_chars >= max_chars or min_tokens >= max_tokens.
-        """
-        if self.max_chars is not None and self.max_chars > 0 and self.min_chars >= self.max_chars:
-            raise ValueError("min_chars must be less than max_chars")
-        if self.max_tokens is not None and self.max_tokens > 0 and self.min_tokens >= self.max_tokens:
-            raise ValueError("min_tokens must be less than max_tokens")
-        return self
-
-
-class RateLimiterConfig(BaseModel):
-    """Config schema for RATE_LIMITER plugin.
-
-    Rate strings use the format ``<count>/<period>`` where period is
-    ``s`` (second) or ``m`` (minute), e.g. ``60/m``, ``10/s``.
-
-    Attributes:
-        by_user: Rate limit per user.
-        by_tenant: Rate limit per tenant.
-        by_tool: Per-tool rate limits as a dict of tool_name to rate string.
-        algorithm: Counting algorithm.
-        backend: Storage backend.
-        redis_url: Redis connection URL (required when backend='redis').
-        redis_key_prefix: Prefix for all Redis keys.
-        redis_fallback: Fall back to memory if Redis is unavailable.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    by_user: Optional[str] = Field(default=None, description="Rate limit per user, e.g. '60/m' or '10/s'; null disables")
-    by_tenant: Optional[str] = Field(default=None, description="Rate limit per tenant, e.g. '600/m'; null disables")
-    by_tool: Optional[Dict[str, str]] = Field(default=None, description="Per-tool rate limits, e.g. {'search': '10/m'}; null disables")
-    algorithm: Literal["fixed_window", "sliding_window", "token_bucket"] = Field(default="fixed_window", description="Counting algorithm")
-    backend: Literal["memory", "redis"] = Field(default="memory", description="Storage backend")
-    redis_url: Optional[str] = Field(default=None, description="Redis URL, e.g. 'redis://localhost:6379/0'; required when backend='redis', null otherwise")
-    redis_key_prefix: str = Field(default="rl", description="Prefix for all Redis keys")
-    redis_fallback: bool = Field(default=True, description="Fall back to memory if Redis is unavailable")
-
-    @field_validator("by_user", "by_tenant", mode="before")
-    @classmethod
-    def validate_rate_string(cls, v: Optional[str]) -> Optional[str]:
-        """Validate rate string format <count>/<s|m>.
-
-        Args:
-            v: Rate string to validate.
-
-        Returns:
-            Validated rate string or None.
-
-        Raises:
-            ValueError: If format is invalid.
-        """
-        if v is None:
-            return v
-        if not re.match(r"^\d+/[sm]$", v):
-            raise ValueError(f"Rate string '{v}' is invalid. Use format '<count>/s' or '<count>/m'")
-        return v
-
-    @field_validator("by_tool", mode="before")
-    @classmethod
-    def validate_by_tool_rate_strings(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
-        """Validate each per-tool rate string.
-
-        Args:
-            v: Dict of tool_name to rate string.
-
-        Returns:
-            Validated dict or None.
-
-        Raises:
-            ValueError: If any rate string is invalid.
-        """
-        if v is None:
-            return v
-        for tool_name, rate in v.items():
-            if not re.match(r"^\d+/[sm]$", rate):
-                raise ValueError(f"Rate string '{rate}' for tool '{tool_name}' is invalid. Use format '<count>/s' or '<count>/m'")
-        return v
-
-
-class SecretsDetectionConfig(BaseModel):
-    """Config schema for SECRETS_DETECTION plugin.
-
-    Attributes:
-        enabled: Map of pattern names to whether they are active.
-        redact: Whether to redact detected secrets from output.
-        redaction_text: Text used to replace redacted secrets.
-        block_on_detection: Whether to block the response when secrets are found.
-        min_findings_to_block: Minimum number of findings required to trigger a block.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
-    redact: bool = Field(default=True, description="Whether to redact detected secrets")
-    redaction_text: str = Field(default="[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
-    block_on_detection: bool = Field(default=False, description="Whether to block the response when secrets are detected")
-    min_findings_to_block: int = Field(default=1, ge=1, description="Minimum number of findings required to block")
-
-
-# Map of plugin_id → config schema class for validation
-_PLUGIN_CONFIG_MAP: Dict[str, type] = {
-    PluginId.OUTPUT_LENGTH_GUARD: OutputLengthGuardConfig,
-    PluginId.RATE_LIMITER: RateLimiterConfig,
-    PluginId.SECRETS_DETECTION: SecretsDetectionConfig,
-}
 
 
 # --- Policy item (one plugin, one or more tools) ---
@@ -8159,11 +8241,12 @@ class PluginPolicyItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
-    plugin_id: PluginId = Field(..., description="Plugin to bind")
+    plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
     mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
-        ..., description="Plugin-specific configuration. All schema fields for the selected plugin must be provided — partial configs are rejected at validation time. On upsert the entire config is fully replaced; there is no merge with the previously stored config."
+        ...,
+        description="Plugin-specific configuration. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
     binding_reference_id: Optional[str] = Field(
         None,
@@ -8171,33 +8254,6 @@ class PluginPolicyItem(BaseModel):
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
         description="Optional external reference ID for correlating this binding with an upstream system",
     )
-
-    @model_validator(mode="after")
-    def validate_config_for_plugin(self) -> "PluginPolicyItem":
-        """Validate config against the schema for the selected plugin_id.
-
-        Returns:
-            self after validation.
-
-        Raises:
-            ValueError: If config is invalid for the chosen plugin.
-        """
-        config_cls = _PLUGIN_CONFIG_MAP.get(self.plugin_id)
-        if config_cls:
-            expected = set(config_cls.model_fields.keys())
-            provided = set(self.config.keys())
-            missing = expected - provided
-            if missing:
-                raise ValueError(f"Missing config fields for {self.plugin_id.value}: {sorted(missing)}")
-            try:
-                config_cls(**self.config)
-            except ValidationError as exc:
-                parts = []
-                for e in exc.errors():
-                    loc = ".".join(str(p) for p in e["loc"])
-                    parts.append(f"{loc}: {e['msg']}" if loc else e["msg"])
-                raise ValueError(f"Invalid {self.plugin_id.value} config: [{', '.join(parts)}]") from exc
-        return self
 
 
 # --- Per-team policies wrapper ---

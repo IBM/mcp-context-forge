@@ -43,7 +43,6 @@ This updates the version string in the four canonical locations defined in `.bum
 |------|-------|
 | `mcpgateway/__init__.py` | `__version__` |
 | `pyproject.toml` | `version` |
-| `Containerfile` | `version` label |
 | `Containerfile.lite` | `version` label |
 
 !!! note "bump2version does not commit or tag"
@@ -98,7 +97,7 @@ gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.sta
 
 ### 1.6 Update container base images
 
-Update the `FROM` lines in `Containerfile` and `Containerfile.lite` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
+Update the `FROM` lines in `Containerfile.lite` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
 
 Check current base images:
 
@@ -108,18 +107,16 @@ grep '^FROM' Containerfile.lite
 
 | Stage | Current image | What to check |
 |-------|---------------|---------------|
-| Rust builder | `quay.io/pypa/manylinux2014:<tag>` | [quay.io tags](https://quay.io/repository/pypa/manylinux2014?tab=tags) |
+| Rust builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
+| Frontend builder | `registry.access.redhat.com/ubi10/nodejs-24:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/nodejs-24) |
 | Builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
 | Runtime | `registry.access.redhat.com/ubi10/ubi-minimal:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi-minimal) |
 
-Update both `Containerfile` and `Containerfile.lite` with the latest tags, then verify the images build:
+Update `Containerfile.lite` with the latest tags, then verify the image builds:
 
 ```bash
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 ```
-
-!!! warning "Keep Containerfile and Containerfile.lite in sync"
-    Both files share the same base images. When updating one, update the other to match.
 
 ### 1.7 Close the GitHub milestone
 
@@ -146,7 +143,6 @@ python .github/tools/update_dependencies.py --file mcp-servers/python/graphviz_s
 python .github/tools/update_dependencies.py --file mcp-servers/python/mcp-rss-search/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/python_sandbox_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/mcp_eval_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/qr_code_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/url_to_markdown_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/output_schema_test_server/pyproject.toml
 
@@ -261,7 +257,7 @@ make test-js-coverage
 
 ### 3.4 Frontend CDN dependencies
 
-The Admin UI loads frontend libraries (Tailwind, HTMX, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync:
+The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
 
 | File | What it controls |
 |------|------------------|
@@ -446,13 +442,13 @@ Runs the full Playwright test suite in headless Chromium against the live compos
 Requires the compose stack to be running with SSE transport enabled.
 
 ```bash
-make test-mcp-rbac test-mcp-cli
+make test-mcp-rbac test-mcp-protocol-e2e
 ```
 
 | Target | What it tests |
 |--------|---------------|
 | `test-mcp-rbac` | RBAC enforcement and multi-transport MCP protocol compliance |
-| `test-mcp-cli` | MCP protocol via mcp-cli + wrapper stdio against the gateway |
+| `test-mcp-protocol-e2e` | MCP protocol via FastMCP client against the gateway |
 
 ### 5.5 Load testing
 
@@ -502,7 +498,7 @@ make hadolint dockle security-scan
 
 | Target | What it checks |
 |--------|----------------|
-| `hadolint` | Dockerfile best practices and shell linting for `Containerfile`, `Containerfile.lite`, and any `Dockerfile.*` |
+| `hadolint` | Dockerfile best practices and shell linting for `Containerfile.*` and any `Dockerfile.*` |
 | `dockle` | CIS Docker Benchmark compliance and image best practices (runs against the built image via tarball) |
 | `security-scan` | Show current local container review guidance |
 
@@ -758,15 +754,67 @@ This starts a local MkDocs development server. Manually review:
 - No rendering issues in code blocks, tables, or admonitions
 - Release-specific pages (CHANGELOG, roadmap) reflect the current release
 
-### 11.3 Deploy documentation
+### 11.3 Deploy versioned documentation
 
-Once verified, deploy the documentation site:
+Deploy the documentation for the release version using mike. This creates a version-specific folder on the `gh-pages` branch:
 
 ```bash
-cd docs && make deploy
+cd docs
+
+# Deploy the version (e.g., 1.0.0) with 'latest' alias
+make mike-deploy VERSION=1.0.0
+
+# Set as default version (landing page)
+make mike-set-default
 ```
 
-This runs `mkdocs gh-deploy` to publish the site to GitHub Pages.
+**Versioning strategy:**
+
+- Documentation is maintained in `main` branch alongside code changes
+- When cutting a release tag (e.g., `v1.0.0`), deploy docs to that version
+- Each version gets its own folder on `gh-pages`: `1.0.0/`, `1.0.1/`, etc.
+- The `latest` alias points to the newest release
+- Old versions remain accessible but are not updated (frozen at release time)
+
+**Version deployment workflow:**
+
+```bash
+cd docs
+
+# For stable releases (deploys with 'latest' alias)
+make mike-deploy VERSION=1.0.0
+
+# For release candidates
+make mike-deploy VERSION=1.0.0-RC1
+
+# For development previews
+make mike-deploy VERSION=dev
+
+# Set default version (landing page)
+make mike-set-default
+
+# Delete a version
+make mike-delete VERSION=0.8.0
+```
+
+**Verify deployment:**
+
+```bash
+cd docs
+make mike-list  # Show all deployed versions
+```
+
+**Local preview:**
+
+```bash
+cd docs
+make mike-serve  # http://localhost:8000 with version selector
+```
+
+The version selector in the docs UI (top right) allows users to switch between versions.
+
+!!! note "Single source, multiple deployments"
+    This strategy maintains a single documentation source in `main` that evolves with the code. Each release tag triggers a versioned deployment, creating a snapshot of the docs at that point in time. No separate version branches are needed.
 
 ---
 
@@ -1314,7 +1362,7 @@ Copy-paste checklist for running all gates in sequence:
 # 0. Security advisories & base images
 gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'
 # ... resolve all open Dependabot, code scanning, secret scanning alerts ...
-# ... update FROM tags in Containerfile + Containerfile.lite ...
+# ... update FROM tags in Containerfile.lite ...
 grep '^FROM' Containerfile.lite
 
 # 1. Python dependency updates
@@ -1356,7 +1404,7 @@ make testing-down compose-clean testing-up
 
 # 7. Integration tests (compose stack must be running)
 make test-ui-headless
-make test-mcp-rbac test-mcp-cli
+make test-mcp-rbac test-mcp-protocol-e2e
 make load-test-cli
 
 # 8. Embedded mode

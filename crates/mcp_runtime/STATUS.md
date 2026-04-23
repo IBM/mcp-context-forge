@@ -22,6 +22,16 @@ Current meaning:
 - `full`: `edge` plus Rust session/event-store/resume/live-stream/affinity
   cores
 
+Boot mode `edge` additionally supports an in-memory runtime override
+(`shadow ↔ edge`) via `PATCH /admin/runtime/mcp-mode` and
+`PATCH /admin/runtime/a2a-mode`. `off`, `shadow`, and `full` are not
+flippable at runtime — `off` has no Rust sidecar to swap to, `shadow` did
+not opt into the session-auth-reuse / delegate-enabled safety invariant
+that routing public traffic to Rust requires, and `full` would require
+live migration of Rust-owned MCP session/event-store cores. When Redis is
+available the override propagates to the whole cluster; otherwise it stays
+local to the pod that received the PATCH.
+
 Python still remains the authority for:
 
 - authentication
@@ -110,7 +120,7 @@ Verified locally and currently green:
 
 Most recent rebuilt full-Rust compose validation on this branch:
 
-- `make test-mcp-cli`
+- `make test-mcp-protocol-e2e`
   - `23 passed`
 - `make test-mcp-rbac`
   - `40 passed`
@@ -339,7 +349,7 @@ items below and any remaining issues are either fixed or explicitly understood.
   substantive change:
   - `make testing-rebuild-rust-full`
   - `make test`
-  - `make test-mcp-cli`
+  - `make test-mcp-protocol-e2e`
   - `make test-mcp-rbac`
   - `make test-mcp-session-isolation`
   - `cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml`

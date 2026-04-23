@@ -160,6 +160,16 @@ services:
       #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
       #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
       #   RUST_MCP_MODE=full   -> edge + Rust session/event-store/resume/live-stream/affinity cores
+      # When the boot mode is edge an authorized admin can flip the public
+      # /mcp ingress between shadow and edge at runtime via
+      # PATCH /admin/runtime/mcp-mode (and /admin/runtime/a2a-mode for A2A).
+      # (off, shadow, and full boot modes are NOT flippable at runtime —
+      # off has no Rust sidecar; shadow did not opt into session-auth-reuse
+      # so an edge override cannot safely route public traffic; full would
+      # require live migration of Rust-owned cores.)
+      # The override is in-memory only; restarts re-read RUST_MCP_MODE/RUST_A2A_MODE.
+      # If REDIS_URL is set the override propagates to all pods; otherwise it is
+      # local to the pod that received the PATCH.
       # Advanced EXPERIMENTAL_/MCP_RUST_* env vars below still work as explicit overrides.
       - RUST_MCP_MODE=${RUST_MCP_MODE:-off}
       - RUST_MCP_LOG=${RUST_MCP_LOG:-warn}
@@ -207,6 +217,39 @@ services:
       - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
       - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
       - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
+      # High-level Rust A2A UX:
+      #   RUST_A2A_MODE=off    -> Python A2A client path
+      #   RUST_A2A_MODE=shadow -> Rust sidecar is present, but A2A invoke stays on Python
+      #   RUST_A2A_MODE=edge   -> A2A invoke delegates to the Rust sidecar
+      #   RUST_A2A_MODE=full   -> alias for edge until task/push cores move to Rust
+      - RUST_A2A_MODE=${RUST_A2A_MODE:-off}
+      - RUST_A2A_LOG=${RUST_A2A_LOG:-warn}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED:-}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED=${EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED:-}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED:-}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_URL=${EXPERIMENTAL_RUST_A2A_RUNTIME_URL:-}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_UDS=${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS:-}
+      - EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS=${EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS:-30}
+      - A2A_RUST_LISTEN_HTTP=${A2A_RUST_LISTEN_HTTP:-}
+      - A2A_RUST_LISTEN_UDS=${A2A_RUST_LISTEN_UDS:-}
+      - A2A_RUST_LOG=${A2A_RUST_LOG:-}
+      - A2A_RUST_REQUEST_TIMEOUT_MS=${A2A_RUST_REQUEST_TIMEOUT_MS:-}
+      - A2A_RUST_AUTH_SECRET=${A2A_RUST_AUTH_SECRET:-${AUTH_ENCRYPTION_SECRET:-}}
+      - A2A_RUST_BACKEND_BASE_URL=${A2A_RUST_BACKEND_BASE_URL:-http://127.0.0.1:4444}
+      - A2A_RUST_MAX_CONCURRENT=${A2A_RUST_MAX_CONCURRENT:-64}
+      - A2A_RUST_MAX_QUEUED=${A2A_RUST_MAX_QUEUED:-}
+      - A2A_RUST_CIRCUIT_FAILURE_THRESHOLD=${A2A_RUST_CIRCUIT_FAILURE_THRESHOLD:-5}
+      - A2A_RUST_CIRCUIT_COOLDOWN_SECS=${A2A_RUST_CIRCUIT_COOLDOWN_SECS:-30}
+      - A2A_RUST_REDIS_URL=${A2A_RUST_REDIS_URL:-${REDIS_URL:-}}
+      - A2A_RUST_L2_CACHE_TTL_SECS=${A2A_RUST_L2_CACHE_TTL_SECS:-300}
+      - A2A_RUST_CACHE_INVALIDATION_CHANNEL=${A2A_RUST_CACHE_INVALIDATION_CHANNEL:-mcpgw:a2a:invalidate}
+      - A2A_RUST_SESSION_ENABLED=${A2A_RUST_SESSION_ENABLED:-true}
+      - A2A_RUST_SESSION_TTL_SECS=${A2A_RUST_SESSION_TTL_SECS:-300}
+      - A2A_RUST_SESSION_FINGERPRINT_HEADERS=${A2A_RUST_SESSION_FINGERPRINT_HEADERS:-authorization,cookie,x-forwarded-for}
+      - A2A_RUST_EVENT_STORE_MAX_EVENTS=${A2A_RUST_EVENT_STORE_MAX_EVENTS:-1000}
+      - A2A_RUST_EVENT_STORE_TTL_SECS=${A2A_RUST_EVENT_STORE_TTL_SECS:-3600}
+      - A2A_RUST_EVENT_FLUSH_INTERVAL_MS=${A2A_RUST_EVENT_FLUSH_INTERVAL_MS:-1000}
+      - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -397,11 +440,18 @@ services:
       # - SSRF_DNS_FAIL_CLOSED=true
       # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16"]
 
-      # Uncomment to enable stateful sessions for Streamable HTTP transport
-      # - USE_STATEFUL_SESSIONS=true
+      # Required for the GET /mcp server-to-client SSE stream (ADR-052).
+      # Without this, GET /mcp returns 405 because the gateway has no event
+      # store to anchor a stream against.
+      - USE_STATEFUL_SESSIONS=true
 
-      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
-      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+      # Required for cross-worker routing in the multi-replica testing-up
+      # config. The GET stream itself doesn't need affinity (Pub/Sub fans out
+      # to any node), but the POST that carries a downstream's response to a
+      # server-initiated request must reach the worker holding the upstream
+      # RequestResponder — which is what affinity routes for. ADR-052 §
+      # "Why we skip affinity for GET" explains the asymmetry.
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
 
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
@@ -992,7 +1042,7 @@ services:
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .
-  #     dockerfile: Containerfile
+  #     dockerfile: Containerfile.lite
   #   environment:
   #     - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
   #   command: alembic -c mcpgateway/alembic.ini upgrade head
@@ -2104,6 +2154,7 @@ services:
     environment:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent
+      - A2A_ECHO_PROTOCOL_VERSION=1.0.0
       - A2A_ECHO_LOG_LEVEL=info
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
@@ -2177,8 +2228,8 @@ services:
                 'description': 'Lightweight A2A echo agent for docker-compose testing',
                 'endpoint_url': 'http://a2a_echo_agent:9100/',
                 'agent_type': 'jsonrpc',
-                'protocol_version': '0.3.0',
-                'capabilities': {'echo': True, 'preferredTransport': 'JSONRPC'},
+                'protocol_version': '1.0.0',
+                'capabilities': {'echo': True, 'transport': 'JSONRPC', 'supportsLegacyInterop': True},
                 'tags': ['testing', 'a2a', 'echo']
             },
             'visibility': 'public'

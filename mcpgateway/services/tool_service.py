@@ -73,19 +73,21 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -122,6 +124,11 @@ def _get_registry_cache():
     return _REGISTRY_CACHE
 
 
+# NOTE: downstream session-id extraction lives in upstream_session_registry so
+# tool_service, prompt_service, and resource_service share one implementation.
+_downstream_session_id_from_request = downstream_session_id_from_request_context
+
+
 def _get_tool_lookup_cache():
     """Get tool lookup cache singleton lazily.
 
@@ -140,6 +147,41 @@ def _get_tool_lookup_cache():
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
+    """Extract a valid tenant id from a raw tool payload team_id value.
+
+    Empty strings are treated as absent (None): a zero-length tenant prefix
+    would collapse tenant-scoped Redis keys onto the unscoped layout.
+    """
+    if team_id is not None and not isinstance(team_id, str):
+        logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
+        return None
+    return team_id if team_id else None
+
+
+def _apply_tool_payload_to_global_context(
+    global_context: "GlobalContext",
+    tool_gateway_id: Optional[str],
+    app_user_email: Optional[str],
+    payload_tenant_id: Optional[str],
+) -> None:
+    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+
+    Populates server_id, user, and tenant_id on a GlobalContext that was
+    supplied by the plugin manager / middleware — filling gaps the upstream
+    propagation did not cover while never overwriting a value that was
+    already set there. Shared by the two tool-invocation call sites so they
+    stay in lockstep.
+    """
+    if tool_gateway_id and isinstance(tool_gateway_id, str):
+        global_context.server_id = tool_gateway_id
+    if not global_context.user and app_user_email and isinstance(app_user_email, str):
+        global_context.user = app_user_email
+    if not global_context.tenant_id and payload_tenant_id:
+        global_context.tenant_id = payload_tenant_id
+
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
@@ -413,13 +455,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
         text = str(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     try:
         text = repr(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.
@@ -3688,7 +3730,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
@@ -3881,17 +3927,21 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        # Derive tenant_id from the tool payload so rate limiting and other
+        # tenant-scoped plugin behaviour works on the fallback path where
+        # middleware didn't run and _propagate_tenant_id never got a chance
+        # to fill it in. Non-string team_id values are ignored defensively.
+        payload_team_id = tool_payload.get("team_id") if tool_payload else None
+        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
+
         if plugin_global_context:
             hook_global_context = plugin_global_context
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                hook_global_context.server_id = tool_gateway_id
-            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                hook_global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
             content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -4450,10 +4500,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        # Use original_name (the MCP server's tool name, e.g. "echo_text") as the binding key,
-        # not the gateway-prefixed display name (e.g. "plugin-tools-echo_text").
-        # Users create bindings against the original name they see in the MCP server.
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         logger.debug("invoke_tool: plugin_context_id=%r plugin_manager=%r", plugin_context_id, plugin_manager)
@@ -4520,21 +4571,21 @@ class ToolService(BaseService):
 
         # Reuse existing global_context from middleware or create new one
         # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
+        # Derive tenant_id from the tool payload so by_tenant rate limiting
+        # and other tenant-scoped plugin behaviour works on the fallback
+        # path where middleware didn't run. Non-string values are ignored.
+        payload_tenant_id = _extract_tenant_id_from_payload(_tool_team_id)
+
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id using local variable (not ORM access)
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                global_context.server_id = tool_gateway_id
-            # Propagate user email to global context for plugin access
-            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
-                global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(global_context, tool_gateway_id, app_user_email, payload_tenant_id)
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             content_type = request_headers.get("content-type") if request_headers else None
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
@@ -5039,38 +5090,39 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # Prefer the registry when we have a downstream Mcp-Session-Id and
+                            # we're not inside a distributed trace (reused transports carry
+                            # pinned headers, so per-request traceparent can't propagate).
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                async with pool.session(
+                            if use_registry:
+                                # Registry path: 1:1 binding means upstream state is private to
+                                # this downstream session. Connection reuse still amortizes the
+                                # initialize cost across multiple tool calls in the same session.
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    # Registry not initialized (tests, early startup) — fall through.
+                                    use_registry = False
+
+                            if use_registry:
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), or
+                                # when a distributed trace needs per-request trace headers.
                                 with create_span(
                                     "mcp.client.call",
                                     {
@@ -5221,40 +5273,35 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # See the SSE branch above for the full rationale.
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                # Determine transport type based on current transport setting
-                                pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-                                async with pool.session(
+                            if use_registry:
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    use_registry = False
+
+                            if use_registry:
+                                registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=pool_transport_type,
+                                    transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), when
+                                # a distributed trace needs per-request trace headers, or when the
+                                # registry singleton isn't initialised (tests, early startup).
                                 with create_span(
                                     "mcp.client.call",
                                     {
@@ -5450,63 +5497,40 @@ class ToolService(BaseService):
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
-                    # Build request data based on agent type
-                    endpoint_url = a2a_agent_endpoint_url
-                    if a2a_agent_type in ["generic", "jsonrpc"] or endpoint_url.endswith("/"):
-                        # JSONRPC agents: Convert flat query to nested message structure
-                        params = None
-                        if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
-                            message_id = f"admin-test-{int(time.time())}"
-                            # A2A v0.3.x: message.parts use "kind" (not "type").
-                            params = {
-                                "message": {
-                                    "kind": "message",
-                                    "messageId": message_id,
-                                    "role": "user",
-                                    "parts": [{"kind": "text", "text": arguments["query"]}],
-                                }
-                            }
-                            method = arguments.get("method", "message/send")
-                        else:
-                            params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
-                            method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
-                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                    else:
-                        # Custom agents: Pass parameters directly
-                        params = arguments if isinstance(arguments, dict) else {}
-                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
-
-                    # Add authentication
-                    if a2a_agent_auth_type in ("api_key", "basic", "bearer", "authheaders") and a2a_agent_auth_value:
-                        # Decrypt auth_value before using it
-                        if isinstance(a2a_agent_auth_value, str):
-                            try:
-                                auth_headers = decode_auth(a2a_agent_auth_value)
-                                headers.update(auth_headers)
-                            except Exception as e:
-                                logger.error(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}': {e}")
-                                raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}'")
-                        elif isinstance(a2a_agent_auth_value, dict):
-                            auth_headers = {str(k): str(v) for k, v in a2a_agent_auth_value.items()}
-                            headers.update(auth_headers)
-                    elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
-                        auth_query_params_decrypted: dict[str, str] = {}
-                        for param_key, encrypted_value in a2a_agent_auth_query_params.items():
-                            if encrypted_value:
-                                try:
-                                    decrypted = decode_auth(encrypted_value)
-                                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                                except Exception:
-                                    logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-                        if auth_query_params_decrypted:
-                            endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+                    prepared = prepare_a2a_invocation(
+                        agent_type=a2a_agent_type,
+                        endpoint_url=a2a_agent_endpoint_url,
+                        protocol_version=a2a_agent_protocol_version,
+                        parameters=arguments if isinstance(arguments, dict) else {},
+                        interaction_type=str(arguments.get("interaction_type", "query")) if isinstance(arguments, dict) else "query",
+                        auth_type=a2a_agent_auth_type,
+                        auth_value=a2a_agent_auth_value,
+                        auth_query_params=a2a_agent_auth_query_params,
+                        base_headers=headers,
+                        correlation_id=get_correlation_id(),
+                    )
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
-                        logger.info(f"Calling A2A agent '{a2a_agent_name}' at {endpoint_url}")
+                        logger.info(f"Calling A2A agent '{a2a_agent_name}' at {prepared.sanitized_endpoint_url}")
                         a2a_start_time = time.time()
                         try:
-                            http_response = await asyncio.wait_for(self._http_client.post(endpoint_url, json=request_data, headers=headers), timeout=effective_timeout)
+                            # First-Party
+                            from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+                            if should_delegate_a2a_to_rust():
+                                runtime_response = await get_rust_a2a_runtime_client().invoke(prepared, timeout_seconds=int(max(1, effective_timeout)))
+                                status_code = int(runtime_response.get("status_code", 200))
+                                response_data = runtime_response.get("json")
+                                response_text = str(runtime_response.get("text") or "")
+                            else:
+                                http_response = await asyncio.wait_for(
+                                    self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
+                                    timeout=effective_timeout,
+                                )
+                                status_code = http_response.status_code
+                                response_data = http_response.json() if status_code == 200 else None
+                                response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
@@ -5532,6 +5556,10 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except RustA2ARuntimeError as e:
+                            status_code = 502
+                            response_data = None
+                            response_text = str(e)
 
                         if http_response.status_code == 200:
                             response_data = http_response.json()
@@ -5545,7 +5573,7 @@ class ToolService(BaseService):
                             if isinstance(response_data, dict) and "response" in response_data:
                                 val = response_data["response"]
                                 content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
-                            else:
+                            elif response_data is not None:
                                 content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
 
                             # Route through canonical coercion to ensure uniform is_error handling
@@ -5553,7 +5581,7 @@ class ToolService(BaseService):
                             tool_result = self._coerce_to_tool_result({"content": content, "isError": is_jsonrpc_error or is_app_error})
                             success = not tool_result.is_error
                         else:
-                            error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+                            error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
                             success = False  # Explicit assignment instead of relying on scope fall-through
@@ -6677,81 +6705,37 @@ class ToolService(BaseService):
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
 
-        # Build request data based on agent type
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC agents: Convert flat query to nested message structure
-            params = None
-            if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
-                # Build the nested message object for JSONRPC protocol
-                message_id = f"admin-test-{int(time.time())}"
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                params = {
-                    "message": {
-                        "kind": "message",
-                        "messageId": message_id,
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": parameters["query"]}],
-                    }
-                }
-                method = parameters.get("method", "message/send")
-            else:
-                # Already in correct format or unknown, pass through
-                params = parameters.get("params", parameters)
-                method = parameters.get("method", "message/send")
+        prepared = prepare_a2a_invocation(
+            agent_type=agent.agent_type,
+            endpoint_url=agent.endpoint_url,
+            protocol_version=agent.protocol_version,
+            parameters=parameters,
+            interaction_type=str(parameters.get("interaction_type", "query")) if isinstance(parameters, dict) else "query",
+            auth_type=agent.auth_type,
+            auth_value=agent.auth_value,
+            auth_query_params=agent.auth_query_params,
+            correlation_id=get_correlation_id(),
+        )
+        logger.info(f"invoke tool request_data prepared: {prepared.request_data}")
 
-            try:
-                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
-            except Exception as e:
-                logger.error(f"Error preparing JSONRPC request data: {e}")
-                raise
-        else:
-            # Custom agents: Pass parameters directly without JSONRPC message conversion
-            # Custom agents expect flat fields like {"query": "...", "message": "..."}
-            params = parameters if isinstance(parameters, dict) else {}
-            logger.info(f"invoke tool Using custom A2A format for A2A agent '{params}'")
-            request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
-        logger.info(f"invoke tool request_data prepared: {request_data}")
+        # First-Party
+        from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+        if should_delegate_a2a_to_rust():
+            runtime_response = await get_rust_a2a_runtime_client().invoke(
+                prepared,
+                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
+            )
+            if int(runtime_response.get("status_code", 200)) == 200:
+                return runtime_response.get("json") if runtime_response.get("json") is not None else runtime_response.get("text")
+            raise Exception(f"HTTP {runtime_response.get('status_code')}: {runtime_response.get('text')}")
+
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
-        headers = {"Content-Type": "application/json"}
-
-        # Determine the endpoint URL (may be modified for query_param auth)
-        endpoint_url = agent.endpoint_url
-
-        # Add authentication if configured
-        if agent.auth_type in ("api_key", "basic", "bearer", "authheaders") and agent.auth_value:
-            # Decrypt auth_value and extract headers (matches a2a_service.py pattern)
-            if isinstance(agent.auth_value, str):
-                try:
-                    auth_headers = decode_auth(agent.auth_value)
-                    headers.update(auth_headers)
-                except Exception as e:
-                    logger.error(f"Failed to decrypt authentication for A2A agent '{agent.name}': {e}")
-                    raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{agent.name}'")
-            elif isinstance(agent.auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
-                headers.update(auth_headers)
-        elif agent.auth_type == "query_param" and agent.auth_query_params:
-            # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
-            auth_query_params_decrypted: dict[str, str] = {}
-            for param_key, encrypted_value in agent.auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-            if auth_query_params_decrypted:
-                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
-                # Log sanitized URL to avoid credential leakage
-                sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
-                logger.debug(f"Applied query param auth to A2A agent endpoint: {sanitized_url}")
-
-        http_response = await client.post(endpoint_url, json=request_data, headers=headers)
+        http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
 
         if http_response.status_code == 200:
             return http_response.json()

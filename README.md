@@ -126,7 +126,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <details>
 <summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
 
-* Admin UI built with HTMX + Alpine.js
+* Admin UI built with HTMX 2.0.3 (bundled) + Alpine.js
 * Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
@@ -759,6 +759,37 @@ Content size limits prevent DoS attacks and ensure system stability:
 | `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
 
 **Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
+
+### 🌐 UAID Cross-Gateway Routing Security
+
+⚠️ **Security Warning:** UAID-based cross-gateway routing enables zero-config agent federation but **does not implement authentication** for outbound HTTP calls to remote gateways.
+
+**Security Implications:**
+
+1. **Remote Gateway Authentication:** Target gateways receive unauthenticated requests. They MUST enforce `AUTH_REQUIRED=true` to protect their resources.
+2. **No Authorization Context:** Cross-gateway calls execute with the target gateway's public access level. RBAC from the originating user is not preserved.
+3. **Trust Boundary:** Your gateway trusts the remote gateway's access control. Compromised remote gateways can become security vectors.
+
+**Configuration:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `UAID_ALLOWED_DOMAINS` | JSON array of trusted domain suffixes for cross-gateway routing | `[]` (allow all) |
+| `UAID_MAX_LENGTH` | Maximum UAID string length (DoS protection) | `2048` |
+
+**Recommended Actions:**
+
+- Set `UAID_ALLOWED_DOMAINS=["trusted.example.com"]` to allowlist trusted gateways
+- Set `UAID_ALLOWED_DOMAINS=["your-trusted.domain"]` to **restrict to trusted gateways only** (most secure)
+- Ensure `AUTH_REQUIRED=true` on ALL gateways in your federation
+- Monitor cross-gateway calls via correlation IDs in observability logs
+
+**Future Security Enhancements (Roadmap):**
+- Bearer token forwarding (gateway-to-gateway trust)
+- Mutual TLS authentication
+- Trusted gateway registry with signature verification
+
+See [UAID Implementation Guide](docs/docs/architecture/UAID_APPROACH_B_IMPLEMENTATION.md) for technical details.
 
 ### ⚙️ Project Defaults (Dev Setup)
 

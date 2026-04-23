@@ -162,29 +162,23 @@ class ToolPluginBindingService:
             for policy in team_policies.policies:
                 # Build the authoritative tool-name set for stale pruning.
                 if policy.binding_reference_id:
-                    key = (policy.binding_reference_id, policy.plugin_id.value)
+                    key = (policy.binding_reference_id, policy.plugin_id)
                     ref_plugin_tool_names.setdefault(key, set()).update(policy.tool_names)
 
                 for tool_name in policy.tool_names:
-                    existing = existing_map.get((team_id, tool_name, policy.plugin_id.value))
+                    existing = existing_map.get((team_id, tool_name, policy.plugin_id))
 
                     if existing:
                         # Warn if binding_reference_id ownership is changing — this means two
                         # different external references are claiming the same (team, tool, plugin)
                         # triple.  The new reference_id wins (last-caller-wins), but the old
                         # caller's DELETE by reference will now be a no-op.
-                        if (
-                            existing.binding_reference_id
-                            and policy.binding_reference_id
-                            and existing.binding_reference_id != policy.binding_reference_id
-                        ):
+                        if existing.binding_reference_id and policy.binding_reference_id and existing.binding_reference_id != policy.binding_reference_id:
                             logger.warning(
-                                "binding_reference_id ownership transfer: "
-                                "team=%s tool=%s plugin=%s old_ref=%s new_ref=%s — "
-                                "DELETE by old_ref will now be a no-op",
+                                "binding_reference_id ownership transfer: team=%s tool=%s plugin=%s old_ref=%s new_ref=%s — DELETE by old_ref will now be a no-op",
                                 team_id,
                                 tool_name,
-                                policy.plugin_id.value,
+                                policy.plugin_id,
                                 existing.binding_reference_id,
                                 policy.binding_reference_id,
                             )
@@ -201,14 +195,14 @@ class ToolPluginBindingService:
                             existing.id,
                             team_id,
                             tool_name,
-                            policy.plugin_id.value,
+                            policy.plugin_id,
                         )
                     else:
                         new_binding = ToolPluginBinding(
                             id=uuid.uuid4().hex,
                             team_id=team_id,
                             tool_name=tool_name,
-                            plugin_id=policy.plugin_id.value,
+                            plugin_id=policy.plugin_id,
                             mode=policy.mode.value,
                             priority=policy.priority,
                             config=policy.config,
@@ -225,7 +219,7 @@ class ToolPluginBindingService:
                             new_binding.id,
                             team_id,
                             tool_name,
-                            policy.plugin_id.value,
+                            policy.plugin_id,
                         )
 
         # Prune stale tool bindings for any (binding_reference_id, plugin_id)
@@ -284,8 +278,7 @@ class ToolPluginBindingService:
         if binding_reference_id:
             if team_id:
                 logger.warning(
-                    "Both team_id=%r and binding_reference_id=%r supplied to list_bindings; "
-                    "team_id will be ignored. Omit team_id when filtering by binding_reference_id.",
+                    "Both team_id=%r and binding_reference_id=%r supplied to list_bindings; team_id will be ignored. Omit team_id when filtering by binding_reference_id.",
                     team_id,
                     binding_reference_id,
                 )

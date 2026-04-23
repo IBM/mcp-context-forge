@@ -101,6 +101,28 @@ CONTAINER_CPUS   = 2
 # The -r flag for xargs is GNU-specific and will fail on macOS
 XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
 
+# -----------------------------------------------------------------------------
+#  Allow override of the image to be used in various docker compose
+#  up and down actions
+# -----------------------------------------------------------------------------
+ifndef IMAGE_LOCAL
+  # Base image name (without any prefix)
+  IMAGE_BASE := mcpgateway/mcpgateway
+  IMAGE_TAG := latest
+
+  # Handle runtime-specific image naming
+  ifeq ($(CONTAINER_RUNTIME),podman)
+    # Podman adds localhost/ prefix for local builds
+    IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  else
+    # Docker doesn't add prefix
+    IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  endif
+endif
 
 # =============================================================================
 # 📖 DYNAMIC HELP
@@ -244,6 +266,7 @@ INTERROGATE_VERSION     ?= 1.7.0
 RADON_VERSION           ?= 6.0.1
 YAMLLINT_VERSION        ?= 1.38.0
 TOMLCHECK_VERSION       ?= 0.2.3
+PYSPELLING_VERSION      ?= 2.11
 
 # detect-secrets: pinned to IBM's hardened fork (Tag 0.13.1+ibm.64.dss).
 # Uses a git-URL + commit SHA rather than a PyPI version because the IBM
@@ -359,7 +382,7 @@ js-build:                        ## Install npm dependencies and build JS bundle
 	fi
 
 ## --- Primary servers ---------------------------------------------------------
-serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
+serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
@@ -724,10 +747,12 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-mcp-cli         - Run MCP protocol tests via mcp-cli against live gateway (localhost:8080)
-# help:                        Requires: mcp-cli installed, ContextForge running (docker-compose up)
-# help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
-# help:                        No LLM or API key required - tests MCP protocol only
+# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
+# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
+# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
+# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -759,9 +784,10 @@ clean:
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
-    tests/e2e/test_mcp_cli_protocol.py \
+    tests/e2e/test_mcp_protocol_e2e.py \
     tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust
+    tests/e2e_rust \
+    tests/protocol_compliance
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -773,13 +799,46 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
-	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+test-mcp-protocol-e2e:  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
-			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
-		echo "✅ mcp-cli protocol tests passed!"'
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+			|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }; \
+		echo "✅ MCP protocol E2E tests passed!"'
+
+test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
+	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
+	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
+	@$(MAKE) test-mcp-protocol-e2e
+
+test-protocol-compliance:  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
+	@echo "📜 Running MCP protocol compliance harness (tests/protocol_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
+			|| { echo "❌ protocol compliance harness failed!"; exit 1; }; \
+		echo "✅ protocol compliance harness passed!"'
+
+test-protocol-compliance-reference:  ## Protocol compliance harness — reference server only (fast, always-on)
+	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "reference-stdio" -v --tb=short \
+			|| { echo "❌ reference-target compliance harness failed!"; exit 1; }; \
+		echo "✅ reference-target compliance harness passed!"'
+
+test-protocol-compliance-gateway:  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
+	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+			|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }; \
+		echo "✅ gateway-target compliance harness passed!"'
+
+test-protocol-compliance-matrix:  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/python scripts/compliance_matrix.py $(MATRIX_ARGS)'
 
 test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1617,9 +1676,10 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@mkdir -p reports
+	@echo "   Using image $${IMAGE_LOCAL}"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -1630,6 +1690,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
+	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1676,7 +1737,7 @@ testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast --profile sso down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -4194,7 +4255,7 @@ pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
 spellcheck:                         ## 🔤  Spell-check
-	@$(VENV_DIR)/bin/pyspelling || true
+	@$(UV_BIN) tool run --with 'lxml>=6.1.0' pyspelling==$(PYSPELLING_VERSION) || true
 
 .PHONY: fawltydeps
 fawltydeps:                         ## 🏗️  Dependency sanity
@@ -4981,7 +5042,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -5019,9 +5080,8 @@ hadolint:
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
 # help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
-# help: containerfile-update - Update base image in Containerfile to latest tag
 
-.PHONY: deps-update containerfile-update
+.PHONY: deps-update
 
 deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
@@ -5029,12 +5089,6 @@ deps-update:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
-
-containerfile-update:
-	@echo "⬆️  Updating base image in Containerfile to :latest tag..."
-	@test -f Containerfile || { echo "❌ Containerfile not found."; exit 1; }
-	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
-	@echo "✅ Base image updated to latest."
 
 
 # =============================================================================
@@ -5122,22 +5176,6 @@ CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker ||
 
 print-runtime:
 	@echo Using container runtime: $(CONTAINER_RUNTIME)
-# Base image name (without any prefix)
-IMAGE_BASE := mcpgateway/mcpgateway
-IMAGE_TAG := latest
-
-# Handle runtime-specific image naming
-ifeq ($(CONTAINER_RUNTIME),podman)
-  # Podman adds localhost/ prefix for local builds
-  IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-else
-  # Docker doesn't add prefix
-  IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-endif
 
 print-image:
 	@echo "🐳 Container Runtime: $(CONTAINER_RUNTIME)"
@@ -5192,8 +5230,8 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden)
-#CONTAINER_FILE ?= Containerfile
+# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# multi-stage production build); falls back to Dockerfile if absent.
 CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
@@ -5263,7 +5301,7 @@ container-build-rust:
 
 container-build-rust-lite:
 	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
+	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
@@ -5660,13 +5698,13 @@ container-wait-healthy:
 	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-prod:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman
@@ -5747,19 +5785,19 @@ podman-top:
 	docker-top docker-shell
 
 docker-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
 
 docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -5770,7 +5808,7 @@ docker-prod-rust-no-cache:
 #   memray flamegraph /tmp/profile.bin -o flamegraph.html
 docker-prod-profiling:
 	@echo "📊 Building production image WITH profiling tools..."
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -7710,8 +7748,17 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-# Exclude pattern for detect-secrets to skip common directories and auto generated files
-DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock|go.sum|mcpgateway/sri_hashes.json'
+# Exclude pattern for detect-secrets to skip common directories and auto generated files.
+# Uses Python verbose-regex mode (?x) so each alternative can be commented.
+# Backslash line continuations collapse the value to one line with interleaved
+# spaces — harmless under (?x).
+DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
+  package-lock\.json$$         \
+  |Cargo\.lock$$               \
+  |uv\.lock$$                  \
+  |go\.sum$$                   \
+  |mcpgateway/sri_hashes\.json$$ \
+)'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
@@ -7956,9 +8003,9 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
-		snyk iac test $(CONTAINERFILE) \
+		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-docker-results.json || true; \
@@ -8731,6 +8778,18 @@ rust-mcp-runtime-test:                  ## Run tests for the experimental Rust M
 rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
 	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
+
+rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
+	@echo "🦀 Building experimental Rust A2A runtime..."
+	@cd crates/a2a_runtime && cargo build --release
+
+rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
+	@echo "🧪 Running Rust A2A runtime tests..."
+	@cd crates/a2a_runtime && cargo test --release
+
+rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
+	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
+	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

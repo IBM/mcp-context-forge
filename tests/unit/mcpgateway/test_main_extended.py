@@ -38,7 +38,6 @@ import mcpgateway.db as db_mod
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
-    _create_jwt_identity_extractor,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
@@ -232,7 +231,7 @@ class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
-        """Module import should swap the mounted /mcp app to the Rust proxy when enabled."""
+        """When boot mode is edge, the ingress mount selects rust-internal by default."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -242,10 +241,31 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # In edge boot mode with no override, public /mcp routes through the
+        # registered Rust ingress (default shape: rust-internal).
+        assert module._should_mount_public_rust_transport() is True
+        assert module._select_mcp_ingress({}) == "rust-internal"
+        assert "rust-internal" in module.mcp_transport_app.names()
+        assert "rust-public" in module.mcp_transport_app.names()  # registered for boot=edge
+        assert "python" in module.mcp_transport_app.names()
+
+    def test_import_selects_rust_public_ingress_when_settings_say_so(self, monkeypatch):
+        """When boot is edge AND settings.mcp_rust_ingress=public, the selector picks rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": True,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        assert module._select_mcp_ingress({}) == "rust-public"
 
     def test_import_keeps_python_transport_when_rust_runtime_lacks_session_auth_reuse(self, monkeypatch):
-        """Module import should keep public /mcp on Python when Rust session auth reuse is disabled."""
+        """When boot mode is shadow, the ingress mount selects the Python transport."""
         module = _import_fresh_main_module(
             monkeypatch,
             overrides={
@@ -255,7 +275,56 @@ class TestConditionalPaths:
             },
         )
 
-        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # In shadow boot mode with no override, public /mcp stays on Python.
+        assert module._should_mount_public_rust_transport() is False
+        assert module._select_mcp_ingress({}) == "python"
+        # rust-public is NOT registered on shadow boot — public listener
+        # isn't bound and the safety invariant isn't met.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert "rust-internal" in module.mcp_transport_app.names()
+
+    def test_import_logs_error_when_public_ingress_misconfigured_on_shadow_boot(self, monkeypatch, caplog):
+        """shadow boot + mcp_rust_ingress=public is a misconfig: boot must log at error so it survives the default LOG_LEVEL=ERROR."""
+        caplog.set_level("ERROR")
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                # session-auth-reuse OFF → boot mode is shadow, the public
+                # listener is not bound, and `mcp_rust_ingress=public` is
+                # the operator misconfig we want to surface loudly.
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPIngressMount"
+        # rust-public is never registered on shadow boot — the public
+        # listener isn't bound there. Without the error log, an operator
+        # would never know their setting is being silently overridden.
+        assert "rust-public" not in module.mcp_transport_app.names()
+        assert any("mcp_rust_ingress=public is set on boot=shadow" in rec.message and rec.levelname == "ERROR" for rec in caplog.records)
+
+    def test_select_mcp_ingress_downgrades_public_to_internal_on_shadow_boot(self, monkeypatch):
+        """Even when an active edge override would otherwise route to Rust, shadow boot must NEVER select rust-public."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "mcp_rust_ingress": "public",
+            },
+        )
+
+        # Force the safety predicate True (as a runtime edge override
+        # would) and assert the selector still refuses to return
+        # "rust-public" on shadow boot. This is the regression guard:
+        # dropping the `boot_mcp_runtime_mode() == "edge"` clause would
+        # silently route auth-sensitive traffic to an unregistered name,
+        # whose only fallback is the python transport.
+        with patch.object(module, "_should_mount_public_rust_transport", return_value=True):
+            assert module._select_mcp_ingress({}) == "rust-internal"
 
     def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
         """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
@@ -286,161 +355,162 @@ class TestConditionalPaths:
         assert response.status_code == 200
 
 
-class TestJwtIdentityExtractor:
-    """Test _create_jwt_identity_extractor() factory and returned closure."""
+@pytest.mark.asyncio
+async def test_mcp_ingress_mount_routes_per_request_after_runtime_override(monkeypatch):
+    """An admin override flip must change which ingress receives the *next* request."""
+    # First-Party
+    from mcpgateway.main import _select_mcp_ingress
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
 
-    def test_extractor_returns_sub_claim(self):
-        """Valid JWT with sub claim should return sub value."""
-        # Third-Party
-        import jwt
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-123", "email": "user@example.com"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
+    # Boot settings: edge (rust would normally win).
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
 
-        result = extractor(headers)
-        assert result == "user-123"
+    python_calls = []
+    rust_calls = []
 
-    def test_extractor_returns_email_claim_when_no_sub(self):
-        """Valid JWT with email but no sub should return email value."""
-        # Third-Party
-        import jwt
+    async def python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"email": "user@example.com", "user_id": "uid-456"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
+    async def rust_app(scope, _receive, _send):
+        rust_calls.append(scope.get("path", "/"))
 
-        result = extractor(headers)
-        assert result == "user@example.com"
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_app)
+    mount.register("python", python_app)
+    mount.register("rust-internal", rust_app)
 
-    def test_extractor_returns_user_id_claim_when_no_sub_or_email(self):
-        """Valid JWT with user_id but no sub/email should return user_id value."""
-        # Third-Party
-        import jwt
+    async def _no_send(_msg):
+        pass
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"user_id": "uid-789", "iat": 1234567890}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
+    async def _no_receive():
+        return {"type": "http.request"}
 
-        result = extractor(headers)
-        assert result == "uid-789"
+    # Boot mode is edge → no override → routes to rust-internal.
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    # Apply admin override → shadow → next request routes to Python.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
+    # Flip back to edge → routes to Rust again.
+    await get_runtime_state().apply_local("mcp", "edge", initiator_user="admin", version=2)
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send)
 
-    def test_extractor_returns_none_for_malformed_token(self):
-        """Malformed JWT should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Bearer not-a-valid-jwt"}
+    assert rust_calls == ["/mcp", "/mcp"]
+    assert python_calls == ["/mcp"]
 
-        result = extractor(headers)
-        assert result is None
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
-    def test_extractor_returns_none_for_non_bearer_header(self):
-        """Non-Bearer auth header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Basic dXNlcjpwYXNz"}
 
-        result = extractor(headers)
-        assert result is None
+@pytest.mark.asyncio
+async def test_mcp_ingress_mount_in_flight_request_finishes_on_original_ingress(monkeypatch):
+    """Drain semantics: a flip mid-request must not redirect an already-dispatched call."""
+    import asyncio as _asyncio
 
-    def test_extractor_returns_none_for_empty_authorization_header(self):
-        """Empty Authorization header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": ""}
+    # First-Party
+    from mcpgateway.main import _select_mcp_ingress
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount
 
-        result = extractor(headers)
-        assert result is None
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
-    def test_extractor_returns_none_for_bearer_only_header(self):
-        """Header containing only 'Bearer ' with no token should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {"Authorization": "Bearer "}
+    # Boot edge → no override → first request routes to Rust.
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_rust_ingress", "internal", raising=False)
 
-        result = extractor(headers)
-        assert result is None
+    rust_started = _asyncio.Event()
+    rust_release = _asyncio.Event()
+    rust_completed = _asyncio.Event()
+    python_calls = []
 
-    def test_extractor_returns_none_for_missing_authorization_header(self):
-        """Missing Authorization header should return None."""
-        extractor = _create_jwt_identity_extractor()
-        headers = {}
+    async def gated_rust_app(_scope, _receive, _send):
+        rust_started.set()
+        await rust_release.wait()
+        rust_completed.set()
 
-        result = extractor(headers)
-        assert result is None
+    async def tracking_python_app(scope, _receive, _send):
+        python_calls.append(scope.get("path", "/"))
 
-    def test_extractor_returns_none_for_token_with_no_identity_claims(self):
-        """JWT with none of the three identity claims should return None."""
-        # Third-Party
-        import jwt
+    mount = MCPIngressMount(selector=_select_mcp_ingress, fallback=tracking_python_app)
+    mount.register("python", tracking_python_app)
+    mount.register("rust-internal", gated_rust_app)
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"iat": 1234567890, "exp": 1234567890, "jti": "random-id"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
+    async def _no_send(_msg):
+        pass
 
-        result = extractor(headers)
-        assert result is None
+    async def _no_receive():
+        return {"type": "http.request"}
 
-    def test_extractor_handles_lowercase_bearer(self):
-        """Lowercase 'bearer' prefix should be handled correctly."""
-        # Third-Party
-        import jwt
+    # Kick off the in-flight request — boot mode is edge so it lands on Rust.
+    in_flight = _asyncio.create_task(mount.dispatch({"type": "http", "method": "POST", "path": "/mcp"}, _no_receive, _no_send))
+    # Wait until the Rust ingress is mid-execution.
+    await _asyncio.wait_for(rust_started.wait(), timeout=1.0)
+    # Now flip the runtime override to shadow; the in-flight request was already
+    # dispatched to Rust and must finish there.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    # New request after the flip should land on Python.
+    await mount.dispatch({"type": "http", "method": "POST", "path": "/mcp/post-flip"}, _no_receive, _no_send)
+    assert python_calls == ["/mcp/post-flip"]
+    assert not rust_completed.is_set()
+    # Release the gated request and verify it completed on Rust.
+    rust_release.set()
+    await _asyncio.wait_for(in_flight, timeout=1.0)
+    assert rust_completed.is_set()
+    # The post-flip request was the only Python landing; the in-flight request
+    # never re-routed.
+    assert python_calls == ["/mcp/post-flip"]
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-lowercase"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"bearer {token}"}
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
-        result = extractor(headers)
-        assert result == "user-lowercase"
 
-    def test_extractor_handles_case_insensitive_header_lookup(self):
-        """Extractor should handle both 'authorization' and 'Authorization' keys."""
-        # Third-Party
-        import jwt
+@pytest.mark.asyncio
+async def test_apply_runtime_mode_headers_reflects_override(monkeypatch):
+    """After a runtime override, _apply_runtime_mode_headers must surface the new mount."""
+    # Third-Party
+    from fastapi import Response
 
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-case"}, "secret", algorithm="HS256")
+    # First-Party
+    from mcpgateway.main import _apply_runtime_mode_headers
+    from mcpgateway.runtime_state import (
+        get_runtime_state,
+        reset_runtime_state_coordinator_for_tests,
+        reset_runtime_state_for_tests,
+    )
 
-        # Test lowercase key
-        headers_lower = {"authorization": f"Bearer {token}"}
-        assert extractor(headers_lower) == "user-case"
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
-        # Test uppercase key
-        headers_upper = {"Authorization": f"Bearer {token}"}
-        assert extractor(headers_upper) == "user-case"
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
 
-    def test_extractor_returns_none_on_jwt_decode_exception(self):
-        """JWT decode raising an exception should return None and log debug message."""
-        # Standard
-        from unittest.mock import patch
+    # Boot edge → header reports rust.
+    response = Response()
+    _apply_runtime_mode_headers(response)
+    assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
 
-        extractor = _create_jwt_identity_extractor()
+    # Flip to shadow → header reports python on the *next* response.
+    await get_runtime_state().apply_local("mcp", "shadow", initiator_user="admin", version=1)
+    response = Response()
+    _apply_runtime_mode_headers(response)
+    assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
 
-        # Create a valid-looking token that will fail decode
-        with patch("jwt.decode", side_effect=Exception("Decode failed")):
-            headers = {"Authorization": "Bearer some-token"}
-            result = extractor(headers)
-            assert result is None
-
-    def test_extractor_prefers_sub_over_email_and_user_id(self):
-        """When all three claims present, sub should be preferred."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user-sub"
-
-    def test_extractor_prefers_email_over_user_id(self):
-        """When email and user_id present but no sub, email should be preferred."""
-        # Third-Party
-        import jwt
-
-        extractor = _create_jwt_identity_extractor()
-        token = jwt.encode({"email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
-        headers = {"Authorization": f"Bearer {token}"}
-
-        result = extractor(headers)
-        assert result == "user@example.com"
+    reset_runtime_state_for_tests()
+    reset_runtime_state_coordinator_for_tests()
 
 
 class TestInternalTrustedMcpTransportBridge:
@@ -1386,7 +1456,6 @@ class TestApplicationStartupPaths:
         monkeypatch.setattr(settings, "metrics_rollup_enabled", False)
         monkeypatch.setattr(settings, "metrics_buffer_enabled", False)
         monkeypatch.setattr(settings, "metrics_aggregation_enabled", False)
-        monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
         monkeypatch.setattr(settings, "sso_enabled", False)
@@ -2838,12 +2907,7 @@ class TestMCPPathRewriteMiddleware:
         """Documented pattern works when root_path is set in scope."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/123/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/123/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2857,12 +2921,7 @@ class TestMCPPathRewriteMiddleware:
         """Handle complex multi-level prefixes."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/dev/mcp-gateway/service/gateway/servers/123/mcp",
-            "root_path": "/dev/mcp-gateway/service/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/dev/mcp-gateway/service/gateway/servers/123/mcp", "root_path": "/dev/mcp-gateway/service/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2876,15 +2935,10 @@ class TestMCPPathRewriteMiddleware:
         """Handle prefix in path when scope['root_path'] is empty but APP_ROOT_PATH is set."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers/123/mcp",
-            "root_path": "",  # Not set in scope
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers/123/mcp", "root_path": "", "headers": []}  # Not set in scope
         receive, send = AsyncMock(), AsyncMock()
 
-        with patch('mcpgateway.config.settings.app_root_path', '/gateway'):
+        with patch("mcpgateway.config.settings.app_root_path", "/gateway"):
             with patch("mcpgateway.main.streamable_http_auth", return_value=True):
                 await middleware._call_streamable_http(scope, receive, send)
 
@@ -2910,12 +2964,7 @@ class TestMCPPathRewriteMiddleware:
         """Workaround /mcp/servers/{id} with prefix passes through."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/mcp/servers/123",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/mcp/servers/123", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2925,16 +2974,45 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_modified_path_set_to_app_relative_path(self):
+        """Regression test for #4266: modified_path should be app-relative for server_id extraction."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/gateway/servers/abc123/mcp", "root_path": "/gateway", "headers": []}
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # modified_path MUST be app-relative (without root_path prefix)
+        # so streamablehttp_transport can extract server_id via regex
+        assert scope["modified_path"] == "/servers/abc123/mcp"
+        # path is rewritten with root_path prefix preserved
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_modified_path_without_root_path(self):
+        """When no root_path, modified_path equals original path."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers/xyz789/mcp", "headers": []}
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", return_value=True):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        # Without root_path, modified_path should equal the normalized path
+        assert scope["modified_path"] == "/servers/xyz789/mcp"
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_security_arbitrary_prefix_not_rewritten(self):
         """PR #3892 security: Arbitrary paths ending with /mcp are NOT rewritten."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/arbitrary/prefix/mcp",
-            "root_path": "",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/arbitrary/prefix/mcp", "root_path": "", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2949,12 +3027,7 @@ class TestMCPPathRewriteMiddleware:
         """Security: Arbitrary paths rejected even with root_path."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/arbitrary/prefix/mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/arbitrary/prefix/mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", return_value=True):
@@ -2970,12 +3043,7 @@ class TestMCPPathRewriteMiddleware:
         """Security: Empty server ID with prefix is rejected."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {
-            "type": "http",
-            "path": "/gateway/servers//mcp",
-            "root_path": "/gateway",
-            "headers": []
-        }
+        scope = {"type": "http", "path": "/gateway/servers//mcp", "root_path": "/gateway", "headers": []}
         receive, send = AsyncMock(), AsyncMock()
         sent = []
 
@@ -4573,6 +4641,12 @@ class TestLifespanAdvanced:
             def set(self):
                 self._set = True
 
+            def clear(self):
+                # ADR-052 added an early `await NotificationService.initialize()`
+                # in lifespan, which calls `self._shutdown_event.clear()`. The
+                # FakeEvent must answer it.
+                self._set = False
+
             async def wait(self):
                 self._set = True
                 return True
@@ -4584,9 +4658,7 @@ class TestLifespanAdvanced:
             return service
 
         # Feature flags
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)
@@ -4674,11 +4746,11 @@ class TestLifespanAdvanced:
         )
 
         # MCP session pool hooks
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.init_mcp_session_pool", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.start_pool_notification_service", AsyncMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.init_session_affinity", MagicMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.start_affinity_notification_service", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.session_affinity.close_session_affinity", AsyncMock())
         pool = SimpleNamespace(start_rpc_listener=AsyncMock(), start_heartbeat=MagicMock())
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(return_value=pool))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(return_value=pool))
 
         # Cache invalidation subscriber
         subscriber = MagicMock()
@@ -4731,7 +4803,6 @@ class TestLifespanAdvanced:
 
         # Keep startup/shutdown lightweight.
         for flag, value in (
-            ("mcp_session_pool_enabled", False),
             ("mcpgateway_session_affinity_enabled", False),
             ("enable_header_passthrough", False),
             ("mcpgateway_tool_cancellation_enabled", False),
@@ -4790,6 +4861,130 @@ class TestLifespanAdvanced:
                 pass
 
         assert excinfo.value.code == 1
+
+    async def _prepare_lifespan_stubs(self, monkeypatch, *, plugins_enabled: bool) -> None:
+        """Install the minimal set of stubs needed for ``lifespan`` to reach the plugin-init try/except."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        def make_service():  # noqa: ANN001
+            service = MagicMock()
+            service.initialize = AsyncMock()
+            service.shutdown = AsyncMock()
+            return service
+
+        for flag, value in (
+            ("mcpgateway_session_affinity_enabled", False),
+            ("enable_header_passthrough", False),
+            ("mcpgateway_tool_cancellation_enabled", False),
+            ("mcpgateway_elicitation_enabled", False),
+            ("metrics_buffer_enabled", False),
+            ("metrics_cleanup_enabled", False),
+            ("metrics_rollup_enabled", False),
+            ("sso_enabled", False),
+            ("metrics_aggregation_enabled", False),
+        ):
+            monkeypatch.setattr(main_mod.settings, flag, value)
+        # ``settings.plugins.enabled`` is a property that reads ``PLUGINS_ENABLED``
+        # as the authoritative override — set it directly rather than patching.
+        monkeypatch.setenv("PLUGINS_ENABLED", "true" if plugins_enabled else "false")
+
+        logging_service = make_service()
+        logging_service.configure_uvicorn_after_startup = MagicMock()
+        monkeypatch.setattr(main_mod, "logging_service", logging_service)
+
+        for attr in (
+            "tool_service",
+            "resource_service",
+            "prompt_service",
+            "gateway_service",
+            "root_service",
+            "completion_service",
+            "sampling_handler",
+            "resource_cache",
+            "streamable_http_session",
+            "session_registry",
+            "export_service",
+            "import_service",
+        ):
+            monkeypatch.setattr(main_mod, attr, make_service())
+        monkeypatch.setattr(main_mod, "a2a_service", None)
+
+        monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+        monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
+        monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+        subscriber = MagicMock()
+        subscriber.start = AsyncMock()
+        subscriber.stop = AsyncMock()
+        # First-Party
+        import mcpgateway.cache.registry_cache as registry_cache_mod
+
+        monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
+        monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+        monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+        monkeypatch.setattr(main_mod, "start_plugin_invalidation_listener", AsyncMock())
+        monkeypatch.setattr(main_mod, "stop_plugin_invalidation_listener", AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_lifespan_raises_when_init_factory_fails_and_plugins_enabled(self, monkeypatch):
+        """Plugins explicitly enabled + factory init failure must loud-crash, not silently degrade."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=True)
+        # The lifespan's outer handler converts errors whose message contains
+        # "Plugin initialization failed" to a clean ``SystemExit(1)``; matching
+        # that phrasing pins the "operator-meaningful crash" path.
+        monkeypatch.setattr(
+            main_mod,
+            "init_plugin_manager_factory",
+            MagicMock(side_effect=RuntimeError("Plugin initialization failed: bad YAML")),
+        )
+
+        with pytest.raises(SystemExit):
+            async with main_mod.lifespan(main_mod.app):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_lifespan_marks_degraded_when_init_factory_fails_and_plugins_disabled(self, monkeypatch):
+        """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.plugins.framework import _state as plugin_state
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock(side_effect=RuntimeError("bad YAML")))
+
+        # pylint: disable=protected-access
+        plugin_state._reset_factory_init_degraded_for_tests()
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+        # The degraded flag must now be set so ``get_plugin_manager`` will emit
+        # its one-shot ERROR when a shared-toggle flip asks for plugins.
+        assert plugin_state.is_factory_init_degraded() is True
+        plugin_state._reset_factory_init_degraded_for_tests()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_swallows_stop_listener_exception(self, monkeypatch):
+        """``stop_plugin_invalidation_listener`` raising during shutdown must not crash lifespan teardown."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        # Keep startup clean so we actually reach the shutdown block.
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod, "stop_plugin_invalidation_listener", AsyncMock(side_effect=RuntimeError("stop blew up")))
+
+        # Must not raise — the shutdown block swallows and DEBUG-logs.
+        async with main_mod.lifespan(main_mod.app):
+            pass
 
     @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
@@ -6095,12 +6290,12 @@ class TestRpcHandling:
         remove_session = AsyncMock()
         cleanup_owner = AsyncMock()
         pool = MagicMock()
-        pool.cleanup_streamable_http_session_owner = cleanup_owner
+        pool.cleanup_session_owner = cleanup_owner
         monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
 
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             response = await handle_internal_mcp_session_delete(request)
 
         assert response.status_code == 204
@@ -7823,7 +8018,7 @@ class TestRpcHandling:
 
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock(return_value=None))
-        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(side_effect=RuntimeError("pool unavailable")))
+        monkeypatch.setattr("mcpgateway.services.session_affinity.get_session_affinity", MagicMock(side_effect=RuntimeError("pool unavailable")))
 
         response = await handle_internal_mcp_session_delete(request)
         assert response.status_code == 204
@@ -9331,7 +9526,7 @@ class TestRpcHandling:
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "not-valid"}
 
-        with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=False):
+        with patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=False):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
 
@@ -9347,16 +9542,16 @@ class TestRpcHandling:
         pool.forward_request_to_owner = AsyncMock(return_value={"result": {"via": "other-worker"}})
 
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["via"] == "other-worker"
 
         pool.forward_request_to_owner = AsyncMock(return_value={"error": {"code": -32001, "message": "nope"}})
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32001
@@ -9369,8 +9564,8 @@ class TestRpcHandling:
         request.headers = {"mcp-session-id": "sess-123"}
 
         with (
-            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
-            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", side_effect=RuntimeError("no pool")),
+            patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
+            patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("no pool")),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
@@ -9417,15 +9612,15 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
         pool = MagicMock()
-        pool.register_pool_session_owner = AsyncMock(return_value=None)
+        pool.register_session_owner = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
-            pool.register_pool_session_owner.assert_awaited_once()
+            pool.register_session_owner.assert_awaited_once()
 
-        pool.register_pool_session_owner = AsyncMock(side_effect=Exception("boom"))
-        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+        pool.register_session_owner = AsyncMock(side_effect=Exception("boom"))
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
 
@@ -9988,7 +10183,7 @@ class TestRemainingCoverageGaps:
         assert sess.invalidated is True
         assert sess.closed is True
 
-    def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
+    async def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -10014,12 +10209,13 @@ class TestRemainingCoverageGaps:
         sess = FakeSession()
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: sess)
 
-        result = main_mod.healthcheck()
+        response = FastAPIResponse()
+        result = main_mod.healthcheck(response)
         assert result["status"] == "unhealthy"
-        assert "db down" in result["error"]
+        assert "error" in result
         assert sess.closed is True
 
-    def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
+    async def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -10041,7 +10237,10 @@ class TestRemainingCoverageGaps:
         response = FastAPIResponse()
         result = main_mod.healthcheck(response)
 
+        # Check overall status
         assert result["status"] == "healthy"
+
+        # Check MCP runtime fields
         assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
         assert result["mcp_runtime"]["mounted"] == "python"
         assert result["mcp_runtime"]["rust_build_included"] is True
@@ -10050,6 +10249,7 @@ class TestRemainingCoverageGaps:
         assert result["mcp_runtime"]["resume_core_mode"] == "python"
         assert result["mcp_runtime"]["live_stream_core_mode"] == "python"
         assert result["mcp_runtime"]["session_auth_reuse_mode"] == "python"
+        # Check response headers
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
@@ -10058,6 +10258,37 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
+
+    async def test_healthcheck_redis_removed(self, monkeypatch):
+        """Test that /health endpoint no longer checks Redis."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
+        # Configure Redis to be enabled - but /health should not check it
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
+
+        response = FastAPIResponse()
+        result = main_mod.healthcheck(response)
+
+        # Check overall status - should be healthy (Redis not checked)
+        assert result["status"] == "healthy"
+
+        # Verify no status_items in response (simple dict format)
+        assert "status_items" not in result
+        assert "mcp_runtime" in result
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         # First-Party
@@ -10081,15 +10312,10 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
-        async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
-            return func(*args, **kwargs)
-
-        monkeypatch.setattr(main_mod.asyncio, "to_thread", _to_thread)
-
-        response = await main_mod.readiness_check()
-        assert response.status_code == 503
-        payload = json.loads(response.body.decode())
-        assert payload["status"] == "not ready"
+        response_obj = FastAPIResponse()
+        result = await main_mod.readiness_check(response_obj)
+        assert result.status == "unready"
+        assert response_obj.status_code == 503
 
     async def test_readiness_check_reports_runtime_mode_headers(self, monkeypatch):
         # First-Party
@@ -10106,11 +10332,6 @@ class TestRemainingCoverageGaps:
                 return None
 
         monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
-
-        async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
-            return func(*args, **kwargs)
-
-        monkeypatch.setattr(main_mod.asyncio, "to_thread", _to_thread)
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
@@ -10121,27 +10342,27 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_live_stream_core_enabled", True)
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_auth_reuse_enabled", True)
 
-        response = await main_mod.readiness_check()
-        payload = json.loads(response.body.decode())
+        response_obj = FastAPIResponse()
+        result = await main_mod.readiness_check(response_obj)
 
-        assert response.status_code == 200
-        assert payload["status"] == "ready"
-        assert payload["mcp_runtime"]["mode"] == "rust-managed"
-        assert payload["mcp_runtime"]["mounted"] == "rust"
-        assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
-        assert payload["mcp_runtime"]["session_core_mode"] == "rust"
-        assert payload["mcp_runtime"]["event_store_mode"] == "rust"
-        assert payload["mcp_runtime"]["resume_core_mode"] == "rust"
-        assert payload["mcp_runtime"]["live_stream_core_mode"] == "rust"
-        assert payload["mcp_runtime"]["session_auth_reuse_mode"] == "rust"
-        assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
-        assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
-        assert response.headers["x-contextforge-rust-build-included"] == "true"
-        assert response.headers["x-contextforge-mcp-session-core-mode"] == "rust"
-        assert response.headers["x-contextforge-mcp-event-store-mode"] == "rust"
-        assert response.headers["x-contextforge-mcp-resume-core-mode"] == "rust"
-        assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "rust"
-        assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "rust"
+        assert result.status == "ready"
+        assert response_obj.status_code == 200
+        assert result.mcp_runtime["mode"] == "rust-managed"
+        assert result.mcp_runtime["mounted"] == "rust"
+        assert result.mcp_runtime["sidecar_transport"] == "uds"
+        assert result.mcp_runtime["session_core_mode"] == "rust"
+        assert result.mcp_runtime["event_store_mode"] == "rust"
+        assert result.mcp_runtime["resume_core_mode"] == "rust"
+        assert result.mcp_runtime["live_stream_core_mode"] == "rust"
+        assert result.mcp_runtime["session_auth_reuse_mode"] == "rust"
+        assert response_obj.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
+        assert response_obj.headers["x-contextforge-mcp-transport-mounted"] == "rust"
+        assert response_obj.headers["x-contextforge-rust-build-included"] == "true"
+        assert response_obj.headers["x-contextforge-mcp-session-core-mode"] == "rust"
+        assert response_obj.headers["x-contextforge-mcp-event-store-mode"] == "rust"
+        assert response_obj.headers["x-contextforge-mcp-resume-core-mode"] == "rust"
+        assert response_obj.headers["x-contextforge-mcp-live-stream-core-mode"] == "rust"
+        assert response_obj.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "rust"
 
     def test_runtime_status_payload_reports_http_transport_and_rust_affinity_core(self, monkeypatch):
         # First-Party
@@ -10194,7 +10415,7 @@ class TestRemainingCoverageGaps:
         assert payload["rust_affinity_core_enabled"] is False
         assert payload["session_auth_reuse_mode"] == "python"
 
-    def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
+    async def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -10215,7 +10436,101 @@ class TestRemainingCoverageGaps:
         result = main_mod.healthcheck(response)
 
         assert result["status"] == "unhealthy"
+        assert "error" in result
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
+
+    async def test_readiness_check_redis_exception_handling(self, monkeypatch):
+        """Test that /ready endpoint checks Redis and handles exceptions."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
+        # Mock Redis availability check to raise an exception
+        async def mock_is_redis_available_exception():
+            raise RuntimeError("Redis connection timeout")
+
+        monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available_exception)
+
+        # Configure Redis to be enabled for this test
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
+
+        response_obj = FastAPIResponse()
+        result = await main_mod.readiness_check(response_obj)
+
+        # Check overall status - should be unready due to Redis failure
+        assert result.status == "unready"
+        assert response_obj.status_code == 503
+
+        # Check status_items
+        assert len(result.status_items) == 2
+
+        # Check Database status - should be healthy
+        db_status = next((item for item in result.status_items if item.name == "Database"), None)
+        assert db_status is not None
+        assert db_status.status_code == 200
+        assert db_status.message == "Database Connection Successful"
+
+        # Check cache status - should be unhealthy due to exception
+        cache_status = next((item for item in result.status_items if item.name == "Cache"), None)
+        assert cache_status is not None
+        assert cache_status.status_code == 503
+        assert cache_status.message == "Cannot connect to Cache"
+
+    async def test_readiness_check_redis_healthy(self, monkeypatch):
+        """Test that /ready endpoint reports healthy when Redis is available."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
+        # Mock Redis availability check to return True (healthy)
+        async def mock_is_redis_available():
+            return True
+
+        monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
+        # Configure Redis to be enabled for this test
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
+
+        response_obj = FastAPIResponse()
+        result = await main_mod.readiness_check(response_obj)
+        # Check overall status
+        assert result.status == "ready"
+        assert response_obj.status_code == 200
+        # Check status_items for Database and Redis
+        assert len(result.status_items) == 2
+        # Check Database status
+        db_status = next((item for item in result.status_items if item.name == "Database"), None)
+        assert db_status is not None
+        assert db_status.status_code == 200
+        assert db_status.message == "Database Connection Successful"
+        # Check Redis status
+        redis_status = next((item for item in result.status_items if item.name == "Cache"), None)
+        assert redis_status is not None
+        assert redis_status.status_code == 200
+        assert redis_status.message == "Cache Connection Successful"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         # First-Party
@@ -11783,7 +12098,6 @@ class TestRemainingCoverageGaps:
             return service
 
         # Minimal startup config: only metrics aggregation auto-start.
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -11844,8 +12158,16 @@ class TestRemainingCoverageGaps:
         log_aggregator.aggregate_all_components = MagicMock()
         monkeypatch.setattr(main_mod, "get_log_aggregator", MagicMock(return_value=log_aggregator))
 
-        # Force TimeoutError in wait_for and ensure the coroutine is closed to avoid warnings.
+        # Force TimeoutError only for the aggregation loop's wait (interval_seconds=60
+        # when window_minutes=0). Delegate every other wait_for (e.g. NotificationService's
+        # refresh-queue worker that uses timeout=1.0) to the real implementation; otherwise
+        # those loops spin without yielding and deadlock the event loop, since a synchronous
+        # TimeoutError-only fake never hits an await point.
+        real_wait_for = asyncio.wait_for
+
         async def fake_wait_for(awaitable, timeout=None):  # noqa: ANN001
+            if timeout != 60:
+                return await real_wait_for(awaitable, timeout=timeout)
             if hasattr(awaitable, "close"):
                 awaitable.close()
             raise asyncio.TimeoutError()
@@ -11871,7 +12193,6 @@ class TestRemainingCoverageGaps:
             service.shutdown = AsyncMock()
             return service
 
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
@@ -11946,6 +12267,104 @@ class TestRemainingCoverageGaps:
             # Give the aggregation loop a chance to hit wait_for at least once.
             await asyncio.sleep(0.05)
 
+    async def test_lifespan_wires_notification_handler_factory(self, monkeypatch):
+        """Capture the factory passed to ``init_upstream_session_registry`` and invoke it.
+
+        The inline factory is only exercised when a new upstream session is wired,
+        so we capture it at init time and call it directly to cover the
+        ``create_message_handler`` hand-off.
+        """
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        def make_service():  # noqa: ANN001 - local test helper
+            service = MagicMock()
+            service.initialize = AsyncMock()
+            service.shutdown = AsyncMock()
+            return service
+
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+
+        monkeypatch.setattr(main_mod, "logging_service", make_service())
+        monkeypatch.setattr(main_mod.logging_service, "configure_uvicorn_after_startup", MagicMock())
+        for attr in (
+            "tool_service",
+            "resource_service",
+            "prompt_service",
+            "gateway_service",
+            "root_service",
+            "completion_service",
+            "sampling_handler",
+            "resource_cache",
+            "streamable_http_session",
+            "session_registry",
+            "export_service",
+            "import_service",
+        ):
+            monkeypatch.setattr(main_mod, attr, make_service())
+        monkeypatch.setattr(main_mod, "a2a_service", None)
+
+        monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+        monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+        monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+        subscriber = MagicMock()
+        subscriber.start = AsyncMock()
+        subscriber.stop = AsyncMock()
+        # First-Party
+        import mcpgateway.cache.registry_cache as registry_cache_mod
+
+        monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
+
+        sentinel_handler = MagicMock(name="message_handler")
+        notification_svc = MagicMock()
+        notification_svc.initialize = AsyncMock()
+        notification_svc.create_message_handler = MagicMock(return_value=sentinel_handler)
+        monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_svc))
+
+        captured = {}
+
+        def capture_registry(*, message_handler_factory):  # noqa: ANN001
+            captured["factory"] = message_handler_factory
+
+        monkeypatch.setattr(
+            "mcpgateway.services.upstream_session_registry.init_upstream_session_registry",
+            capture_registry,
+        )
+
+        async with main_mod.lifespan(main_mod.app):
+            factory = captured["factory"]
+            handler = factory("https://peer.example/mcp", "gw-1", downstream_session_id="sess-123")
+
+        assert handler is sentinel_handler
+        notification_svc.create_message_handler.assert_called_once_with(
+            "gw-1",
+            "https://peer.example/mcp",
+            downstream_session_id="sess-123",
+        )
+
+        # And the gateway_id-falsy branch: factory should fall back to the URL.
+        notification_svc.create_message_handler.reset_mock()
+        factory("https://peer.example/mcp", None, downstream_session_id="sess-456")
+        notification_svc.create_message_handler.assert_called_once_with(
+            "https://peer.example/mcp",
+            "https://peer.example/mcp",
+            downstream_session_id="sess-456",
+        )
+
     async def test_lifespan_reraises_unexpected_startup_error(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
@@ -11954,7 +12373,6 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "logging_service", MagicMock(initialize=AsyncMock(), shutdown=AsyncMock(), configure_uvicorn_after_startup=MagicMock()))
         monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
-        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())

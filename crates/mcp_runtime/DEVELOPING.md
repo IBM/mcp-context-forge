@@ -37,7 +37,7 @@ Use the smallest set that matches your change.
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C crates/mcp_runtime fmt-check clippy-all test test-rmcp` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
-| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
+| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-protocol-e2e test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
 | Packaging / release readiness | `make verify` |
 | Performance-sensitive hot path | relevant tests plus benchmark and profiling targets |
@@ -126,6 +126,36 @@ Add this when the change is close to shipping:
 make verify
 ```
 
+## GET /mcp Stream Relay (ADR-052)
+
+The Rust live-stream branch in `forward_transport_request` (`src/lib.rs`)
+relays Python's `GET /mcp` SSE stream byte-for-byte after parsing it back
+into typed `Event` frames. As of ADR-052, Python serves a spec-conformant
+SSE stream backed by a per-session event bus (Redis Pub/Sub + ring buffer in
+multi-node, in-process deque + `asyncio.Event` in single-node). The relay
+itself did not need code changes — it inherited the new behavior the moment
+Python stopped returning 405.
+
+What this means for development:
+
+- The `session_id.is_none()` 405 in the live-stream branch is spec-mandated
+  (GET requires a session id) and stays. Tests that assert on this 405 are
+  still valid.
+- For the GET-with-session path, the relay opens an upstream GET to Python's
+  `/mcp`, parses the resulting SSE byte stream, and re-emits each frame.
+  No Rust event-bus machinery needed; Python is the source of truth.
+- The Pub/Sub channel (`mcp:session:{sid}:events`) and event-store keys
+  (`mcpgw:eventstore:{sid}:*`) are owned by Python. Rust does not write to
+  them in v1. A future iteration could have Rust subscribe directly to skip
+  the Python hop, but the current relay is the simpler design and keeps the
+  fanout policy in one place.
+- `live_stream_core_enabled()` continues to gate this path; deployments
+  that want Python to serve the stream end-to-end (no Rust relay) leave
+  this disabled and let the request fall through to the Python proxy.
+
+When debugging GET-stream failures, check Python first — `make logs` for
+`ServerEventBus` lines reveals the chosen backend and any publish errors.
+
 ## Compose-Backed MCP Validation
 
 Rust-local tests are not enough for this runtime. You also need live validation
@@ -141,7 +171,7 @@ make testing-down
 make compose-clean
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make testing-up
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up
@@ -151,7 +181,7 @@ MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
 Expected outcome:
 
 - `/health` reports Python MCP mode
-- `make test-mcp-cli` passes, with the Rust-only raw-header assertion skipped
+- `make test-mcp-protocol-e2e` passes, with the Rust-only raw-header assertion skipped
 - `make test-mcp-rbac` passes
 - `make test-mcp-access-matrix` passes and verifies scoped-user access with
   strong tool/resource/prompt sentinels
@@ -166,7 +196,7 @@ path.
 
 ```bash
 make testing-rebuild-rust-shadow
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 ```
@@ -183,7 +213,7 @@ session/event-store stack.
 
 ```bash
 make testing-rebuild-rust
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 ```
@@ -195,7 +225,7 @@ stream/auth reuse changes.
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation
@@ -208,7 +238,7 @@ MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
 Expected outcome:
 
 - `/health` reports Rust-managed runtime and Rust-mounted public transport
-- `make test-mcp-cli` passes
+- `make test-mcp-protocol-e2e` passes
 - `make test-mcp-rbac` passes
 - `make test-mcp-access-matrix` passes on the Rust path
 - `make test-mcp-session-isolation` passes on the Rust path
@@ -406,7 +436,7 @@ make -C crates/mcp_runtime fmt-check clippy-all test-rmcp
 make doctest test htmlcov
 make bandit interrogate pylint
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation
@@ -439,7 +469,7 @@ make autoflake isort black pre-commit
 make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation
@@ -450,7 +480,7 @@ If the change affects fallback behavior or public MCP mounting:
 
 ```bash
 make testing-up
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 ```
 
@@ -474,7 +504,7 @@ make autoflake isort black pre-commit
 make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation
