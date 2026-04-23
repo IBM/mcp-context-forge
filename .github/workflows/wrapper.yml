@@ -1,15 +1,6 @@
 name: Wrapper E2E
 
 on:
-    push:
-        branches: [main]
-        paths:
-            - "crates/wrapper/**"
-            - "mcp-servers/go/fast-time-server/**"
-            - "Cargo.toml"
-            - "Cargo.lock"
-            - "rust-toolchain.toml"
-            - ".github/workflows/wrapper.yml"
     pull_request:
         branches: [main]
         types: [opened, synchronize, reopened]

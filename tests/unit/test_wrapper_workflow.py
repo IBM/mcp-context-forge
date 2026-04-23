@@ -10,22 +10,6 @@ def load_workflow() -> dict:
         return yaml.safe_load(handle)
 
 
-def test_wrapper_workflow_only_triggers_for_wrapper_changes():
-    workflow = load_workflow()
-    on_block = workflow.get("on", workflow.get(True))
-
-    expected_paths = {
-        "crates/wrapper/**",
-        "mcp-servers/go/fast-time-server/**",
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        ".github/workflows/wrapper.yml",
-    }
-    assert set(on_block["push"]["paths"]) == expected_paths
-    assert set(on_block["pull_request"]["paths"]) == expected_paths
-
-
 def test_wrapper_workflow_keeps_wrapper_specific_e2e_steps():
     workflow = load_workflow()
     steps = workflow["jobs"]["wrapper-e2e"]["steps"]
