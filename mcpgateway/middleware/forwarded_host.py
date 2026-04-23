@@ -21,10 +21,10 @@ Starlette builds ``request.base_url`` from the ``host`` header, not from
 ``scope["server"]``.  The host header rewrite is therefore the critical
 change; ``scope["server"]`` is updated as well for other ASGI consumers.
 
-Register this middleware **after** ``ProxyHeadersMiddleware`` in the
-``add_middleware`` stack (which means it executes **before** it in the ASGI
-call chain, ensuring the scheme is already corrected when we derive the
-default port for ``scope["server"]``).
+Register this middleware **before** ``ProxyHeadersMiddleware`` in the
+``add_middleware`` stack (which means it is inner / executes **after**
+``ProxyHeadersMiddleware`` in the ASGI call chain, ensuring the scheme is
+already corrected when we derive the default port for ``scope["server"]``).
 
 Trust decisions (which upstream IPs may set forwarded headers) are the
 responsibility of the caller — this middleware always acts when
@@ -40,14 +40,7 @@ from __future__ import annotations
 
 # Standard
 import logging
-
-# Third-Party
-from uvicorn._types import (
-    ASGI3Application,
-    ASGIReceiveCallable,
-    ASGISendCallable,
-    Scope,
-)
+from typing import Any, Awaitable, Callable, MutableMapping
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +61,15 @@ class ForwardedHostMiddleware:
     default for the scheme (80 for http/ws, 443 for https/wss).
     """
 
-    def __init__(self, app: ASGI3Application) -> None:
+    def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
         """Initialise middleware with the inner ASGI app."""
         self.app = app
 
     async def __call__(
         self,
-        scope: Scope,
-        receive: ASGIReceiveCallable,
-        send: ASGISendCallable,
+        scope: MutableMapping[str, Any],
+        receive: Callable[[], Awaitable[MutableMapping[str, Any]]],
+        send: Callable[[MutableMapping[str, Any]], Awaitable[None]],
     ) -> None:
         """Rewrite host header from X-Forwarded-Host if present."""
         if scope["type"] in ("http", "websocket"):

@@ -3020,17 +3020,20 @@ app.add_middleware(DocsAuthMiddleware)
 # This ensures all /admin/* routes (except login/logout) require admin status
 app.add_middleware(AdminAuthMiddleware)
 
-# Trust all proxies (or lock down with a list of host patterns)
-_proxy_trusted_hosts = "*"
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_proxy_trusted_hosts)
-
 # Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
 # Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
 # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
 # This ensures request.base_url reflects the proxy's public host, fixing the
 # OAuth redirect_uri hint and other URL construction throughout the admin UI.
-# Only registered when proxy headers are trusted (same condition as above).
+# Only registered when proxy headers are trusted (same condition as below).
+#
+# Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
+# ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
+# already being corrected when deriving the default port for scope["server"].
 app.add_middleware(ForwardedHostMiddleware)
+
+# Trust all proxies (or lock down with a list of host patterns)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Add correlation ID middleware if enabled
 # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
