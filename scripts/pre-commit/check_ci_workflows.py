@@ -93,7 +93,10 @@ def _check_rust_workflow() -> list[str]:
     # Trigger paths
     if on_block:
         for event in ("push", "pull_request"):
-            paths = on_block.get(event, {}).get("paths", [])
+            event_config = on_block.get(event, {})
+            if event == "push" and "branches" not in event_config:
+                continue
+            paths = event_config.get("paths", [])
             if "Makefile" not in paths:
                 violations.append(f"rust.yml: {event} paths missing Makefile")
             if "mcpgateway/db.py" not in paths:

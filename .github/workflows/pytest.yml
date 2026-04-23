@@ -13,15 +13,6 @@
 name: Tests & Coverage
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/**"
-      - "tests/**"
-      - "!tests/e2e_rust/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/pytest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

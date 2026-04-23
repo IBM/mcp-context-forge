@@ -1,16 +1,6 @@
 name: sql-sanitizer E2E
 
 on:
-    push:
-        branches: [main]
-        paths:
-            - "mcpgateway/**"
-            - "plugins/**"
-            - "crates/sql-sanitizer/**"
-            - "mcp-servers/rust/fast-test-server/**"
-            - "pyproject.toml"
-            - "uv.lock"
-            - ".github/workflows/sql-sanitizer.yml"
     pull_request:
         branches: [main]
         types: [opened, synchronize, reopened]
