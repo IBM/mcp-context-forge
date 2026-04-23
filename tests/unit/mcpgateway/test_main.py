@@ -2563,6 +2563,7 @@ class TestRPCEndpoints:
             {},
             {"jsonrpc": "2.0", "id": "x", "params": {}},
             {"jsonrpc": "2.0", "id": "x", "method": "tools/list", "params": []},
+            {"jsonrpc": "2.0", "id": [1], "method": "tools/list", "params": {}},
         ],
     )
     def test_rpc_malformed_request_payloads_return_invalid_request(self, payload, test_client, auth_headers):
@@ -2574,6 +2575,28 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32600
         assert body["error"]["message"] == "Invalid Request"
         assert "data" not in body["error"]
+
+    def test_rpc_method_failing_security_validation_returns_invalid_request(self, test_client, auth_headers):
+        """RPCRequest security validators (XSS/pattern) should reject bad method names."""
+        req = {"jsonrpc": "2.0", "id": "sec-1", "method": "!!invalid", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32600
+        assert body["error"]["message"] == "Invalid Request"
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock)
+    def test_rpc_null_params_normalized_to_empty_dict(self, mock_list, mock_filter, test_client, auth_headers):
+        """RPC with null params should normalize to empty dict and dispatch normally."""
+        mock_filter.return_value = ("user@example.com", [], False)
+        mock_list.return_value = ([], None)
+        req = {"jsonrpc": "2.0", "id": "null-p", "method": "tools/list", "params": None}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert "result" in response.json()
 
     def test_rpc_invalid_json(self, test_client, auth_headers):
         """Test RPC error handling for malformed JSON."""

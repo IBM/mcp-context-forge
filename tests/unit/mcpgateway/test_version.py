@@ -165,6 +165,20 @@ def test_version_requires_admin_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rsp.status_code == 403
 
 
+def test_version_rejects_non_dict_non_str_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-string, non-dict user values should be rejected by the admin access check."""
+    app = _build_app(monkeypatch, auth_ok=True)
+
+    async def _int_user() -> int:
+        return 42
+
+    from mcpgateway import version as ver_mod
+
+    app.dependency_overrides[ver_mod.require_admin_auth] = _int_user
+    rsp = TestClient(app).get("/version")
+    assert rsp.status_code == 403
+
+
 # --------------------------------------------------------------------------- #
 # Helper functions                                                            #
 # --------------------------------------------------------------------------- #

@@ -949,6 +949,47 @@ async def test_close_streamable_http_session_registry_none(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_close_streamable_http_session_affinity_runtime_error(monkeypatch):
+    """Session close should succeed when affinity cleanup raises RuntimeError (not initialized)."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(return_value=None)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    with patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("not initialized")):
+        status_code, payload = await tr._close_streamable_http_session(
+            mcp_session_id="sess-abc",
+            user_context={"email": "owner@example.com", "is_authenticated": True},
+        )
+
+    assert status_code == 200
+    assert payload == {"jsonrpc": "2.0", "result": {}}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_affinity_generic_error(monkeypatch):
+    """Session close should succeed when affinity cleanup raises a non-RuntimeError."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(return_value=None)
+
+    mock_affinity = MagicMock()
+    mock_affinity.cleanup_session_owner = AsyncMock(side_effect=OSError("connection refused"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_affinity):
+        status_code, payload = await tr._close_streamable_http_session(
+            mcp_session_id="sess-abc",
+            user_context={"email": "owner@example.com", "is_authenticated": True},
+        )
+
+    assert status_code == 200
+    assert payload == {"jsonrpc": "2.0", "result": {}}
+
+
+@pytest.mark.asyncio
 async def test_close_streamable_http_session_remove_fails(monkeypatch):
     """Session close should return 500 when remove_session raises."""
     session_registry = MagicMock()

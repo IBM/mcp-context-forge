@@ -3540,6 +3540,11 @@ async def require_valid_server(server_id: str, db: Session = Depends(get_db)) ->
     return server_id
 
 
+def _jsonrpc_invalid_request(req_id: Optional[Union[int, str]] = None) -> dict:
+    """Build a JSON-RPC 2.0 ``Invalid Request`` error envelope."""
+    return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": req_id}
+
+
 async def _read_request_json(request: Request) -> Any:
     """Read JSON payload using orjson.
 
@@ -3824,14 +3829,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     body = await _read_request_json(request)
     req_id = body.get("id") if isinstance(body, dict) else None
     if not isinstance(body, dict) or body.get("method") != "ping":
-        return ORJSONResponse(
-            status_code=400,
-            content={
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32600, "message": "Invalid Request"},
-            },
-        )
+        return ORJSONResponse(status_code=400, content=_jsonrpc_invalid_request(req_id))
 
     logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
     response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
@@ -10154,19 +10152,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 },
             )
         if not isinstance(body, dict):
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32600, "message": "Invalid Request"},
-                "id": None,
-            }
+            return _jsonrpc_invalid_request()
 
         req_id = body.get("id")
         if req_id is not None and not isinstance(req_id, (str, int)):
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32600, "message": "Invalid Request"},
-                "id": None,
-            }
+            return _jsonrpc_invalid_request()
 
         method = body.get("method")
         params = body.get("params", {})
@@ -10175,20 +10165,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         jsonrpc_version = body.get("jsonrpc")
 
         if jsonrpc_version != "2.0" or not isinstance(method, str) or not method.strip() or not isinstance(params, dict):
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32600, "message": "Invalid Request"},
-                "id": req_id,
-            }
-
-        try:
-            RPCRequest(jsonrpc=jsonrpc_version, method=method, params=params, id=req_id)
-        except (ValidationError, ValueError):
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32600, "message": "Invalid Request"},
-                "id": req_id,
-            }
+            return _jsonrpc_invalid_request(req_id)
 
         request_headers = request.headers
         lowered_headers: Optional[Dict[str, str]] = None
@@ -10206,6 +10183,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         _trusted_internal_mcp_dispatch = _get_internal_mcp_auth_context(request) is not None
         _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
+
+        if not _trusted_internal_mcp_dispatch:
+            try:
+                RPCRequest(jsonrpc=jsonrpc_version, method=method, params=params, id=req_id)
+            except (ValidationError, ValueError):
+                return _jsonrpc_invalid_request(req_id)
 
         if req_id is None:
             req_id = str(uuid.uuid4())
@@ -10259,8 +10242,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 await _assert_session_owner_or_admin(request, user, mcp_session_id)
             except HTTPException as exc:
                 if exc.status_code == status.HTTP_404_NOT_FOUND:
-                    raise JSONRPCError(-32002, "Session not found", {"method": method, "session_id": mcp_session_id}) from exc
-                raise JSONRPCError(-32003, str(exc.detail), {"method": method, "session_id": mcp_session_id}) from exc
+                    raise JSONRPCError(-32002, "Session not found", {"method": method}) from exc
+                raise JSONRPCError(-32003, str(exc.detail), {"method": method}) from exc
 
         if method == "initialize":
             result = await _execute_rpc_initialize(
@@ -10610,7 +10593,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             try:
                 result = await sampling_handler.create_message(db, params)
             except SamplingError as e:
-                raise JSONRPCError(-32602, str(e), params) from e
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
@@ -10709,7 +10692,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             try:
                 result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
             except CompletionError as e:
-                raise JSONRPCError(-32602, str(e), params) from e
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
