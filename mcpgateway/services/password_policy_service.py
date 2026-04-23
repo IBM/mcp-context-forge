@@ -161,7 +161,7 @@ class PasswordPolicyService:
             complexity_count += 1
 
         if complexity_count < 3:
-            raise PasswordPolicyError("Password must contain at least 3 of the following: " "lowercase letters, uppercase letters, numbers, special characters")
+            raise PasswordPolicyError("Password must contain at least 3 of the following: lowercase letters, uppercase letters, numbers, special characters")
 
         # Check against common passwords
         if password.lower() in COMMON_PASSWORDS:
@@ -213,7 +213,7 @@ class PasswordPolicyService:
 
         # Service accounts should have high entropy - check for randomness
         if not self._has_sufficient_entropy(password):
-            raise PasswordPolicyError("Service account password appears to have low entropy. " "Use cryptographically secure random generation (e.g., UUID or secrets module)")
+            raise PasswordPolicyError("Service account password appears to have low entropy. Use cryptographically secure random generation (e.g., UUID or secrets module)")
 
         return True
 
