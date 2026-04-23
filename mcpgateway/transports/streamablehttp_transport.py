@@ -67,6 +67,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
@@ -1000,13 +1001,6 @@ async def _check_server_oauth_enforcement(server_id: str, user_context: Optional
         _oauth_checked_var.set(True)
         return  # Already authenticated — no need to check
 
-    # Lazy DB lookup to avoid import-time side-effects
-    # Third-Party
-    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-    # First-Party
-    from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-
     try:
         async with get_db() as db:
             server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
@@ -1618,12 +1612,6 @@ async def call_tool(name: str, arguments: dict) -> Union[
     if gateway_id_from_header:
         try:  # Check if this gateway is in direct_proxy mode
             async with get_db() as check_db:
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                 gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
                 if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
@@ -2130,12 +2118,6 @@ async def list_tools() -> List[types.Tool]:
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
                 if gateway_id:
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                    # First-Party
-                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
@@ -2166,12 +2148,6 @@ async def list_tools() -> List[types.Tool]:
                         logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
                 # Check if server exists for cache mode
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-
                 server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
                 if not server:
                     logger.warning("Server %s not found in database", server_id)
@@ -2428,12 +2404,6 @@ async def list_resources() -> List[types.Resource]:
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
                 if gateway_id:
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                    # First-Party
-                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
@@ -2555,12 +2525,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
             if gateway_id:
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
@@ -5039,9 +5003,6 @@ class _StreamableHttpAuthHandler:
             # DB/cache, so a second membership query would be redundant.
             if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
                 # Import lazily to avoid circular imports
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
