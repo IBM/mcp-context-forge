@@ -2,6 +2,7 @@ import { useIntl } from "react-intl";
 import { useAuth } from "../../auth/useAuth";
 import { SidebarTrigger } from "../ui/sidebar";
 import { LanguageSwitcher } from "../ui/LanguageSwitcher";
+import { ThemeToggle } from "../ui/ThemeToggle";
 
 export function Header() {
   const intl = useIntl();
@@ -12,6 +13,7 @@ export function Header() {
       <SidebarTrigger />
       <div className="flex items-center gap-3">
         <LanguageSwitcher />
+        <ThemeToggle />
         {user && <span className="text-sm text-muted-foreground">{user.email}</span>}
         <button
           onClick={logout}

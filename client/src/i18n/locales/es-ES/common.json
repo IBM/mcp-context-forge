@@ -23,5 +23,9 @@
   "common.name": "Nombre",
   "common.description": "Descripción",
   "common.createdAt": "Creado el",
-  "common.updatedAt": "Actualizado el"
+  "common.updatedAt": "Actualizado el",
+  "common.theme.light": "Modo claro",
+  "common.theme.dark": "Modo oscuro",
+  "common.theme.system": "Tema del sistema",
+  "common.theme.toggle": "Cambiar tema"
 }
