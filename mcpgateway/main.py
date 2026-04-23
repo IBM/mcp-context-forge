@@ -70,6 +70,8 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
+
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
@@ -3020,6 +3022,13 @@ app.add_middleware(AdminAuthMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
+# Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
+# but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
+# This ensures request.base_url reflects the proxy's public host, fixing the
+# OAuth redirect_uri hint and other URL construction throughout the admin UI.
+app.add_middleware(ForwardedHostMiddleware, trusted_hosts="*")
 
 # Add correlation ID middleware if enabled
 # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
