@@ -512,6 +512,40 @@ async def _derive_team_from_payload(kwargs) -> Optional[str]:
     return None
 
 
+async def _resolve_team_and_check_mode(user_context: dict, kwargs: dict) -> tuple[Optional[str], bool]:
+    """Resolve team_id and determine whether to check any team for RBAC.
+
+    Shared by ``require_permission`` and ``require_any_permission`` to avoid
+    duplicating the team derivation decision tree.
+
+    Returns:
+        (team_id, check_any_team) — the resolved team scope and whether the
+        permission service should aggregate across all of the user's teams.
+    """
+    team_id = kwargs.get("team_id")
+    if not team_id:
+        team_id = user_context.get("team_id", None)
+
+    check_any_team = False
+    if not team_id:
+        token_use = user_context.get("token_use")
+        if token_use in ("session", "api"):
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                team_id = _derive_team_from_resource(kwargs, db_session)
+                if team_id is None:
+                    team_id = await _derive_team_from_payload(kwargs)
+        # Tokens without team_id (including legacy tokens with no token_use)
+        # fall through here.  Authorization ("does this user have the
+        # permission?") is separate from resource scoping ("which team owns
+        # this resource?").  Layer 1 token_teams filtering still constrains
+        # which team roles are visible.
+        if not team_id:
+            check_any_team = True
+
+    return team_id, check_any_team
+
+
 # Permissions that indicate create/mutate operations (not safe for "any-team" aggregation)
 _MUTATE_PERMISSION_ACTIONS = frozenset(
     {
@@ -616,31 +650,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Extract team_id from path parameters if available
-            team_id = kwargs.get("team_id")
-
-            # If team_id is None or blank in kwargs then check
-            if not team_id:
-                # check if user_context has team_id
-                team_id = user_context.get("team_id", None)
-
-            # For multi-team session tokens (team_id is None), derive team from context
-            check_any_team = False
-            if not team_id and user_context.get("token_use") == "session":
-                db_session = kwargs.get("db") or user_context.get("db")
-                if db_session:
-                    # Tier 1: Try to derive team from existing resource
-                    team_id = _derive_team_from_resource(kwargs, db_session)
-                    # Tier 3: Try to derive team from create payload / form
-                    if team_id is None:
-                        team_id = await _derive_team_from_payload(kwargs)
-                # If still no team_id, check permission across all of the user's teams.
-                # This separates authorization ("does this user have the permission?")
-                # from resource scoping ("which team owns this resource?"). Team
-                # assignment is enforced downstream by endpoint logic (e.g.
-                # verify_team_for_user, token team membership checks).
-                if not team_id:
-                    check_any_team = True
+            team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
             # First, check if any plugins want to handle permission checking
             # First-Party
@@ -933,29 +943,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Extract team_id from path parameters if available
-            team_id = kwargs.get("team_id")
-
-            # If team_id is None or blank in kwargs then check
-            if not team_id:
-                # check if user_context has team_id
-                team_id = user_context.get("team_id", None)
-
-            # For multi-team session tokens (team_id is None), derive team from context
-            check_any_team = False
-            if not team_id and user_context.get("token_use") == "session":
-                db_session = kwargs.get("db") or user_context.get("db")
-                if db_session:
-                    # Tier 1: Try to derive team from existing resource
-                    team_id = _derive_team_from_resource(kwargs, db_session)
-                    # Tier 3: Try to derive team from create payload / form
-                    if team_id is None:
-                        team_id = await _derive_team_from_payload(kwargs)
-                # If still no team_id, check permission across all of the user's teams.
-                # Authorization ("does this user have the permission?") is separate
-                # from resource scoping ("which team owns this resource?").
-                if not team_id:
-                    check_any_team = True
+            team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")

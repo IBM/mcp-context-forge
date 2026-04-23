@@ -2218,11 +2218,13 @@ class TestNonSessionTokenTeamDerivation:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
 
     @pytest.mark.asyncio
-    async def test_api_token_no_team_id_skips_derivation(self, monkeypatch):
-        """API token with no team_id skips derivation block (check_any_team stays False).
+    async def test_api_token_no_team_id_uses_check_any_team(self, monkeypatch):
+        """API token with no team_id must use check_any_team=True.
 
-        This documents existing behavior: non-session tokens rely on auth.py to set
-        team_id. Multi-team non-session tokens don't exist in practice.
+        When team_id cannot be derived from route params, user context, or
+        resource/payload, API tokens fall back to check_any_team=True so
+        that team-scoped roles (developer, team_admin) are found.
+        Layer 1 (token scope cap) already restricts what the token can do.
         """
 
         async def dummy_func(user=None, db=None):
@@ -2240,11 +2242,16 @@ class TestNonSessionTokenTeamDerivation:
 
         assert result == "ok"
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
-        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
     @pytest.mark.asyncio
-    async def test_cli_token_no_token_use_skips_derivation(self, monkeypatch):
-        """CLI-generated token (no token_use claim) skips derivation block."""
+    async def test_cli_token_no_token_use_uses_check_any_team(self, monkeypatch):
+        """CLI-generated token (no token_use claim) without team_id uses check_any_team=True.
+
+        When team_id cannot be derived and token_use is absent, we still need
+        to find team-scoped roles.  The token_use-based derivation path is
+        skipped, but check_any_team is True because team_id is still None.
+        """
 
         async def dummy_func(user=None, db=None):
             return "ok"
@@ -2261,7 +2268,7 @@ class TestNonSessionTokenTeamDerivation:
 
         assert result == "ok"
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
-        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
     @pytest.mark.asyncio
     async def test_api_token_with_team_id_for_any_permission(self, monkeypatch):

@@ -1013,11 +1013,19 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         return
 
     # Layer 2: RBAC check
-    # Session tokens have no explicit team_id, so check across all team-scoped roles.
-    # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-    check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
+    # /rpc payloads never carry a resource with an owning team, so we skip
+    # resource/payload derivation (unlike @require_permission).  For single-
+    # team API tokens we extract team_id from the token itself; otherwise
+    # fall back to check_any_team so team-scoped roles are found.
+    # Layer 1 (token scope cap above) already restricts visibility.
+    team_id: str | None = None
+    check_any_team = False
+    if isinstance(user, dict):
+        team_id = user.get("team_id")
+        if not team_id:
+            check_any_team = True
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
-    if not await checker.has_permission(permission, check_any_team=check_any_team):
+    if not await checker.has_permission(permission, check_any_team=check_any_team, team_id=team_id):
         logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
