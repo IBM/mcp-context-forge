@@ -1,4 +1,5 @@
 import { AuthProvider } from "./auth/AuthContext";
+import { ThemeProvider } from "./hooks/useTheme";
 import { RouterProvider, Route, Redirect, AuthGuard, useRouter } from "./router";
 import { AppShell } from "./components/layout/AppShell";
 
@@ -79,9 +80,11 @@ function PrivateRoutes() {
 export function App() {
   return (
     <RouterProvider>
-      <AuthProvider>
-        <Routes />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <Routes />
+        </AuthProvider>
+      </ThemeProvider>
     </RouterProvider>
   );
 }
