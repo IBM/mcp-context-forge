@@ -896,6 +896,118 @@ async def test_validate_streamable_session_access_skips_when_rust_already_valida
 
 
 @pytest.mark.asyncio
+async def test_close_streamable_http_session_removes_registry_and_affinity(monkeypatch):
+    """Session close helper should remove registry state and affinity owner mapping."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(return_value=None)
+
+    mock_affinity = MagicMock()
+    mock_affinity.cleanup_session_owner = AsyncMock(return_value=None)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_affinity):
+        status_code, payload = await tr._close_streamable_http_session(
+            mcp_session_id="sess-abc",
+            user_context={"email": "owner@example.com", "is_authenticated": True},
+        )
+
+    assert status_code == 200
+    assert payload == {"jsonrpc": "2.0", "result": {}}
+    session_registry.remove_session.assert_awaited_once_with("sess-abc")
+    mock_affinity.cleanup_session_owner.assert_awaited_once_with("sess-abc")
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_denied(monkeypatch):
+    """Session close helper should return deny payload when ownership check fails."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(False, 403, "Session access denied")))
+
+    status_code, payload = await tr._close_streamable_http_session(
+        mcp_session_id="sess-abc",
+        user_context={"email": "attacker@example.com", "is_authenticated": True},
+    )
+
+    assert status_code == 403
+    assert payload == {"detail": "Session access denied"}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_registry_none(monkeypatch):
+    """Session close should return 403 when session registry is unavailable."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: None)
+
+    status_code, payload = await tr._close_streamable_http_session(
+        mcp_session_id="sess-abc",
+        user_context={"email": "user@example.com", "is_authenticated": True},
+    )
+
+    assert status_code == 403
+    assert payload == {"detail": "Session ownership unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_affinity_runtime_error(monkeypatch):
+    """Session close should succeed when affinity cleanup raises RuntimeError (not initialized)."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(return_value=None)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    with patch("mcpgateway.services.session_affinity.get_session_affinity", side_effect=RuntimeError("not initialized")):
+        status_code, payload = await tr._close_streamable_http_session(
+            mcp_session_id="sess-abc",
+            user_context={"email": "owner@example.com", "is_authenticated": True},
+        )
+
+    assert status_code == 200
+    assert payload == {"jsonrpc": "2.0", "result": {}}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_affinity_generic_error(monkeypatch):
+    """Session close should succeed when affinity cleanup raises a non-RuntimeError."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(return_value=None)
+
+    mock_affinity = MagicMock()
+    mock_affinity.cleanup_session_owner = AsyncMock(side_effect=OSError("connection refused"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_affinity):
+        status_code, payload = await tr._close_streamable_http_session(
+            mcp_session_id="sess-abc",
+            user_context={"email": "owner@example.com", "is_authenticated": True},
+        )
+
+    assert status_code == 200
+    assert payload == {"jsonrpc": "2.0", "result": {}}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_remove_fails(monkeypatch):
+    """Session close should return 500 when remove_session raises."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(side_effect=RuntimeError("redis down"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    status_code, payload = await tr._close_streamable_http_session(
+        mcp_session_id="sess-abc",
+        user_context={"email": "user@example.com", "is_authenticated": True},
+    )
+
+    assert status_code == 500
+    assert payload == {"detail": "Failed to close session"}
+
+
+@pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     mock_db = MagicMock()
@@ -8739,8 +8851,10 @@ async def test_affinity_disconnect_during_body_read(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_affinity_owner_is_self_non_post_falls_through_to_sdk(monkeypatch):
-    """When owner is current worker but method is not POST, request should fall through to SDK (line 1529->1613)."""
+async def test_stateful_delete_with_session_id_uses_deterministic_close(monkeypatch):
+    """DELETE with session ID should use deterministic close path instead of SDK dispatch."""
+
+    sdk_called = False
 
     class DummySessionManager:
         @asynccontextmanager
@@ -8748,12 +8862,16 @@ async def test_affinity_owner_is_self_non_post_falls_through_to_sdk(monkeypatch)
             yield self
 
         async def handle_request(self, scope, receive, send_func):
-            await send_func({"type": "http.response.start", "status": 200, "headers": []})
-            await send_func({"type": "http.response.body", "body": b"sdk"})
+            nonlocal sdk_called
+            sdk_called = True
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._close_streamable_http_session",
+        AsyncMock(return_value=(200, {"jsonrpc": "2.0", "result": {}})),
+    )
 
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
@@ -8761,21 +8879,11 @@ async def test_affinity_owner_is_self_non_post_falls_through_to_sdk(monkeypatch)
     send, messages = _make_send_collector()
     scope = _make_scope("/mcp", method="DELETE", headers=[(b"mcp-session-id", b"sess-abc")])
 
-    mock_pool = MagicMock()
-    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")  # We own it, but not POST
-
-    mock_session_class = MagicMock()
-    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
-
-    with (
-        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
-        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
-        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-    ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
+    assert sdk_called is False
 
 
 # ---------------------------------------------------------------------------

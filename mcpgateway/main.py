@@ -85,7 +85,7 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
@@ -152,7 +152,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -3540,6 +3540,11 @@ async def require_valid_server(server_id: str, db: Session = Depends(get_db)) ->
     return server_id
 
 
+def _jsonrpc_invalid_request(req_id: Optional[Union[int, str]] = None) -> dict:
+    """Build a JSON-RPC 2.0 ``Invalid Request`` error envelope."""
+    return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": req_id}
+
+
 async def _read_request_json(request: Request) -> Any:
     """Read JSON payload using orjson.
 
@@ -3821,23 +3826,14 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     Raises:
         HTTPException: If the request method is not "ping".
     """
-    req_id: Optional[str] = None
-    try:
-        body: dict = await _read_request_json(request)
-        if body.get("method") != "ping":
-            raise HTTPException(status_code=400, detail="Invalid method")
-        req_id = body.get("id")
-        logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
-        # Return an empty result per the MCP ping specification.
-        response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-        return ORJSONResponse(content=response)
-    except Exception as e:
-        error_response: dict = {
-            "jsonrpc": "2.0",
-            "id": req_id,  # Now req_id is always defined
-            "error": {"code": -32603, "message": "Internal error", "data": str(e)},
-        }
-        return ORJSONResponse(status_code=500, content=error_response)
+    body = await _read_request_json(request)
+    req_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or body.get("method") != "ping":
+        return ORJSONResponse(status_code=400, content=_jsonrpc_invalid_request(req_id))
+
+    logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
+    response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+    return ORJSONResponse(content=response)
 
 
 @protocol_router.post("/notifications")
@@ -3887,6 +3883,9 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
 
     Returns:
         The result of the completion process.
+
+    Raises:
+        HTTPException: If completion request validation fails.
     """
     body = await _read_request_json(request)
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a completion request")
@@ -3895,7 +3894,10 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
         user_email = None
     elif token_teams is None:
         token_teams = []
-    return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    try:
+        return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    except CompletionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -3910,10 +3912,16 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 
     Returns:
         The result of the message creation process.
+
+    Raises:
+        HTTPException: If sampling request validation fails.
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a sampling request")
     body = await _read_request_json(request)
-    return await sampling_handler.create_message(db, body)
+    try:
+        return await sampling_handler.create_message(db, body)
+    except SamplingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 ###############
@@ -10121,7 +10129,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         PluginError: If encounters issue with plugin
         PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
-    req_id = None
+    req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
         if hasattr(user, "email"):
@@ -10143,6 +10151,22 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     "id": None,
                 },
             )
+        if not isinstance(body, dict):
+            return _jsonrpc_invalid_request()
+
+        req_id = body.get("id")
+        if req_id is not None and not isinstance(req_id, (str, int)):
+            return _jsonrpc_invalid_request()
+
+        method = body.get("method")
+        params = body.get("params", {})
+        if params is None:
+            params = {}
+        jsonrpc_version = body.get("jsonrpc")
+
+        if jsonrpc_version != "2.0" or not isinstance(method, str) or not method.strip() or not isinstance(params, dict):
+            return _jsonrpc_invalid_request(req_id)
+
         request_headers = request.headers
         lowered_headers: Optional[Dict[str, str]] = None
 
@@ -10160,13 +10184,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         _trusted_internal_mcp_dispatch = _get_internal_mcp_auth_context(request) is not None
         _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
-        method = body["method"]
-        req_id = body.get("id")
+        if not _trusted_internal_mcp_dispatch:
+            try:
+                RPCRequest(jsonrpc=jsonrpc_version, method=method, params=params, id=req_id)
+            except (ValidationError, ValueError):
+                return _jsonrpc_invalid_request(req_id)
+
         if req_id is None:
             req_id = str(uuid.uuid4())
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
         if _internal_runtime_server_id:
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
@@ -10202,9 +10227,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif _token_server_id is not None:
             server_id = _token_server_id
 
-        if not _trusted_internal_mcp_dispatch:
-            RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
-
         forwarded_response = await _maybe_forward_affinitized_rpc_request(
             request,
             method=method,
@@ -10214,6 +10236,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         )
         if forwarded_response is not None:
             return forwarded_response
+
+        if settings.use_stateful_sessions and mcp_session_id and method != "initialize":
+            try:
+                await _assert_session_owner_or_admin(request, user, mcp_session_id)
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    raise JSONRPCError(-32002, "Session not found", {"method": method}) from exc
+                raise JSONRPCError(-32003, str(exc.detail), {"method": method}) from exc
 
         if method == "initialize":
             result = await _execute_rpc_initialize(
@@ -10560,7 +10590,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method == "sampling/createMessage":
             # MCP spec-compliant sampling endpoint
-            result = await sampling_handler.create_message(db, params)
+            try:
+                result = await sampling_handler.create_message(db, params)
+            except SamplingError as e:
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
@@ -10656,7 +10689,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 user_email = None
             elif token_teams is None:
                 token_teams = []
-            result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            try:
+                result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            except CompletionError as e:
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -10722,12 +10758,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
-        if isinstance(e, ValueError):
-            return ORJSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
-            "error": {"code": -32000, "message": "Internal error", "data": str(e)},
+            "error": {"code": -32603, "message": "Internal error"},
             "id": req_id,
         }
 
