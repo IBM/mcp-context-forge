@@ -9522,7 +9522,7 @@ class TestRustMcpExecutionPlan:
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_requires_prior_authorization(self, tool_service):
-        """Authorization-code OAuth plans should fail when no stored token exists for the user."""
+        """Authorization-code OAuth plans should continue when no stored token exists, allowing plugins to inject auth."""
         cache = self._cache_mock(
             self._cache_payload(
                 gateway={
@@ -9548,8 +9548,11 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
-                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+            # Should not raise exception - plugins can provide auth
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+            assert plan["eligible"] is True
+            # No Authorization header yet - plugins will inject it
+            assert "Authorization" not in plan.get("headers", {})
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_client_credentials_success(self, tool_service):

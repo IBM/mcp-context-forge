@@ -3924,7 +3924,9 @@ class ToolService(BaseService):
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
                     else:
-                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                        # If no token, continue with empty headers - plugins may provide auth via X-Vault-Tokens.
+                        # The Rust runtime will forward to upstream; if no auth provided, upstream returns 401 (fail-closed).
+                        headers = {}
                 except Exception as e:
                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
@@ -5030,8 +5032,9 @@ class ToolService(BaseService):
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
-                                    # User hasn't authorized this gateway yet
-                                    raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                                    # If no token, continue with empty headers - plugins may provide auth via X-Vault-Tokens.
+                                    # If plugins don't provide auth, upstream MCP server returns 401 (fail-closed).
+                                    headers = {}
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
