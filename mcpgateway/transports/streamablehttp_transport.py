@@ -67,7 +67,8 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
-from mcpgateway.db import Server as DbServer, SessionLocal
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.models import UserContext
