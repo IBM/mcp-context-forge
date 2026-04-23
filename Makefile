@@ -266,6 +266,7 @@ INTERROGATE_VERSION     ?= 1.7.0
 RADON_VERSION           ?= 6.0.1
 YAMLLINT_VERSION        ?= 1.38.0
 TOMLCHECK_VERSION       ?= 0.2.3
+PYSPELLING_VERSION      ?= 2.11
 
 # detect-secrets: pinned to IBM's hardened fork (Tag 0.13.1+ibm.64.dss).
 # Uses a git-URL + commit SHA rather than a PyPI version because the IBM
@@ -4254,7 +4255,7 @@ pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
 spellcheck:                         ## 🔤  Spell-check
-	@$(VENV_DIR)/bin/pyspelling || true
+	@$(UV_BIN) tool run --with 'lxml>=6.1.0' pyspelling==$(PYSPELLING_VERSION) || true
 
 .PHONY: fawltydeps
 fawltydeps:                         ## 🏗️  Dependency sanity

@@ -59,6 +59,8 @@ wheels/
 MANIFEST
 .Python
 *.so
+*.dylib
+*.dylib.yml
 
 !scripts/lib
 
@@ -200,7 +202,6 @@ aider*
 .ai*
 .bob
 .claude/*
-!.claude/skills/
 CLAUDE.local.md
 .continue
 
@@ -225,6 +226,7 @@ stats/
 # macOS
 # ========================================
 .DS_Store
+Info.plist
 
 # ========================================
 # Translations
