@@ -3818,13 +3818,43 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         set_span_attribute(span, "health.status", "healthy")
                         set_span_attribute(span, "success", True)
 
-                except Exception as e:
+                except httpx.HTTPStatusError as e:
+                    # HTTP status errors - distinguish client (4xx) from server (5xx) errors
+                    status_code = e.response.status_code
+                    if 400 <= status_code < 500:
+                        # 4xx = Client errors (including 401/403 auth failures)
+                        # These indicate valid communication but client-side issues (wrong credentials, bad request, etc.)
+                        # Gateway IS reachable, so don't mark it as unhealthy
+                        logger.warning(
+                            f"Health check returned client error {status_code} for gateway {SecurityValidator.sanitize_log_message(gateway_name)}. "
+                            f"Gateway is reachable but may need credential update."
+                        )
+                        if span:
+                            set_span_attribute(span, "health.status", "auth_error")
+                            set_span_attribute(span, "http.status_code", status_code)
+                            set_span_error(span, e)
+                        # Don't call _handle_gateway_failure - gateway is reachable, just auth issue
+                    else:
+                        # 5xx = Server errors - gateway has internal problems
+                        logger.error(f"Health check returned server error {status_code} for gateway {SecurityValidator.sanitize_log_message(gateway_name)}")
+                        if span:
+                            set_span_attribute(span, "health.status", "unhealthy")
+                            set_span_attribute(span, "http.status_code", status_code)
+                            set_span_error(span, e)
+                        await self._handle_gateway_failure(gateway)
+                except (httpx.ConnectError, httpx.TimeoutException) as e:
+                    # Network/connectivity failures - gateway is truly unreachable
+                    logger.error(f"Health check failed - gateway unreachable: {SecurityValidator.sanitize_log_message(gateway_name)}: {e}")
                     if span:
                         set_span_attribute(span, "health.status", "unhealthy")
                         set_span_error(span, e)
-
-                    # Set the logger as debug as this check happens for each interval
-                    logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
+                    await self._handle_gateway_failure(gateway)
+                except Exception as e:
+                    # Unknown failures - log and mark unhealthy (fail-safe approach)
+                    logger.error(f"Health check failed with unexpected error for gateway {SecurityValidator.sanitize_log_message(gateway_name)}: {e}")
+                    if span:
+                        set_span_attribute(span, "health.status", "unhealthy")
+                        set_span_error(span, e)
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
