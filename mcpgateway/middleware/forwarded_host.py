@@ -7,7 +7,7 @@ Authors: ContextForge Contributors
 Forwarded Host Middleware.
 
 Rewrites the ASGI ``host`` header and ``scope["server"]`` tuple from the
-``X-Forwarded-Host`` header when the request originates from a trusted proxy.
+``X-Forwarded-Host`` header set by a reverse proxy.
 
 Uvicorn's ``ProxyHeadersMiddleware`` handles ``X-Forwarded-Proto`` (scheme)
 and ``X-Forwarded-For`` (client IP) but does **not** handle
@@ -17,10 +17,20 @@ This middleware fills that gap so that ``request.base_url`` (used in admin UI
 hints, OAuth redirect_uri display, well-known URLs, etc.) reflects the
 proxy's public host rather than the gateway's internal address.
 
+Starlette builds ``request.base_url`` from the ``host`` header, not from
+``scope["server"]``.  The host header rewrite is therefore the critical
+change; ``scope["server"]`` is updated as well for other ASGI consumers.
+
 Register this middleware **after** ``ProxyHeadersMiddleware`` in the
 ``add_middleware`` stack (which means it executes **before** it in the ASGI
 call chain, ensuring the scheme is already corrected when we derive the
-default port).
+default port for ``scope["server"]``).
+
+Trust decisions (which upstream IPs may set forwarded headers) are the
+responsibility of the caller — this middleware always acts when
+``X-Forwarded-Host`` is present.  The gateway should only register it
+when proxy headers are trusted (the same condition under which
+``ProxyHeadersMiddleware`` is registered).
 
 When Uvicorn merges upstream support, this middleware can be removed.
 """
@@ -51,28 +61,16 @@ class ForwardedHostMiddleware:
     * Replaces the ``host`` entry in ``scope["headers"]`` so that
       Starlette's ``request.base_url`` returns the proxy origin.
 
-    Only acts when ``trusted_hosts="*"`` (trust all proxies).  Per-IP trust
-    checking is not implemented — for non-wildcard values the middleware is a
-    no-op.  This is intentional: the gateway registers both this and
-    ``ProxyHeadersMiddleware`` with ``trusted_hosts="*"`` via a shared variable,
-    and this middleware is temporary until Uvicorn merges upstream support.
-
-    Default port values (80 for http/ws, 443 for https/wss) follow RFC 2616
-    and match the convention in Uvicorn PR #2811.  They populate
-    ``scope["server"]`` only when the ``X-Forwarded-Host`` header omits a port.
+    Proxies typically send just the hostname for standard ports
+    (``X-Forwarded-Host: example.com``) and include the port only for
+    non-standard ones (``X-Forwarded-Host: example.com:8443``).  When
+    no port is present, ``scope["server"]`` is filled with the standard
+    default for the scheme (80 for http/ws, 443 for https/wss).
     """
 
-    def __init__(
-        self,
-        app: ASGI3Application,
-        trusted_hosts: list[str] | str = "127.0.0.1",
-    ) -> None:
-        """Initialise middleware with the inner ASGI app and trusted hosts."""
+    def __init__(self, app: ASGI3Application) -> None:
+        """Initialise middleware with the inner ASGI app."""
         self.app = app
-        if isinstance(trusted_hosts, str):
-            self.always_trust = trusted_hosts == "*"
-        else:
-            self.always_trust = trusted_hosts == ["*"]
 
     async def __call__(
         self,
@@ -80,8 +78,8 @@ class ForwardedHostMiddleware:
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
     ) -> None:
-        """Rewrite host header from X-Forwarded-Host if present and trusted."""
-        if scope["type"] in ("http", "websocket") and self.always_trust:
+        """Rewrite host header from X-Forwarded-Host if present."""
+        if scope["type"] in ("http", "websocket"):
             headers = dict(scope["headers"])  # type: ignore[arg-type]
 
             if b"x-forwarded-host" in headers:
@@ -91,7 +89,7 @@ class ForwardedHostMiddleware:
                 x_forwarded_host = raw.split(",")[0].strip()
 
                 if x_forwarded_host:
-                    # Determine default port from the (already-corrected) scheme.
+                    # Default port for scope["server"] when the header omits one.
                     default_port = 443 if scope.get("scheme") in ("https", "wss") else 80
 
                     # Parse host and optional port.

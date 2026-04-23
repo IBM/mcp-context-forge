@@ -3029,7 +3029,8 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_proxy_trusted_hosts)
 # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
 # This ensures request.base_url reflects the proxy's public host, fixing the
 # OAuth redirect_uri hint and other URL construction throughout the admin UI.
-app.add_middleware(ForwardedHostMiddleware, trusted_hosts=_proxy_trusted_hosts)
+# Only registered when proxy headers are trusted (same condition as above).
+app.add_middleware(ForwardedHostMiddleware)
 
 # Add correlation ID middleware if enabled
 # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes

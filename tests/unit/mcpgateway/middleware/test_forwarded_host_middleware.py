@@ -54,7 +54,7 @@ class TestForwardedHostMiddleware:
         original_server = scope["server"]
         original_headers = list(scope["headers"])
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == original_server
@@ -67,7 +67,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "proxy.example.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 443)
@@ -80,7 +80,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "proxy.example.com:8443")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 8443)
@@ -89,44 +89,44 @@ class TestForwardedHostMiddleware:
 
     @pytest.mark.asyncio
     async def test_http_default_port(self):
-        """HTTP scheme defaults to port 80."""
+        """HTTP scheme defaults to port 80 in scope['server']."""
         scope = _make_scope(scheme="http")
         _add_header(scope, "x-forwarded-host", "proxy.example.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 80)
 
     @pytest.mark.asyncio
     async def test_https_default_port(self):
-        """HTTPS scheme defaults to port 443."""
+        """HTTPS scheme defaults to port 443 in scope['server']."""
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "proxy.example.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 443)
 
     @pytest.mark.asyncio
     async def test_wss_default_port(self):
-        """WSS scheme defaults to port 443."""
+        """WSS scheme defaults to port 443 in scope['server']."""
         scope = _make_scope(scheme="wss", scope_type="websocket")
         _add_header(scope, "x-forwarded-host", "proxy.example.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 443)
 
     @pytest.mark.asyncio
     async def test_ws_default_port(self):
-        """WS scheme defaults to port 80."""
+        """WS scheme defaults to port 80 in scope['server']."""
         scope = _make_scope(scheme="ws", scope_type="websocket")
         _add_header(scope, "x-forwarded-host", "proxy.example.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 80)
@@ -137,7 +137,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "[2001:db8::1]")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("[2001:db8::1]", 443)
@@ -150,7 +150,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "[2001:db8::1]:8080")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("[2001:db8::1]", 8080)
@@ -164,7 +164,7 @@ class TestForwardedHostMiddleware:
         original_server = scope["server"]
         _add_header(scope, "x-forwarded-host", "")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == original_server
@@ -176,7 +176,7 @@ class TestForwardedHostMiddleware:
         original_server = scope["server"]
         _add_header(scope, "x-forwarded-host", "   ")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == original_server
@@ -187,7 +187,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "first-proxy.com, second-proxy.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("first-proxy.com", 443)
@@ -195,24 +195,11 @@ class TestForwardedHostMiddleware:
         assert host_values == ["first-proxy.com"]
 
     @pytest.mark.asyncio
-    async def test_untrusted_host_passthrough(self):
-        """When trusted_hosts is restrictive, untrusted requests pass through."""
-        scope = _make_scope()
-        original_server = scope["server"]
-        _add_header(scope, "x-forwarded-host", "evil.com")
-
-        # Not trusted (trusted_hosts is not "*")
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="192.168.0.1")
-        await mw(scope, None, None)
-
-        assert scope["server"] == original_server
-
-    @pytest.mark.asyncio
     async def test_lifespan_scope_passthrough(self):
         """Lifespan events are passed through without modification."""
         scope = {"type": "lifespan"}
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert "server" not in scope
@@ -223,7 +210,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(host="internal:4444", scheme="https")
         _add_header(scope, "x-forwarded-host", "external.com")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         host_entries = [(k, v) for k, v in scope["headers"] if k == b"host"]
@@ -236,18 +223,7 @@ class TestForwardedHostMiddleware:
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "proxy.example.com:notaport")
 
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts="*")
-        await mw(scope, None, None)
-
-        assert scope["server"] == ("proxy.example.com", 443)
-
-    @pytest.mark.asyncio
-    async def test_list_trusted_hosts_wildcard(self):
-        """trusted_hosts as list ['*'] is also trusted."""
-        scope = _make_scope(scheme="https")
-        _add_header(scope, "x-forwarded-host", "proxy.example.com")
-
-        mw = ForwardedHostMiddleware(_capture_app, trusted_hosts=["*"])
+        mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
         assert scope["server"] == ("proxy.example.com", 443)
