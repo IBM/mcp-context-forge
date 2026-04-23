@@ -69,6 +69,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
+from mcpgateway.plugins.framework.models import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -86,6 +87,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -240,8 +242,7 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 # here for backwards-compat: external callers that already do
 # `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
 # keep working.
-from mcpgateway.transports.context import request_headers_var, user_context_var  # noqa: E402  # pylint: disable=wrong-import-position
-
+from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 
@@ -1284,6 +1285,11 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 gateway_passthrough_headers=gw_passthrough,
             )
 
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
+
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
@@ -1329,6 +1335,11 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
                 gateway_passthrough_headers=gw_passthrough,
             )
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -1390,6 +1401,11 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
                 gateway_passthrough_headers=gw_passthrough,
             )
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -1583,6 +1599,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         meta_data=meta_data,
                         user_email=user_email,
                         token_teams=token_teams,
+                        user_context=user_identity_var.get(),
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
@@ -4487,22 +4504,45 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
+def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
+    """Build a UserContext from the user_context dict and store it in user_identity_var.
+
+    Args:
+        ctx: User context dictionary with email, is_admin, teams, auth_method keys.
+    """
+    # Standard
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+    email = ctx.get("email")
+    if email:
+        user_identity_var.set(
+            UserContext(
+                user_id=email,
+                email=email,
+                is_admin=ctx.get("is_admin", False),
+                teams=ctx.get("teams"),
+                auth_method=ctx.get("auth_method", "bearer"),
+                authenticated_at=datetime.now(timezone.utc),
+            )
+        )
+
+
 def _set_proxy_user_context(proxy_user: str) -> None:
     """Set user context for a proxy-authenticated request (no team context, non-admin).
 
     Args:
         proxy_user: Email address of the proxy-authenticated user.
     """
-    user_context_var.set(
-        {
-            "email": proxy_user,
-            "teams": [],
-            "is_authenticated": True,
-            "is_admin": False,
-            "permission_is_admin": False,
-            "auth_method": "proxy",
-        }
-    )
+    _proxy_ctx: dict[str, Any] = {
+        "email": proxy_user,
+        "teams": [],
+        "is_authenticated": True,
+        "is_admin": False,
+        "permission_is_admin": False,
+        "auth_method": "proxy",
+    }
+    user_context_var.set(_proxy_ctx)
+    _set_user_identity_from_dict(_proxy_ctx)
     set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
 
 
@@ -4970,6 +5010,7 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
+            _set_user_identity_from_dict(auth_user_ctx)
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,
