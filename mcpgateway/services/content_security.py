@@ -15,8 +15,14 @@ from issue #538.
 import hashlib
 import logging
 import re
+import sys
 import threading
 from typing import List, Optional, Union
+
+# re.search() gained a `timeout` keyword in Python 3.13 that actually aborts
+# pathological regex execution. Older versions only have the thread.join
+# fallback, which is a soft timeout (see _regex_search_with_timeout).
+_HAS_NATIVE_REGEX_TIMEOUT: bool = sys.version_info >= (3, 13)
 
 # First-Party
 from mcpgateway.config import settings
@@ -288,9 +294,22 @@ class ContentSecurityService:
     """
 
     def __init__(self):
-        """Initialize the content security service."""
+        """Initialize the content security service.
+
+        Patterns are compiled once here instead of on every request because
+        this service is a singleton (see get_content_security_service below)
+        and re.compile on a hot path is measurable overhead.
+        """
         self.max_resource_size = settings.content_max_resource_size
         self.max_prompt_size = settings.content_max_prompt_size
+        self._compiled_blocked_patterns: List[tuple[str, re.Pattern]] = self._compile_patterns(
+            settings.content_blocked_patterns,
+            pattern_kind="content_blocked_patterns",
+        )
+        self._compiled_template_patterns: List[tuple[str, re.Pattern]] = self._compile_patterns(
+            settings.content_blocked_template_patterns,
+            pattern_kind="content_blocked_template_patterns",
+        )
         logger.info(
             "ContentSecurityService initialized",
             extra={
@@ -298,10 +317,34 @@ class ContentSecurityService:
                 "max_prompt_size": self.max_prompt_size,
                 "strict_mime_validation": settings.content_strict_mime_validation,
                 "allowed_resource_mimetypes_count": len(settings.content_allowed_resource_mimetypes),
+                "compiled_blocked_patterns": len(self._compiled_blocked_patterns),
+                "compiled_template_patterns": len(self._compiled_template_patterns),
+                "pattern_max_scan_size": settings.content_pattern_max_scan_size,
             },
         )
 
-    def _regex_search_with_timeout(self, pattern: str, content: str, timeout: float = 1.0):
+    @staticmethod
+    def _compile_patterns(raw_patterns: List[str], pattern_kind: str) -> List[tuple[str, re.Pattern]]:
+        """Compile a list of regex strings once, skipping any that fail to compile.
+
+        Args:
+            raw_patterns: Raw regex pattern strings from config.
+            pattern_kind: Human-readable tag used when logging compile errors.
+
+        Returns:
+            List of (original_pattern_string, compiled_pattern) tuples. Patterns that
+            fail to compile are logged and omitted so a single bad config entry does
+            not disable the whole validator.
+        """
+        compiled: List[tuple[str, re.Pattern]] = []
+        for raw in raw_patterns:
+            try:
+                compiled.append((raw, re.compile(raw, re.IGNORECASE | re.DOTALL)))
+            except re.error as exc:
+                logger.error("Skipping invalid regex in %s: %r (%s)", pattern_kind, raw, exc)
+        return compiled
+
+    def _regex_search_with_timeout(self, pattern: re.Pattern, content: str, timeout: float = 1.0):
         """Execute regex search with timeout protection for Python < 3.13.
 
         Uses threading to implement timeout for regex operations that don't
@@ -323,7 +366,7 @@ class ContentSecurityService:
 
         def search_thread():
             try:
-                result[0] = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+                result[0] = pattern.search(content)
             except Exception as e:
                 exception[0] = e
 
@@ -332,11 +375,14 @@ class ContentSecurityService:
         thread.join(timeout)
 
         if thread.is_alive():
-            # Thread is still running - timeout exceeded
+            # thread.join(timeout) only controls the wait here; the daemon thread
+            # itself cannot be killed and continues until the regex returns naturally.
+            # Primary ReDoS defense is the content_pattern_max_scan_size cap enforced
+            # in detect_malicious_patterns() before this helper is called.
             logger.warning(
                 "Regex search timeout exceeded",
                 extra={
-                    "pattern_length": len(pattern),
+                    "pattern_length": len(pattern.pattern),
                     "content_length": len(content),
                     "timeout": timeout,
                 },
@@ -604,8 +650,9 @@ class ContentSecurityService:
             logger.debug("Pattern detection disabled via CONTENT_PATTERN_DETECTION_ENABLED")
             return
 
-        blocked_patterns = settings.content_blocked_patterns
         validation_mode = settings.content_pattern_validation_mode
+        max_scan_size = settings.content_pattern_max_scan_size
+        regex_timeout = settings.content_pattern_regex_timeout
 
         # Normalize input to prevent encoding bypasses (CWE-116 fix)
         # - HTML entity decoding: &#60;script -> <script
@@ -614,22 +661,35 @@ class ContentSecurityService:
         # - Unicode normalization: various Unicode tricks
         normalized_content = self._normalize_input(content)
 
-        for pattern in blocked_patterns:
-            try:
-                # Use re.search with timeout to prevent ReDoS (CWE-400 fix)
-                # Python 3.13+ supports timeout parameter
-                # Standard
-                import sys
+        # Hard ReDoS guard (CWE-400): reject content too large to scan in bounded time.
+        # This is the primary defense; the per-pattern timeout below is defense-in-depth.
+        if len(normalized_content) > max_scan_size:
+            sanitized = _sanitize_pii_for_logging(user_email, ip_address)
+            logger.warning(
+                "Content rejected - exceeds pattern scan size limit",
+                extra={
+                    "content_type": content_type,
+                    "content_length": len(normalized_content),
+                    "max_scan_size": max_scan_size,
+                    **sanitized,
+                },
+            )
+            raise ContentPatternError(
+                pattern_matched="[oversize]",
+                content_type=content_type,
+                violation_type="content_too_large_to_scan",
+            )
 
-                if sys.version_info >= (3, 13):
-                    match = re.search(pattern, normalized_content, re.IGNORECASE | re.DOTALL, timeout=1.0)  # pylint: disable=unexpected-keyword-arg
+        for raw_pattern, compiled in self._compiled_blocked_patterns:
+            try:
+                if _HAS_NATIVE_REGEX_TIMEOUT:
+                    match = compiled.search(normalized_content, timeout=regex_timeout)  # pylint: disable=unexpected-keyword-arg
                 else:
-                    # Fallback for Python < 3.13 - manual timeout using threading
-                    match = self._regex_search_with_timeout(pattern, normalized_content, timeout=1.0)
+                    match = self._regex_search_with_timeout(compiled, normalized_content, timeout=regex_timeout)
 
                 if match:
                     # Determine violation type from pattern
-                    violation_type = self._classify_violation(pattern, match.group(0))
+                    violation_type = self._classify_violation(raw_pattern, match.group(0))
 
                     # Log with sanitized PII
                     sanitized = _sanitize_pii_for_logging(user_email, ip_address)
@@ -638,7 +698,7 @@ class ContentSecurityService:
                         extra={
                             "content_type": content_type,
                             "violation_type": violation_type,
-                            "pattern_length": len(pattern),  # Don't log full pattern for security
+                            "pattern_length": len(raw_pattern),  # Don't log full pattern for security
                             "validation_mode": validation_mode,
                             **sanitized,
                         },
@@ -664,7 +724,7 @@ class ContentSecurityService:
                 logger.error(
                     "Pattern matching timeout - possible ReDoS",
                     extra={
-                        "pattern_length": len(pattern),
+                        "pattern_length": len(raw_pattern),
                         "content_type": content_type,
                         **sanitized,
                     },
@@ -765,13 +825,23 @@ class ContentSecurityService:
             logger.warning("Template syntax validation failed: unbalanced braces", extra={"template_name": template_name, **sanitized})
             raise TemplateValidationError(template_name, "Unbalanced template braces - check {{ }}, {% %}, or {# #} pairs")
 
-        # Step 2: Scan for dangerous patterns
-        blocked_patterns = settings.content_blocked_template_patterns
-        for pattern in blocked_patterns:
-            if re.search(pattern, template, re.IGNORECASE):
+        # Step 2: Scan for dangerous patterns using the same ReDoS-bounded path
+        # as detect_malicious_patterns (size cap + compiled patterns + per-pattern timeout).
+        regex_timeout = settings.content_pattern_regex_timeout
+        for raw_pattern, compiled in self._compiled_template_patterns:
+            try:
+                if _HAS_NATIVE_REGEX_TIMEOUT:
+                    match = compiled.search(template, timeout=regex_timeout)  # pylint: disable=unexpected-keyword-arg
+                else:
+                    match = self._regex_search_with_timeout(compiled, template, timeout=regex_timeout)
+            except TimeoutError:
                 sanitized = _sanitize_pii_for_logging(user_email, ip_address)
-                logger.warning("Template security validation failed: dangerous pattern detected", extra={"template_name": template_name, "pattern": pattern, **sanitized})
-                raise TemplateValidationError(template_name, "Template contains dangerous pattern that could lead to code injection", pattern=pattern)
+                logger.error("Template pattern matching timeout - possible ReDoS", extra={"template_name": template_name, "pattern_length": len(raw_pattern), **sanitized})
+                raise TemplateValidationError(template_name, "Template pattern evaluation exceeded timeout", pattern=raw_pattern)
+            if match:
+                sanitized = _sanitize_pii_for_logging(user_email, ip_address)
+                logger.warning("Template security validation failed: dangerous pattern detected", extra={"template_name": template_name, "pattern_length": len(raw_pattern), **sanitized})
+                raise TemplateValidationError(template_name, "Template contains dangerous pattern that could lead to code injection", pattern=raw_pattern)
 
         # Step 3: Validate Jinja2 syntax by attempting to parse and analyze
         # Note: meta.find_undeclared_variables() only finds undefined variables,
