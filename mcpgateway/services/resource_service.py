@@ -877,6 +877,17 @@ class ResourceService(BaseService):
                             ip_address=created_from_ip,
                         )
 
+                        # Same US-3 malicious-pattern scan that register_resource() runs.
+                        # Keep in lock-step with the single-resource path.
+                        if hasattr(resource, "content") and resource.content:
+                            content_str = resource.content if isinstance(resource.content, str) else resource.content.decode("utf-8", errors="ignore")
+                            content_security.detect_malicious_patterns(
+                                content=content_str,
+                                content_type="Resource content",
+                                user_email=created_by,
+                                ip_address=created_from_ip,
+                            )
+
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
