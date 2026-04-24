@@ -10290,7 +10290,7 @@ mod unit_tests {
         accepts_sse, active_runtime_session_count, affinity_forward_error_response,
         auth_binding_fingerprint, authenticate_public_request_if_needed,
         authorize_server_method_via_backend, batch_rejected_response, build_forwarded_sse_event,
-        build_public_router, can_reuse_session_auth, can_use_direct_prompts_get,
+        build_public_router, build_router, can_reuse_session_auth, can_use_direct_prompts_get,
         can_use_direct_resources_read, decode_request, decode_upstream_json_payload_bytes,
         derive_backend_authenticate_url, derive_backend_completion_complete_url,
         derive_backend_initialize_url, derive_backend_logging_set_level_url,
@@ -14165,6 +14165,39 @@ mod unit_tests {
             .expect("response");
 
         // Should fail with 413 Payload Too Large
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // Twin of the public-router test: guards against `build_router` and
+    // `build_public_router` drifting out of sync on body-limit enforcement.
+    #[tokio::test]
+    async fn request_body_limit_rejects_oversized_payloads_on_internal_router() {
+        let mut config = test_config();
+        config.max_request_body_size_bytes = 100;
+
+        let state = AppState::new(&config).expect("state");
+        let app = build_router(state);
+
+        let large_payload = "x".repeat(200);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": large_payload,
+            "id": 1
+        });
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
