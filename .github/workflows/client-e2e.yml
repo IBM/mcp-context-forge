@@ -1,0 +1,100 @@
+# ===============================================================
+# React Client E2E - Playwright (TypeScript) smoke suite
+# ===============================================================
+#   - runs TypeScript Playwright tests for the React admin UI
+#   - Vite dev server is spawned by Playwright's webServer config
+#   - backend API is stubbed with page.route() (no gateway required)
+#   - triggered on PRs and pushes touching client/** or this workflow
+# ---------------------------------------------------------------
+
+name: Client E2E (Playwright)
+
+on:
+  push:
+    branches: ["main", "epic/ui-rewrite"]
+    paths:
+      - "client/**"
+      - ".github/workflows/client-e2e.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main", "epic/ui-rewrite"]
+    paths:
+      - "client/**"
+      - ".github/workflows/client-e2e.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Playwright smoke + auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: ./client
+
+    env:
+      CI: "true"
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+
+    steps:
+      - name: ⬇️ Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: 🟢 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: client/package-lock.json
+
+      - name: 📥 Install client dependencies
+        run: npm ci
+
+      - name: 🎭 Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('client/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: 🎭 Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: 🎭 Install Playwright system deps (cached browsers)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: 🧪 Run Playwright tests
+        run: npm run e2e
+
+      - name: 📦 Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: client/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: 📦 Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-traces
+          path: client/test-results
+          retention-days: 7
+          if-no-files-found: ignore
