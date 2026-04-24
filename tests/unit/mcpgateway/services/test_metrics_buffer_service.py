@@ -691,11 +691,12 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
 
-    # Two transactions: main (tool/resource/prompt/a2a) + server metrics
-    assert len(all_dbs) == 2
+    # Five separate transactions: one for each metric type (tool, resource, prompt, a2a, server)
+    # This prevents FK violations on one type from rolling back other types
+    assert len(all_dbs) == 5
     assert all(db.committed for db in all_dbs)
 
-    # Collect models across both transactions
+    # Collect models across all transactions
     models = [call[0] for db in all_dbs for call in db.bulk_calls]
     assert ToolMetric in models
     assert ResourceMetric in models
@@ -715,6 +716,7 @@ def test_record_tool_metric_falls_back_to_immediate_write(monkeypatch):
 
 
 def test_get_metrics_buffer_service_singleton(monkeypatch):
+    # First-Party
     from mcpgateway.services import metrics_buffer_service as mbs
 
     mbs._metrics_buffer_service = None
@@ -809,8 +811,8 @@ class TestMetricsSetup:
         from fastapi import FastAPI
 
         # First-Party
-        from mcpgateway.services import metrics as metrics_module
         from mcpgateway.services import http_client_service
+        from mcpgateway.services import metrics as metrics_module
 
         class DummyGauge:
             def __init__(self, _name, _doc, labelnames=None, registry=None):  # noqa: ARG002
@@ -953,3 +955,84 @@ class TestImmediateWriteMethods:
         )
         service = MetricsBufferService(enabled=False)
         service._write_a2a_agent_metric_immediately("a1", time.monotonic(), False, "invoke", "err")
+        # Should not raise
+
+
+def test_flush_to_db_prompt_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during prompt metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import PromptMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    # Track which metric types were attempted
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == PromptMetric:
+                raise Exception("FK violation on prompt_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    prompt_metric = SimpleNamespace(prompt_id="p1", timestamp=time.time(), response_time=0.3, is_success=True, error_message=None)
+
+    # Should not raise despite the exception
+    service._flush_to_db([], [], [prompt_metric], [], [])
+
+    # Verify prompt metrics were attempted
+    assert PromptMetric in attempted_types
+
+
+def test_flush_to_db_a2a_agent_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during A2A agent metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import A2AAgentMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    # Track which metric types were attempted
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == A2AAgentMetric:
+                raise Exception("FK violation on a2a_agent_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    a2a_metric = SimpleNamespace(a2a_agent_id="a1", timestamp=time.time(), response_time=0.5, is_success=True, interaction_type="invoke", error_message=None)
+
+    # Should not raise despite the exception
+    service._flush_to_db([], [], [], [], [a2a_metric])
+
+    # Verify A2A agent metrics were attempted
+    assert A2AAgentMetric in attempted_types
