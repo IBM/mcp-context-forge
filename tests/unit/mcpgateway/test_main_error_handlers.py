@@ -31,8 +31,15 @@ TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 
 
 @pytest.fixture
-def test_client(app_with_temp_db):
-    """Return a TestClient with auth dependencies overridden."""
+def test_client(app_with_temp_db, main_app_with_admin_api):
+    """Return a TestClient with auth dependencies overridden.
+
+    Depends on ``main_app_with_admin_api`` to ensure the admin router
+    is mounted on ``mcpgateway.main.app`` so admin-prefixed routes
+    (e.g. ``/admin/prompts``) resolve. Without this dep, admin routes
+    are disabled by the conftest bootstrap and HTTP tests targeting
+    them get 404.
+    """
     # First-Party
     from mcpgateway.db import EmailUser
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
