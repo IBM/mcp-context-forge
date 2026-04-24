@@ -179,23 +179,28 @@ async def test_get_redis_client_with_circuit_open():
 
 
 @pytest.mark.asyncio
-async def test_get_redis_client_reconnection_after_circuit_timeout():
-    """Test that _get_redis_client attempts reconnection after circuit timeout."""
-    cache = RegistryCache()
-    cache._redis_circuit_open = True
-    cache._redis_last_failure_time = asyncio.get_event_loop().time() - 31  # 31s ago
-    cache._redis_circuit_open_duration = 30.0
+async def test_get_redis_client_does_not_ping_per_call():
+    """_get_redis_client must return the factory client without a per-call ping.
 
-    # Mock successful Redis client
+    Wrapping ping in the circuit breaker on every operation lets a "half-up"
+    Redis (PING ok, GET times out) oscillate the failure counter between 0
+    and 1 so the breaker never opens. We verify the factory client is
+    returned verbatim and that ping() was NOT invoked here.
+    """
+    cache = RegistryCache()
+    cache._redis_checked = False
+    cache._redis_available = False
+
     mock_redis = AsyncMock()
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_redis):
         client = await cache._get_redis_client()
 
-        assert client is not None
-        assert cache._redis_circuit_open is False
-        assert cache._redis_available is True
+    assert client is mock_redis
+    assert cache._redis_available is True
+    assert cache._redis_checked is True
+    mock_redis.ping.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -254,24 +259,33 @@ async def test_successful_operation_resets_failure_count():
 
 
 @pytest.mark.asyncio
-async def test_redis_ping_timeout_in_get_client():
-    """Test that Redis ping timeout is handled in _get_redis_client."""
-    cache = RegistryCache()
+async def test_half_up_redis_trips_circuit_breaker():
+    """Regression test for B1: Redis that answers PING but times out on commands.
 
-    # Mock Redis client with hanging ping
-    async def hanging_ping():
-        await asyncio.sleep(10)
-        return True
+    Before B1 was fixed, _get_redis_client pinged Redis on every call and
+    _record_success'd that ping, oscillating failure_count between 0 (after
+    ping success) and 1 (after get timeout). The breaker never opened, so
+    every request paid the full timeout. After the fix, the command's own
+    timeout is the sole breaker signal and 3 consecutive failures open it.
+    """
+    # Third-Party
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    cache = RegistryCache()
+    cache._redis_failure_threshold = 3
+    cache._redis_operation_timeout = 0.05
 
     mock_redis = AsyncMock()
-    mock_redis.ping = hanging_ping
+    mock_redis.ping = AsyncMock(return_value=True)
+    mock_redis.get = AsyncMock(side_effect=RedisTimeoutError("command timed out"))
 
     with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_redis):
-        client = await cache._get_redis_client()
+        for i in range(3):
+            result = await cache.get("tools", f"hash{i}")
+            assert result is None, f"half-up Redis must never return a value (iter {i})"
 
-        # Should return None due to ping timeout
-        assert client is None
-        assert cache._redis_available is False
+        assert cache._redis_failure_count >= 3, "Each timeout must count against the breaker"
+        assert cache._redis_circuit_open is True, "Circuit must open after threshold failures"
 
 
 @pytest.mark.asyncio
@@ -313,22 +327,158 @@ async def test_circuit_breaker_half_open_state():
 
 
 @pytest.mark.asyncio
-async def test_get_redis_client_ping_failure():
-    """Test Redis client returns None when ping fails (covers lines 351-353)."""
+async def test_get_redis_client_factory_connection_error_records_failure():
+    """Factory-level redis-py ConnectionError must route through the breaker.
+
+    _get_redis_client no longer pings per call, but a factory that raises a
+    redis.exceptions.ConnectionError should still increment failure_count
+    (e.g. from bad URL / DNS) so the breaker can eventually trip.
+    """
+    # Third-Party
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
     cache = RegistryCache()
     cache._redis_checked = False
     cache._redis_available = True
+    cache._redis_failure_count = 0
 
-    # Mock Redis client with failing ping
-    mock_redis = AsyncMock()
-    mock_redis.ping = AsyncMock(side_effect=Exception("Connection refused"))
-
-    with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_redis):
+    with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=RedisConnectionError("bad url")):
         result = await cache._get_redis_client()
 
-        assert result is None
-        assert cache._redis_available is False
-        # _redis_checked is NOT set when ping fails in the try block
+    assert result is None
+    assert cache._redis_available is False
+    assert cache._redis_checked is True
+    assert cache._redis_failure_count == 1, "Factory connection error must count against the breaker"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_releases_slot():
+    """Regression test for B2: cancelling a probe coroutine must release the slot.
+
+    asyncio.CancelledError is a BaseException (not Exception), so the prior
+    ``except Exception`` did not catch it and left
+    _half_open_probe_in_flight=True permanently, disabling the breaker
+    until process restart. The finally block now releases the slot.
+    """
+    cache = RegistryCache()
+    cache._redis_circuit_open = True
+    cache._redis_last_failure_time = time.time() - 31
+    cache._redis_circuit_open_duration = 30.0
+
+    probe_started = asyncio.Event()
+
+    async def slow_probe(_client=None):
+        probe_started.set()
+        await asyncio.sleep(60)
+        return "never-reached"
+
+    mock_redis = AsyncMock()
+    with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+        probe_task = asyncio.create_task(cache._redis_operation_with_timeout(slow_probe, operation_name="probe"))
+        await probe_started.wait()
+        assert cache._half_open_probe_in_flight is True, "Probe must be in flight before cancellation"
+
+        probe_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await probe_task
+
+    assert cache._half_open_probe_in_flight is False, "Cancelled probe must release the slot"
+
+
+@pytest.mark.asyncio
+async def test_scan_timeout_does_not_publish():
+    """Regression test for B3: if scan_iter fails/times out, do NOT publish.
+
+    Publishing 'cache is invalid' to peer workers after a failed scan causes
+    them to drop L1 while stale L2 keys remain in THIS worker's Redis,
+    producing divergent cache state.
+    """
+    cache = RegistryCache()
+    cache._redis_operation_timeout = 0.05
+    cache._scan_timeout = 0.05
+
+    async def hanging_scan(*_a, **_kw):
+        await asyncio.sleep(10)
+        yield b"never"  # async generator with unreachable yield
+
+    mock_redis = AsyncMock()
+    mock_redis.scan_iter = hanging_scan
+    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.publish = AsyncMock(return_value=1)
+
+    with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+        await cache.invalidate("tools")
+
+    mock_redis.delete.assert_not_called()
+    mock_redis.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_invalid_scan_output_aborts_invalidation():
+    """H4: non-bytes/str SCAN output must abort delete+publish, not crash.
+
+    A broken or malicious Redis could yield unexpected types; we log and
+    bail rather than feeding garbage to redis.delete.
+    """
+    cache = RegistryCache()
+
+    async def garbage_scan(*_a, **_kw):
+        yield b"real-key-1"
+        yield 12345  # invalid
+
+    mock_redis = AsyncMock()
+    mock_redis.scan_iter = garbage_scan
+    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.publish = AsyncMock(return_value=1)
+
+    with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+        await cache.invalidate("tools")
+
+    mock_redis.delete.assert_not_called()
+    mock_redis.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_single_roundtrip():
+    """H3: invalidate() must batch all keys into a single redis.delete(*keys) call."""
+    cache = RegistryCache()
+
+    async def scan_stream(*_a, **_kw):
+        for k in (b"k1", b"k2", b"k3", b"k4", b"k5"):
+            yield k
+
+    mock_redis = AsyncMock()
+    mock_redis.scan_iter = scan_stream
+    mock_redis.delete = AsyncMock(return_value=5)
+    mock_redis.publish = AsyncMock(return_value=1)
+
+    with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+        await cache.invalidate("tools")
+
+    assert mock_redis.delete.call_count == 1, "All keys must be deleted in a single round trip"
+    call_args = mock_redis.delete.call_args.args
+    assert set(call_args) == {b"k1", b"k2", b"k3", b"k4", b"k5"}
+    mock_redis.publish.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stale_nonprobe_success_does_not_zero_open_circuit():
+    """H2: a stale success arriving after the circuit opened must not zero the counter.
+
+    Race: operation A is slow (500ms) and eventually succeeds; operations
+    B, C, D time out during A's wait and open the circuit with
+    failure_count=3. A's late success must NOT reset failure_count to 0,
+    which would obscure the true failure history.
+    """
+    cache = RegistryCache()
+    cache._redis_failure_count = 3
+    cache._redis_circuit_open = True
+    cache._redis_last_failure_time = time.time()
+
+    await cache._record_success(is_probe=False)
+
+    assert cache._redis_failure_count == 3, "Stale non-probe success must not zero an open circuit"
+    assert cache._redis_circuit_open is True, "Only a probe success may close the circuit"
 
 
 @pytest.mark.asyncio
