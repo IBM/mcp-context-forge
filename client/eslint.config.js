@@ -6,10 +6,18 @@ import prettierConfig from "eslint-config-prettier";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["../mcpgateway/static/app", "dist", "build"] },
+  {
+    ignores: [
+      "../mcpgateway/static/app",
+      "dist",
+      "build",
+      "playwright-report",
+      "test-results",
+    ],
+  },
   {
     extends: [...tseslint.configs.recommended],
-    files: ["**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       globals: globals.browser,
     },
@@ -39,5 +47,22 @@ export default tseslint.config(
     settings: {
       react: { version: "detect" },
     },
-  }
+  },
+  {
+    extends: [...tseslint.configs.recommended],
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+    plugins: {
+      prettier: prettierPlugin,
+    },
+    rules: {
+      ...prettierConfig.rules,
+      "prettier/prettier": "error",
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-new-func": "error",
+    },
+  },
 );
