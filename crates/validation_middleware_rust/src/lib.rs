@@ -488,7 +488,27 @@ fn normalize_absolute_path(absolute: PathBuf) -> PathBuf {
         }
     }
 
-    normalized
+    normalize_windows_verbatim_prefix(normalized)
+}
+
+#[cfg(windows)]
+fn normalize_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path_string = path.to_string_lossy();
+
+    if let Some(rest) = path_string.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+
+    if let Some(rest) = path_string.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+
+    path
+}
+
+#[cfg(not(windows))]
+fn normalize_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn normalize_path(path: &str) -> Result<PathBuf, std::io::Error> {
@@ -581,7 +601,7 @@ fn validate_resource_path_impl(path: &str, validator: &CompiledValidator) -> PyR
         && !validator
             .allowed_roots
             .iter()
-            .any(|root| resolved_path.starts_with(root))
+            .any(|root| resolved_path.starts_with(normalize_absolute_path(root.clone())))
     {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "invalid_path: Path outside allowed roots",
@@ -891,7 +911,7 @@ mod tests {
         let candidate = tempdir.path().join("file.txt");
         let result = validate_resource_path_impl(candidate.to_str().unwrap(), &validator).unwrap();
 
-        assert!(result.starts_with(allowed_root.to_str().unwrap()));
+        assert!(PathBuf::from(result).starts_with(normalize_absolute_path(allowed_root)));
     }
 
     #[cfg(unix)]
