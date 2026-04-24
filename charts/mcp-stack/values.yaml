@@ -144,24 +144,6 @@ mcpContextForge:
       failureThreshold: 10
 
   # Kubernetes resource requests / limits
-  # ────────────────────────────────────────────────────────────────────────────
-  # SECURITY NOTE: Process Limits (Fork Bomb Protection)
-  # ────────────────────────────────────────────────────────────────────────────
-  # Kubernetes does NOT provide native per-container process limits (no nproc
-  # equivalent to Docker's ulimits). For fork bomb protection in production:
-  #
-  # Option 1: Admission Controllers (Recommended)
-  #   - OPA Gatekeeper: https://open-policy-agent.github.io/gatekeeper/
-  #   - Kyverno: https://kyverno.io/
-  #
-  # Option 2: Runtime Security Tools
-  #   - Falco: https://falco.org/ (detects rapid process creation)
-  #
-  # Option 3: Node-level cgroups v2 (Advanced)
-  #   - Configure pids.max at node level (affects all pods on node)
-  #
-  # See docs/docs/security/resource-limits.md for detailed guidance.
-  # ────────────────────────────────────────────────────────────────────────────
   resources:
     limits:
       cpu: "2"
