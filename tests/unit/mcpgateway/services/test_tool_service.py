@@ -361,6 +361,8 @@ def mock_gateway():
     gw.passthrough_headers = []
     gw.ca_certificate = None
     gw.ca_certificate_sig = None
+    gw.client_cert = None
+    gw.client_key = None
     gw.signing_algorithm = None
 
     gw.enabled = True
@@ -3917,8 +3919,14 @@ class TestToolService:
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify OAuth token was obtained
-        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_tool.oauth_config)
+        # Verify OAuth token was obtained (with gateway CA cert parameters)
+        tool_service.oauth_manager.get_access_token.assert_called_once()
+        call_args = tool_service.oauth_manager.get_access_token.call_args
+        assert call_args[0][0] == mock_tool.oauth_config
+        # Gateway is None for tool-level OAuth, so CA cert params should be None
+        assert call_args[1]["ca_certificate"] is None
+        assert call_args[1]["client_cert"] is None
+        assert call_args[1]["client_key"] is None
 
         # Verify HTTP request included Bearer token
         tool_service._http_client.request.assert_called_once()
@@ -3996,8 +4004,14 @@ class TestToolService:
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify OAuth was called
-        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_gateway.oauth_config)
+        # Verify OAuth was called (with gateway CA cert parameters)
+        tool_service.oauth_manager.get_access_token.assert_called_once()
+        call_args = tool_service.oauth_manager.get_access_token.call_args
+        assert call_args[0][0] == mock_gateway.oauth_config
+        # Check that CA cert parameters were passed (from gateway_payload dict)
+        assert call_args[1]["ca_certificate"] is None
+        assert call_args[1]["client_cert"] is None
+        assert call_args[1]["client_key"] is None
 
         # Verify MCP session was initialized and tool called
         session_mock.initialize.assert_awaited_once()

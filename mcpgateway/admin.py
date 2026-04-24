@@ -13871,7 +13871,9 @@ async def admin_test_gateway(
                 # For Client Credentials flow, get token directly
                 try:
                     oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-                    access_token: str = await oauth_manager.get_access_token(gateway.oauth_config)
+                    access_token: str = await oauth_manager.get_access_token(
+                        gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+                    )
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")

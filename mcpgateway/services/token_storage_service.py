@@ -280,7 +280,13 @@ class TokenStorageService:
             oauth_manager = OAuthManager()
 
             logger.info(f"Attempting to refresh token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
-            token_response = await oauth_manager.refresh_token(refresh_token, oauth_config)
+            token_response = await oauth_manager.refresh_token(
+                refresh_token,
+                oauth_config,
+                ca_certificate=gateway.ca_certificate,
+                client_cert=gateway.client_cert,
+                client_key=gateway.client_key,
+            )
 
             # Update stored tokens with new values
             new_access_token = token_response["access_token"]
