@@ -37,7 +37,7 @@ jobs:
           go-version: "1.25.x"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: Run pre-commit
         run: make --no-print-directory pre-commit
