@@ -272,7 +272,8 @@ async def initiate_sso_login(
     try:
         auth_url = sso_service.get_authorization_url(provider_id, redirect_uri, scope_list, session_binding=browser_session_binding)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning(f"OAuth authorization request error: {exc}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth authorization request") from exc
 
     if not auth_url:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found or disabled")
@@ -464,6 +465,7 @@ async def create_sso_provider(
     try:
         provider = await sso_service.create_provider(provider_data.model_dump())
     except ValueError as exc:
+        logger.warning(f"SSO provider create error: {exc}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result = {
@@ -606,6 +608,7 @@ async def update_sso_provider(
     try:
         provider = await sso_service.update_provider(provider_id, update_data)
     except ValueError as exc:
+        logger.warning(f"SSO provider update error: {exc}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not provider:

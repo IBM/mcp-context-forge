@@ -829,9 +829,9 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         try:
             config = build_config(input_data)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=f"Invalid configuration: {str(ve)}")
+            raise HTTPException(status_code=400, detail="Invalid configuration")
         except Exception as config_error:
-            raise HTTPException(status_code=400, detail=f"Configuration error: {str(config_error)}")
+            raise HTTPException(status_code=400, detail="Configuration error")
 
         # Store user configuration
         await set_user_config(user_id, config)
@@ -846,15 +846,15 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         except ConnectionError as ce:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=503, detail=f"Failed to connect to MCP server: {str(ce)}. Please verify the server URL and authentication.")
+            raise HTTPException(status_code=503, detail="Failed to connect to MCP server. Please verify the server URL and authentication.")
         except ValueError as ve:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=400, detail=f"Invalid LLM configuration: {str(ve)}")
+            raise HTTPException(status_code=400, detail="Invalid LLM configuration")
         except Exception as init_error:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=500, detail=f"Service initialization failed: {str(init_error)}")
+            raise HTTPException(status_code=500, detail="Service initialization failed")
 
         await set_active_session(user_id, chat_service)
 
@@ -877,7 +877,7 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         raise
     except Exception as e:
         logger.error(f"Unexpected error in connect endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Unexpected connection error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected connection error")
 
 
 async def token_streamer(chat_service: MCPChatService, message: str, user_id: str):
@@ -1085,17 +1085,17 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                     "elapsed_ms": result["elapsed_ms"],
                 }
             except RuntimeError as re:
-                raise HTTPException(status_code=503, detail=f"Chat service error: {str(re)}")
+                raise HTTPException(status_code=503, detail="Chat service error")
 
     except ConnectionError as ce:
-        raise HTTPException(status_code=503, detail=f"Lost connection to MCP server: {str(ce)}. Please reconnect.")
+        raise HTTPException(status_code=503, detail="Lost connection to MCP server. Please reconnect.")
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in chat endpoint for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 @llmchat_router.post("/disconnect")
@@ -1343,4 +1343,4 @@ async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
             }
     except Exception as e:
         logger.error(f"Failed to get gateway models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve gateway models")
