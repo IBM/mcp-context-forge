@@ -69,6 +69,79 @@ mcpContextForge:
 If registration fails with `422` and mentions blocked private network addresses, update SSRF values and
 retry the Helm upgrade.
 
+## Kubernetes Process Limits
+
+**Important:** Kubernetes does NOT provide native per-container process limits equivalent to Docker's `ulimits.nproc`.
+
+To prevent resource exhaustion in Kubernetes deployments, implement defense-in-depth using:
+
+### Option 1: Admission Controllers (Recommended)
+
+**OPA Gatekeeper:**
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sProcessLimit
+metadata:
+  name: container-process-limit
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    maxProcesses: 5000
+```
+
+**Kyverno:**
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: limit-processes
+spec:
+  validationFailureAction: enforce
+  rules:
+    - name: check-process-limit
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "Container must not spawn excessive processes"
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(capabilities):
+                    drop:
+                      - SYS_ADMIN
+```
+
+### Option 2: Runtime Security Tools
+
+**Falco Rule:**
+```yaml
+- rule: Excessive Process Creation
+  desc: Detect rapid process creation patterns
+  condition: >
+    spawned_process and
+    proc.pname = proc.name and
+    evt.count > 100 in 1s
+  output: "Rapid process creation detected (user=%user.name container=%container.name)"
+  priority: CRITICAL
+```
+
+### Option 3: Node-level cgroups v2 (Advanced)
+
+Configure pids.max at the node level (affects all pods on the node):
+```bash
+echo 5000 > /sys/fs/cgroup/kubepods/pids.max
+```
+
+**Note:** Requires node-level access and impacts all pods on the node.
+
+For detailed guidance on resource limits and process management, see `docs/docs/security/resource-limits.md` in the repository.
+
 ## Values
 
 | Key | Type | Default | Description |
