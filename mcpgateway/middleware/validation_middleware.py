@@ -34,7 +34,7 @@ from mcpgateway.config import settings
 logger = logging.getLogger(__name__)
 
 _RUST_VALIDATION_MODULE = None
-_MAX_JSON_VALIDATION_DEPTH = 1024
+_DEFAULT_MAX_JSON_VALIDATION_DEPTH = 1024
 
 
 def is_path_traversal(uri: str) -> bool:
@@ -47,6 +47,103 @@ def is_path_traversal(uri: str) -> bool:
         bool: True if path traversal detected
     """
     return ".." in uri or uri.startswith("/") or "\\" in uri
+
+
+class _RustValidationUnavailable(RuntimeError):
+    """Raised when the optional Rust backend cannot be used."""
+
+
+class _RustValidationBackend:
+    """Small adapter around the optional Rust validation extension."""
+
+    def __init__(
+        self,
+        max_param_length: int,
+        dangerous_pattern_strings: list[str],
+        allowed_root_strings: list[str],
+        max_path_depth: int,
+        max_json_depth: int,
+    ):
+        self.max_param_length = max_param_length
+        self.dangerous_pattern_strings = dangerous_pattern_strings
+        self.allowed_root_strings = allowed_root_strings
+        self.max_path_depth = max_path_depth
+        self.max_json_depth = max_json_depth
+        self.validator = None
+        self.validate_json_bytes = None
+        self.sanitize_response_body = None
+        self.validate_resource_path = None
+        self.json_depth_error = None
+        self.invalid_json_error = None
+        self.unavailable = False
+
+    def load_module(self):
+        """Load the experimental Rust validation extension on demand."""
+        global _RUST_VALIDATION_MODULE
+
+        if _RUST_VALIDATION_MODULE is None:
+            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_rust")
+        json_depth_error = getattr(_RUST_VALIDATION_MODULE, "JsonDepthError", None)
+        invalid_json_error = getattr(_RUST_VALIDATION_MODULE, "InvalidJsonError", None)
+        self.json_depth_error = json_depth_error if isinstance(json_depth_error, type) else None
+        self.invalid_json_error = invalid_json_error if isinstance(invalid_json_error, type) else None
+        return _RUST_VALIDATION_MODULE
+
+    def build_validator(self):
+        """Build the compiled Rust validator once per middleware instance."""
+        if self.unavailable:
+            return None
+
+        try:
+            validator = self.load_module().Validator(
+                self.max_param_length,
+                self.dangerous_pattern_strings,
+                self.allowed_root_strings,
+                self.max_path_depth,
+                self.max_json_depth,
+            )
+            self.validator = validator
+            self.refresh_handles()
+            return validator
+        except Exception as exc:
+            self.mark_unavailable()
+            raise _RustValidationUnavailable(str(exc)) from exc
+
+    def mark_unavailable(self):
+        """Disable cached Rust validation handles after runtime extension failures."""
+        self.unavailable = True
+        self.validator = None
+        self.validate_json_bytes = None
+        self.sanitize_response_body = None
+        self.validate_resource_path = None
+        self.json_depth_error = None
+        self.invalid_json_error = None
+
+    def refresh_handles(self) -> bool:
+        """Populate cached Rust callables from the current validator instance."""
+        if self.validator is None:
+            return False
+
+        self.validate_json_bytes = self.validator.validate_json_bytes
+        self.sanitize_response_body = self.validator.sanitize_response_body
+        self.validate_resource_path = self.validator.validate_resource_path
+        return True
+
+    def ensure_validator(self):
+        """Return a ready validator or raise when Rust is unavailable."""
+        if self.validator is None:
+            validator = self.build_validator()
+            if validator is None:
+                raise _RustValidationUnavailable("rust validator unavailable")
+        return self.validator
+
+    def is_json_depth_error(self, exc: ValueError) -> bool:
+        """Identify structured Rust JSON depth failures."""
+        return self.json_depth_error is not None and isinstance(exc, self.json_depth_error)
+
+    def is_invalid_json_error(self, exc: ValueError) -> bool:
+        """Identify structured Rust JSON parse failures."""
+        return self.invalid_json_error is not None and isinstance(exc, self.invalid_json_error)
 
 
 class ValidationMiddleware(BaseHTTPMiddleware):
@@ -67,22 +164,30 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.enabled = settings.experimental_validate_io
         self.strict = settings.validation_strict
         self.sanitize = settings.sanitize_output
+        self.rust_enabled = getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True
+        self.environment = settings.environment
+        self.max_param_length = settings.max_param_length
+        self.max_path_depth = settings.max_path_depth
+        configured_depth = getattr(settings, "validation_middleware_max_json_depth", _DEFAULT_MAX_JSON_VALIDATION_DEPTH)
+        self.max_json_depth = configured_depth if isinstance(configured_depth, int) else _DEFAULT_MAX_JSON_VALIDATION_DEPTH
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
         self.allowed_root_strings = [str(root) for root in self.allowed_roots]
         self.dangerous_pattern_strings = list(settings.dangerous_patterns)
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
-        self._rust_validator = None
-        self._rust_validate_http_request = None
-        self._rust_sanitize_response_body = None
-        self._rust_validate_resource_path = None
-        self._rust_validator_unavailable = False
+        self._rust_backend = (
+            _RustValidationBackend(
+                self.max_param_length,
+                self.dangerous_pattern_strings,
+                self.allowed_root_strings,
+                self.max_path_depth,
+                self._max_json_validation_depth(),
+            )
+            if self.rust_enabled
+            else None
+        )
 
-        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
-            self._rust_validator = self._build_rust_validator()
-            if self._rust_validator is not None:
-                self._rust_validate_http_request = self._rust_validator.validate_http_request
-                self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
-                self._rust_validate_resource_path = self._rust_validator.validate_resource_path
+        if self._rust_backend is not None:
+            self._build_rust_validator()
 
     async def dispatch(self, request: Request, call_next):
         """Process request with validation and response sanitization.
@@ -103,7 +208,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             return response
 
         # Phase 1: Log-only mode in dev/staging
-        warn_only = settings.environment in ("development", "staging") and not self.strict
+        warn_only = self.environment in ("development", "staging") and not self.strict
 
         # Validate input
         try:
@@ -145,33 +250,26 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         content_type = request.headers.get("content-type", "")
         is_json_body = content_type.startswith("application/json")
 
-        defer_parameter_validation_to_rust_request = self._rust_validate_http_request is not None and is_json_body
-
-        if parameters_to_validate and defer_parameter_validation_to_rust_request:
-            result = self._validate_parameters_with_rust(parameters_to_validate)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
-
-        if parameters_to_validate and not defer_parameter_validation_to_rust_request:
+        if parameters_to_validate:
             self._validate_parameters(parameters_to_validate)
 
         body = b""
         if is_json_body:
             body = await request.body()
 
-        if self._rust_validate_http_request is not None and is_json_body:
+        if self._rust_validate_json_bytes is not None and is_json_body:
             try:
-                result = self._validate_request_with_rust(parameters_to_validate, content_type, body)
+                result = self._validate_body_with_rust(body)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
                 return
             except orjson.JSONDecodeError:
-                pass
+                return
             except HTTPException:
                 raise
             except Exception as exc:
+                self._mark_rust_validator_unavailable()
                 logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
 
         if is_json_body:
@@ -183,6 +281,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                         key, error_type = result
                         self._raise_validation_failure(key, error_type)
             except orjson.JSONDecodeError:
+                self._validate_json_body_depth_with_python(body)
                 pass  # Let other middleware handle JSON errors
 
     def _validate_parameter(self, key: str, value: str):
@@ -195,22 +294,22 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If validation fails in strict mode
         """
-        if len(value) > settings.max_param_length:
-            if settings.environment in ("development", "staging"):
+        if len(value) > self.max_param_length:
+            if self.environment in ("development", "staging"):
                 logger.warning(f"Parameter {key} exceeds maximum length")
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
 
         for pattern in self.dangerous_patterns:
             if pattern.search(value):
-                if settings.environment in ("development", "staging"):
+                if self.environment in ("development", "staging"):
                     logger.warning(f"Parameter {key} contains dangerous characters")
                     return
                 raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
 
     def _validate_parameters(self, parameters: list[tuple[str, str]]):
         """Validate request parameters using the active backend."""
-        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+        if self.rust_enabled:
             result = self._validate_parameters_with_rust(parameters)
             if result is not None:
                 key, error_type = result
@@ -225,7 +324,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
     def _validate_parameters_with_python(self, parameters: list[tuple[str, str]]) -> tuple[str, str] | None:
         """Validate request parameters with the Python implementation."""
         for key, value in parameters:
-            if len(value) > settings.max_param_length:
+            if len(value) > self.max_param_length:
                 return key, "max_length"
 
             for pattern in self.dangerous_patterns:
@@ -243,7 +342,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If validation fails in strict mode
         """
-        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+        if self.rust_enabled:
             result = self._validate_json_data_with_rust(data)
             if result is not None:
                 key, error_type = result
@@ -255,30 +354,116 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             key, error_type = result
             self._raise_validation_failure(key, error_type)
 
+    @property
+    def _rust_validator(self):
+        """Compatibility accessor for the cached Rust validator."""
+        return self._rust_backend.validator if self._rust_backend is not None else None
+
+    @_rust_validator.setter
+    def _rust_validator(self, value):
+        """Compatibility mutator for tests that inject a Rust validator."""
+        if self._rust_backend is not None:
+            self._rust_backend.validator = value
+
+    @property
+    def _rust_validate_json_bytes(self):
+        """Compatibility accessor for the Rust JSON bytes callable."""
+        return self._rust_backend.validate_json_bytes if self._rust_backend is not None else None
+
+    @_rust_validate_json_bytes.setter
+    def _rust_validate_json_bytes(self, value):
+        """Compatibility mutator for the Rust JSON bytes callable."""
+        if self._rust_backend is not None:
+            self._rust_backend.validate_json_bytes = value
+
+    @property
+    def _rust_sanitize_response_body(self):
+        """Compatibility accessor for the Rust response sanitizer."""
+        return self._rust_backend.sanitize_response_body if self._rust_backend is not None else None
+
+    @_rust_sanitize_response_body.setter
+    def _rust_sanitize_response_body(self, value):
+        """Compatibility mutator for the Rust response sanitizer."""
+        if self._rust_backend is not None:
+            self._rust_backend.sanitize_response_body = value
+
+    @property
+    def _rust_validate_resource_path(self):
+        """Compatibility accessor for the Rust resource path validator."""
+        return self._rust_backend.validate_resource_path if self._rust_backend is not None else None
+
+    @_rust_validate_resource_path.setter
+    def _rust_validate_resource_path(self, value):
+        """Compatibility mutator for the Rust resource path validator."""
+        if self._rust_backend is not None:
+            self._rust_backend.validate_resource_path = value
+
+    @property
+    def _rust_json_depth_error(self):
+        """Compatibility accessor for the Rust JSON depth exception type."""
+        return self._rust_backend.json_depth_error if self._rust_backend is not None else None
+
+    @_rust_json_depth_error.setter
+    def _rust_json_depth_error(self, value):
+        """Compatibility mutator for the Rust JSON depth exception type."""
+        if self._rust_backend is not None:
+            self._rust_backend.json_depth_error = value
+
+    @property
+    def _rust_invalid_json_error(self):
+        """Compatibility accessor for the Rust invalid JSON exception type."""
+        return self._rust_backend.invalid_json_error if self._rust_backend is not None else None
+
+    @_rust_invalid_json_error.setter
+    def _rust_invalid_json_error(self, value):
+        """Compatibility mutator for the Rust invalid JSON exception type."""
+        if self._rust_backend is not None:
+            self._rust_backend.invalid_json_error = value
+
+    @property
+    def _rust_validator_unavailable(self):
+        """Compatibility accessor for Rust backend availability state."""
+        return self._rust_backend.unavailable if self._rust_backend is not None else False
+
+    @_rust_validator_unavailable.setter
+    def _rust_validator_unavailable(self, value):
+        """Compatibility mutator for Rust backend availability state."""
+        if self._rust_backend is not None:
+            self._rust_backend.unavailable = value
+
     def _load_rust_validation_module(self):
         """Load the experimental Rust validation extension on demand."""
-        global _RUST_VALIDATION_MODULE
-
-        if _RUST_VALIDATION_MODULE is None:
-            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_rust")
-        return _RUST_VALIDATION_MODULE
+        if self._rust_backend is None:
+            raise _RustValidationUnavailable("rust backend disabled")
+        return self._rust_backend.load_module()
 
     def _build_rust_validator(self):
         """Build the compiled Rust validator once per middleware instance."""
-        if self._rust_validator_unavailable:
+        if self._rust_backend is None or self._rust_validator_unavailable:
             return None
 
         try:
-            return self._load_rust_validation_module().Validator(
-                settings.max_param_length,
-                self.dangerous_pattern_strings,
-                self.allowed_root_strings,
-                settings.max_path_depth,
-            )
-        except Exception as exc:
-            self._rust_validator_unavailable = True
+            return self._rust_backend.build_validator()
+        except _RustValidationUnavailable as exc:
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return None
+
+    def _mark_rust_validator_unavailable(self):
+        """Disable cached Rust validation handles after runtime extension failures."""
+        if self._rust_backend is not None:
+            self._rust_backend.mark_unavailable()
+
+    def _max_json_validation_depth(self) -> int:
+        """Return configured JSON validation depth, with a safe middleware default."""
+        return self.max_json_depth
+
+    def _is_rust_json_depth_error(self, exc: ValueError) -> bool:
+        """Identify structured Rust JSON depth failures."""
+        return self._rust_backend is not None and self._rust_backend.is_json_depth_error(exc)
+
+    def _is_rust_invalid_json_error(self, exc: ValueError) -> bool:
+        """Identify structured Rust JSON parse failures."""
+        return self._rust_backend is not None and self._rust_backend.is_invalid_json_error(exc)
 
     def _validate_parameters_with_rust(self, parameters: list[tuple[str, str]]) -> tuple[str, str] | None:
         """Validate request parameters with the Rust extension, falling back to Python on failures."""
@@ -292,25 +477,27 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         except HTTPException:
             raise
         except Exception as exc:
+            self._mark_rust_validator_unavailable()
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_parameters_with_python(parameters)
 
-    def _validate_request_with_rust(
+    def _validate_body_with_rust(
         self,
-        parameters: list[tuple[str, str]],
-        content_type: str,
         body: bytes,
     ) -> tuple[str, str] | None:
-        """Validate the middleware request path via the Rust engine."""
+        """Validate the request body via the Rust engine after parameters were prechecked."""
         try:
-            if self._rust_validate_http_request is None:
+            if self._rust_validate_json_bytes is None:
                 raise RuntimeError("rust validator unavailable")
 
-            return self._rust_validate_http_request(parameters, content_type, body if body else None, True)
+            if not body:
+                return None
+
+            return self._rust_validate_json_bytes(body)
         except ValueError as exc:
-            if "maximum supported nesting depth" in str(exc):
+            if self._is_rust_json_depth_error(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-            if "Request body contains invalid JSON:" in str(exc):
+            if self._is_rust_invalid_json_error(exc):
                 raise orjson.JSONDecodeError("invalid json", "", 0) from exc
             raise
 
@@ -319,7 +506,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if self._rust_validator is None:
             return False
 
-        self._rust_validate_http_request = self._rust_validator.validate_http_request
+        self._rust_validate_json_bytes = self._rust_validator.validate_json_bytes
         self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
         self._rust_validate_resource_path = self._rust_validator.validate_resource_path
         return True
@@ -334,64 +521,112 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
             return self._rust_validator.validate_json_data(data)
         except ValueError as exc:
-            if "maximum supported nesting depth" in str(exc):
+            if self._is_rust_json_depth_error(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            self._mark_rust_validator_unavailable()
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
         except HTTPException:
             raise
         except Exception as exc:
+            self._mark_rust_validator_unavailable()
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
         """Validate JSON data with the Python implementation."""
-        if depth > _MAX_JSON_VALIDATION_DEPTH:
-            raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
+        stack = [("value", data, depth, "payload")]
+        max_depth = self._max_json_validation_depth()
 
-        if isinstance(data, dict):
-            for key, value in data.items():
+        while stack:
+            entry = stack.pop()
+            entry_type = entry[0]
+
+            if entry_type == "dict":
+                iterator, item_depth = entry[1], entry[2]
+                try:
+                    key, value = next(iterator)
+                except StopIteration:
+                    continue
+
+                stack.append(entry)
                 if isinstance(value, str):
-                    if len(value) > settings.max_param_length:
-                        return key, "max_length"
-                    for pattern in self.dangerous_patterns:
-                        if pattern.search(value):
-                            return key, "dangerous_pattern"
+                    stack.append(("value", value, item_depth, key))
                 elif isinstance(value, (dict, list)):
-                    result = self._validate_json_data_with_python(value, depth + 1)
-                    if result is not None:
-                        return result
-        elif isinstance(data, list):
-            for item in data:
-                if isinstance(item, str):
-                    if len(item) > settings.max_param_length:
-                        return "list_item", "max_length"
-                    for pattern in self.dangerous_patterns:
-                        if pattern.search(item):
-                            return "list_item", "dangerous_pattern"
+                    stack.append(("value", value, item_depth + 1, "payload"))
+                continue
+
+            if entry_type == "list":
+                iterator, item_depth = entry[1], entry[2]
+                try:
+                    value = next(iterator)
+                except StopIteration:
+                    continue
+
+                stack.append(entry)
+                if isinstance(value, str):
+                    stack.append(("value", value, item_depth, "list_item"))
+                elif isinstance(value, (dict, list)):
+                    stack.append(("value", value, item_depth + 1, "payload"))
+                continue
+
+            item, item_depth, string_key = entry[1], entry[2], entry[3]
+
+            if isinstance(item, str):
+                if len(item) > self.max_param_length:
+                    return string_key, "max_length"
+                for pattern in self.dangerous_patterns:
+                    if pattern.search(item):
+                        return string_key, "dangerous_pattern"
+                continue
+
+            if isinstance(item, (dict, list)):
+                if item_depth >= max_depth:
+                    raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
+
+                if isinstance(item, dict):
+                    stack.append(("dict", iter(item.items()), item_depth))
                 else:
-                    result = self._validate_json_data_with_python(item, depth + 1)
-                    if result is not None:
-                        return result
-        elif isinstance(data, str):
-            if len(data) > settings.max_param_length:
-                return "payload", "max_length"
-            for pattern in self.dangerous_patterns:
-                if pattern.search(data):
-                    return "payload", "dangerous_pattern"
+                    stack.append(("list", iter(item), item_depth))
 
         return None
+
+    def _validate_json_body_depth_with_python(self, body: bytes) -> None:
+        """Precheck JSON container depth before Python object parsing."""
+        max_depth = self._max_json_validation_depth()
+        depth = 0
+        in_string = False
+        escape = False
+
+        for byte in body:
+            if in_string:
+                if escape:
+                    escape = False
+                elif byte == 0x5C:
+                    escape = True
+                elif byte == 0x22:
+                    in_string = False
+                continue
+
+            if byte == 0x22:
+                in_string = True
+            elif byte in (0x5B, 0x7B):
+                if depth >= max_depth:
+                    raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
+                depth += 1
+            elif byte in (0x5D, 0x7D) and depth > 0:
+                depth -= 1
 
     def _raise_validation_failure(self, key: str, error_type: str):
         """Raise or log validation failures while preserving middleware mode semantics."""
         if error_type == "max_length":
-            if settings.environment in ("development", "staging"):
+            if self.environment in ("development", "staging"):
                 logger.warning("Parameter %s exceeds maximum length", key)
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
 
         if error_type == "dangerous_pattern":
-            if settings.environment in ("development", "staging"):
+            if self.environment in ("development", "staging"):
                 logger.warning("Parameter %s contains dangerous characters", key)
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
@@ -410,7 +645,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If path is invalid or contains traversal patterns
         """
-        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+        if self.rust_enabled:
             try:
                 if self._rust_validate_resource_path is None:
                     if not self._refresh_rust_validator_handles():
@@ -422,6 +657,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception as exc:
+                self._mark_rust_validator_unavailable()
                 logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
                 return self._validate_resource_path_with_python(path)
 
@@ -438,11 +674,11 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         try:
             resolved_path = Path(path).resolve()
 
-            if len(resolved_path.parts) > settings.max_path_depth:
+            if len(resolved_path.parts) > self.max_path_depth:
                 raise HTTPException(status_code=400, detail="invalid_path: Path too deep")
 
             if self.allowed_roots:
-                allowed = any(str(resolved_path).startswith(str(root)) for root in self.allowed_roots)
+                allowed = any(resolved_path.is_relative_to(root) for root in self.allowed_roots)
                 if not allowed:
                     raise HTTPException(status_code=400, detail="invalid_path: Path outside allowed roots")
 
@@ -464,7 +700,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         try:
             body = response.body
-            if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+            if self.rust_enabled:
                 if self._rust_sanitize_response_body is None:
                     if not self._refresh_rust_validator_handles():
                         self._rust_validator = self._build_rust_validator()
@@ -473,7 +709,12 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 if self._rust_sanitize_response_body is not None:
                     if isinstance(body, str):
                         body = body.encode("utf-8", errors="replace")
-                    response.body = self._rust_sanitize_response_body(body)
+                    try:
+                        response.body = self._rust_sanitize_response_body(body)
+                    except Exception as exc:
+                        self._mark_rust_validator_unavailable()
+                        logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+                        response.body = self._sanitize_response_body_with_python(body)
                 else:
                     response.body = self._sanitize_response_body_with_python(body)
             else:

@@ -8552,6 +8552,8 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-clean-stubs                      - Remove generated stub files from maturin crates
 # help: rust-uninstall-plugins                - Uninstall maturin crates from Python environment
 # help: rust-build-wheels                     - Build Python wheels for maturin crates
+# help: rust-validation-install               - Build and install the Rust validation extension into the active venv
+# help: rust-validation-test                  - Run tests for the Rust validation extension crate
 # help:
 # help: Runtime:
 # help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
@@ -8656,13 +8658,13 @@ rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust
 rust-validation-install: rust-ensure-deps  ## Build and install the Rust validation extension into the active venv
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@echo "🧪 Installing Rust validation extension..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path crates/validation_middleware_rust/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --release --manifest-path crates/validation_middleware_rust/Cargo.toml"
 
 rust-validation-test: rust-ensure-deps  ## Run tests for the Rust validation extension crate
 	@echo "🧪 Testing Rust validation extension..."
 	@cargo test --manifest-path crates/validation_middleware_rust/Cargo.toml
 	@$(MAKE) rust-validation-install
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pytest -q tests/unit/mcpgateway/middleware/test_validation_middleware.py -k real_rust_extension_when_installed"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && REQUIRE_RUST=1 pytest -q tests/unit/mcpgateway/middleware/test_validation_middleware.py tests/unit/test_validation_middleware_rust_stubs.py"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."
@@ -8731,7 +8733,7 @@ rust-verify: rust-ensure-deps rust-verify-python-crates  ## Verify maturin crate
 	done
 	@echo "✅ All maturin crates verified"
 
-rust-verify-stubs: rust-ensure-deps rust-verify-python-crates  ## Verify stub generation and pyproject.toml for maturin crates
+rust-verify-stubs: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Verify stub generation and pyproject.toml for maturin crates
 	@echo "🦀 Verifying stub files and pyproject.toml..."
 	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
 	@for crate in $(RUST_MATURIN_CRATES); do \
@@ -8739,7 +8741,16 @@ rust-verify-stubs: rust-ensure-deps rust-verify-python-crates  ## Verify stub ge
 		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
 		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
 		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		typed=$$(find $$crate/python -name "py.typed" 2>/dev/null | head -1); \
+		if [ -z "$$typed" ]; then echo "❌ $$crate: no py.typed marker"; exit 1; fi; \
 		echo "  ✅ $$crate"; \
+	done
+	@git diff --exit-code -- $(RUST_MATURIN_CRATES:%=%/python) >/dev/null || { echo "❌ Generated Rust stubs differ from committed files"; git diff -- $(RUST_MATURIN_CRATES:%=%/python); exit 1; }
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		out=$$(mktemp -d); \
+		uv run maturin build --manifest-path $$crate/Cargo.toml --out $$out >/dev/null || { rm -rf "$$out"; exit 1; }; \
+		python3 -c 'from pathlib import Path; from zipfile import ZipFile; import sys; crate=Path(sys.argv[1]); out=Path(sys.argv[2]); wheel=next(out.glob("*.whl")); names=set(ZipFile(wheel).namelist()); src=crate / "python"; expected=[path.relative_to(src).as_posix() for pattern in ("**/__init__.pyi", "**/py.typed") for path in src.glob(pattern)]; missing=[path for path in expected if path not in names]; print(f"  ✅ {wheel.name} contains source stubs and py.typed markers" if not missing else f"❌ {wheel.name} missing {missing}"); sys.exit(1 if missing else 0)' "$$crate" "$$out" || { rm -rf "$$out"; exit 1; }; \
+		rm -rf "$$out"; \
 	done
 	@echo "✅ All stubs verified"
 

@@ -1,11 +1,11 @@
-use crate::CompiledValidator;
 use crate::matcher::{ValidationFailure, validate_string};
+use crate::{CompiledValidator, InvalidJsonError, JsonDepthError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use std::borrow::Cow;
 use std::fmt;
 
-const MAX_JSON_DEPTH: usize = 1024;
 const FAILURE_PREFIX: &str = "__validation_failure__:";
 const DEPTH_PREFIX: &str = "__validation_depth__";
 
@@ -19,6 +19,8 @@ fn stream_stop_error<E>(stop: StreamStop) -> E
 where
     E: de::Error,
 {
+    // serde_json only exposes visitor aborts through its Error type. Keep the
+    // string sentinel isolated here and parse it back into StreamStop once.
     match stop {
         StreamStop::Failure(key, error_type) => {
             E::custom(format!("{FAILURE_PREFIX}{key}:{error_type}"))
@@ -46,33 +48,29 @@ fn parse_stream_stop(error: serde_json::Error) -> StreamStop {
     StreamStop::InvalidJson(message)
 }
 
-struct ValueSeed<'a> {
+struct ValueSeed<'a, 'k> {
     validator: &'a CompiledValidator,
     depth: usize,
-    key_context: Option<&'a str>,
+    key_context: Option<Cow<'k, str>>,
     list_item_context: bool,
 }
 
-struct ValueVisitor<'a> {
-    seed: ValueSeed<'a>,
+struct ValueVisitor<'a, 'k> {
+    seed: ValueSeed<'a, 'k>,
 }
 
-impl<'de, 'a> DeserializeSeed<'de> for ValueSeed<'a> {
+impl<'de, 'a, 'k> DeserializeSeed<'de> for ValueSeed<'a, 'k> {
     type Value = ();
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: de::Deserializer<'de>,
     {
-        if self.depth > MAX_JSON_DEPTH {
-            return Err(stream_stop_error(StreamStop::MaxDepth));
-        }
-
         deserializer.deserialize_any(ValueVisitor { seed: self })
     }
 }
 
-impl<'de, 'a> Visitor<'de> for ValueVisitor<'a> {
+impl<'de, 'a, 'k> Visitor<'de> for ValueVisitor<'a, 'k> {
     type Value = ();
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -111,7 +109,11 @@ impl<'de, 'a> Visitor<'de> for ValueVisitor<'a> {
             let key = if self.seed.list_item_context {
                 "list_item".to_owned()
             } else {
-                self.seed.key_context.unwrap_or("payload").to_owned()
+                self.seed
+                    .key_context
+                    .as_deref()
+                    .unwrap_or("payload")
+                    .to_owned()
             };
             let error_type = match result {
                 ValidationFailure::MaxLength => "max_length".to_owned(),
@@ -141,6 +143,10 @@ impl<'de, 'a> Visitor<'de> for ValueVisitor<'a> {
     where
         A: SeqAccess<'de>,
     {
+        if self.seed.depth >= self.seed.validator.max_json_depth {
+            return Err(stream_stop_error(StreamStop::MaxDepth));
+        }
+
         let child_seed = ValueSeed {
             validator: self.seed.validator,
             depth: self.seed.depth + 1,
@@ -156,11 +162,15 @@ impl<'de, 'a> Visitor<'de> for ValueVisitor<'a> {
     where
         A: MapAccess<'de>,
     {
-        while let Some(key) = map.next_key::<String>()? {
+        if self.seed.depth >= self.seed.validator.max_json_depth {
+            return Err(stream_stop_error(StreamStop::MaxDepth));
+        }
+
+        while let Some(key) = map.next_key::<Cow<'de, str>>()? {
             map.next_value_seed(ValueSeed {
                 validator: self.seed.validator,
                 depth: self.seed.depth + 1,
-                key_context: Some(key.as_str()),
+                key_context: Some(key),
                 list_item_context: false,
             })?;
         }
@@ -168,12 +178,12 @@ impl<'de, 'a> Visitor<'de> for ValueVisitor<'a> {
     }
 }
 
-impl<'a> ValueSeed<'a> {
-    fn reborrow<'b>(&'b self) -> ValueSeed<'b> {
+impl<'a, 'k> ValueSeed<'a, 'k> {
+    fn reborrow<'b>(&'b self) -> ValueSeed<'b, 'k> {
         ValueSeed {
             validator: self.validator,
             depth: self.depth,
-            key_context: self.key_context,
+            key_context: self.key_context.clone(),
             list_item_context: self.list_item_context,
         }
     }
@@ -202,26 +212,22 @@ pub(crate) fn validate_json_bytes_streaming(
             Ok(()) => Ok(None),
             Err(error) => match parse_stream_stop(error) {
                 StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
-                StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                StreamStop::MaxDepth => Err(PyErr::new::<JsonDepthError, _>(
                     "JSON payload exceeds maximum supported nesting depth",
                 )),
-                StreamStop::InvalidJson(message) => {
-                    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Request body contains invalid JSON: {message}"
-                    )))
-                }
+                StreamStop::InvalidJson(message) => Err(PyErr::new::<InvalidJsonError, _>(
+                    format!("Request body contains invalid JSON: {message}"),
+                )),
             },
         },
         Err(error) => match parse_stream_stop(error) {
             StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
-            StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            StreamStop::MaxDepth => Err(PyErr::new::<JsonDepthError, _>(
                 "JSON payload exceeds maximum supported nesting depth",
             )),
-            StreamStop::InvalidJson(message) => {
-                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Request body contains invalid JSON: {message}"
-                )))
-            }
+            StreamStop::InvalidJson(message) => Err(PyErr::new::<InvalidJsonError, _>(format!(
+                "Request body contains invalid JSON: {message}"
+            ))),
         },
     }
 }
@@ -234,24 +240,33 @@ pub(crate) fn walk_json_like(
     let mut stack = vec![(data.clone().unbind(), 0usize)];
 
     while let Some((item, depth)) = stack.pop() {
-        if depth > MAX_JSON_DEPTH {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "JSON payload exceeds maximum supported nesting depth",
-            ));
-        }
-
         let bound_item = item.bind(py);
 
+        if let Ok(value_string) = bound_item.cast::<PyString>() {
+            if let Some(result) = validate_string(value_string.to_str()?, validator) {
+                return Ok(Some((
+                    "payload".to_owned(),
+                    validation_failure_type(result).to_owned(),
+                )));
+            }
+            continue;
+        }
+
         if let Ok(dict) = bound_item.cast::<PyDict>() {
+            if depth >= validator.max_json_depth {
+                return Err(PyErr::new::<JsonDepthError, _>(
+                    "JSON payload exceeds maximum supported nesting depth",
+                ));
+            }
+
             for (key, value) in dict.iter() {
                 if let Ok(value_string) = value.cast::<PyString>() {
                     if let Some(result) = validate_string(value_string.to_str()?, validator) {
                         let key_string = key.str()?.to_string_lossy().into_owned();
-                        let error_type = match result {
-                            ValidationFailure::MaxLength => "max_length",
-                            ValidationFailure::DangerousPattern => "dangerous_pattern",
-                        };
-                        return Ok(Some((key_string, error_type.to_owned())));
+                        return Ok(Some((
+                            key_string,
+                            validation_failure_type(result).to_owned(),
+                        )));
                     }
                 } else if value.is_instance_of::<PyDict>() || value.is_instance_of::<PyList>() {
                     stack.push((value.unbind(), depth + 1));
@@ -261,16 +276,21 @@ pub(crate) fn walk_json_like(
         }
 
         if let Ok(list) = bound_item.cast::<PyList>() {
+            if depth >= validator.max_json_depth {
+                return Err(PyErr::new::<JsonDepthError, _>(
+                    "JSON payload exceeds maximum supported nesting depth",
+                ));
+            }
+
             for child in list.iter().rev() {
                 if child.is_instance_of::<PyDict>() || child.is_instance_of::<PyList>() {
                     stack.push((child.unbind(), depth + 1));
                 } else if let Ok(value_string) = child.cast::<PyString>() {
                     if let Some(result) = validate_string(value_string.to_str()?, validator) {
-                        let error_type = match result {
-                            ValidationFailure::MaxLength => "max_length",
-                            ValidationFailure::DangerousPattern => "dangerous_pattern",
-                        };
-                        return Ok(Some(("list_item".to_owned(), error_type.to_owned())));
+                        return Ok(Some((
+                            "list_item".to_owned(),
+                            validation_failure_type(result).to_owned(),
+                        )));
                     }
                 }
             }
@@ -278,4 +298,11 @@ pub(crate) fn walk_json_like(
     }
 
     Ok(None)
+}
+
+fn validation_failure_type(failure: ValidationFailure) -> &'static str {
+    match failure {
+        ValidationFailure::MaxLength => "max_length",
+        ValidationFailure::DangerousPattern => "dangerous_pattern",
+    }
 }

@@ -5,13 +5,24 @@ mod sanitize;
 
 use json::{validate_json_bytes_streaming, walk_json_like};
 use matcher::{DangerousPatternMatcher, ValidationFailure, validate_string};
-use paths::{normalize_absolute_path, validate_resource_path_impl};
+use paths::{normalize_absolute_path, resolve_allowed_root, validate_resource_path_impl};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::*;
 use sanitize::sanitize_response_body_bytes;
 use std::path::PathBuf;
+
+pyo3::create_exception!(
+    validation_middleware_rust,
+    JsonDepthError,
+    pyo3::exceptions::PyValueError
+);
+pyo3::create_exception!(
+    validation_middleware_rust,
+    InvalidJsonError,
+    pyo3::exceptions::PyValueError
+);
 
 #[gen_stub_pyclass]
 #[pyclass(name = "Validator")]
@@ -20,6 +31,7 @@ pub struct CompiledValidator {
     pub(crate) matcher: DangerousPatternMatcher,
     pub(crate) allowed_roots: Vec<PathBuf>,
     pub(crate) max_path_depth: usize,
+    pub(crate) max_json_depth: usize,
 }
 
 fn compile_validator(
@@ -27,6 +39,7 @@ fn compile_validator(
     dangerous_patterns: Vec<String>,
     allowed_roots: Vec<String>,
     max_path_depth: usize,
+    max_json_depth: usize,
 ) -> PyResult<CompiledValidator> {
     let matcher = DangerousPatternMatcher::from_patterns(&dangerous_patterns)?;
 
@@ -36,9 +49,16 @@ fn compile_validator(
         allowed_roots: allowed_roots
             .into_iter()
             .map(PathBuf::from)
+            .map(resolve_allowed_root)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("invalid_path: Invalid path")
+            })?
+            .into_iter()
             .map(normalize_absolute_path)
             .collect(),
         max_path_depth,
+        max_json_depth,
     })
 }
 
@@ -46,18 +66,20 @@ fn compile_validator(
 #[pymethods]
 impl CompiledValidator {
     #[new]
-    #[pyo3(signature = (max_param_length, dangerous_patterns, allowed_roots=Vec::new(), max_path_depth=1024))]
+    #[pyo3(signature = (max_param_length, dangerous_patterns, allowed_roots=Vec::new(), max_path_depth=1024, max_json_depth=1024))]
     fn new(
         max_param_length: usize,
         dangerous_patterns: Vec<String>,
         allowed_roots: Vec<String>,
         max_path_depth: usize,
+        max_json_depth: usize,
     ) -> PyResult<Self> {
         compile_validator(
             max_param_length,
             dangerous_patterns,
             allowed_roots,
             max_path_depth,
+            max_json_depth,
         )
     }
 
@@ -70,31 +92,6 @@ impl CompiledValidator {
         #[gen_stub(override_type(type_repr = "bytes"))] raw_body: &[u8],
     ) -> PyResult<Option<(String, String)>> {
         validate_json_bytes_streaming(raw_body, self)
-    }
-
-    #[pyo3(signature = (parameters, content_type, raw_body=None, skip_parameter_validation=false))]
-    fn validate_http_request(
-        &self,
-        parameters: Vec<(String, String)>,
-        content_type: &str,
-        #[gen_stub(override_type(type_repr = "bytes | None"))] raw_body: Option<&[u8]>,
-        skip_parameter_validation: bool,
-    ) -> PyResult<Option<(String, String)>> {
-        if !skip_parameter_validation {
-            if let Some(result) = self.validate_parameters(parameters) {
-                return Ok(Some(result));
-            }
-        }
-
-        if content_type.starts_with("application/json") {
-            if let Some(body) = raw_body {
-                if !body.is_empty() {
-                    return self.validate_json_bytes(body);
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     fn validate_parameters(&self, parameters: Vec<(String, String)>) -> Option<(String, String)> {
@@ -119,21 +116,14 @@ impl CompiledValidator {
     }
 }
 
-#[gen_stub_pyfunction]
-#[pyfunction]
-fn validate_json_data(
-    data: &Bound<'_, PyAny>,
-    max_param_length: usize,
-    dangerous_patterns: Vec<String>,
-) -> PyResult<Option<(String, String)>> {
-    let validator = compile_validator(max_param_length, dangerous_patterns, Vec::new(), 1024)?;
-    walk_json_like(data.py(), data, &validator)
-}
-
 #[pymodule]
 fn validation_middleware_rust(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<CompiledValidator>()?;
-    module.add_function(wrap_pyfunction!(validate_json_data, module)?)?;
+    module.add("JsonDepthError", module.py().get_type::<JsonDepthError>())?;
+    module.add(
+        "InvalidJsonError",
+        module.py().get_type::<InvalidJsonError>(),
+    )?;
     Ok(())
 }
 
@@ -157,6 +147,7 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         assert!(validate_string("é", &validator).is_none());
@@ -176,6 +167,7 @@ mod tests {
                 },
                 allowed_roots: Vec::new(),
                 max_path_depth: 1024,
+                max_json_depth: 1024,
             };
 
             let mut payload = PyDict::new(py).unbind();
@@ -219,6 +211,7 @@ mod tests {
                 },
                 allowed_roots: Vec::new(),
                 max_path_depth: 1024,
+                max_json_depth: 1024,
             };
 
             let payload = PyList::empty(py);
@@ -228,6 +221,32 @@ mod tests {
             assert_eq!(
                 result,
                 Some(("list_item".to_owned(), "dangerous_pattern".to_owned()))
+            );
+        });
+    }
+
+    #[test]
+    fn walk_json_like_rejects_dangerous_root_string() {
+        Python::initialize();
+        Python::attach(|py| {
+            let validator = CompiledValidator {
+                max_param_length: 32,
+                matcher: DangerousPatternMatcher {
+                    shell_metacharacters: false,
+                    path_traversal: false,
+                    control_characters: false,
+                    fallback_pattern: Some(Regex::new("<script").unwrap()),
+                },
+                allowed_roots: Vec::new(),
+                max_path_depth: 1024,
+                max_json_depth: 1024,
+            };
+
+            let payload = pyo3::types::PyString::new(py, "<script>");
+            let result = walk_json_like(py, payload.as_any(), &validator).unwrap();
+            assert_eq!(
+                result,
+                Some(("payload".to_owned(), "dangerous_pattern".to_owned()))
             );
         });
     }
@@ -244,6 +263,7 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let result = validator
@@ -267,12 +287,55 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let result = validator
             .validate_json_bytes(b"{\"name\":\"\xC3\xA9\"}")
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn validate_json_bytes_depth_limit_counts_containers_like_python() {
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: Vec::new(),
+            max_path_depth: 1024,
+            max_json_depth: 1,
+        };
+
+        assert!(
+            validator
+                .validate_json_bytes(br#"{"name":"safe"}"#)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            validator
+                .validate_json_bytes(br#"[1,true,null]"#)
+                .unwrap()
+                .is_none()
+        );
+        let err = validator
+            .validate_json_bytes(br#"{"nested":{"name":"safe"}}"#)
+            .unwrap_err();
+
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<JsonDepthError>(py));
+        });
+
+        let err = validator.validate_json_bytes(br#"[[1]]"#).unwrap_err();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<JsonDepthError>(py));
+        });
     }
 
     #[test]
@@ -287,6 +350,7 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let err = validator
@@ -311,6 +375,7 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let result = validator.validate_parameters(vec![
@@ -333,6 +398,7 @@ mod tests {
             Vec::new(),
             vec![allowed_root.to_string_lossy().into_owned()],
             1024,
+            1024,
         )
         .unwrap();
 
@@ -340,6 +406,32 @@ mod tests {
         let result = validate_resource_path_impl(candidate.to_str().unwrap(), &validator).unwrap();
 
         assert!(PathBuf::from(result).starts_with(normalize_absolute_path(allowed_root)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_resource_path_accepts_symlink_allowed_root() {
+        let real_root = tempfile::tempdir().unwrap();
+        let link_parent = tempfile::tempdir().unwrap();
+        let link_path = link_parent.path().join("allowed-link");
+        std::os::unix::fs::symlink(real_root.path(), &link_path).unwrap();
+
+        let validator = compile_validator(
+            32,
+            Vec::new(),
+            vec![link_path.to_string_lossy().into_owned()],
+            1024,
+            1024,
+        )
+        .unwrap();
+
+        let candidate = real_root.path().join("file.txt");
+        let result = match validate_resource_path_impl(candidate.to_str().unwrap(), &validator) {
+            Ok(path) => path,
+            Err(_) => panic!("unexpected path validation failure"),
+        };
+
+        assert!(PathBuf::from(result).starts_with(real_root.path().canonicalize().unwrap()));
     }
 
     #[cfg(unix)]
@@ -361,6 +453,7 @@ mod tests {
             },
             allowed_roots: vec![tempdir.path().to_path_buf()],
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let err =
@@ -393,6 +486,7 @@ mod tests {
             },
             allowed_roots: vec![tempdir.path().to_path_buf()],
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let err =
@@ -426,6 +520,7 @@ mod tests {
             },
             allowed_roots: vec![tempdir.path().to_path_buf()],
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let err =
@@ -450,6 +545,7 @@ mod tests {
             },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
+            max_json_depth: 1024,
         };
 
         let err = validate_resource_path_impl("bad\0path", &validator).unwrap_err();
@@ -470,81 +566,6 @@ mod tests {
     fn sanitize_response_body_keeps_safe_ascii_unchanged() {
         let sanitized = sanitize_response_body_bytes(b"plain-ascii-response-body");
         assert_eq!(sanitized, b"plain-ascii-response-body");
-    }
-
-    #[test]
-    fn validate_request_checks_parameters_before_json_body() {
-        let validator = CompiledValidator {
-            max_param_length: 32,
-            matcher: DangerousPatternMatcher {
-                shell_metacharacters: false,
-                path_traversal: false,
-                control_characters: false,
-                fallback_pattern: Some(Regex::new("<script").unwrap()),
-            },
-            allowed_roots: Vec::new(),
-            max_path_depth: 1024,
-        };
-
-        let result = validator
-            .validate_http_request(
-                vec![("query".to_owned(), "<script>".to_owned())],
-                "application/json",
-                Some(br#"{"name":"safe"}"#),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(
-            result,
-            Some(("query".to_owned(), "dangerous_pattern".to_owned()))
-        );
-    }
-
-    #[test]
-    fn validate_http_request_skips_non_json_body_validation() {
-        let validator =
-            compile_validator(32, vec![r"[;&|`$(){}\[\]<>]".to_owned()], Vec::new(), 1024).unwrap();
-
-        let result = validator
-            .validate_http_request(
-                vec![("query".to_owned(), "safe".to_owned())],
-                "text/plain",
-                Some(br#"<script>"#),
-                false,
-            )
-            .unwrap();
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn validate_http_request_checks_parameters_and_body() {
-        let validator = compile_validator(
-            32,
-            vec![
-                r"[;&|`$(){}\[\]<>]".to_owned(),
-                r"\.\.[\\/]".to_owned(),
-                r"[\x00-\x1f\x7f-\x9f]".to_owned(),
-            ],
-            Vec::new(),
-            1024,
-        )
-        .unwrap();
-
-        let result = validator
-            .validate_http_request(
-                vec![("query".to_owned(), "safe".to_owned())],
-                "application/json",
-                Some(br#"{"name":"<script>"}"#),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(
-            result,
-            Some(("name".to_owned(), "dangerous_pattern".to_owned()))
-        );
     }
 
     #[test]

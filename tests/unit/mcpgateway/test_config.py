@@ -212,6 +212,7 @@ def test_settings_default_values():
         assert settings.metrics_retention_days == 7
         assert settings.metrics_rollup_late_data_hours == 1
         assert settings.experimental_rust_validation_middleware_enabled is False
+        assert settings.validation_middleware_max_json_depth == 1024
 
 
 def test_api_key_property():

@@ -54,6 +54,16 @@ class TestSecurityValidator:
         with pytest.raises(ValueError, match="outside allowed roots"):
             SecurityValidator.validate_path("/etc/passwd", ["/srv/data"])
 
+    def test_validate_path_rejects_sibling_prefix_of_allowed_root(self, tmp_path):
+        """Test allowed root validation uses path components, not string prefixes."""
+        allowed_root = tmp_path / "data"
+        allowed_root.mkdir()
+        sibling = tmp_path / "database"
+        sibling.mkdir()
+
+        with pytest.raises(ValueError, match="outside allowed roots"):
+            SecurityValidator.validate_path(str(sibling / "file.txt"), [str(allowed_root)])
+
     def test_validate_parameter_length(self):
         """Test parameter length validation."""
         with pytest.raises(ValueError, match="exceeds maximum length"):

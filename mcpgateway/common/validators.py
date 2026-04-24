@@ -1685,7 +1685,7 @@ class SecurityValidator:
 
             # Check against allowed roots
             if allowed_roots:
-                allowed = any(str(resolved_path).startswith(str(Path(root).resolve())) for root in allowed_roots)
+                allowed = any(resolved_path.is_relative_to(Path(root).resolve()) for root in allowed_roots)
                 if not allowed:
                     raise ValueError("Path outside allowed roots")
 

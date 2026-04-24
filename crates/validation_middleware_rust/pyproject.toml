@@ -4,12 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "validation-middleware-rust"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 
 [tool.maturin]
-module-name = "validation_middleware_rust"
+module-name = "validation_middleware_rust.validation_middleware_rust"
 python-source = "python"
 bindings = "pyo3"
 features = ["pyo3/extension-module"]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pyo"]

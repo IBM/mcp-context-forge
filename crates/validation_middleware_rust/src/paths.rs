@@ -55,10 +55,14 @@ fn normalize_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
 
 fn normalize_path(path: &str) -> Result<PathBuf, std::io::Error> {
     let candidate = Path::new(path);
-    let absolute = if candidate.is_absolute() {
-        candidate.to_path_buf()
+    normalize_path_buf(candidate.to_path_buf())
+}
+
+fn normalize_path_buf(path: PathBuf) -> Result<PathBuf, std::io::Error> {
+    let absolute = if path.is_absolute() {
+        path
     } else {
-        std::env::current_dir()?.join(candidate)
+        std::env::current_dir()?.join(path)
     };
 
     Ok(normalize_absolute_path(absolute))
@@ -110,6 +114,10 @@ fn resolve_absolute_path(path: PathBuf, symlink_depth: usize) -> Result<PathBuf,
 
 fn resolve_path(path: &str) -> Result<PathBuf, std::io::Error> {
     resolve_absolute_path(normalize_path(path)?, 0)
+}
+
+pub(crate) fn resolve_allowed_root(path: PathBuf) -> Result<PathBuf, std::io::Error> {
+    resolve_absolute_path(normalize_path_buf(path)?, 0)
 }
 
 pub(crate) fn validate_resource_path_impl(

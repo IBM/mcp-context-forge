@@ -571,6 +571,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.VALIDATION_MAX_TEMPLATE_LENGTH | string | `"65536"` |  |
 | mcpContextForge.config.VALIDATION_MAX_CONTENT_LENGTH | string | `"1048576"` |  |
 | mcpContextForge.config.VALIDATION_MAX_JSON_DEPTH | string | `"30"` |  |
+| mcpContextForge.config.VALIDATION_MIDDLEWARE_MAX_JSON_DEPTH | string | `"1024"` |  |
 | mcpContextForge.config.VALIDATION_MAX_URL_LENGTH | string | `"2048"` |  |
 | mcpContextForge.config.VALIDATION_MAX_RPC_PARAM_SIZE | string | `"262144"` |  |
 | mcpContextForge.config.VALIDATION_MAX_METHOD_LENGTH | string | `"128"` |  |
@@ -587,7 +588,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.PAGINATION_INCLUDE_LINKS | string | `"true"` |  |
 | mcpContextForge.config.PAGINATION_BASE_URL | string | `""` |  |
 | mcpContextForge.config.EXPERIMENTAL_VALIDATE_IO | string | `"false"` |  |
-| mcpContextForge.config.EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` | enable the experimental Rust validation middleware accelerator (requires `make rust-validation-install`) |
+| mcpContextForge.config.EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` | enable the experimental Rust validation middleware accelerator when the image was built with `ENABLE_RUST=true` |
 | mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |

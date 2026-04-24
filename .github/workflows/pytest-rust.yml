@@ -20,7 +20,12 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "deny.toml"
+      - "mcpgateway/config.py"
+      - "mcpgateway/middleware/validation_middleware.py"
       - "tests/e2e_rust/**"
+      - "tests/unit/mcpgateway/test_config.py"
+      - "tests/unit/mcpgateway/middleware/test_validation_middleware.py"
+      - "tests/unit/test_validation_middleware_rust_stubs.py"
       - ".github/workflows/pytest-rust.yml"
 
 concurrency:
@@ -92,6 +97,9 @@ jobs:
 
       - name: 🔨  Build Rust extensions
         run: make rust-install
+
+      - name: 🧪  Run Rust validation middleware tests
+        run: cargo test --manifest-path crates/validation_middleware_rust/Cargo.toml
 
       - name: 🧪  Run pytest
         run: |

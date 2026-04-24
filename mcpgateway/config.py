@@ -2532,6 +2532,12 @@ Disallow: /
         ge=1,
         le=100,
     )
+    validation_middleware_max_json_depth: int = Field(
+        default=int(os.getenv("VALIDATION_MIDDLEWARE_MAX_JSON_DEPTH", "1024")),
+        description=("Maximum allowed JSON nesting depth for validation middleware request bodies. " "This is separate from VALIDATION_MAX_JSON_DEPTH, which applies to tool/resource schemas."),
+        ge=1,
+        le=10000,
+    )
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
 

@@ -18,7 +18,7 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Optional: enable the Rust validation middleware accelerator after `make rust-validation-install`
+# Optional: enable the Rust validation middleware accelerator after installing the native extension
 EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=false
 
 # Enable validation middleware (default: false)
@@ -39,6 +39,9 @@ MAX_PATH_DEPTH=10
 # Maximum parameter length (default: 10000)
 MAX_PARAM_LENGTH=10000
 
+# Maximum JSON request-body nesting depth for validation middleware (default: 1024)
+VALIDATION_MIDDLEWARE_MAX_JSON_DEPTH=1024
+
 # Dangerous patterns (regex, JSON array)
 DANGEROUS_PATTERNS='["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]'
 ```
@@ -54,11 +57,12 @@ EXPERIMENTAL_VALIDATE_IO=false  # Disabled in production
 
 #### Optional Rust Extension
 ```bash
+# Local development:
 make rust-validation-install
 EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=true
 ```
 
-Enable this only after the Rust extension is installed into the active virtual environment. This flag accelerates validation middleware parameter checks, JSON validation, resource-path validation, and response sanitization. If the extension is unavailable, the middleware falls back to the Python validator for standard validation failures.
+Enable this only after the Rust extension is installed into the active virtual environment. For container and Helm deployments, use an image built with `ENABLE_RUST=true`; Helm cannot install the native extension at runtime. This flag accelerates validation middleware parameter checks, JSON validation, resource-path validation, and response sanitization. If the extension is unavailable, the middleware falls back to the Python validator for standard validation failures.
 
 #### Phase 1: Log-Only Mode (Dev/Staging)
 ```bash

@@ -30,6 +30,7 @@ from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUST_VALIDATION_MANIFEST = REPO_ROOT / "crates" / "validation_middleware_rust" / "Cargo.toml"
+_RUST_VALIDATION_MODULE: Any | None = None
 UDS_TARGET_MEDIANS_MS = {
     "nested_safe": 0.153,
     "deep_nested": 0.806,
@@ -60,12 +61,39 @@ class _QueryRequest:
 
 
 def _ensure_rust_extension_installed() -> Any:
+    global _RUST_VALIDATION_MODULE
+
+    if _RUST_VALIDATION_MODULE is not None:
+        return _RUST_VALIDATION_MODULE
+
     env = os.environ.copy()
     virtual_env = sys.prefix
     env["VIRTUAL_ENV"] = virtual_env
     env["PATH"] = f"{Path(virtual_env) / 'bin'}:{env['PATH']}"
     subprocess.run(["maturin", "develop", "--release", "--manifest-path", str(RUST_VALIDATION_MANIFEST)], check=True, cwd=REPO_ROOT, env=env)
-    return importlib.import_module("validation_middleware_rust")
+    _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_rust")
+    return _RUST_VALIDATION_MODULE
+
+
+def test_ensure_rust_extension_installed_uses_process_cache(monkeypatch):
+    """Test benchmark setup builds/imports the Rust extension once per process."""
+    global _RUST_VALIDATION_MODULE
+
+    _RUST_VALIDATION_MODULE = None
+    module = object()
+    run_calls = []
+
+    def fake_run(*args, **kwargs):
+        run_calls.append((args, kwargs))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(importlib, "import_module", lambda _name: module)
+
+    assert _ensure_rust_extension_installed() is module
+    assert _ensure_rust_extension_installed() is module
+    assert len(run_calls) == 1
+
+    _RUST_VALIDATION_MODULE = None
 
 
 def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:

@@ -482,7 +482,12 @@
               "type": "string"
             },
             "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED": {
-              "type": "string"
+              "type": "string",
+              "description": "Enable the experimental Rust validation middleware accelerator when the image already includes the native extension, such as images built with ENABLE_RUST=true"
+            },
+            "VALIDATION_MIDDLEWARE_MAX_JSON_DEPTH": {
+              "type": "string",
+              "description": "Maximum JSON request-body nesting depth for validation middleware"
             },
             "FEDERATION_TIMEOUT": {
               "type": "string",

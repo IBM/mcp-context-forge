@@ -131,11 +131,11 @@ pub(crate) fn validate_string(
     value: &str,
     validator: &CompiledValidator,
 ) -> Option<ValidationFailure> {
-    if value.is_ascii() {
-        if value.len() > validator.max_param_length {
-            return Some(ValidationFailure::MaxLength);
-        }
-    } else if value.chars().count() > validator.max_param_length {
+    if value.len() > validator.max_param_length
+        && (value.is_ascii()
+            || value.chars().take(validator.max_param_length + 1).count()
+                > validator.max_param_length)
+    {
         return Some(ValidationFailure::MaxLength);
     }
 
