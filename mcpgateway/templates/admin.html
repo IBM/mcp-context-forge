@@ -19,9 +19,21 @@
       href="{{ root_path }}/static/favicon.ico"
     />
     <!-- Tailwind CSS -->
-    <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
-    <!-- HTMX is bundled in the main JS bundle -->
-    <script>
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
+    {% else %}
+    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    {% endif %}
+    <script nonce="{{ csp_nonce(request) }}">
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+        };
+      }
+    </script>
+    <!-- HTMX is now bundled in the main JS bundle -->
+    <script nonce="{{ csp_nonce(request) }}">
       // Configure HTMX to swap content on 4xx responses (for inline error display)
       document.addEventListener("htmx:beforeSwap", function (evt) {
         const xhr = evt.detail.xhr;
@@ -6284,7 +6296,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                   </div>
                 </div>
-                <script>
+                <script nonce="{{ csp_nonce(request) }}">
                   // Validate the Create User password box and update requirement icons
                   (function(){
                     const minLen = {{ password_min_length | tojson }} || 8;
@@ -12017,7 +12029,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     <!-- Scripts -->
-    <script defer>
+    <script defer nonce="{{ csp_nonce(request) }}">
       // User creation form event handler
       document.addEventListener('DOMContentLoaded', function() {
         const createUserForm = document.getElementById('create-user-form');
@@ -12424,7 +12436,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       // Add search functionality for filtering tools
     </script>
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       function handleEditIntegrationTypeChange() {
         const typeSel = document.getElementById("edit-tool-type");
         const reqSel = document.getElementById("edit-tool-request-type");
@@ -14540,7 +14552,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
     {% endif %}
 
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       // Safely inject teams data for Alpine.js
       window.USER_TEAMS_DATA = {{ user_teams | default([]) | tojson }};
 

@@ -1,5 +1,5 @@
 <!-- htmlhint doctype-first:false -->
-<script>
+<script nonce="{{ csp_nonce(request) }}">
   // Set global ROOT_PATH for consistency across all JavaScript
   if (typeof window.ROOT_PATH === 'undefined') {
     window.ROOT_PATH = {{ root_path|tojson }};
@@ -637,7 +637,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce(request) }}">
 // API Key modal functions
 function showApiKeyModal(serverId, serverName, serverUrl) {
   document.getElementById('modal-server-id').value = serverId;

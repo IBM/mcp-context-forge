@@ -8,10 +8,15 @@ Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
 XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
+
+The Content-Security-Policy (CSP) uses a nonce-based approach to allow legitimate
+inline scripts while blocking malicious ones. Each request generates a unique
+cryptographic nonce that must be included in inline script tags.
 """
 
 # Standard
 import re
+import secrets
 from typing import Any, Callable, Set
 
 # Third-Party
@@ -35,10 +40,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - X-Frame-Options: Prevents clickjacking attacks
     - X-XSS-Protection: Disables legacy XSS protection (modern browsers use CSP)
     - Referrer-Policy: Controls referrer information sent with requests
-    - Content-Security-Policy: Prevents XSS and other code injection attacks
+    - Content-Security-Policy: Nonce-based CSP prevents XSS and code injection
     - Strict-Transport-Security: Forces HTTPS connections (when appropriate)
     - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private)
     - Vary: Authorization - Prevents cache key collisions on authenticated endpoints
+
+    CSP Implementation:
+    - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
+    - No unsafe-inline or unsafe-eval directives
+    - Nonce stored in request.state.csp_nonce for template access
+    - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
 
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
@@ -54,16 +65,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         >>> middleware = SecurityHeadersMiddleware(None)
         >>> isinstance(middleware, SecurityHeadersMiddleware)
         True
-        >>> # Test CSP directive construction
+        >>> # Test CSP directive construction with nonce
+        >>> import secrets
+        >>> csp_nonce = secrets.token_urlsafe(16)
         >>> csp_directives = [
         ...     "default-src 'self'",
-        ...     "script-src 'self' 'unsafe-inline'",
-        ...     "style-src 'self' 'unsafe-inline'"
+        ...     f"script-src 'self' 'nonce-{csp_nonce}'",
+        ...     f"style-src 'self' 'nonce-{csp_nonce}'"
         ... ]
         >>> csp = "; ".join(csp_directives) + ";"
         >>> "default-src 'self'" in csp
         True
         >>> csp.endswith(";")
+        True
+        >>> "'nonce-" in csp
         True
         >>> # Test HSTS value construction
         >>> hsts_max_age = 31536000
@@ -198,11 +213,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> "strict-origin" in referrer_policy
             True
 
-            Test CSP directive construction:
+            Test CSP directive construction with nonce-based approach:
+            >>> import secrets
+            >>> csp_nonce = secrets.token_urlsafe(16)
             >>> csp_directives = [
             ...     "default-src 'self'",
-            ...     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com",
-            ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+            ...     f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
+            ...     f"style-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
             ...     "img-src 'self' data: https:",
             ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
             ...     "connect-src 'self' ws: wss: https:",
@@ -353,15 +370,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-        # Content Security Policy
-        # This CSP is designed to work with the Admin UI while providing security
-        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
-        # NOTE: 'unsafe-eval' is required for Alpine.js v3 reactive system (uses Function() constructor)
-        # This will be removed in Phase 2 when Alpine.js is replaced with CSP-compatible alternative
+        # Content Security Policy with nonce-based approach
+        # Generate a cryptographically secure nonce for this request
+        csp_nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = csp_nonce
+
+        # CSP directives without unsafe-inline and unsafe-eval
+        # Use nonce for legitimate inline scripts
         csp_directives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
-            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+            f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+            f"style-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
             "img-src 'self' data: https:",
             "font-src 'self' data: https://cdnjs.cloudflare.com",
             "connect-src 'self' ws: wss: https:",

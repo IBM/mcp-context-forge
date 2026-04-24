@@ -3095,6 +3095,25 @@ def tojson_attr(value: object) -> str:
 
 jinja_env.filters["tojson_attr"] = tojson_attr
 
+
+def get_csp_nonce_from_request(request: Request) -> str:
+    """
+    Retrieve the CSP nonce from the request state.
+    Used in templates to add nonce attributes to inline scripts.
+
+    Args:
+        request: The FastAPI Request object. Can be None in test contexts.
+
+    Returns:
+        The CSP nonce string, or empty string if not available.
+    """
+    if request is None:
+        return ""
+    return getattr(request.state, "csp_nonce", "")
+
+
+jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
+
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")

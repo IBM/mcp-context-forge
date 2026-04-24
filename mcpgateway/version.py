@@ -1538,6 +1538,12 @@ async def version_endpoint(
                 autoescape=True,
                 auto_reload=settings.templates_auto_reload,
             )
+
+            # Register csp_nonce global for CSP nonce support in templates
+            def get_csp_nonce(req: Request | None) -> str:
+                return getattr(req.state, "csp_nonce", "") if req else ""
+
+            jinja_env.globals["csp_nonce"] = get_csp_nonce
             templates = Jinja2Templates(env=jinja_env)
         return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")

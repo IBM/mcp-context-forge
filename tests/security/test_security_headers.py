@@ -250,7 +250,7 @@ class TestProductionSecurity:
         """Test security headers are consistent across different endpoints."""
         endpoints = ["/health", "/ready"]
 
-        headers_to_check = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "Referrer-Policy", "Content-Security-Policy"]
+        headers_to_check = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "Referrer-Policy"]
 
         responses = {}
         for endpoint in endpoints:
@@ -260,6 +260,14 @@ class TestProductionSecurity:
         for header in headers_to_check:
             values = [responses[endpoint].headers.get(header) for endpoint in endpoints]
             assert all(value == values[0] for value in values), f"Inconsistent {header} across endpoints"
+
+        # CSP headers should have the same structure but different nonces per request
+        # Verify CSP structure is consistent by checking for key directives
+        for endpoint in endpoints:
+            csp = responses[endpoint].headers.get("Content-Security-Policy", "")
+            assert "default-src 'self'" in csp, f"Missing default-src in CSP for {endpoint}"
+            assert "script-src 'self' 'nonce-" in csp, f"Missing nonce-based script-src in CSP for {endpoint}"
+            assert "frame-ancestors 'none'" in csp, f"Missing frame-ancestors in CSP for {endpoint}"
 
 
 class TestSecurityHeadersEdgeCases:
