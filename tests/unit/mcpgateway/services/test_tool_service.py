@@ -58,6 +58,9 @@ from mcpgateway.services.tool_service import (
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
 
+# Local
+from tests.helpers.admin_mocks import install_admin_user
+
 
 @pytest.fixture(autouse=True)
 def mock_logging_services():
@@ -1189,7 +1192,8 @@ class TestToolService:
         assert result == []
         assert next_cursor is None
         # Query IS executed but returns empty due to WHERE FALSE condition
-        test_db.execute.assert_called_once()
+        # Note: execute is called twice - once for admin check, once for actual query
+        assert test_db.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
@@ -5968,6 +5972,35 @@ class TestToolAccessAuthorization:
 
         # Admin bypass: both None = unrestricted access
         assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_database_admin_bypass(self, tool_service, mock_db):
+        """User with is_admin=True in database should get bypass ONLY with unrestricted token."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        # Unrestricted session token (token_teams=None) + DB admin → bypass
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_with_narrowed_token_still_narrowed(self, tool_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass; narrowing is authoritative (#4106 guard)."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        # Admin with team-scoped token → cannot see resources outside token's teams
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_with_public_only_token_stays_public_only(self, tool_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public — matches normalize_token_teams contract."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_tool_access_private_denied_to_unauthenticated(self, tool_service, mock_db):

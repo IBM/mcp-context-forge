@@ -573,15 +573,6 @@ class ToolCreate(BaseModel):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ToolCreate
-            >>> ToolCreate.validate_url('https://example.com')
-            'https://example.com'
-            >>> ToolCreate.validate_url('ftp://example.com')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v

@@ -74,6 +74,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1084,9 +1085,7 @@ class ResourceService(BaseService):
         if visibility == "public":
             return True
 
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return True
 
         # No user context (but not admin) = deny access to non-public resources
@@ -3653,7 +3652,12 @@ class ResourceService(BaseService):
             token_teams=effective_token_teams,
         )
 
-    async def subscribe_events(self, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def subscribe_events(
+        self,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        is_admin_bypass: bool = False,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to Resource events via the EventService.
 
         Args:
@@ -3662,12 +3666,28 @@ class ResourceService(BaseService):
                 - ``None`` = unrestricted admin
                 - ``[]`` = public-only
                 - ``[...]`` = team-scoped access
+            is_admin_bypass: Pre-resolved DB-admin bypass flag.  Callers
+                that can consult a request-scoped session (e.g. the SSE
+                HTTP handler) should compute this once via
+                :func:`mcpgateway.utils.admin_check.is_user_admin` and
+                pass it in; this avoids a throw-away session spawn per
+                subscription and keeps the bypass check near the auth
+                boundary.
 
         Yields:
             Resource event messages.
+
+        Security note:
+            ``is_admin_bypass`` is snapshotted by the caller and sticky
+            for the stream lifetime.  A user demoted mid-subscription
+            keeps visibility until reconnect — this is an intentional
+            trade-off between auth freshness and SSE simplicity.  Callers
+            MUST only pass ``is_admin_bypass=True`` when
+            ``token_teams is None`` (auth-layer bypass); see
+            :mod:`mcpgateway.utils.admin_check`.
         """
         async for event in self._event_service.subscribe_events():
-            if user_email is None and token_teams is None:
+            if (user_email is None and token_teams is None) or is_admin_bypass:
                 yield event
                 continue
 

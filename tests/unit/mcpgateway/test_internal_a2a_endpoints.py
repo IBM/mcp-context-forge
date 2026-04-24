@@ -118,7 +118,7 @@ class TestTasksGetTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task", new_callable=AsyncMock)
     def test_returns_task(self, mock_get_task, _mock_scope, _mock_trust, client):
         mock_get_task.return_value = {"task_id": "t1", "state": "completed"}
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "t1"})
@@ -126,14 +126,14 @@ class TestTasksGetTrusted:
         assert resp.json()["task_id"] == "t1"
 
     @patch(_TRUST_PATH, return_value=True)
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task", new_callable=AsyncMock)
     def test_missing_task_id_returns_400(self, _mock_get_task, _mock_trust, client):
         resp = client.post("/_internal/a2a/tasks/get", json={})
         assert resp.status_code == 400
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task", new_callable=AsyncMock)
     def test_task_not_found_returns_404(self, mock_get_task, _mock_scope, _mock_trust, client):
         mock_get_task.return_value = None
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "missing"})
@@ -207,7 +207,7 @@ class TestTasksCancelTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task", new_callable=AsyncMock)
     def test_cancels_task(self, mock_cancel, _mock_scope, _mock_trust, client):
         mock_cancel.return_value = {"task_id": "t1", "state": "canceled"}
         resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "t1"})
@@ -215,14 +215,14 @@ class TestTasksCancelTrusted:
         assert resp.json()["state"] == "canceled"
 
     @patch(_TRUST_PATH, return_value=True)
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task", new_callable=AsyncMock)
     def test_missing_task_id_returns_400(self, _mock_cancel, _mock_trust, client):
         resp = client.post("/_internal/a2a/tasks/cancel", json={})
         assert resp.status_code == 400
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task", new_callable=AsyncMock)
     def test_task_not_found_returns_404(self, mock_cancel, _mock_scope, _mock_trust, client):
         mock_cancel.return_value = None
         resp = client.post("/_internal/a2a/tasks/cancel", json={"task_id": "missing"})
@@ -231,7 +231,7 @@ class TestTasksCancelTrusted:
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
     @patch("mcpgateway.main.SessionLocal")
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task", new_callable=AsyncMock)
     def test_scope_context_passed_through(self, mock_cancel, mock_session_cls, mock_scope, _mock_trust, client):
         """Verify that _get_internal_a2a_scope_context output is forwarded to cancel_task."""
         mock_db = MagicMock()
@@ -255,7 +255,7 @@ class TestPushCreateTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.create_push_config")
     def test_creates_config(self, mock_create, _mock_access, _mock_scope, _mock_trust, client):
         mock_create.return_value = {"id": "cfg1"}
@@ -282,7 +282,7 @@ class TestPushCreateTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=False)
     def test_hidden_agent_returns_404(self, _mock_access, _mock_scope, _mock_trust, client):
         resp = client.post(
             "/_internal/a2a/push/create",
@@ -296,7 +296,7 @@ class TestPushGetTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_push_config")
     def test_returns_config(self, mock_get, _mock_access, _mock_scope, _mock_trust, client):
         mock_get.return_value = {"id": "cfg1", "task_id": "t1", "a2a_agent_id": "agent1"}
@@ -319,7 +319,7 @@ class TestPushGetTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=False)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_push_config")
     def test_hidden_config_returns_404(self, mock_get, _mock_access, _mock_scope, _mock_trust, client):
         mock_get.return_value = {"id": "cfg1", "task_id": "t1", "a2a_agent_id": "agent1"}
@@ -337,7 +337,7 @@ class TestPushListTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.list_push_configs_for_dispatch")
     def test_returns_configs(self, mock_list, _mock_access, _mock_scope, _mock_trust, client):
         mock_list.return_value = [
@@ -380,7 +380,7 @@ class TestPushDeleteTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.delete_push_config")
     def test_deletes_config(self, mock_delete, _mock_access, _mock_scope, _mock_trust, client):
         mock_delete.return_value = True
@@ -390,7 +390,7 @@ class TestPushDeleteTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.delete_push_config")
     def test_config_not_found_returns_404(self, mock_delete, _mock_access, _mock_scope, _mock_trust, client):
         mock_delete.return_value = False
@@ -412,7 +412,7 @@ class TestPushDeleteTrusted:
         mock_db.query.return_value.filter.return_value.first.return_value = mock_cfg
         mock_session_local.return_value = mock_db
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=False):
             resp = client.post("/_internal/a2a/push/delete", json={"config_id": "cfg1"})
         assert resp.status_code == 404
 
@@ -422,7 +422,7 @@ class TestEventsFlushTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@test.com", None))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.flush_events")
     def test_flushes_events(self, mock_flush, _mock_access, _mock_scope, _mock_trust, client):
         mock_flush.return_value = 3
@@ -449,7 +449,7 @@ class TestEventsFlushTrusted:
         mock_task.a2a_agent_id = "agent-123"
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=False):
             resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
         assert resp.status_code == 403
         assert "access denied" in resp.json()["error"]
@@ -467,7 +467,7 @@ class TestEventsFlushTrusted:
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
         mock_flush.return_value = 1
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True):
             resp = client.post("/_internal/a2a/events/flush", json={"events": [{"task_id": "t1", "seq": 1}]})
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
@@ -494,7 +494,7 @@ class TestEventsReplayTrusted:
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@test.com", None))
     @patch("mcpgateway.main.SessionLocal")
-    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.services.a2a_service.A2AAgentService.replay_events")
     def test_replays_events(self, mock_replay, _mock_access, mock_session_cls, _mock_scope, _mock_trust, client):
         mock_db = MagicMock()
@@ -522,7 +522,7 @@ class TestEventsReplayTrusted:
         mock_task.a2a_agent_id = "agent-123"
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=False):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=False):
             resp = client.post("/_internal/a2a/events/replay", json={"task_id": "t1", "after_sequence": 0})
         assert resp.status_code == 404
 
@@ -769,7 +769,7 @@ class TestAgentResolveTrusted:
             mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
             mock_session_local.return_value = mock_db
 
-            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=True):
                 resp = client.post("/_internal/a2a/agents/my-agent/resolve", json={})
 
         assert resp.status_code == 200
@@ -861,7 +861,7 @@ class TestAgentCardTrusted:
         mock_session_local.return_value = mock_db
         mock_server_card.return_value = {"name": "server-agent", "url": "https://server.example.com"}
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=False):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=False):
             resp = client.post("/_internal/a2a/agents/server-agent/card", json={})
 
         assert resp.status_code == 200
@@ -956,8 +956,8 @@ class TestInternalA2AExceptionHandling:
         mock_session_local.return_value = mock_db
         setup(mock_db)
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", return_value=True):
-            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access_by_id", new_callable=AsyncMock, return_value=True):
+            with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=True):
                 with patch(patch_target, side_effect=RuntimeError("boom")):
                     resp = client.post(url, json=body)
 
@@ -975,7 +975,7 @@ class TestInternalA2AExceptionHandling:
         mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
         mock_session_local.return_value = mock_db
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", side_effect=RuntimeError("boom")):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
             resp = client.post("/_internal/a2a/agents/my-agent/resolve", json={})
 
         assert resp.status_code == 500
@@ -992,7 +992,7 @@ class TestInternalA2AExceptionHandling:
         mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
         mock_session_local.return_value = mock_db
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=True):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=True):
             with patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", side_effect=RuntimeError("boom")):
                 resp = client.post("/_internal/a2a/agents/my-agent/card", json={})
 
@@ -1045,7 +1045,7 @@ class TestInternalA2ADenyPaths:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_task", new_callable=AsyncMock)
     def test_tasks_get_wrong_team_returns_404(self, mock_get_task, _mock_scope, _mock_trust, client):
         """A caller scoped to team-other must not see a task owned by team-a.
 
@@ -1079,7 +1079,7 @@ class TestInternalA2ADenyPaths:
         mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
         mock_session_local.return_value = mock_db
 
-        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", return_value=False):
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=False):
             with patch("mcpgateway.services.a2a_server_service.A2AServerService.resolve_server_agent", return_value=None):
                 resp = client.post("/_internal/a2a/agents/team-a-agent/resolve", json={})
 
@@ -1087,7 +1087,7 @@ class TestInternalA2ADenyPaths:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@test.com", ["team-other"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.cancel_task", new_callable=AsyncMock)
     def test_tasks_cancel_wrong_team_returns_404(self, mock_cancel, _mock_scope, _mock_trust, client):
         """Cancel on a cross-team task must 404, and scope must be forwarded."""
         mock_cancel.return_value = None
@@ -1140,7 +1140,7 @@ class TestInternalA2ADenyPaths:
         a significant availability regression for A2A-disabled
         deployments.  This test pins the path-scoped behavior.
         """
-        # First-Party
+        # Third-Party
         from starlette.requests import Request
 
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)

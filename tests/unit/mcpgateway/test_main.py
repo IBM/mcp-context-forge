@@ -1395,7 +1395,9 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
+        # Handler pre-resolves is_admin_bypass; with user_email=None it resolves to True
+        # (no-auth-context bypass).  See mcpgateway.utils.admin_check.
+        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None, is_admin_bypass=True)
 
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):

@@ -413,6 +413,7 @@ async def test_mcp_ingress_mount_routes_per_request_after_runtime_override(monke
 @pytest.mark.asyncio
 async def test_mcp_ingress_mount_in_flight_request_finishes_on_original_ingress(monkeypatch):
     """Drain semantics: a flip mid-request must not redirect an already-dispatched call."""
+    # Standard
     import asyncio as _asyncio
 
     # First-Party
@@ -2024,7 +2025,13 @@ class TestAdminAuthMiddleware:
         monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
         monkeypatch.setattr(settings, "mcp_client_auth_enabled", False)
 
+        # Local
+        from tests.helpers.admin_mocks import install_admin_user
+
         mock_db = MagicMock()
+        # Admin flow hits permission_service._is_user_admin → admin_check.is_user_admin,
+        # which queries db.execute(...); prime the mock chain to return an admin user.
+        install_admin_user(mock_db, email="proxy@example.com")
 
         def _db_gen():
             yield mock_db

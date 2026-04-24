@@ -933,7 +933,57 @@ class TestGatewayService:
         assert result == []
         assert next_cursor is None
         # Query IS executed but returns empty due to WHERE FALSE condition
-        test_db.execute.assert_called_once()
+        # Note: execute is called twice - once for admin check, once for actual query
+        assert test_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_platform_admin_bypass(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Platform admin email should bypass visibility filtering."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        # Mock platform admin email
+        original_admin = getattr(settings, "platform_admin_email", "")
+        monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[mock_gateway]))
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "test_gateway"
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        # Platform admin should see all gateways
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="platform-admin@example.com", token_teams=["some-team"])
+
+        assert len(result) == 1
+        assert result[0].name == "test_gateway"
+        # Restore original value
+        if original_admin:
+            monkeypatch.setattr(settings, "platform_admin_email", original_admin)
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_database_exception_handling(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """DB exception during admin check (token_teams=None path) should fail-closed to non-admin filtering, not crash."""
+
+        call_count = [0]
+
+        def mock_execute(stmt):
+            call_count[0] += 1
+            # Admin check runs first when token_teams=None — simulate DB failure there.
+            if call_count[0] == 1:
+                raise Exception("Database error")
+            return _make_execute_result(scalars_list=[])
+
+        test_db.execute = Mock(side_effect=mock_execute)
+
+        # token_teams=None is the only path that triggers admin check; non-admin users
+        # should fall through to normal (team-scoped) filtering after exception.
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", token_teams=None)
+
+        assert call_count[0] >= 2
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
