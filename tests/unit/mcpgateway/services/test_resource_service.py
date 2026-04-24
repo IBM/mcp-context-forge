@@ -28,11 +28,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
-from mcpgateway.services.resource_service import (
-    ResourceError,
-    ResourceNotFoundError,
-    ResourceService,
-)
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 
 # --------------------------------------------------------------------------- #
 # Fixtures and test helpers                                                   #
@@ -368,7 +364,9 @@ class TestResourceRegistration:
     @pytest.mark.asyncio
     async def test_register_resource_binary_content(self, resource_service, mock_db, monkeypatch):
         """Test registration with binary content."""
+        # First-Party
         from mcpgateway import config
+
         # Ensure strict MIME validation is off so this test is independent of .env settings
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
 
@@ -2188,11 +2186,7 @@ class TestResourceServiceContentSizeError:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = MagicMock()
-        mock_security_service.validate_resource_size.side_effect = ContentSizeError(
-            content_type="Resource content",
-            actual_size=150000,
-            max_size=102400
-        )
+        mock_security_service.validate_resource_size.side_effect = ContentSizeError(content_type="Resource content", actual_size=150000, max_size=102400)
 
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Create a resource with large content
@@ -2225,11 +2219,7 @@ class TestResourceServiceContentSizeError:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = MagicMock()
-        mock_security_service.validate_resource_size.side_effect = ContentSizeError(
-            content_type="Resource content",
-            actual_size=150000,
-            max_size=102400
-        )
+        mock_security_service.validate_resource_size.side_effect = ContentSizeError(content_type="Resource content", actual_size=150000, max_size=102400)
 
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Update with large content
@@ -2243,14 +2233,16 @@ class TestResourceServiceContentSizeError:
             assert exc_info.value.max_size == 102400
             assert exc_info.value.content_type == "Resource content"
 
+
 class TestResourceServiceContentTypeError:
     """Tests for ContentTypeError handling in resource service."""
 
     @pytest.mark.asyncio
     async def test_register_resource_content_type_error(self, resource_service, mock_db, sample_resource_create, monkeypatch):
         """Test that ContentTypeError is caught and re-raised during resource registration."""
-        from mcpgateway.services.content_security import ContentTypeError
+        # First-Party
         from mcpgateway import config
+        from mcpgateway.services.content_security import ContentTypeError
 
         # Enable strict MIME validation
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
@@ -2260,10 +2252,7 @@ class TestResourceServiceContentTypeError:
         # Mock get_content_security_service to return a mock that raises ContentTypeError
         mock_security_service = MagicMock()
         mock_security_service.validate_resource_size = MagicMock()  # Size validation passes
-        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(
-            mime_type="application/evil",
-            allowed_types=["text/plain", "text/markdown", "application/json"]
-        )
+        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(mime_type="application/evil", allowed_types=["text/plain", "text/markdown", "application/json"])
 
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Create a resource with disallowed MIME type
@@ -2285,9 +2274,10 @@ class TestResourceServiceContentTypeError:
     @pytest.mark.asyncio
     async def test_update_resource_content_type_error(self, resource_service, mock_db, mock_resource, monkeypatch):
         """Test that ContentTypeError is caught and re-raised during resource update."""
-        from mcpgateway.services.content_security import ContentTypeError
-        from mcpgateway.schemas import ResourceUpdate
+        # First-Party
         from mcpgateway import config
+        from mcpgateway.schemas import ResourceUpdate
+        from mcpgateway.services.content_security import ContentTypeError
 
         # Enable strict MIME validation
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
@@ -2299,10 +2289,7 @@ class TestResourceServiceContentTypeError:
         # Mock get_content_security_service to return a mock that raises ContentTypeError
         mock_security_service = MagicMock()
         mock_security_service.validate_resource_size = MagicMock()  # Size validation passes
-        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(
-            mime_type="application/malicious",
-            allowed_types=["text/plain", "text/markdown"]
-        )
+        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(mime_type="application/malicious", allowed_types=["text/plain", "text/markdown"])
 
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Update with disallowed MIME type - use model_construct to bypass Pydantic validation
@@ -2318,7 +2305,9 @@ class TestResourceServiceContentTypeError:
     @pytest.mark.asyncio
     async def test_register_resource_vendor_mime_type_in_log_only_mode(self, resource_service, mock_db, sample_resource_create, monkeypatch):
         """Test that vendor MIME types (x- prefix) are allowed in log-only mode."""
+        # First-Party
         from mcpgateway import config
+
         # Disable strict validation (log-only mode)
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
 
@@ -2360,6 +2349,7 @@ class TestResourceServiceContentTypeError:
     @pytest.mark.asyncio
     async def test_register_resource_vendor_mime_type_rejected_in_strict_mode(self, resource_service, mock_db, sample_resource_create, monkeypatch):
         """Test that vendor MIME types are rejected in strict mode if not in allowlist."""
+        # First-Party
         from mcpgateway import config
         from mcpgateway.services.content_security import ContentTypeError
 
@@ -2391,8 +2381,8 @@ class TestResourceUpdateMimeTypeDetection:
     @pytest.mark.asyncio
     async def test_update_resource_with_empty_mime_type_detects_from_uri(self, resource_service, mock_db):
         """Test that empty MIME type triggers detection from URI."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
-        from datetime import datetime, timezone
 
         # Create mock resource
         mock_resource = MagicMock()
@@ -2427,6 +2417,7 @@ class TestResourceUpdateMimeTypeDetection:
     @pytest.mark.asyncio
     async def test_update_resource_with_empty_mime_type_uses_content(self, resource_service, mock_db):
         """Test that empty MIME type detection uses existing content."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         # Create mock resource with text content
@@ -2460,6 +2451,7 @@ class TestResourceUpdateMimeTypeDetection:
     @pytest.mark.asyncio
     async def test_update_resource_with_explicit_mime_type_no_detection(self, resource_service, mock_db):
         """Test that explicit MIME type is used without detection."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         mock_resource = MagicMock()
@@ -2493,6 +2485,7 @@ class TestResourceUpdateMimeTypeDetection:
     @pytest.mark.asyncio
     async def test_update_resource_without_mime_type_preserves_existing(self, resource_service, mock_db):
         """Test that not providing MIME type preserves existing value."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         mock_resource = MagicMock()
@@ -2523,14 +2516,15 @@ class TestResourceUpdateMimeTypeDetection:
                     # Verify existing MIME type was preserved
                     assert mock_resource.mime_type == "text/markdown"
 
+
 class TestResourceUrlDetectedMimeTypePriority:
     """Tests for URL-detected MIME type priority over user-provided values."""
 
     @pytest.mark.asyncio
     async def test_register_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
         """Test that URL-detected MIME type takes priority over user-provided during registration."""
+        # First-Party
         from mcpgateway.schemas import ResourceCreate
-        import logging
 
         # Mock database operations
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing resource
@@ -2539,12 +2533,7 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.refresh = MagicMock()
 
         # Create resource with .md extension but user provides text/plain
-        resource = ResourceCreate(
-            uri="https://gist.github.com/user/example.md",
-            name="Test Markdown",
-            mime_type="text/plain",  # User provides wrong type
-            content="# Test"
-        )
+        resource = ResourceCreate(uri="https://gist.github.com/user/example.md", name="Test Markdown", mime_type="text/plain", content="# Test")  # User provides wrong type
 
         with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
@@ -2558,12 +2547,12 @@ class TestResourceUrlDetectedMimeTypePriority:
 
                     # Verify logging of the override - check if info was called with the message
                     log_calls = [str(call) for call in mock_logger.info.call_args_list]
-                    assert any("text/markdown" in str(call) and "text/plain" in str(call) for call in log_calls), \
-                        f"Expected log about MIME type override, got: {log_calls}"
+                    assert any("text/markdown" in str(call) and "text/plain" in str(call) for call in log_calls), f"Expected log about MIME type override, got: {log_calls}"
 
     @pytest.mark.asyncio
     async def test_register_resource_uses_user_mime_when_no_url_detection(self, resource_service, mock_db):
         """Test that user-provided MIME type is used when URL detection fails."""
+        # First-Party
         from mcpgateway.schemas import ResourceCreate
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
@@ -2572,12 +2561,7 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.refresh = MagicMock()
 
         # URI with no extension
-        resource = ResourceCreate(
-            uri="test://no-extension",
-            name="Test Resource",
-            mime_type="text/plain",
-            content="test"
-        )
+        resource = ResourceCreate(uri="test://no-extension", name="Test Resource", mime_type="text/plain", content="test")
 
         with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
@@ -2590,6 +2574,7 @@ class TestResourceUrlDetectedMimeTypePriority:
     @pytest.mark.asyncio
     async def test_register_resource_url_detection_various_extensions(self, resource_service, mock_db, monkeypatch):
         """Test URL detection works for various file extensions."""
+        # First-Party
         from mcpgateway.schemas import ResourceCreate
 
         # Mock content security to bypass MIME validation
@@ -2611,12 +2596,7 @@ class TestResourceUrlDetectedMimeTypePriority:
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
 
-            resource = ResourceCreate(
-                uri=uri,
-                name="Test",
-                mime_type="text/plain",  # Wrong type
-                content="test"
-            )
+            resource = ResourceCreate(uri=uri, name="Test", mime_type="text/plain", content="test")  # Wrong type
 
             with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_content_security):
                 with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
@@ -2629,6 +2609,7 @@ class TestResourceUrlDetectedMimeTypePriority:
     @pytest.mark.asyncio
     async def test_update_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
         """Test that URL-detected MIME type takes priority during updates."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         # Existing resource
@@ -2647,10 +2628,7 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.refresh = MagicMock()
 
         # Update with new URI that has .json extension
-        update = ResourceUpdate(
-            uri="https://api.example.com/data.json",
-            mime_type="text/html"  # User provides wrong type
-        )
+        update = ResourceUpdate(uri="https://api.example.com/data.json", mime_type="text/html")  # User provides wrong type
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
@@ -2662,12 +2640,12 @@ class TestResourceUrlDetectedMimeTypePriority:
 
                     # Verify logging - check if info was called with the message
                     log_calls = [str(call) for call in mock_logger.info.call_args_list]
-                    assert any("application/json" in str(call) and "text/html" in str(call) for call in log_calls), \
-                        f"Expected log about MIME type override, got: {log_calls}"
+                    assert any("application/json" in str(call) and "text/html" in str(call) for call in log_calls), f"Expected log about MIME type override, got: {log_calls}"
 
     @pytest.mark.asyncio
     async def test_update_resource_empty_mime_with_url_detection(self, resource_service, mock_db):
         """Test that empty MIME type triggers URL detection during update."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         mock_resource = MagicMock()
@@ -2685,10 +2663,7 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.refresh = MagicMock()
 
         # Update with new URI and empty MIME type
-        update = ResourceUpdate(
-            uri="https://example.com/document.pdf",
-            mime_type=""  # Empty string
-        )
+        update = ResourceUpdate(uri="https://example.com/document.pdf", mime_type="")  # Empty string
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
@@ -2700,6 +2675,7 @@ class TestResourceUrlDetectedMimeTypePriority:
     @pytest.mark.asyncio
     async def test_update_resource_empty_mime_no_url_detection_preserves_existing(self, resource_service, mock_db):
         """Test that empty MIME type with no URL detection preserves existing type."""
+        # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
         mock_resource = MagicMock()
@@ -2742,7 +2718,6 @@ class TestResourceUrlDetectedMimeTypePriority:
         for uri, expected_mime in test_cases:
             result = resource_service._detect_mime_type_from_uri(uri)
             assert result == expected_mime, f"Failed for {uri}: expected {expected_mime}, got {result}"
-
 
 
 class TestResourceServiceMetricsExtended:
@@ -4919,7 +4894,9 @@ class TestResourceServiceCoverageEdges:
     @pytest.mark.asyncio
     async def test_register_resources_bulk_mime_validation_fails_in_strict_mode(self, resource_service, mock_db, monkeypatch):
         """MIME type validation in bulk: disallowed type in strict mode is counted as failed."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 

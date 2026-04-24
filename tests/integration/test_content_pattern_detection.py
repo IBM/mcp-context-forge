@@ -11,26 +11,29 @@ This module tests the acceptance criteria:
 - Validation modes (strict, moderate, lenient) work correctly
 - Pattern caching improves performance
 """
+
+# Standard
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
-import pytest
+# Third-Party
 from _pytest.monkeypatch import MonkeyPatch
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
 
+# First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.utils.verify_credentials import require_auth
 from mcpgateway.db import Base
+
 # Don't import app at module level - import in fixture after patching
-from mcpgateway.middleware.rbac import (
-    get_current_user_with_permissions,
-    get_db as rbac_get_db,
-    get_permission_service,
-)
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_db as rbac_get_db
+from mcpgateway.middleware.rbac import get_permission_service
+from mcpgateway.utils.verify_credentials import require_auth
 
 
 class MockPermissionService:
@@ -53,6 +56,7 @@ def test_app():
     url = f"sqlite:///{path}"
 
     # Patch settings
+    # First-Party
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
@@ -65,6 +69,7 @@ def test_app():
     # Enable admin API for tests - patch both settings and the constant in main.py
     mp.setattr(settings, "mcpgateway_admin_api_enabled", True, raising=True)
 
+    # First-Party
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
 
@@ -82,6 +87,7 @@ def test_app():
     Base.metadata.create_all(bind=engine)
 
     # Import app AFTER patching settings
+    # First-Party
     from mcpgateway.main import app
 
     # Create mock user for basic auth
@@ -159,15 +165,7 @@ class TestXSSPatternDetection:
     def test_resource_blocks_script_tag(self, client, auth_headers):
         """Test that resources with <script> tags are blocked."""
         malicious_content = "Hello <script>alert('XSS')</script> World"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://xss-script",
-                "name": "XSS Script Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://xss-script", "name": "XSS Script Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -181,15 +179,7 @@ class TestXSSPatternDetection:
     def test_resource_blocks_event_handler(self, client, auth_headers):
         """Test that resources with event handlers are blocked."""
         malicious_content = '<img src="x" onerror="alert(1)">'
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://xss-event",
-                "name": "XSS Event Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://xss-event", "name": "XSS Event Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -198,15 +188,7 @@ class TestXSSPatternDetection:
     def test_resource_blocks_javascript_protocol(self, client, auth_headers):
         """Test that resources with javascript: protocol are blocked."""
         malicious_content = '<a href="javascript:alert(1)">Click me</a>'
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://xss-js-protocol",
-                "name": "XSS JS Protocol Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://xss-js-protocol", "name": "XSS JS Protocol Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -215,15 +197,7 @@ class TestXSSPatternDetection:
     def test_prompt_blocks_script_tag(self, client, auth_headers):
         """Test that prompts with <script> tags are blocked."""
         malicious_template = "Generate code: <script>alert('XSS')</script>"
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "xss_script_prompt",
-                "template": malicious_template,
-                "description": "XSS test"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "xss_script_prompt", "template": malicious_template, "description": "XSS test"}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -236,15 +210,7 @@ class TestTemplateInjectionDetection:
     def test_resource_blocks_jinja2_template(self, client, auth_headers):
         """Test that resources with Jinja2 template syntax are blocked."""
         malicious_content = "User input: {{ config.items() }}"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://template-jinja",
-                "name": "Template Injection Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://template-jinja", "name": "Template Injection Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -253,15 +219,7 @@ class TestTemplateInjectionDetection:
     def test_resource_blocks_expression_evaluation(self, client, auth_headers):
         """Test that resources with ${} expressions are blocked."""
         malicious_content = "Value: ${7*7}"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://template-expr",
-                "name": "Expression Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://template-expr", "name": "Expression Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -270,15 +228,7 @@ class TestTemplateInjectionDetection:
     def test_prompt_blocks_template_syntax(self, client, auth_headers):
         """Test that prompts with template injection are blocked."""
         malicious_template = "Process: {% for item in config %} {{ item }} {% endfor %}"
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "template_injection_prompt",
-                "template": malicious_template,
-                "description": "Template injection test"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "template_injection_prompt", "template": malicious_template, "description": "Template injection test"}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -291,15 +241,7 @@ class TestCommandInjectionDetection:
     def test_resource_blocks_shell_metacharacters(self, client, auth_headers):
         """Test that resources with shell metacharacters are blocked."""
         malicious_content = "Run: ls -la; rm -rf /"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://cmd-shell",
-                "name": "Command Injection Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://cmd-shell", "name": "Command Injection Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -308,15 +250,7 @@ class TestCommandInjectionDetection:
     def test_resource_blocks_command_chaining(self, client, auth_headers):
         """Test that resources with command chaining are blocked."""
         malicious_content = "echo hello && cat /etc/passwd"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://cmd-chain",
-                "name": "Command Chain Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://cmd-chain", "name": "Command Chain Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -325,15 +259,7 @@ class TestCommandInjectionDetection:
     def test_resource_blocks_backtick_execution(self, client, auth_headers):
         """Test that resources with backtick command execution are blocked."""
         malicious_content = "Output: `whoami`"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://cmd-backtick",
-                "name": "Backtick Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://cmd-backtick", "name": "Backtick Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -346,15 +272,7 @@ class TestSQLInjectionDetection:
     def test_resource_blocks_sql_keywords(self, client, auth_headers):
         """Test that resources with SQL keywords are blocked."""
         malicious_content = "Query: SELECT * FROM users WHERE id=1"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://sql-keywords",
-                "name": "SQL Keywords Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://sql-keywords", "name": "SQL Keywords Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -363,15 +281,7 @@ class TestSQLInjectionDetection:
     def test_resource_blocks_sql_comments(self, client, auth_headers):
         """Test that resources with SQL comment injection are blocked."""
         malicious_content = "Input: admin'-- "
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://sql-comment",
-                "name": "SQL Comment Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://sql-comment", "name": "SQL Comment Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -380,15 +290,7 @@ class TestSQLInjectionDetection:
     def test_resource_blocks_sql_string_concat(self, client, auth_headers):
         """Test that resources with SQL string concatenation are blocked."""
         malicious_content = "Value: ' OR '1'='1"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://sql-concat",
-                "name": "SQL Concat Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://sql-concat", "name": "SQL Concat Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -402,25 +304,13 @@ class TestPatternValidationConsistency:
         """Test pattern validation applies to both create and update operations."""
         # First, create a clean resource
         clean_content = "This is safe content"
-        create_response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://update-pattern-test",
-                "name": "Update Pattern Test",
-                "content": clean_content
-            },
-            headers=auth_headers
-        )
+        create_response = client.post("/api/resources", json={"uri": "test://update-pattern-test", "name": "Update Pattern Test", "content": clean_content}, headers=auth_headers)
         assert create_response.status_code == 201
         resource_id = create_response.json()["id"]
 
         # Try to update with malicious content
         malicious_content = "<script>alert('XSS')</script>"
-        update_response = client.put(
-            f"/api/resources/{resource_id}",
-            json={"content": malicious_content},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/resources/{resource_id}", json={"content": malicious_content}, headers=auth_headers)
 
         # Update should be rejected with 400
         assert update_response.status_code == 400
@@ -432,31 +322,20 @@ class TestPatternValidationConsistency:
         """Test pattern validation applies to both create and update operations."""
         # First, create a clean prompt
         clean_template = "This is a safe template"
-        create_response = client.post(
-            "/api/prompts",
-            json={
-                "name": "update_pattern_test_prompt",
-                "template": clean_template,
-                "description": "Update test"
-            },
-            headers=auth_headers
-        )
+        create_response = client.post("/api/prompts", json={"name": "update_pattern_test_prompt", "template": clean_template, "description": "Update test"}, headers=auth_headers)
         assert create_response.status_code == 201
         prompt_id = create_response.json()["id"]
 
         # Try to update with malicious template
         malicious_template = "{{ config.items() }}"
-        update_response = client.put(
-            f"/api/prompts/{prompt_id}",
-            json={"template": malicious_template},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/prompts/{prompt_id}", json={"template": malicious_template}, headers=auth_headers)
 
         # Update should be rejected with 400
         assert update_response.status_code == 400
         data = update_response.json()
         assert "detail" in data
         assert "violation_type" in data["detail"]
+
     def test_prompt_update_blocks_xss_pattern(self, client, auth_headers):
         """Test that updating a prompt with XSS pattern returns 400 with structured error.
 
@@ -465,24 +344,12 @@ class TestPatternValidationConsistency:
         - prompt_service.py lines 2380-2381 (ContentPatternError handler in update_prompt)
         """
         # Create clean prompt
-        create_response = client.post(
-            "/api/prompts",
-            json={
-                "name": "xss_update_test",
-                "template": "Hello {{name}}",
-                "description": "Test prompt for XSS update"
-            },
-            headers=auth_headers
-        )
+        create_response = client.post("/api/prompts", json={"name": "xss_update_test", "template": "Hello {{name}}", "description": "Test prompt for XSS update"}, headers=auth_headers)
         assert create_response.status_code == 201
         prompt_id = create_response.json()["id"]
 
         # Update with XSS pattern
-        update_response = client.put(
-            f"/api/prompts/{prompt_id}",
-            json={"template": "<script>alert('XSS')</script>"},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/prompts/{prompt_id}", json={"template": "<script>alert('XSS')</script>"}, headers=auth_headers)
 
         # Verify 400 error with structured response
         assert update_response.status_code == 400
@@ -504,23 +371,13 @@ class TestPatternValidationConsistency:
         """
         # Create clean prompt
         create_response = client.post(
-            "/api/prompts",
-            json={
-                "name": "cmd_update_test",
-                "template": "Process {{input}}",
-                "description": "Test prompt for command injection update"
-            },
-            headers=auth_headers
+            "/api/prompts", json={"name": "cmd_update_test", "template": "Process {{input}}", "description": "Test prompt for command injection update"}, headers=auth_headers
         )
         assert create_response.status_code == 201
         prompt_id = create_response.json()["id"]
 
         # Update with command injection
-        update_response = client.put(
-            f"/api/prompts/{prompt_id}",
-            json={"template": "Run: ls; rm -rf /"},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/prompts/{prompt_id}", json={"template": "Run: ls; rm -rf /"}, headers=auth_headers)
 
         # Verify 400 error
         assert update_response.status_code == 400
@@ -535,15 +392,7 @@ class TestPatternValidationConsistency:
         - main.py lines 6032-6040 (ContentPatternError handler in POST /prompts endpoint)
         - Verifies CREATE endpoint handler works correctly
         """
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "sql_test",
-                "template": "Query: SELECT * FROM users WHERE id={{id}}",
-                "description": "SQL injection test"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "sql_test", "template": "Query: SELECT * FROM users WHERE id={{id}}", "description": "SQL injection test"}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -553,42 +402,22 @@ class TestPatternValidationConsistency:
         assert data["detail"]["error"] == "Malicious pattern detected"
 
 
-
 class TestBulkOperationPatternValidation:
     """Test pattern validation in bulk operations."""
 
     def test_bulk_resource_registration_with_malicious_patterns(self, test_app, client, auth_headers):
         """Test that bulk resource registration validates patterns for each resource."""
+        # First-Party
+        from mcpgateway.db import get_db
         from mcpgateway.schemas import ResourceCreate
         from mcpgateway.services.resource_service import ResourceService
-        from mcpgateway.db import get_db
 
         # Create a mix of valid and malicious resources
         resources = [
-            ResourceCreate(
-                uri="resource://test/clean1",
-                name="Clean Resource 1",
-                content="This is safe content",
-                description="Clean resource"
-            ),
-            ResourceCreate(
-                uri="resource://test/xss1",
-                name="XSS Resource 1",
-                content="<script>alert('XSS')</script>",
-                description="Malicious resource"
-            ),
-            ResourceCreate(
-                uri="resource://test/clean2",
-                name="Clean Resource 2",
-                content="Another safe resource",
-                description="Another clean resource"
-            ),
-            ResourceCreate(
-                uri="resource://test/sqli1",
-                name="SQLi Resource 1",
-                content="SELECT * FROM users",
-                description="SQL injection attempt"
-            ),
+            ResourceCreate(uri="resource://test/clean1", name="Clean Resource 1", content="This is safe content", description="Clean resource"),
+            ResourceCreate(uri="resource://test/xss1", name="XSS Resource 1", content="<script>alert('XSS')</script>", description="Malicious resource"),
+            ResourceCreate(uri="resource://test/clean2", name="Clean Resource 2", content="Another safe resource", description="Another clean resource"),
+            ResourceCreate(uri="resource://test/sqli1", name="SQLi Resource 1", content="SELECT * FROM users", description="SQL injection attempt"),
         ]
 
         # Get database session
@@ -596,16 +425,10 @@ class TestBulkOperationPatternValidation:
 
         # Call bulk registration
         service = ResourceService()
+        # Standard
         import asyncio
-        result = asyncio.run(
-            service.register_resources_bulk(
-                db=db,
-                resources=resources,
-                created_by="test@example.com",
-                created_from_ip="127.0.0.1",
-                conflict_strategy="skip"
-            )
-        )
+
+        result = asyncio.run(service.register_resources_bulk(db=db, resources=resources, created_by="test@example.com", created_from_ip="127.0.0.1", conflict_strategy="skip"))
 
         # Verify results
         assert result["created"] == 2, "Should create 2 valid resources"
@@ -614,8 +437,7 @@ class TestBulkOperationPatternValidation:
 
         # Check error messages contain pattern information
         errors_text = " ".join(result["errors"])
-        assert "xss" in errors_text.lower() or "sql" in errors_text.lower(), \
-            "Errors should mention violation types"
+        assert "xss" in errors_text.lower() or "sql" in errors_text.lower(), "Errors should mention violation types"
 
 
 class TestValidationModes:
@@ -623,38 +445,26 @@ class TestValidationModes:
 
     def test_strict_mode_blocks_all_patterns(self, client, auth_headers, monkeypatch):
         """Test that strict mode blocks all malicious patterns."""
+        # First-Party
         from mcpgateway.config import settings
+
         monkeypatch.setattr(settings, "content_pattern_validation_mode", "strict")
 
         malicious_content = "<script>alert('test')</script>"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://strict-mode",
-                "name": "Strict Mode Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://strict-mode", "name": "Strict Mode Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         assert "violation_type" in response.json()["detail"]
 
     def test_lenient_mode_logs_but_allows(self, client, auth_headers, monkeypatch):
         """Test that lenient mode logs violations but allows content."""
+        # First-Party
         from mcpgateway.config import settings
+
         monkeypatch.setattr(settings, "content_pattern_validation_mode", "lenient")
 
         malicious_content = "<script>alert('test')</script>"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://lenient-mode",
-                "name": "Lenient Mode Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://lenient-mode", "name": "Lenient Mode Test", "content": malicious_content}, headers=auth_headers)
 
         # In lenient mode, content should be allowed
         assert response.status_code == 201
@@ -672,15 +482,7 @@ class TestCleanContentAllowed:
         - Documentation
         - No malicious patterns
         """
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://clean-resource",
-                "name": "Clean Resource",
-                "content": clean_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://clean-resource", "name": "Clean Resource", "content": clean_content}, headers=auth_headers)
 
         assert response.status_code == 201
         data = response.json()
@@ -693,15 +495,7 @@ class TestCleanContentAllowed:
         Please help the user with: {task}
         Provide clear and concise answers.
         """
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "clean_prompt",
-                "template": clean_template,
-                "description": "Clean prompt template"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "clean_prompt", "template": clean_template, "description": "Clean prompt template"}, headers=auth_headers)
 
         assert response.status_code == 201
         data = response.json()
@@ -714,15 +508,7 @@ class TestErrorMessageClarity:
     def test_pattern_violation_error_includes_details(self, client, auth_headers):
         """Test that pattern violation errors include helpful details."""
         malicious_content = "<script>alert('XSS')</script>"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://error-details",
-                "name": "Error Details Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://error-details", "name": "Error Details Test", "content": malicious_content}, headers=auth_headers)
 
         data = response.json()
         detail = data["detail"]
@@ -743,15 +529,7 @@ class TestErrorMessageClarity:
         """Test that content with multiple violations is reported clearly."""
         # Content with both XSS and SQL injection
         malicious_content = "<script>alert('XSS')</script> SELECT * FROM users"
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://multiple-violations",
-                "name": "Multiple Violations Test",
-                "content": malicious_content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://multiple-violations", "name": "Multiple Violations Test", "content": malicious_content}, headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()

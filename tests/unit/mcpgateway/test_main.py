@@ -34,19 +34,8 @@ from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCa
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
-from mcpgateway.schemas import (
-    A2AAgentAggregateMetrics,
-    GatewayRead,
-    PromptMetrics,
-    PromptRead,
-    ResourceMetrics,
-    ResourceRead,
-    ServerMetrics,
-    ServerRead,
-    ToolMetrics,
-    ToolRead,
-)
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.schemas import A2AAgentAggregateMetrics, GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
+from mcpgateway.services.content_security import ContentSizeError
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -485,9 +474,11 @@ class TestHealthAndInfrastructure:
     @pytest.mark.asyncio
     async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
+        # Third-Party
+        from starlette.responses import Response as FastAPIResponse
+
         # First-Party
         from mcpgateway import main as mcpgateway_main
-        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -519,9 +510,11 @@ class TestHealthAndInfrastructure:
     @pytest.mark.asyncio
     async def test_ready_check_db_error(self):
         """Test readiness check error path with rollback failure."""
+        # Third-Party
+        from starlette.responses import Response as FastAPIResponse
+
         # First-Party
         from mcpgateway import main as mcpgateway_main
-        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -762,6 +755,7 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion endpoint should map completion validation errors to 400."""
+        # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
         mock_filter_context.return_value = ("viewer@example.com", ["team-1"], False)
@@ -785,6 +779,7 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.sampling_handler.create_message")
     def test_handle_sampling_endpoint_maps_sampling_error(self, mock_sampling, test_client, auth_headers):
         """Protocol sampling endpoint should map sampling validation errors to 400."""
+        # First-Party
         from mcpgateway.handlers.sampling import SamplingError
 
         mock_sampling.side_effect = SamplingError("invalid sampling payload")
@@ -1166,6 +1161,7 @@ class TestResourceEndpoints:
         data = response.json()
         # Default response is a plain list (include_pagination=False by default)
         assert isinstance(data, list)
+
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 413 for content size limit exceeded."""
@@ -1184,6 +1180,7 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 415 for unsupported MIME type."""
+        # First-Party
         from mcpgateway.services.content_security import ContentTypeError
 
         mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
@@ -1197,6 +1194,7 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 415 for unsupported MIME type."""
+        # First-Party
         from mcpgateway.services.content_security import ContentTypeError
 
         mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
@@ -1230,6 +1228,7 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
+
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 413 for content size limit exceeded."""
@@ -1248,6 +1247,7 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 415 for unsupported MIME type."""
+        # First-Party
         from mcpgateway.services.content_security import ContentTypeError
 
         mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
@@ -1279,6 +1279,7 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 415 for unsupported MIME type."""
+        # First-Party
         from mcpgateway.services.content_security import ContentTypeError
 
         mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
@@ -1483,35 +1484,6 @@ class TestPromptEndpoints:
     def test_update_prompt_validation_and_integrity_errors(self, mock_update, exc, status_code, test_client, auth_headers):
         """Test update_prompt error branches for validation/integrity errors."""
         mock_update.side_effect = exc
-    @patch("mcpgateway.main.prompt_service.register_prompt")
-    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
-        """Test create_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/prompts/", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-
-    @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
-        """Test update_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"template": "x" * 15000}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
 
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
@@ -1546,6 +1518,36 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"template": "x" * 15000}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_prompt returns 413 for content size limit exceeded."""
         mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
         req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
         response = test_client.post("/prompts/", json=req, headers=auth_headers)
@@ -1566,17 +1568,14 @@ class TestPromptEndpoints:
         assert data["error"] == "Prompt size limit exceeded"
         assert data["actual_size"] == 15000
         assert data["max_size"] == 10240
+
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_content_pattern_error(self, mock_update, test_client, auth_headers):
         """Test update_prompt returns 400 for template validation error with dangerous pattern."""
         # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
-        mock_update.side_effect = TemplateValidationError(
-            template_name="test_prompt",
-            reason="Template contains dangerous pattern that could lead to code injection",
-            pattern="__import__"
-        )
+        mock_update.side_effect = TemplateValidationError(template_name="test_prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__")
         req = {"template": "Hello {{name}}"}
         response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
         assert response.status_code == 400
@@ -1586,7 +1585,6 @@ class TestPromptEndpoints:
         assert "dangerous pattern" in data["reason"].lower()
         assert data["pattern"] == "__import__"
         assert "message" in data
-
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint_secondary(self, mock_delete, test_client, auth_headers):
@@ -2554,6 +2552,7 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.sampling_handler.create_message", new_callable=AsyncMock)
     def test_rpc_sampling_create_message_maps_sampling_error(self, mock_sampling, test_client, auth_headers):
         """RPC sampling/createMessage should map SamplingError to JSON-RPC -32602."""
+        # First-Party
         from mcpgateway.handlers.sampling import SamplingError
 
         mock_sampling.side_effect = SamplingError("bad payload")
@@ -2623,6 +2622,7 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion/complete should map CompletionError to JSON-RPC -32602."""
+        # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
         mock_filter_context.return_value = ("user@example.com", ["t1"], False)

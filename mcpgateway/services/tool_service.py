@@ -61,17 +61,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import (
-    GlobalContext,
-    HttpHeaderPayload,
-    PluginContextTable,
-    PluginError,
-    PluginViolationError,
-    ToolHookType,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-    UserContext,
-)
+from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginContextTable, PluginError, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload, UserContext
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation

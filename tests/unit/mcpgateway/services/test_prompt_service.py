@@ -30,13 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import (
-    PromptError,
-    PromptNameConflictError,
-    PromptNotFoundError,
-    PromptService,
-    PromptValidationError,
-)
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -377,6 +371,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
         """Test that template validation errors are raised as TemplateValidationError."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -426,11 +421,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -1168,11 +1159,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -1188,9 +1175,11 @@ class TestPromptService:
 
             # Verify rollback was called
             test_db.rollback.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_register_prompt_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
         """Test that ContentPatternError is caught and re-raised during prompt registration."""
+        # First-Party
         from mcpgateway.services.content_security import ContentPatternError
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -1200,20 +1189,16 @@ class TestPromptService:
         mock_security_service = Mock()
         mock_security_service.validate_prompt_size.return_value = None  # Size check passes
         mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
-            pattern_matched="__import__",
-            content_type="Prompt template",
-            content_snippet="{{__import__('os')}}",
-            violation_type="python_injection"
+            pattern_matched="__import__", content_type="Prompt template", content_snippet="{{__import__('os')}}", violation_type="python_injection"
         )
 
-        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service), \
-             patch("mcpgateway.services.prompt_service.logger") as mock_logger, \
-             patch("mcpgateway.services.prompt_service.structured_logger") as mock_structured_logger:
+        with (
+            patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service),
+            patch("mcpgateway.services.prompt_service.logger") as mock_logger,
+            patch("mcpgateway.services.prompt_service.structured_logger") as mock_structured_logger,
+        ):
             # Use model_construct to bypass Pydantic validation
-            prompt = PromptCreate.model_construct(
-                name="malicious-prompt",
-                template="{{__import__('os')}}"
-            )
+            prompt = PromptCreate.model_construct(name="malicious-prompt", template="{{__import__('os')}}")
 
             with pytest.raises(ContentPatternError) as exc_info:
                 await prompt_service.register_prompt(test_db, prompt, created_by="test_user", owner_email="test@example.com")
@@ -1244,6 +1229,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_with_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
         """Test that ContentPatternError is caught and re-raised during prompt update."""
+        # First-Party
         from mcpgateway.services.content_security import ContentPatternError
 
         existing = _build_db_prompt()
@@ -1262,16 +1248,12 @@ class TestPromptService:
         mock_security_service = Mock()
         mock_security_service.validate_prompt_size.return_value = None  # Size check passes
         mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
-            pattern_matched="eval(",
-            content_type="Prompt template",
-            content_snippet="{{eval(user_input)}}",
-            violation_type="code_injection"
+            pattern_matched="eval(", content_type="Prompt template", content_snippet="{{eval(user_input)}}", violation_type="code_injection"
         )
 
         mock_structured_logger = mock_logging_services["structured_logger"]
 
-        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service), \
-             patch("mcpgateway.services.prompt_service.logger") as mock_logger:
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service), patch("mcpgateway.services.prompt_service.logger") as mock_logger:
             upd = PromptUpdate(template="{{eval(user_input)}}")
 
             with pytest.raises(ContentPatternError) as exc_info:
@@ -1304,6 +1286,7 @@ class TestPromptService:
         This test covers:
         - prompt_service.py template validation with dangerous patterns
         """
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         existing = _build_db_prompt()
@@ -1321,9 +1304,7 @@ class TestPromptService:
         mock_security_service = Mock()
         mock_security_service.validate_prompt_size.return_value = None  # Size check passes
         mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(
-            template_name="test-prompt",
-            reason="Template contains dangerous pattern that could lead to code injection",
-            pattern="__import__"
+            template_name="test-prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__"
         )
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
@@ -1339,7 +1320,6 @@ class TestPromptService:
 
             # Verify rollback was called
             test_db.rollback.assert_called_once()
-
 
     @pytest.mark.asyncio
     async def test_update_prompt_template_validation_error(self, prompt_service, test_db):
@@ -1360,11 +1340,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises TemplateValidationError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(
-            template_name="test-template",
-            reason="Template contains dangerous pattern",
-            pattern="__import__"
-        )
+        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(template_name="test-template", reason="Template contains dangerous pattern", pattern="__import__")
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use a safe template that passes Pydantic validation
@@ -1381,7 +1357,6 @@ class TestPromptService:
 
             # Verify rollback was called
             test_db.rollback.assert_called_once()
-
 
     # ──────────────────────────────────────────────────────────────────
     #   set state
@@ -2169,8 +2144,9 @@ class TestPromptBulkRegistration:
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_invalid_template_counts_failed(self, prompt_service, monkeypatch):
         """Test that template validation errors cause fail-fast in bulk operations."""
-        from mcpgateway.services.content_security import TemplateValidationError, ContentSecurityService
+        # First-Party
         from mcpgateway import config
+        from mcpgateway.services.content_security import ContentSecurityService, TemplateValidationError
 
         # Ensure validation is enabled by monkeypatching settings
         monkeypatch.setattr(config.settings, "content_validate_prompt_templates", True)

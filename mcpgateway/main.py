@@ -1817,10 +1817,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # only the cross-worker affinity machinery is gated here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
-                get_session_affinity,
-                start_affinity_notification_service,
-            )
+            from mcpgateway.services.session_affinity import get_session_affinity, start_affinity_notification_service  # pylint: disable=import-outside-toplevel
 
             await start_affinity_notification_service(gateway_service)
             pool = get_session_affinity()

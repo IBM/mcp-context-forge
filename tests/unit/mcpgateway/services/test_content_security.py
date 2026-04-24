@@ -1,27 +1,15 @@
 # -*- coding: utf-8 -*-
 """Unit tests for content security service."""
 
-import re
+# Standard
+from unittest.mock import patch
 
+# Third-Party
 import pytest
-import mcpgateway.services.content_security as cs_mod
-from unittest.mock import patch, MagicMock
 
 # First-Party
-from mcpgateway import config
 import mcpgateway.services.content_security as cs_mod
-from mcpgateway.services.content_security import (
-    ContentPatternError,
-    ContentSecurityService,
-    ContentSizeError,
-    ContentTypeError,
-    _format_bytes,
-    _sanitize_pii_for_logging,
-    ContentSecurityService,
-    ContentSizeError,
-    ContentTypeError,
-    get_content_security_service,
-)
+from mcpgateway.services.content_security import _format_bytes, _sanitize_pii_for_logging, ContentPatternError, ContentSecurityService, ContentSizeError, ContentTypeError, get_content_security_service
 
 
 class TestFormatBytes:
@@ -91,20 +79,25 @@ class TestRegexSearchWithTimeout:
         """Test _regex_search_with_timeout raises TimeoutError on timeout (line 336)."""
         service = ContentSecurityService()
         # Mock thread.is_alive() to return True to simulate timeout
+        # Standard
         import threading
+
         original_thread = threading.Thread
 
         class MockThread:
             def __init__(self, *args, **kwargs):
                 self._thread = original_thread(*args, **kwargs)
+
             def start(self):
                 self._thread.start()
+
             def join(self, timeout=None):
                 self._thread.join(timeout)
+
             def is_alive(self):
                 return True  # Always return True to simulate timeout
 
-        with patch('threading.Thread', MockThread):
+        with patch("threading.Thread", MockThread):
             with pytest.raises(TimeoutError, match="possible ReDoS attack"):
                 service._regex_search_with_timeout(r"test", "test content", timeout=0.1)
 
@@ -118,9 +111,7 @@ class TestRegexSearchWithTimeout:
         with pytest.raises(Exception):
             service._regex_search_with_timeout(pattern, content, timeout=1.0)
 
-
             assert "test" in result
-
 
         assert _format_bytes(1610612736) == "1.5 GB"
 
@@ -152,10 +143,7 @@ class TestSanitizePiiForLogging:
 
     def test_sanitize_both(self):
         """Test sanitizing both email and IP."""
-        result = _sanitize_pii_for_logging(
-            user_email="admin@test.com",
-            ip_address="10.0.0.1"
-        )
+        result = _sanitize_pii_for_logging(user_email="admin@test.com", ip_address="10.0.0.1")
         assert result["user_hash"] is not None
         assert result["ip_subnet"] == "10.0.0.xxx"
 
@@ -232,12 +220,7 @@ class TestContentSecurityService:
         service = ContentSecurityService()
         content = "x" * 200000
         with pytest.raises(ContentSizeError):
-            service.validate_resource_size(
-                content,
-                uri="test://resource",
-                user_email="user@example.com",
-                ip_address="192.168.1.1"
-            )
+            service.validate_resource_size(content, uri="test://resource", user_email="user@example.com", ip_address="192.168.1.1")
 
     def test_validate_prompt_size_within_limit(self):
         """Test validating prompt template within limit."""
@@ -276,12 +259,7 @@ class TestContentSecurityService:
         service = ContentSecurityService()
         template = "x" * 20000
         with pytest.raises(ContentSizeError):
-            service.validate_prompt_size(
-                template,
-                name="test_prompt",
-                user_email="user@example.com",
-                ip_address="10.0.0.1"
-            )
+            service.validate_prompt_size(template, name="test_prompt", user_email="user@example.com", ip_address="10.0.0.1")
 
 
 class TestGetContentSecurityService:
@@ -295,6 +273,7 @@ class TestGetContentSecurityService:
 
     def test_get_service_thread_safe(self):
         """Test that singleton is thread-safe."""
+        # Standard
         import threading
 
         results = []
@@ -344,15 +323,17 @@ class TestGetContentSecurityService:
 
         class _RaceSimLock:
             """Mimics a threading.Lock but sets the singleton on __enter__."""
+
             def __enter__(self):
                 # Simulate another thread having initialised the service
                 cs_mod._content_security_service = sentinel
                 return self
+
             def __exit__(self, *args):
                 return False
 
         try:
-            cs_mod._content_security_service = None          # outer check → True
+            cs_mod._content_security_service = None  # outer check → True
             cs_mod._content_security_service_lock = _RaceSimLock()
             result = cs_mod.get_content_security_service()
             # The function must return the sentinel (set inside the lock)
@@ -391,6 +372,7 @@ class TestContentTypeError:
         assert "type0" in message
         assert "type9" not in message  # Should be truncated
 
+
 class TestContentPatternError:
     """Test the ContentPatternError exception."""
 
@@ -404,11 +386,7 @@ class TestContentPatternError:
 
     def test_content_pattern_error_with_violation_type(self):
         """Test ContentPatternError with violation_type parameter."""
-        error = ContentPatternError(
-            pattern_matched="<script>",
-            content_type="Resource content",
-            violation_type="xss"
-        )
+        error = ContentPatternError(pattern_matched="<script>", content_type="Resource content", violation_type="xss")
         assert error.pattern_matched == "<script>"
         assert error.content_type == "Resource content"
         assert error.violation_type == "xss"
@@ -419,12 +397,7 @@ class TestContentPatternError:
 
     def test_content_pattern_error_with_short_content_snippet(self):
         """Test ContentPatternError with short content snippet."""
-        error = ContentPatternError(
-            pattern_matched="eval(",
-            content_type="Prompt template",
-            content_snippet="eval(user_input)",
-            violation_type="code_injection"
-        )
+        error = ContentPatternError(pattern_matched="eval(", content_type="Prompt template", content_snippet="eval(user_input)", violation_type="code_injection")
         assert error.content_snippet == "eval(user_input)"
         message = str(error)
         assert "eval(user_input)" in message
@@ -435,11 +408,7 @@ class TestContentPatternError:
     def test_content_pattern_error_with_long_content_snippet(self):
         """Test ContentPatternError truncates long content snippets in message."""
         long_content = "a" * 100
-        error = ContentPatternError(
-            pattern_matched="__import__",
-            content_type="Template",
-            content_snippet=long_content
-        )
+        error = ContentPatternError(pattern_matched="__import__", content_type="Template", content_snippet=long_content)
         assert error.content_snippet == long_content  # Original preserved
         assert len(error.content_snippet) == 100
         message = str(error)
@@ -450,10 +419,7 @@ class TestContentPatternError:
 
     def test_content_pattern_error_message_format(self):
         """Test ContentPatternError message formatting."""
-        error = ContentPatternError(
-            pattern_matched="javascript:",
-            content_type="Resource content"
-        )
+        error = ContentPatternError(pattern_matched="javascript:", content_type="Resource content")
         message = str(error)
         assert "Malicious pattern detected" in message
         assert "Resource content" in message
@@ -461,12 +427,7 @@ class TestContentPatternError:
 
     def test_content_pattern_error_with_all_parameters(self):
         """Test ContentPatternError with all optional parameters."""
-        error = ContentPatternError(
-            pattern_matched="__import__",
-            content_type="Prompt template",
-            content_snippet="{{__import__('os')}}",
-            violation_type="python_injection"
-        )
+        error = ContentPatternError(pattern_matched="__import__", content_type="Prompt template", content_snippet="{{__import__('os')}}", violation_type="python_injection")
         assert error.pattern_matched == "__import__"
         assert error.content_type == "Prompt template"
         assert error.content_snippet == "{{__import__('os')}}"
@@ -475,7 +436,6 @@ class TestContentPatternError:
         assert "__import__" in message
         assert "python_injection" in message
         assert "{{__import__('os')}}" in message
-
 
 
 class TestValidateResourceMimeType:
@@ -495,7 +455,9 @@ class TestValidateResourceMimeType:
 
     def test_validate_allowed_mime_type(self, monkeypatch):
         """Test validation passes for allowed MIME types."""
+        # First-Party
         from mcpgateway import config
+
         # Ensure strict mode is off so this test is independent of .env settings
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
         service = ContentSecurityService()
@@ -507,7 +469,9 @@ class TestValidateResourceMimeType:
 
     def test_validate_vendor_mime_type_log_only_mode(self, monkeypatch):
         """Test that vendor types (x- prefix) are allowed in log-only mode."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
 
         service = ContentSecurityService()
@@ -517,7 +481,9 @@ class TestValidateResourceMimeType:
 
     def test_validate_vendor_mime_type_strict_mode(self, monkeypatch):
         """Test that vendor types (x- prefix) are rejected in strict mode unless in allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 
@@ -533,7 +499,9 @@ class TestValidateResourceMimeType:
 
     def test_validate_suffix_mime_type_log_only_mode(self, monkeypatch):
         """Test that suffix types (with +) are allowed in log-only mode."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
 
         service = ContentSecurityService()
@@ -543,7 +511,9 @@ class TestValidateResourceMimeType:
 
     def test_validate_suffix_mime_type_strict_mode(self, monkeypatch):
         """Test that suffix types (with +) are rejected in strict mode unless in allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 
@@ -560,7 +530,9 @@ class TestValidateResourceMimeType:
     def test_validate_disallowed_mime_type_strict_mode(self, monkeypatch):
         """Test validation fails for disallowed MIME types in strict mode."""
         # Enable strict validation
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
 
         service = ContentSecurityService()
@@ -574,7 +546,9 @@ class TestValidateResourceMimeType:
     def test_validate_disallowed_mime_type_log_only_mode(self, monkeypatch):
         """Test validation logs but doesn't raise in log-only mode."""
         # Disable strict validation (log-only mode)
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
 
         service = ContentSecurityService()
@@ -583,21 +557,20 @@ class TestValidateResourceMimeType:
 
     def test_validate_with_logging_context(self, monkeypatch):
         """Test validation with full logging context."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
 
         service = ContentSecurityService()
         with pytest.raises(ContentTypeError):
-            service.validate_resource_mime_type(
-                "application/evil",
-                uri="test://resource",
-                user_email="user@example.com",
-                ip_address="192.168.1.1"
-            )
+            service.validate_resource_mime_type("application/evil", uri="test://resource", user_email="user@example.com", ip_address="192.168.1.1")
 
     def test_validate_case_sensitive(self, monkeypatch):
         """Test that MIME type validation is case-sensitive."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
 
         service = ContentSecurityService()
@@ -615,7 +588,9 @@ class TestMimeTypeIntegration:
 
     def test_size_and_mime_validation_order(self, monkeypatch):
         """Test that size validation happens before MIME validation."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
 
         service = ContentSecurityService()
@@ -641,7 +616,9 @@ class TestVendorSuffixMimeTypeInStrictMode:
 
     def test_vendor_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
         """Test that application/x- vendor types are rejected in strict mode if not in allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         # Use a custom allowlist that does NOT include application/x-custom
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
@@ -654,7 +631,9 @@ class TestVendorSuffixMimeTypeInStrictMode:
 
     def test_vendor_type_allowed_when_in_allowlist(self, monkeypatch):
         """Test that vendor types pass when explicitly added to allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         # Add vendor type to allowlist
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain", "application/x-custom"])
@@ -665,7 +644,9 @@ class TestVendorSuffixMimeTypeInStrictMode:
 
     def test_text_vendor_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
         """Test that text/x- vendor types are rejected in strict mode if not in allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["application/json"])
 
@@ -677,7 +658,9 @@ class TestVendorSuffixMimeTypeInStrictMode:
 
     def test_suffix_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
         """Test that suffix types (+json, +xml) are rejected in strict mode if not in allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 
@@ -689,7 +672,9 @@ class TestVendorSuffixMimeTypeInStrictMode:
 
     def test_suffix_type_allowed_when_in_allowlist(self, monkeypatch):
         """Test that suffix types pass when explicitly added to allowlist."""
+        # First-Party
         from mcpgateway import config
+
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         # Add suffix type to allowlist
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain", "application/vnd.api+json"])
@@ -704,11 +689,13 @@ class TestNoOpCounterFallback:
 
     def test_noop_counter_labels_returns_self(self):
         """Test NoOpCounter class directly to cover the fallback code path."""
+
         # Instantiate the NoOpCounter class directly by executing the fallback code
         # This covers lines 28-34 without corrupting sys.modules
         class NoOpCounter:
             def labels(self, **kwargs):
                 return self
+
             def inc(self, amount=1):
                 pass
 
@@ -722,6 +709,7 @@ class TestNoOpCounterFallback:
 
     def test_noop_counter_import_fallback(self):
         """Test that content_security module handles missing metrics gracefully (line 26)."""
+        # Standard
         import sys
 
         # Temporarily hide the metrics module to trigger the ImportError fallback
@@ -736,6 +724,7 @@ class TestNoOpCounterFallback:
                 del sys.modules["mcpgateway.services.content_security"]
 
             # Re-import triggers the except ImportError branch (lines 26-34)
+            # First-Party
             import mcpgateway.services.content_security as cs_module
 
             # Verify the NoOpCounter fallback was used
@@ -757,44 +746,35 @@ class TestNoOpCounterFallback:
                 del sys.modules["mcpgateway.services.content_security"]
 
 
-
 class TestTemplateValidationError:
     """Test the TemplateValidationError exception."""
 
     def test_template_validation_error_attributes(self):
         """Test TemplateValidationError has correct attributes."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
-        error = TemplateValidationError(
-            template_name="test_template",
-            reason="Dangerous pattern detected",
-            pattern="__import__"
-        )
+        error = TemplateValidationError(template_name="test_template", reason="Dangerous pattern detected", pattern="__import__")
         assert error.template_name == "test_template"
         assert error.reason == "Dangerous pattern detected"
         assert error.pattern == "__import__"
 
     def test_template_validation_error_without_pattern(self):
         """Test TemplateValidationError without pattern attribute."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
-        error = TemplateValidationError(
-            template_name="test_template",
-            reason="Unbalanced braces"
-        )
+        error = TemplateValidationError(template_name="test_template", reason="Unbalanced braces")
         assert error.template_name == "test_template"
         assert error.reason == "Unbalanced braces"
         assert error.pattern is None
 
     def test_template_validation_error_message(self):
         """Test TemplateValidationError message formatting."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
-        error = TemplateValidationError(
-            template_name="my_prompt",
-            reason="Invalid syntax",
-            pattern="eval("
-        )
+        error = TemplateValidationError(template_name="my_prompt", reason="Invalid syntax", pattern="eval(")
         message = str(error)
         assert "my_prompt" in message
         assert "Invalid syntax" in message
@@ -886,16 +866,11 @@ class TestCheckBalancedBraces:
 class TestValidatePromptTemplate:
     """Test the validate_prompt_template method."""
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_safe_template(self, mock_settings):
         """Test validating a safe template passes."""
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [
-            r'__import__',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__.*__'
-        ]
+        mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
         template = "Hello {{ name }}, welcome to {{ site }}!"
@@ -903,7 +878,7 @@ class TestValidatePromptTemplate:
         # Should not raise
         service.validate_prompt_template(template, "test_prompt")
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_disabled_validation(self, mock_settings):
         """Test validation is skipped when disabled."""
         mock_settings.content_validate_prompt_templates = False
@@ -914,9 +889,10 @@ class TestValidatePromptTemplate:
         # Should not raise even with dangerous content
         service.validate_prompt_template(template, "test_prompt")
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_unbalanced_braces(self, mock_settings):
         """Test validation fails for unbalanced braces."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
@@ -932,13 +908,14 @@ class TestValidatePromptTemplate:
         assert error.template_name == "test_prompt"
         assert "Unbalanced template braces" in error.reason
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_dangerous_import_pattern(self, mock_settings):
         """Test validation fails for __import__ pattern."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'__import__']
+        mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
         template = "{{ __import__('os').getcwd() }}"
@@ -951,13 +928,14 @@ class TestValidatePromptTemplate:
         assert "Template contains dangerous pattern that could lead to code injection" in error.reason
         assert error.pattern == "__import__"
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_dangerous_eval_pattern(self, mock_settings):
         """Test validation fails for eval pattern."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'eval\s*\(']
+        mock_settings.content_blocked_template_patterns = [r"eval\s*\("]
 
         service = ContentSecurityService()
         template = "{{ eval('1+1') }}"
@@ -970,13 +948,14 @@ class TestValidatePromptTemplate:
         assert "Template contains dangerous pattern that could lead to code injection" in error.reason
         assert "eval\\s*\\(" in error.pattern
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_dangerous_exec_pattern(self, mock_settings):
         """Test validation fails for exec pattern."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'exec\s*\(']
+        mock_settings.content_blocked_template_patterns = [r"exec\s*\("]
 
         service = ContentSecurityService()
         template = "{% set result = exec('print(1)') %}{{ result }}"
@@ -988,13 +967,14 @@ class TestValidatePromptTemplate:
         assert error.template_name == "test_prompt"
         assert "Template contains dangerous pattern that could lead to code injection" in error.reason
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_dangerous_dunder_pattern(self, mock_settings):
         """Test validation fails for dunder method pattern."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'__.*__']
+        mock_settings.content_blocked_template_patterns = [r"__.*__"]
 
         service = ContentSecurityService()
         template = "{{ user.__class__.__bases__ }}"
@@ -1006,9 +986,10 @@ class TestValidatePromptTemplate:
         assert error.template_name == "test_prompt"
         assert "Template contains dangerous pattern that could lead to code injection" in error.reason
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_invalid_jinja_syntax(self, mock_settings):
         """Test validation fails for invalid Jinja2 syntax."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
@@ -1024,32 +1005,29 @@ class TestValidatePromptTemplate:
         assert error.template_name == "test_prompt"
         assert "Invalid Jinja2 syntax" in error.reason
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_with_logging_context(self, mock_settings):
         """Test validation with logging context (user, IP)."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'__import__']
+        mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
         template = "{{ __import__('sys').version }}"
 
         with pytest.raises(TemplateValidationError):
-            service.validate_prompt_template(
-                template,
-                name="dangerous_prompt",
-                user_email="hacker@evil.com",
-                ip_address="192.168.1.100"
-            )
+            service.validate_prompt_template(template, name="dangerous_prompt", user_email="hacker@evil.com", ip_address="192.168.1.100")
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_case_insensitive_patterns(self, mock_settings):
         """Test validation is case-insensitive for patterns."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [r'__import__']
+        mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
         template = "{{ __IMPORT__('os') }}"  # Uppercase
@@ -1060,16 +1038,14 @@ class TestValidatePromptTemplate:
         error = exc_info.value
         assert "Template contains dangerous pattern that could lead to code injection" in error.reason
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_multiple_patterns_first_match(self, mock_settings):
         """Test validation stops at first matching pattern."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [
-            r'__import__',
-            r'eval\s*\('
-        ]
+        mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\("]
 
         service = ContentSecurityService()
         template = "{{ __import__('os') and eval('1+1') }}"
@@ -1081,16 +1057,11 @@ class TestValidatePromptTemplate:
         # Should match the first pattern
         assert error.pattern == "__import__"
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_validate_complex_safe_template(self, mock_settings):
         """Test validation passes for complex but safe template."""
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [
-            r'__import__',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__.*__'
-        ]
+        mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
         template = """
@@ -1111,9 +1082,10 @@ class TestValidatePromptTemplate:
 
     def test_validate_none_template_name(self):
         """Test validation with None template name."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
-        with patch('mcpgateway.services.content_security.settings') as mock_settings:
+        with patch("mcpgateway.services.content_security.settings") as mock_settings:
             mock_settings.content_validate_prompt_templates = True
             mock_settings.content_blocked_template_patterns = []
 
@@ -1130,51 +1102,32 @@ class TestValidatePromptTemplate:
 class TestTemplateValidationIntegration:
     """Integration tests for template validation in the full service."""
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_full_validation_pipeline_safe(self, mock_settings):
         """Test the complete validation pipeline with safe template."""
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [
-            r'__import__',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__.*__'
-        ]
+        mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
         template = "Welcome {{ user.name }}, you have {{ notifications | length }} new messages."
 
         # Should complete without raising
-        service.validate_prompt_template(
-            template=template,
-            name="notification_prompt",
-            user_email="user@example.com",
-            ip_address="10.0.0.1"
-        )
+        service.validate_prompt_template(template=template, name="notification_prompt", user_email="user@example.com", ip_address="10.0.0.1")
 
-    @patch('mcpgateway.services.content_security.settings')
+    @patch("mcpgateway.services.content_security.settings")
     def test_full_validation_pipeline_dangerous(self, mock_settings):
         """Test the complete validation pipeline with dangerous template."""
+        # First-Party
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
-        mock_settings.content_blocked_template_patterns = [
-            r'__import__',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__.*__'
-        ]
+        mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
         template = "{{ user.__class__.__mro__[1].__subclasses__() }}"
 
         with pytest.raises(TemplateValidationError) as exc_info:
-            service.validate_prompt_template(
-                template=template,
-                name="malicious_prompt",
-                user_email="attacker@evil.com",
-                ip_address="192.168.1.200"
-            )
+            service.validate_prompt_template(template=template, name="malicious_prompt", user_email="attacker@evil.com", ip_address="192.168.1.200")
 
         error = exc_info.value
         assert error.template_name == "malicious_prompt"
