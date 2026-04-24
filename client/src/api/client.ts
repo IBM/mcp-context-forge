@@ -123,15 +123,19 @@ export const api = {
     return request<T>(path, { method: "POST", body, ...opts });
   },
 
-  put<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "PUT", body });
+  put<T>(path: string, body?: unknown, opts?: Omit<RequestOptions, "method" | "body">): Promise<T> {
+    return request<T>(path, { method: "PUT", body, ...opts });
   },
 
-  patch<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "PATCH", body });
+  patch<T>(
+    path: string,
+    body?: unknown,
+    opts?: Omit<RequestOptions, "method" | "body">,
+  ): Promise<T> {
+    return request<T>(path, { method: "PATCH", body, ...opts });
   },
 
-  delete<T>(path: string): Promise<T> {
-    return request<T>(path, { method: "DELETE" });
+  delete<T>(path: string, opts?: Omit<RequestOptions, "method" | "body">): Promise<T> {
+    return request<T>(path, { method: "DELETE", ...opts });
   },
 };
