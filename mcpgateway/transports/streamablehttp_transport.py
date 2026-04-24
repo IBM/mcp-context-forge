@@ -4550,11 +4550,12 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
     """
     # First-Party
     from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
-    from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
-    db = next(get_db())
-    try:
+    # Use the module-local async get_db() context manager (line 721) rather than
+    # mcpgateway.db.get_db: it provides proper cancellation handling for MCP
+    # handlers cancelled mid-auth (client disconnect, timeout).
+    async with get_db() as db:
         auth_service = EmailAuthService(db)
         user_info = await auth_service.get_user_by_email(proxy_user)
 
@@ -4590,8 +4591,6 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
         # pre-authentication contract of set_trace_context_from_teams.
         set_trace_context_from_teams(token_teams or [], user_email=proxy_user, is_admin=is_admin, auth_method="proxy")
         return None
-    finally:
-        db.close()
 
 
 def get_streamable_http_auth_context() -> dict[str, Any]:
