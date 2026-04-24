@@ -66,7 +66,7 @@ async def list_traces(
     status: Optional[str] = Query(None, pattern=r"^(ok|error)$", description="Filter by status (ok, error)"),
     http_status_code: Optional[int] = Query(None, description="Filter by HTTP status code"),
     http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$", description="Filter by HTTP method"),
-    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", description="Filter by user email"),
+    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$", description="Filter by user email or service-account identifier"),
     attribute_search: Optional[str] = Query(None, max_length=500, description="Free-text search within trace attributes"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),

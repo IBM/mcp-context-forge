@@ -17593,7 +17593,7 @@ async def get_observability_traces(
     min_duration: Optional[float] = Query(None, ge=0),
     max_duration: Optional[float] = Query(None, ge=0),
     http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"),
-    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
+    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
     name_search: Optional[str] = Query(None, max_length=500),
     attribute_search: Optional[str] = Query(None, max_length=500),
     # tool_name pattern follows MCP SEP-986 (Specify Format for Tool Names), matching

@@ -622,7 +622,11 @@ async def get_security_events(
 async def get_audit_trails(
     action: Optional[List[str]] = Query(None),
     resource_type: Optional[List[str]] = Query(None),
-    user_id: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
+    # user_id accepts both email addresses and service-account identifiers. The audit
+    # trail stores fallback strings like "unknown", str(user), and JWT `sub` claims
+    # (see mcpgateway/main.py:get_user_email and services/audit_trail_service.py);
+    # an email-only regex would reject legitimate platform events.
+    user_id: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
     requires_review: Optional[bool] = Query(None),
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None),
