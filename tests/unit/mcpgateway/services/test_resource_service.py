@@ -3088,6 +3088,7 @@ class TestResourceAccessAuthorization:
     @pytest.mark.asyncio
     async def test_check_resource_access_database_admin_bypass(self, resource_service, mock_db):
         """User with is_admin=True in database should have full access."""
+        # First-Party
         from mcpgateway.db import EmailUser
 
         private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")

@@ -5973,6 +5973,7 @@ class TestToolAccessAuthorization:
     @pytest.mark.asyncio
     async def test_check_tool_access_database_admin_bypass(self, tool_service, mock_db):
         """User with is_admin=True in database should have full access."""
+        # First-Party
         from mcpgateway.db import EmailUser
 
         private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}

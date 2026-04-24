@@ -161,6 +161,7 @@ class TestBuildGatewayAuthHeaders:
         assert headers == {}
 
 
+# First-Party
 from mcpgateway.utils.gateway_access import check_gateway_access
 
 
@@ -204,6 +205,7 @@ class TestCheckGatewayAccess:
     @pytest.mark.asyncio
     async def test_database_admin_bypass(self):
         """User with is_admin=True in database should have unrestricted access."""
+        # First-Party
         from mcpgateway.db import EmailUser
 
         db = MagicMock()
@@ -229,6 +231,7 @@ class TestCheckGatewayAccess:
     @pytest.mark.asyncio
     async def test_platform_admin_bypass(self, monkeypatch):
         """Platform admin email should bypass all access checks."""
+        # First-Party
         from mcpgateway.config import settings
 
         db = MagicMock()
@@ -468,6 +471,7 @@ class TestCheckGatewayAccess:
         assert result is False
 
 
+# First-Party
 from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 
 

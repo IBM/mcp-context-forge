@@ -1140,7 +1140,7 @@ class TestInternalA2ADenyPaths:
         a significant availability regression for A2A-disabled
         deployments.  This test pins the path-scoped behavior.
         """
-        # First-Party
+        # Third-Party
         from starlette.requests import Request
 
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)

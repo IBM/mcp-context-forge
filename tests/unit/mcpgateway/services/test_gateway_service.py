@@ -939,6 +939,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_list_gateways_platform_admin_bypass(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Platform admin email should bypass visibility filtering."""
+        # First-Party
         from mcpgateway.config import settings
 
         # Mock platform admin email
@@ -4035,6 +4036,7 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     assert federated_prompt.original_name == "Prompt"
     assert federated_prompt.custom_name == "Prompt"
     assert federated_prompt.display_name == "Prompt"
+
 
 @pytest.mark.asyncio
 async def test_shutdown_releases_redis_leader_success():

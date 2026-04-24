@@ -9,9 +9,9 @@ Tests for A2A Agent Service functionality.
 
 # Standard
 from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import json
 import uuid
 
 # Third-Party
@@ -23,9 +23,9 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.utils.services_auth import encode_auth
 
 

@@ -1762,6 +1762,7 @@ class TestPromptAccessAuthorization:
     @pytest.mark.asyncio
     async def test_check_prompt_access_database_admin_bypass(self, prompt_service, mock_db):
         """User with is_admin=True in database should have full access."""
+        # First-Party
         from mcpgateway.db import EmailUser
 
         private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")

@@ -99,7 +99,7 @@ async def check_gateway_access(
         try:
             user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
             # Explicitly check for is_admin attribute and that it's True (not just truthy)
-            if user is not None and hasattr(user, 'is_admin') and user.is_admin is True:
+            if user is not None and hasattr(user, "is_admin") and user.is_admin is True:
                 return True
         except Exception:  # pylint: disable=broad-except
             # Fail-closed: if we can't verify admin status, continue with normal checks
