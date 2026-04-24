@@ -19,11 +19,6 @@ import sys
 import threading
 from typing import List, Optional, Union
 
-# re.search() gained a `timeout` keyword in Python 3.13 that actually aborts
-# pathological regex execution. Older versions only have the thread.join
-# fallback, which is a soft timeout (see _regex_search_with_timeout).
-_HAS_NATIVE_REGEX_TIMEOUT: bool = sys.version_info >= (3, 13)
-
 # First-Party
 from mcpgateway.config import settings
 
@@ -52,6 +47,11 @@ except ImportError:
 
     content_size_violations_counter = NoOpCounter()
     content_type_violations_counter = NoOpCounter()
+
+# re.search() gained a `timeout` keyword in Python 3.13 that actually aborts
+# pathological regex execution. Older versions only have the thread.join
+# fallback, which is a soft timeout (see _regex_search_with_timeout).
+_HAS_NATIVE_REGEX_TIMEOUT: bool = sys.version_info >= (3, 13)
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +371,12 @@ class ContentSecurityService:
         exception = [None]
 
         def search_thread():
+            """Run the regex search in a worker thread, capturing result or exception.
+
+            Writes the match object (or ``None``) into the enclosing ``result`` list,
+            and any raised exception into the enclosing ``exception`` list, so the
+            caller can inspect them after ``thread.join(timeout)`` returns.
+            """
             try:
                 result[0] = pattern.search(content)
             except Exception as e:

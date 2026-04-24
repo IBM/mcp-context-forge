@@ -1885,10 +1885,7 @@ class ToolService(BaseService):
                 # Convert inputSchema to string for pattern scanning
                 # Handle both dict objects and test mocks gracefully
                 try:
-                    # Standard
-                    import json
-
-                    schema_str = json.dumps(tool.input_schema)
+                    schema_str = orjson.dumps(tool.input_schema).decode()
                     self._content_security.detect_malicious_patterns(
                         content=schema_str,
                         content_type="Tool inputSchema",
@@ -2354,10 +2351,7 @@ class ToolService(BaseService):
                 )
             if tool.input_schema:
                 try:
-                    # Standard
-                    import json
-
-                    schema_str = json.dumps(tool.input_schema)
+                    schema_str = orjson.dumps(tool.input_schema).decode()
                     self._content_security.detect_malicious_patterns(
                         content=schema_str,
                         content_type="Tool inputSchema",
@@ -6041,10 +6035,7 @@ class ToolService(BaseService):
                 # Convert inputSchema to string for pattern scanning
                 # Handle both dict objects and test mocks gracefully
                 try:
-                    # Standard
-                    import json
-
-                    schema_str = json.dumps(tool_update.input_schema)
+                    schema_str = orjson.dumps(tool_update.input_schema).decode()
                     self._content_security.detect_malicious_patterns(
                         content=schema_str,
                         content_type="Tool inputSchema",
