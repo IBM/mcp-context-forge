@@ -344,6 +344,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> 'Vary' in resp.headers and 'Origin' in resp.headers['Vary']
             True
         """
+        # Generate CSP nonce BEFORE processing request so templates can access it
+        # This must happen before call_next() so request.state.csp_nonce is available during template rendering
+        csp_nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = csp_nonce
+
         response = await call_next(request)
 
         # Only apply security headers if enabled
@@ -370,10 +375,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-        # Content Security Policy with nonce-based approach
-        # Generate a cryptographically secure nonce for this request
-        csp_nonce = secrets.token_urlsafe(16)
-        request.state.csp_nonce = csp_nonce
+        # Content Security Policy with nonce-based approach (nonce already generated above)
 
         # CSP directives with nonce-based approach for scripts
         # Note: style-src uses 'unsafe-inline' without nonce (nonce would disable unsafe-inline)
