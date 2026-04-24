@@ -1194,7 +1194,10 @@ class MetaServerService:
             ).model_dump(by_alias=True)
 
     async def _get_tool_categories(self, arguments: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
-        """Get aggregated tool categories with counts from ToolService.
+        """Get aggregated tool categories with counts.
+
+        Builds categories from tool tags, inheriting tags from parent
+        gateways when a tool has no tags of its own.
 
         Args:
             arguments: Category query parameters (include_counts).
@@ -1203,8 +1206,11 @@ class MetaServerService:
             GetToolCategoriesResponse as dict with categories and counts.
         """
         # First-Party
+        from collections import Counter
+
+        from sqlalchemy.orm import joinedload as _jl  # pylint: disable=import-outside-toplevel
+
         from mcpgateway.meta_server.schemas import ToolCategory
-        from mcpgateway.services.tool_service import ToolService
 
         include_counts = arguments.get("include_counts", True)
 
@@ -1212,39 +1218,53 @@ class MetaServerService:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                tool_service = ToolService()
-
-                # Call ToolService.get_tool_categories
-                result = tool_service.get_tool_categories(
-                    db=db,
-                    actor_scope="public_user",  # Default to public scope
+                tools = (
+                    db.query(Tool)
+                    .options(_jl(Tool.gateway))
+                    .filter(Tool.enabled.is_(True))
+                    .all()
                 )
 
-                # Transform to meta-tool response format
-                categories_list = []
-                if include_counts:
-                    categories_list = [
-                        ToolCategory(
-                            name=cat["name"],
-                            description=cat.get("description"),
-                            tool_count=cat.get("tool_count", 0),
-                        )
-                        for cat in result.get("categories", [])
-                    ]
-                else:
-                    # Without counts
-                    categories_list = [
-                        ToolCategory(
-                            name=cat["name"],
-                            description=cat.get("description"),
-                            tool_count=0,
-                        )
-                        for cat in result.get("categories", [])
-                    ]
+                tag_counter: Counter = Counter()
+                for tool in tools:
+                    # Resolve tags — same inheritance logic as _get_tool_metadata
+                    tags_list = tool.tags or []
+                    if tags_list and isinstance(tags_list[0], dict):
+                        tags_list = [
+                            tag.get("id") or tag.get("label")
+                            for tag in tags_list
+                            if isinstance(tag, dict)
+                        ]
+
+                    # Inherit from parent gateway when the tool has no own tags
+                    if not tags_list and tool.gateway_id and tool.gateway:
+                        gw_tags = tool.gateway.tags or []
+                        if gw_tags and isinstance(gw_tags[0], dict):
+                            tags_list = [
+                                t.get("id") or t.get("label")
+                                for t in gw_tags
+                                if isinstance(t, dict)
+                            ]
+                        elif gw_tags:
+                            tags_list = list(gw_tags)
+
+                    for tag in tags_list:
+                        if tag:
+                            tag_counter[tag] += 1
+
+                # Build sorted categories
+                categories_list = [
+                    ToolCategory(
+                        name=tag_name,
+                        description=None,
+                        tool_count=count if include_counts else 0,
+                    )
+                    for tag_name, count in sorted(tag_counter.items())
+                ]
 
                 return GetToolCategoriesResponse(
                     categories=categories_list,
-                    total_categories=result.get("total_categories", 0),
+                    total_categories=len(categories_list),
                 ).model_dump(by_alias=True)
             finally:
                 try:
