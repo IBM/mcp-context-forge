@@ -3768,7 +3768,11 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
         if tool is None and has_gateway:
@@ -3831,7 +3835,7 @@ class ToolService(BaseService):
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             else:
                 try:
-                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -4448,8 +4452,12 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
@@ -4664,7 +4672,14 @@ class ToolService(BaseService):
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
-                            access_token = await self.oauth_manager.get_access_token(tool_oauth_config)
+                            # REST invoke path: gateway ORM object is still attached to the
+                            # active session, so attribute access is safe here.
+                            access_token = await self.oauth_manager.get_access_token(
+                                tool_oauth_config,
+                                ca_certificate=gateway.ca_certificate if gateway else None,
+                                client_cert=gateway.client_cert if gateway else None,
+                                client_key=gateway.client_key if gateway else None,
+                            )
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
                             logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
@@ -4928,7 +4943,9 @@ class ToolService(BaseService):
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
-                                access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                access_token = await self.oauth_manager.get_access_token(
+                                    gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                                )
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")

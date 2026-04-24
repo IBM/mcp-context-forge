@@ -1,7 +1,7 @@
 """Add A2A v1 domain models: tasks, server interfaces, agent auth
 
 Revision ID: 3f7e9d1a2b4c
-Revises: d3e4f5a6b7c8
+Revises: ff03273d8f93
 Create Date: 2026-04-01
 
 Creates tables for A2A task persistence (a2a_tasks), server-to-agent
@@ -18,7 +18,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "3f7e9d1a2b4c"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "d3e4f5a6b7c8"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "ff03273d8f93"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

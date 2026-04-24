@@ -254,8 +254,16 @@ class ResourceService(BaseService):
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
-        # Initialize mime types
+        # Register MIME types for resource content detection
+        # This runs in __init__ rather than initialize() because:
+        # 1. Many tests create ResourceService instances without calling initialize()
+        # 2. MIME type registration is idempotent and safe at import time
+        # 3. The _detect_mime_type_from_uri method depends on these registrations
         mimetypes.init()
+        if not mimetypes.guess_type("file.md")[0]:
+            mimetypes.add_type("text/markdown", ".md")
+        if not mimetypes.guess_type("file.markdown")[0]:
+            mimetypes.add_type("text/markdown", ".markdown")
 
     async def initialize(self) -> None:
         """Initialize the service."""
@@ -1886,7 +1894,9 @@ class ResourceService(BaseService):
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
-                                    access_token: str = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                    access_token: str = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+                                    )
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
                                     if span:

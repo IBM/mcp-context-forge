@@ -14620,7 +14620,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
             captured.update(kwargs)
             return MockResponse()
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, ca_certificate=None, client_cert=None, client_key=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
@@ -19505,9 +19505,7 @@ class TestTemplateButtonGating:
             "lastSeen": None,
             "team": None,
         }
-        html = self._render_gateways_partial(
-            jinja_env, gw_data, current_user_email="member@example.com", user_team_roles={"team-1": "member"}
-        )
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="member@example.com", user_team_roles={"team-1": "member"})
         assert "Authorize" in html
         assert "editGateway" not in html
         assert "/delete" not in html
@@ -20914,7 +20912,7 @@ class TestAdminTokensPartialSearch:
             response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
             assert "password_mismatch" in response.headers["location"]
 
-        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"})) # pragma: allowlist secret
+        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"}))  # pragma: allowlist secret
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
