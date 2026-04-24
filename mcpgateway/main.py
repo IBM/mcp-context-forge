@@ -3987,7 +3987,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
@@ -4682,9 +4682,9 @@ async def list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility (private, team, public)"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
@@ -5144,11 +5144,11 @@ async def list_tools(
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
-    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
+    apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolsResponse:
     """List all registered tools with team-based filtering and pagination support.
@@ -5361,7 +5361,7 @@ async def get_tool(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
+    apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
 ) -> ToolResponse:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
@@ -5713,14 +5713,14 @@ async def toggle_resource_status(
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6233,14 +6233,14 @@ async def toggle_prompt_status(
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6753,12 +6753,12 @@ async def toggle_gateway_status(
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[GatewayRead], Dict[str, Any]]:
