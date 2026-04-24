@@ -1166,7 +1166,6 @@ class TestResourceEndpoints:
         data = response.json()
         # Default response is a plain list (include_pagination=False by default)
         assert isinstance(data, list)
-
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 413 for content size limit exceeded."""
@@ -1181,6 +1180,32 @@ class TestResourceEndpoints:
         assert data["error"] == "Resource size limit exceeded"
         assert data["actual_size"] == 150000
         assert data["max_size"] == 102400
+
+    @patch("mcpgateway.main.resource_service.update_resource")
+    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
+        req = {"mime_type": "text/plain", "content": "hello"}
+        response = test_client.put("/resources/1", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-executable"
+
+    @patch("mcpgateway.main.resource_service.update_resource")
+    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
+        req = {"mime_type": "text/plain", "content": "hello"}
+        response = test_client.put("/resources/1", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-executable"
 
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
@@ -1205,10 +1230,57 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Resource", 150000, 102400)
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "content": "x" * 150000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Resource size limit exceeded"
+        assert data["actual_size"] == 150000
+        assert data["max_size"] == 102400
 
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-malicious"
+        assert "allowed_types" in data
+
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Resource", 150000, 102400)
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "content": "x" * 150000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Resource size limit exceeded"
+        assert data["actual_size"] == 150000
+        assert data["max_size"] == 102400
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
+
         mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
         req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/resources/", json=req, headers=auth_headers)
@@ -1411,9 +1483,65 @@ class TestPromptEndpoints:
     def test_update_prompt_validation_and_integrity_errors(self, mock_update, exc, status_code, test_client, auth_headers):
         """Test update_prompt error branches for validation/integrity errors."""
         mock_update.side_effect = exc
-        req = {"description": "Updated description"}
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"template": "x" * 15000}
         response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == status_code
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"template": "x" * 15000}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
 
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
@@ -1438,6 +1566,27 @@ class TestPromptEndpoints:
         assert data["error"] == "Prompt size limit exceeded"
         assert data["actual_size"] == 15000
         assert data["max_size"] == 10240
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_pattern_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 400 for template validation error with dangerous pattern."""
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
+        mock_update.side_effect = TemplateValidationError(
+            template_name="test_prompt",
+            reason="Template contains dangerous pattern that could lead to code injection",
+            pattern="__import__"
+        )
+        req = {"template": "Hello {{name}}"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 400
+        data = response.json()["detail"]
+        assert data["error"] == "Template validation failed"
+        assert data["template_name"] == "test_prompt"
+        assert "dangerous pattern" in data["reason"].lower()
+        assert data["pattern"] == "__import__"
+        assert "message" in data
+
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint_secondary(self, mock_delete, test_client, auth_headers):

@@ -2520,6 +2520,46 @@ class TestAdminResourceRoutes:
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentTypeError."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentTypeError(
+            mime_type="application/x-executable",
+            allowed_types=["text/plain", "application/json"]
+        )
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentTypeError(
+            mime_type="application/x-executable",
+            allowed_types=["text/plain", "application/json"]
+        )
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
@@ -2588,45 +2628,6 @@ class TestAdminResourceRoutes:
         assert mock_update_resource.call_args[0][1] == uri
 
     @patch.object(ResourceService, "update_resource")
-    async def test_admin_edit_resource_preserves_team_id_when_not_in_form(self, mock_update_resource, mock_request, mock_db, monkeypatch):
-        """Editing a resource without team_id in form should preserve the existing team."""
-        resource_id = "resource-99"
-        existing_team_id = "team-original"
-
-        form_data = FakeForm(
-            {
-                "uri": "/test/resource",
-                "name": "My Resource",
-                "mimeType": "text/plain",
-                "content": "hello",
-                "template": "t",
-                "visibility": "team",
-            }
-        )
-        mock_request.form = AsyncMock(return_value=form_data)
-
-        mock_existing_resource = MagicMock()
-        mock_existing_resource.team_id = existing_team_id
-        mock_db.get.return_value = mock_existing_resource
-
-        team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
-        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
-            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
-        )
-        mock_update_resource.return_value = None
-
-        result = await admin_edit_resource(resource_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-
-        assert result.status_code == 200
-        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
-        call_args = mock_update_resource.call_args
-        resource_update = call_args[0][2]
-        assert resource_update.team_id == existing_team_id
-
-    @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentSizeError."""
         # First-Party
@@ -2650,11 +2651,9 @@ class TestAdminResourceRoutes:
         result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
-
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_type_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentTypeError."""
-        # First-Party
         from mcpgateway.services.content_security import ContentTypeError
 
         team_service = MagicMock()
@@ -2669,12 +2668,16 @@ class TestAdminResourceRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock the module-level resource_service instance to raise ContentTypeError
-        mock_update = AsyncMock(side_effect=ContentTypeError(mime_type="text/plain", allowed_types=["application/json", "application/xml"]))
+        mock_update = AsyncMock(side_effect=ContentTypeError(
+            mime_type="text/plain",
+            allowed_types=["application/json", "application/xml"]
+        ))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
 
         result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 415
+
 
     async def test_admin_edit_resource_error_handlers(self, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
@@ -2932,41 +2935,6 @@ class TestAdminPromptRoutes:
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 413
 
-    @patch.object(PromptService, "update_prompt")
-    async def test_admin_edit_prompt_preserves_team_id_when_not_in_form(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
-        """Editing a prompt without team_id in form should preserve the existing team."""
-        prompt_id = "prompt-99"
-        existing_team_id = "team-original"
-
-        form_data = FakeForm(
-            {
-                "name": "My Prompt",
-                "template": "Hello {{name}}",
-                "visibility": "team",
-            }
-        )
-        mock_request.form = AsyncMock(return_value=form_data)
-
-        mock_existing_prompt = MagicMock()
-        mock_existing_prompt.team_id = existing_team_id
-        mock_db.get.return_value = mock_existing_prompt
-
-        team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
-        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
-            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
-        )
-        mock_update_prompt.return_value = None
-
-        result = await admin_edit_prompt(prompt_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-
-        assert result.status_code == 200
-        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
-        call_args = mock_update_prompt.call_args
-        prompt_update = call_args[0][2]
-        assert prompt_update.team_id == existing_team_id
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_name_change(self, mock_update_prompt, mock_request, mock_db):

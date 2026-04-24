@@ -507,18 +507,26 @@ class TestConcurrencyScenarios:
         mock_tool = MagicMock(spec=Tool)
         mock_tool.id = "tool-id"
         mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
         mock_tool.visibility = "public"
+        mock_tool.team_id = None
+        mock_tool.owner_email = "test@example.com"
 
         # Mock a conflicting tool
         mock_conflict = MagicMock(spec=Tool)
         mock_conflict.id = "other-id"
         mock_conflict.name = "new-name"
+        mock_conflict.custom_name = "new-name"
         mock_conflict.enabled = True
+        mock_conflict.visibility = "public"
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "new-name"
         tool_update.custom_name = "new-name"
-        tool_update.visibility = "public"
+        tool_update.visibility = MagicMock()
+        tool_update.visibility.lower.return_value = "public"
+        tool_update.description = None
+        tool_update.input_schema = None
 
         get_for_update_calls = []
 

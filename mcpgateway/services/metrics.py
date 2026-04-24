@@ -108,7 +108,7 @@ content_size_violations_counter = Counter(
 content_type_violations_counter = Counter(
     "content_type_violations_total",
     "Total number of MIME type violations",
-    ["content_type"],  # "resource" or "prompt" — rejected type is in logs, not labels (unbounded cardinality)
+    ["content_type", "mime_type"],  # content_type: "resource" or "prompt", mime_type: the rejected type
 )
 
 # MCP Auth Cache Metrics
@@ -118,17 +118,11 @@ mcp_auth_cache_events_counter = Counter(
     ["outcome"],
 )
 
-# OAuth / JWKS access-token verification on oauth_enabled virtual servers.
-# Outcome labels:
-#   success          — IdP-issued token verified and user context populated
-#   failed           — verification attempted and rejected (401/503 emitted)
-#   not_applicable   — target server is not oauth_enabled, issuer outside the
-#                      allowlist, token undecodable, or URL path missing a
-#                      server id; caller falls through to internal verify
+# OAuth Verification Metrics
 oauth_verify_events_counter = Counter(
     "oauth_verify_events_total",
-    "OAuth access token verification outcomes on virtual server MCP endpoints",
-    ["outcome"],
+    "Total number of OAuth token verification events by outcome",
+    ["outcome"],  # success, failed, error, not_applicable
 )
 
 # Streamable HTTP GET rejections. Clients that probe a passive SSE stream

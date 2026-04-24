@@ -688,6 +688,9 @@ class TestAdminResourceAPIs:
 
     async def test_admin_add_resource_rejects_disallowed_mime_type(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test that resources with disallowed MIME types are rejected with 415 status."""
+        # First-Party
+        from mcpgateway.config import settings
+
         # Configure a very restrictive MIME type list that excludes application/evil
         # We need to set both validation lists to ensure the error reaches ContentSecurityService
         allowed_types = [
