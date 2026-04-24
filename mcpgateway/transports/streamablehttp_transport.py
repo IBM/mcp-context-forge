@@ -38,7 +38,7 @@ import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union, assert_never
+from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -58,7 +58,7 @@ import orjson
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -69,6 +69,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
+from mcpgateway.plugins.framework.models import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -86,6 +87,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -240,8 +242,7 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 # here for backwards-compat: external callers that already do
 # `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
 # keep working.
-from mcpgateway.transports.context import request_headers_var, user_context_var  # noqa: E402  # pylint: disable=wrong-import-position
-
+from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 
@@ -1187,6 +1188,71 @@ def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestPar
     return PaginatedRequestParams(_meta=meta)
 
 
+async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
+    """Send a JSON response for Streamable HTTP request handling paths.
+
+    Args:
+        send: ASGI send callable.
+        status_code: HTTP status code for the response.
+        payload: JSON-serializable response payload.
+    """
+    body = orjson.dumps(payload)
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status_code,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _close_streamable_http_session(
+    *,
+    mcp_session_id: str,
+    user_context: Optional[dict[str, Any]],
+) -> tuple[int, dict[str, Any]]:
+    """Close a stateful Streamable HTTP session deterministically.
+
+    Args:
+        mcp_session_id: Stateful MCP session identifier to close.
+        user_context: Authenticated requester context used for ownership checks.
+
+    Returns:
+        Tuple ``(status_code, payload)``.
+    """
+    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+        mcp_session_id=mcp_session_id,
+        user_context=user_context,
+        rpc_method=None,
+    )
+    if not session_allowed:
+        return deny_status, {"detail": deny_detail}
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return HTTP_403_FORBIDDEN, {"detail": "Session ownership unavailable"}
+
+    try:
+        await session_registry.remove_session(mcp_session_id)
+    except Exception as exc:
+        logger.warning(f"Failed to remove streamable session {mcp_session_id}: {exc}")
+        return HTTP_500_INTERNAL_SERVER_ERROR, {"detail": "Failed to close session"}
+
+    # Best-effort cleanup for multi-worker session-affinity ownership records.
+    try:
+        # First-Party
+        from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
+
+        await get_session_affinity().cleanup_session_owner(mcp_session_id)
+    except RuntimeError:
+        pass
+    except Exception as exc:
+        logger.debug(f"Failed to clear affinity owner for session {mcp_session_id}: {exc}")
+
+    return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
+
+
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
@@ -1218,6 +1284,11 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
                 gateway_passthrough_headers=gw_passthrough,
             )
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -1264,6 +1335,11 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
                 gateway_passthrough_headers=gw_passthrough,
             )
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -1325,6 +1401,11 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
                 gateway_passthrough_headers=gw_passthrough,
             )
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -1518,6 +1599,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         meta_data=meta_data,
                         user_email=user_email,
                         token_teams=token_teams,
+                        user_context=user_identity_var.get(),
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
@@ -3280,20 +3362,20 @@ async def _handle_get_stream(
         require distinct outcome labels, filed as a potential
         follow-up if operators need to split.
     """
+    # Third-Party
+    from sse_starlette.sse import EventSourceResponse  # pylint: disable=import-outside-toplevel
+
     # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
         ListenerClaimResult,
         SessionAffinityNotInitializedError,
-        get_session_affinity,
     )
     from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
         BusBackendError,
-        ListenerBacklogOverflow,
         get_server_event_bus,
+        ListenerBacklogOverflow,
     )
-
-    # Third-Party
-    from sse_starlette.sse import EventSourceResponse  # pylint: disable=import-outside-toplevel
 
     if not _accepts_event_stream(accept):
         transport_get_rejected_counter.labels(outcome="not_acceptable").inc()
@@ -3887,6 +3969,17 @@ class SessionManagerWrapper:
             )
             return
 
+        # Deterministic stateful lifecycle close:
+        # When a valid MCP session ID is provided for DELETE, perform explicit
+        # ownership-checked teardown instead of relying on SDK manager behavior.
+        if method == "DELETE" and settings.use_stateful_sessions and mcp_session_id != "not-provided":
+            status_code, payload = await _close_streamable_http_session(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+            )
+            await _send_streamable_http_json_response(send, status_code=status_code, payload=payload)
+            return
+
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
 
@@ -4411,22 +4504,45 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
+def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
+    """Build a UserContext from the user_context dict and store it in user_identity_var.
+
+    Args:
+        ctx: User context dictionary with email, is_admin, teams, auth_method keys.
+    """
+    # Standard
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+    email = ctx.get("email")
+    if email:
+        user_identity_var.set(
+            UserContext(
+                user_id=email,
+                email=email,
+                is_admin=ctx.get("is_admin", False),
+                teams=ctx.get("teams"),
+                auth_method=ctx.get("auth_method", "bearer"),
+                authenticated_at=datetime.now(timezone.utc),
+            )
+        )
+
+
 def _set_proxy_user_context(proxy_user: str) -> None:
     """Set user context for a proxy-authenticated request (no team context, non-admin).
 
     Args:
         proxy_user: Email address of the proxy-authenticated user.
     """
-    user_context_var.set(
-        {
-            "email": proxy_user,
-            "teams": [],
-            "is_authenticated": True,
-            "is_admin": False,
-            "permission_is_admin": False,
-            "auth_method": "proxy",
-        }
-    )
+    _proxy_ctx: dict[str, Any] = {
+        "email": proxy_user,
+        "teams": [],
+        "is_authenticated": True,
+        "is_admin": False,
+        "permission_is_admin": False,
+        "auth_method": "proxy",
+    }
+    user_context_var.set(_proxy_ctx)
+    _set_user_identity_from_dict(_proxy_ctx)
     set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
 
 
@@ -4894,6 +5010,7 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
+            _set_user_identity_from_dict(auth_user_ctx)
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,

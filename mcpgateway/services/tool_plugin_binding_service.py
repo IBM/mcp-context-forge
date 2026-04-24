@@ -173,15 +173,9 @@ class ToolPluginBindingService:
                         # different external references are claiming the same (team, tool, plugin)
                         # triple.  The new reference_id wins (last-caller-wins), but the old
                         # caller's DELETE by reference will now be a no-op.
-                        if (
-                            existing.binding_reference_id
-                            and policy.binding_reference_id
-                            and existing.binding_reference_id != policy.binding_reference_id
-                        ):
+                        if existing.binding_reference_id and policy.binding_reference_id and existing.binding_reference_id != policy.binding_reference_id:
                             logger.warning(
-                                "binding_reference_id ownership transfer: "
-                                "team=%s tool=%s plugin=%s old_ref=%s new_ref=%s — "
-                                "DELETE by old_ref will now be a no-op",
+                                "binding_reference_id ownership transfer: team=%s tool=%s plugin=%s old_ref=%s new_ref=%s — DELETE by old_ref will now be a no-op",
                                 team_id,
                                 tool_name,
                                 policy.plugin_id,
@@ -284,8 +278,7 @@ class ToolPluginBindingService:
         if binding_reference_id:
             if team_id:
                 logger.warning(
-                    "Both team_id=%r and binding_reference_id=%r supplied to list_bindings; "
-                    "team_id will be ignored. Omit team_id when filtering by binding_reference_id.",
+                    "Both team_id=%r and binding_reference_id=%r supplied to list_bindings; team_id will be ignored. Omit team_id when filtering by binding_reference_id.",
                     team_id,
                     binding_reference_id,
                 )

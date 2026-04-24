@@ -33,6 +33,7 @@ from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +165,14 @@ class OAuthManager:
 
         return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
 
-    async def get_access_token(self, credentials: Dict[str, Any]) -> str:
+    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Get access token based on grant type.
 
         Args:
             credentials: OAuth configuration containing grant_type and other params
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -181,7 +185,7 @@ class OAuthManager:
             Client credentials flow:
             >>> import asyncio
             >>> class TestMgr(OAuthManager):
-            ...     async def _client_credentials_flow(self, credentials):
+            ...     async def _client_credentials_flow(self, credentials, ca_certificate=None, client_cert=None, client_key=None):
             ...         return 'tok'
             >>> mgr = TestMgr()
             >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
@@ -209,9 +213,9 @@ class OAuthManager:
         logger.debug(f"Getting access token for grant type: {grant_type}")
 
         if grant_type == "client_credentials":
-            return await self._client_credentials_flow(credentials)
+            return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "password":
-            return await self._password_flow(credentials)
+            return await self._password_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
@@ -236,6 +240,32 @@ class OAuthManager:
         except Exception as exc:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
         return credentials
+
+    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> httpx.Response:
+        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+
+        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
+        is created with the corresponding SSL context so that OAuth token
+        exchange works against self-signed or custom-CA upstream servers.
+        Otherwise the shared HTTP client (which respects the global
+        ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Args:
+            url: Token endpoint URL.
+            data: Form-encoded request body (dict or list of tuples for RFC 8707).
+            ca_certificate: Optional PEM-encoded CA certificate.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            The HTTP response from the token endpoint.
+        """
+        if ca_certificate:
+            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+            async with httpx.AsyncClient(verify=ssl_context) as client:
+                return await client.post(url, data=data, timeout=self.request_timeout)
+        client = await self._get_client()
+        return await client.post(url, data=data, timeout=self.request_timeout)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
@@ -373,11 +403,20 @@ class OAuthManager:
                 redacted[key] = value
         return redacted
 
-    async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
+    async def _client_credentials_flow(
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> str:
         """Machine-to-machine authentication using client credentials.
 
         Args:
             credentials: OAuth configuration with client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -404,8 +443,7 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -425,7 +463,7 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to obtain access token after all retry attempts")
 
-    async def _password_flow(self, credentials: Dict[str, Any]) -> str:
+    async def _password_flow(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Resource Owner Password Credentials flow (RFC 6749 Section 4.3).
 
         This flow is used when the application can directly handle the user's credentials,
@@ -433,6 +471,9 @@ class OAuthManager:
 
         Args:
             credentials: OAuth configuration with client_id, optional client_secret, token_url, username, password
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -472,8 +513,7 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -573,6 +613,84 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
+    async def token_exchange(
+        self,
+        token_url: str,
+        subject_token: str,
+        client_id: str,
+        client_secret: str,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
+        requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
+    ) -> Dict[str, Any]:
+        """RFC 8693 token exchange for on-behalf-of flows.
+
+        Exchanges a subject token (e.g. the gateway's JWT) for a new token
+        scoped to a downstream service, enabling the downstream to act on
+        behalf of the original user.
+
+        Args:
+            token_url: Token endpoint of the authorization server.
+            subject_token: The original user's access token.
+            client_id: Client ID for the gateway.
+            client_secret: Client secret for the gateway.
+            audience: Intended audience for the exchanged token.
+            scope: Requested scope for the exchanged token.
+            requested_token_type: The type of token being requested.
+
+        Returns:
+            Dict with ``access_token``, ``token_type``, and optionally
+            ``expires_in`` and ``scope``.
+
+        Raises:
+            OAuthError: If token exchange fails after all retries.
+        """
+        # Decrypt client secret if encrypted
+        if client_secret:
+            try:
+                settings = get_settings()
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                if encryption.is_encrypted(client_secret):
+                    decrypted = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted:
+                        client_secret = decrypted
+            except Exception as e:
+                logger.warning(f"Failed to decrypt client secret for token exchange: {e}")
+
+        token_data: Dict[str, str] = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": requested_token_type,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if audience:
+            token_data["audience"] = audience
+        if scope:
+            token_data["scope"] = scope
+
+        for attempt in range(self.max_retries):
+            try:
+                client = await self._get_client()
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response.raise_for_status()
+
+                token_response = response.json()
+                if "access_token" not in token_response:
+                    raise OAuthError(f"No access_token in token exchange response: {token_response}")
+
+                logger.info("Successfully performed RFC 8693 token exchange")
+                return token_response
+
+            except httpx.HTTPError as e:
+                logger.warning(f"Token exchange attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
+                await asyncio.sleep(2**attempt)
+
+        raise OAuthError("Token exchange failed after all retry attempts")
+
     async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
@@ -607,7 +725,9 @@ class OAuthManager:
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
-    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def complete_authorization_code_flow(
+        self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
@@ -615,6 +735,9 @@ class OAuthManager:
             code: Authorization code from callback
             state: State parameter for CSRF validation
             credentials: OAuth configuration
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Dict containing success status, user_id, and expiration info
@@ -649,7 +772,7 @@ class OAuthManager:
             logger.warning("User context (app_user_email) missing from OAuth state; no token_storage configured — proceeding without binding. gateway_id=%s", gateway_id)
 
         # Exchange code for tokens with PKCE code_verifier
-        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
+        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
 
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
@@ -1257,13 +1380,21 @@ class OAuthManager:
         query_string = urlencode(params, doseq=True)
         return f"{authorization_url}?{query_string}"
 
-    async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str, code_verifier: str = None) -> Dict[str, Any]:
+    async def _exchange_code_for_tokens(
+        self, credentials: Dict[str, Any], code: str, code_verifier: str = None, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Exchange authorization code for tokens with PKCE support.
 
         Args:
             credentials: OAuth configuration
             code: Authorization code from callback
             code_verifier: Optional PKCE code verifier (RFC 7636)
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+                When provided, creates an isolated HTTP client with custom SSL context
+                instead of using the shared client. This enables OAuth token exchange
+                with self-signed or custom CA upstream OAuth servers.
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Token response dictionary
@@ -1311,8 +1442,7 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -1332,12 +1462,25 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    async def refresh_token(self, refresh_token: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def refresh_token(
+        self,
+        refresh_token: str,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Refresh an expired access token using a refresh token.
 
         Args:
             refresh_token: The refresh token to use
             credentials: OAuth configuration including client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate (PEM format or file path) to use
+                instead of system trust store. When provided, creates an isolated HTTP client
+                instead of using the shared client. This enables OAuth token refresh
+                with self-signed or custom CA upstream OAuth servers.
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Dict containing new access_token, optional refresh_token, and expires_in
@@ -1388,8 +1531,7 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 if response.status_code == 200:
                     token_response = self._parse_token_response(response)
 

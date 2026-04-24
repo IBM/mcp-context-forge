@@ -75,6 +75,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -253,8 +254,16 @@ class ResourceService(BaseService):
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
-        # Initialize mime types
+        # Register MIME types for resource content detection
+        # This runs in __init__ rather than initialize() because:
+        # 1. Many tests create ResourceService instances without calling initialize()
+        # 2. MIME type registration is idempotent and safe at import time
+        # 3. The _detect_mime_type_from_uri method depends on these registrations
         mimetypes.init()
+        if not mimetypes.guess_type("file.md")[0]:
+            mimetypes.add_type("text/markdown", ".md")
+        if not mimetypes.guess_type("file.markdown")[0]:
+            mimetypes.add_type("text/markdown", ".markdown")
 
     async def initialize(self) -> None:
         """Initialize the service."""
@@ -1885,7 +1894,9 @@ class ResourceService(BaseService):
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
-                                    access_token: str = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                    access_token: str = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+                                    )
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
                                     if span:
@@ -1900,6 +1911,14 @@ class ResourceService(BaseService):
                                 headers = {str(k): str(v) for k, v in auth_data.items()}
                             else:
                                 headers = {}
+
+                        # Inject identity propagation headers if user_identity is a UserContext
+                        if user_identity:
+                            # First-Party
+                            from mcpgateway.plugins.framework.models import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
+
+                            if isinstance(user_identity, UserCtx):
+                                headers.update(build_identity_headers(user_identity))
 
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
@@ -2350,6 +2369,10 @@ class ResourceService(BaseService):
 
                             # Prepare headers with gateway auth
                             headers = build_gateway_auth_headers(gateway)
+
+                            # Inject identity propagation headers
+                            if plugin_global_context and plugin_global_context.user_context:
+                                headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
                             # Use MCP SDK to connect and read resource
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):

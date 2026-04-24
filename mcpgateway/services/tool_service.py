@@ -70,6 +70,7 @@ from mcpgateway.plugins.framework import (
     ToolHookType,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
+    UserContext,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
@@ -92,6 +93,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -147,6 +149,41 @@ def _get_tool_lookup_cache():
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
+    """Extract a valid tenant id from a raw tool payload team_id value.
+
+    Empty strings are treated as absent (None): a zero-length tenant prefix
+    would collapse tenant-scoped Redis keys onto the unscoped layout.
+    """
+    if team_id is not None and not isinstance(team_id, str):
+        logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
+        return None
+    return team_id if team_id else None
+
+
+def _apply_tool_payload_to_global_context(
+    global_context: "GlobalContext",
+    tool_gateway_id: Optional[str],
+    app_user_email: Optional[str],
+    payload_tenant_id: Optional[str],
+) -> None:
+    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+
+    Populates server_id, user, and tenant_id on a GlobalContext that was
+    supplied by the plugin manager / middleware — filling gaps the upstream
+    propagation did not cover while never overwriting a value that was
+    already set there. Shared by the two tool-invocation call sites so they
+    stay in lockstep.
+    """
+    if tool_gateway_id and isinstance(tool_gateway_id, str):
+        global_context.server_id = tool_gateway_id
+    if not global_context.user and app_user_email and isinstance(app_user_email, str):
+        global_context.user = app_user_email
+    if not global_context.tenant_id and payload_tenant_id:
+        global_context.tenant_id = payload_tenant_id
+
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
@@ -420,13 +457,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
         text = str(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     try:
         text = repr(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
         pass
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.
@@ -3379,6 +3416,7 @@ class ToolService(BaseService):
         meta_data: Optional[Dict[str, Any]] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        user_context: Optional[UserContext] = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -3394,6 +3432,7 @@ class ToolService(BaseService):
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
+            user_context: Optional UserContext for identity propagation.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -3427,6 +3466,11 @@ class ToolService(BaseService):
                     header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
                     if header_value:
                         headers[header_name] = header_value
+
+            # Inject identity propagation headers
+            if user_context:
+                headers.update(build_identity_headers(user_context, gateway))
+                meta_data = build_identity_meta(user_context, meta_data, gateway)
 
             gateway_url = gateway.url
 
@@ -3724,7 +3768,11 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
         if tool is None and has_gateway:
@@ -3787,7 +3835,7 @@ class ToolService(BaseService):
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             else:
                 try:
-                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -3892,17 +3940,21 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        # Derive tenant_id from the tool payload so rate limiting and other
+        # tenant-scoped plugin behaviour works on the fallback path where
+        # middleware didn't run and _propagate_tenant_id never got a chance
+        # to fill it in. Non-string team_id values are ignored defensively.
+        payload_team_id = tool_payload.get("team_id") if tool_payload else None
+        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
+
         if plugin_global_context:
             hook_global_context = plugin_global_context
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                hook_global_context.server_id = tool_gateway_id
-            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                hook_global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
             content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -4400,8 +4452,12 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
@@ -4532,21 +4588,21 @@ class ToolService(BaseService):
 
         # Reuse existing global_context from middleware or create new one
         # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
+        # Derive tenant_id from the tool payload so by_tenant rate limiting
+        # and other tenant-scoped plugin behaviour works on the fallback
+        # path where middleware didn't run. Non-string values are ignored.
+        payload_tenant_id = _extract_tenant_id_from_payload(_tool_team_id)
+
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id using local variable (not ORM access)
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                global_context.server_id = tool_gateway_id
-            # Propagate user email to global context for plugin access
-            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
-                global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(global_context, tool_gateway_id, app_user_email, payload_tenant_id)
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             content_type = request_headers.get("content-type") if request_headers else None
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
@@ -4616,7 +4672,14 @@ class ToolService(BaseService):
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
-                            access_token = await self.oauth_manager.get_access_token(tool_oauth_config)
+                            # REST invoke path: gateway ORM object is still attached to the
+                            # active session, so attribute access is safe here.
+                            access_token = await self.oauth_manager.get_access_token(
+                                tool_oauth_config,
+                                ca_certificate=gateway.ca_certificate if gateway else None,
+                                client_cert=gateway.client_cert if gateway else None,
+                                client_key=gateway.client_key if gateway else None,
+                            )
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
                             logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
@@ -4648,6 +4711,10 @@ class ToolService(BaseService):
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
+
+                    # Inject identity propagation headers for REST tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -4876,7 +4943,9 @@ class ToolService(BaseService):
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
-                                access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                access_token = await self.oauth_manager.get_access_token(
+                                    gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                                )
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -4901,6 +4970,11 @@ class ToolService(BaseService):
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+
+                    # Inject identity propagation headers and meta for MCP tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None

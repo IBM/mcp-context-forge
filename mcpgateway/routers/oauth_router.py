@@ -412,7 +412,7 @@ async def initiate_oauth_flow(
 @oauth_router.get("/callback")
 async def oauth_callback(
     code: Annotated[str | None, Query(description="Authorization code from OAuth provider")] = None,
-    state: Annotated[str, Query(description="State parameter for CSRF protection")] = ...,
+    state: Annotated[str | None, Query(description="State parameter for CSRF protection")] = None,
     error: Annotated[str | None, Query(description="OAuth provider error code")] = None,
     error_description: Annotated[str | None, Query(description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
@@ -510,6 +510,10 @@ async def oauth_callback(
                 status_code=400,
             )
 
+        if not state:
+            logger.warning("OAuth callback missing state parameter")
+            return _invalid_state_response()
+
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
         gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
         if not gateway_id:
@@ -549,7 +553,9 @@ async def oauth_callback(
             # Strip query for auto-derived (RFC 8707 SHOULD NOT)
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
-        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+        )
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 

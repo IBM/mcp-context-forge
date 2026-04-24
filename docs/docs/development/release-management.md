@@ -143,7 +143,6 @@ python .github/tools/update_dependencies.py --file mcp-servers/python/graphviz_s
 python .github/tools/update_dependencies.py --file mcp-servers/python/mcp-rss-search/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/python_sandbox_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/mcp_eval_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/qr_code_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/url_to_markdown_server/pyproject.toml
 python .github/tools/update_dependencies.py --file mcp-servers/python/output_schema_test_server/pyproject.toml
 
@@ -258,7 +257,7 @@ make test-js-coverage
 
 ### 3.4 Frontend CDN dependencies
 
-The Admin UI loads frontend libraries (Tailwind, HTMX, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync:
+The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
 
 | File | What it controls |
 |------|------------------|

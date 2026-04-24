@@ -27,7 +27,7 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 | Layer | Technology | Purpose |
 |-------|------------|---------|
 | **Templating** | Jinja2 | Server-side HTML rendering (44 templates in `mcpgateway/templates/`) |
-| **Interactivity** | HTMX 1.9.10 | AJAX without JavaScript, HTML-over-HTTP patterns |
+| **Interactivity** | HTMX 2.0.3 | AJAX without JavaScript, HTML-over-HTTP patterns (bundled via npm/Vite) |
 | **Reactivity** | Alpine.js 3.x | Lightweight reactive components |
 | **Styling** | Tailwind CSS | Utility-first CSS framework |
 | **Code Editor** | CodeMirror 5.65.18 | Syntax-highlighted editing |
@@ -94,7 +94,7 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-By default, the UI loads vendor libraries from CDNs (Tailwind, HTMX, Alpine.js, etc.). When `MCPGATEWAY_UI_AIRGAPPED=true`:
+By default, the UI loads vendor libraries from CDNs (Tailwind, Alpine.js, etc.). HTMX is bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
 
 - All libraries load from `mcpgateway/static/vendor/`
 - No external network requests for UI assets
@@ -128,7 +128,7 @@ The script downloads to `mcpgateway/static/vendor/`:
 | Library | Version | Size |
 |---------|---------|------|
 | Tailwind CSS | CDN | ~404KB |
-| HTMX | 1.9.10 | ~52KB |
+| HTMX | 2.0.3 | Bundled in main JS (included in bundle size) |
 | CodeMirror | 5.65.18 | ~216KB |
 | Alpine.js | 3.14.1 | ~48KB |
 | Chart.js | 4.4.1 | ~208KB |

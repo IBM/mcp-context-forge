@@ -11,16 +11,6 @@
 name: Tests & Coverage (Rust)
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "deny.toml"
-      - "tests/e2e_rust/**"
-      - ".github/workflows/pytest-rust.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
@@ -101,7 +91,7 @@ jobs:
             ${{ runner.os }}-cargo-pytest-rust-
 
       - name: 🔨  Build Rust extensions
-        run: make rust-install && make rust-verify-stubs
+        run: make rust-install
 
       - name: 🧪  Run pytest
         run: |

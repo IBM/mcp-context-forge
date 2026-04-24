@@ -70,6 +70,7 @@ from mcpgateway.plugins.framework.models import (
     PluginPayload,
     PluginResult,
     PluginViolation,
+    UserContext,
 )
 from mcpgateway.plugins.framework.observability import ObservabilityProvider
 from mcpgateway.plugins.framework.utils import get_attr
@@ -612,7 +613,7 @@ async def _plugin_invalidation_listener() -> None:
         except Exception as exc:
             consecutive_failures += 1
             level = logging.ERROR if consecutive_failures >= 5 else logging.WARNING
-            jitter = random.uniform(0, backoff / 2)
+            jitter = random.uniform(0, backoff / 2)  # nosec B311 - jitter for backoff, not cryptographic
             delay = min(max_backoff, backoff + jitter)
             _logger.log(
                 level,
@@ -740,4 +741,5 @@ __all__ = [
     "ToolPostInvokeResult",
     "ToolPreInvokeResult",
     "ToolPreInvokePayload",
+    "UserContext",
 ]

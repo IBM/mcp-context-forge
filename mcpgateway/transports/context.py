@@ -17,7 +17,7 @@ from __future__ import annotations
 
 # Standard
 import contextvars
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Per-request HTTP headers. Set by the streamable-http ASGI layer before
 # dispatching into business logic; read by anything that needs the caller's
@@ -27,3 +27,10 @@ request_headers_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.Contex
 # Authenticated user context for the current request. Mirrors the headers
 # ContextVar — transport layer fills it, service layer reads it.
 user_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+
+# Structured user identity for identity propagation to upstream servers.
+# Populated by _set_user_identity_from_dict() in the transport layer;
+# read by tool/resource/prompt services when building upstream requests.
+from mcpgateway.plugins.framework.models import UserContext  # noqa: E402  # pylint: disable=wrong-import-position
+
+user_identity_var: contextvars.ContextVar[Optional[UserContext]] = contextvars.ContextVar("user_identity", default=None)
