@@ -713,6 +713,7 @@ impl AppState {
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         #[cfg(feature = "rmcp-upstream-client")]
         let rmcp_client = RmcpReqwestClient::builder()
@@ -721,12 +722,20 @@ impl AppState {
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
+            .redirect(reqwest_rmcp::redirect::Policy::none())
             .build()
             .map_err(|err| RuntimeError::Config(format!("rmcp http client error: {err}")))?;
         let db_pool = build_db_pool(config)?;
         let redis_client = build_redis_client(config)?;
         let backend_url_validator = backend_url_validator::BackendUrlValidator::from_config(config)
             .map_err(|e| RuntimeError::Config(format!("Backend URL validator error: {}", e)))?;
+        backend_url_validator
+            .validate_url(&config.backend_rpc_url, "Backend RPC URL (startup)")
+            .map_err(|err| {
+                RuntimeError::Config(format!(
+                    "MCP_RUST_BACKEND_RPC_URL rejected by validator: {err}"
+                ))
+            })?;
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
@@ -6207,6 +6216,8 @@ async fn authorize_server_method_via_backend(
     url: &str,
     method_label: &str,
 ) -> Result<DirectExecutionAuthorization, Response> {
+    state.validate_backend_url(url, &format!("Backend {method_label} authz URL"))?;
+
     let backend_response = state
         .client
         .post(url)

@@ -15,24 +15,35 @@
 //! # Threat Model
 //!
 //! **Defends against**:
-//! - Misconfigured `BACKEND_RPC_URL` pointing to cloud metadata endpoints (169.254.169.254)
-//! - Misconfigured backend URLs pointing to internal services
-//! - Accidental exposure of internal network resources
+//! - Misconfigured `MCP_RUST_BACKEND_RPC_URL` pointing to cloud metadata endpoints (e.g., 169.254.169.254)
+//! - Misconfigured backend URLs pointing to blocked internal CIDR ranges
+//! - Accidental exposure of internal network resources via operator error
 //!
-//! **Does NOT defend against**:
-//! - DNS poisoning (assumes operator-controlled infrastructure)
-//! - Sophisticated attacks on the operator's network infrastructure
+//! # Out of Scope (deliberate, NOT a security guarantee)
+//!
+//! These attack vectors are explicitly **not** mitigated by this module. Operators who
+//! need defense against them must pin DNS resolution and/or disable HTTP redirects at the
+//! [`reqwest::Client`] builder level (the shared runtime client already sets
+//! `redirect::Policy::none()`).
+//!
+//! - **DNS rebinding / DNS poisoning**: The allowlist is a string match on the URL host;
+//!   the resolved IP is never checked. A host that is allowlisted at validation time can
+//!   resolve to any IP at connection time.
+//! - **`/etc/hosts` or resolver manipulation**: Same as above — no IP-level verification.
+//! - **HTTP redirects**: The validator only inspects the initial URL. Redirects are
+//!   neutralized at the client-builder layer via `redirect::Policy::none()`, not here.
 //!
 //! # Design
 //!
 //! Uses a simple allowlist + CIDR blocklist approach:
-//! 1. Parse URL to extract host
-//! 2. Check if host is in allowlist → allow
-//! 3. If host is IP address, check against blocked CIDR ranges → deny if matched
-//! 4. If host is domain not in allowlist → deny (fail-closed)
+//! 1. Parse URL to extract host.
+//! 2. If host is in the allowlist → allow.
+//! 3. If host parses as an IP (after stripping IPv6 brackets, and mapping `::ffff:…`
+//!    IPv4-compatible addresses back to IPv4), check against blocked CIDR ranges → deny
+//!    if matched, allow otherwise.
+//! 4. If host is a domain not in the allowlist → deny (fail-closed).
 //!
-//! No DNS resolution is performed, keeping the implementation simple and avoiding
-//! complexity around DNS caching, DNS errors, and DNS-based attacks.
+//! No DNS resolution is performed — see "Out of Scope" above.
 
 use ipnetwork::IpNetwork;
 use std::{collections::HashSet, net::IpAddr, str::FromStr};
@@ -40,6 +51,21 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::config::RuntimeConfig;
+
+fn parse_host_as_ip(host: &str) -> Option<IpAddr> {
+    let stripped = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip = IpAddr::from_str(stripped).ok()?;
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => Some(IpAddr::V4(v4)),
+            None => Some(IpAddr::V6(v6)),
+        },
+        v4 => Some(v4),
+    }
+}
 
 /// Backend URL validator with allowlist-based host filtering.
 #[derive(Clone, Debug)]
@@ -135,7 +161,6 @@ impl BackendUrlValidator {
             "URL missing host".to_string()
         })?;
 
-        // Check allowlist
         if self.allowed_hosts.contains(host) {
             debug!(
                 "Backend URL for {} approved via allowlist: {}",
@@ -144,8 +169,7 @@ impl BackendUrlValidator {
             return Ok(());
         }
 
-        // If host is an IP address, check against blocked networks
-        if let Ok(ip) = host.parse::<IpAddr>() {
+        if let Some(ip) = parse_host_as_ip(host) {
             for network in &self.blocked_networks {
                 if network.contains(ip) {
                     error!(
@@ -158,7 +182,6 @@ impl BackendUrlValidator {
                     ));
                 }
             }
-            // IP not in any blocked network = allowed
             debug!(
                 "Backend URL for {} approved: IP {} not in blocked networks",
                 description, ip
@@ -166,7 +189,6 @@ impl BackendUrlValidator {
             return Ok(());
         }
 
-        // Domain not in allowlist = reject (fail-closed)
         error!(
             "Backend URL for {} rejected: domain '{}' not in approved hosts",
             description, host
@@ -346,5 +368,51 @@ mod tests {
         let result = BackendUrlValidator::from_config(&config);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid CIDR network"));
+    }
+
+    #[test]
+    fn ipv6_loopback_blocklist_hits_through_brackets() {
+        let config = test_config("", "::1/128", true);
+        let validator = BackendUrlValidator::from_config(&config).expect("validator");
+
+        let result = validator.validate_url("http://[::1]/api", "test");
+        assert!(
+            result.is_err(),
+            "bracketed IPv6 loopback must be caught by CIDR blocklist"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("blocked network"),
+            "expected CIDR rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ipv4_mapped_ipv6_caught_by_ipv4_cidr_block() {
+        let config = test_config("", "169.254.169.254/32", true);
+        let validator = BackendUrlValidator::from_config(&config).expect("validator");
+
+        let result = validator.validate_url("http://[::ffff:169.254.169.254]/metadata", "test");
+        assert!(
+            result.is_err(),
+            "::ffff:169.254.169.254 must be caught by IPv4 CIDR blocklist"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("blocked network"),
+            "expected CIDR rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ipv6_in_allowlist_approved_via_brackets() {
+        let config = test_config("[::1],localhost", "", true);
+        let validator = BackendUrlValidator::from_config(&config).expect("validator");
+
+        let result = validator.validate_url("http://[::1]:4444/rpc", "test");
+        assert!(
+            result.is_ok(),
+            "[::1] allowlisted with brackets should match url::Url::host_str output"
+        );
     }
 }

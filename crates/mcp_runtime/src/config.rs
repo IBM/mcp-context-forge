@@ -182,24 +182,28 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_LOG", default_value = "info")]
     pub log_filter: String,
 
-    #[arg(long, env = "BACKEND_VALIDATION_ENABLED", default_value_t = true)]
+    #[arg(
+        long,
+        env = "MCP_RUST_BACKEND_VALIDATION_ENABLED",
+        default_value_t = true
+    )]
     pub backend_validation_enabled: bool,
 
     #[arg(
         long,
-        env = "BACKEND_ALLOWED_HOSTS",
-        default_value = "localhost,127.0.0.1,0.0.0.0"
+        env = "MCP_RUST_BACKEND_ALLOWED_HOSTS",
+        default_value = "localhost,127.0.0.1,[::1]"
     )]
     pub backend_allowed_hosts: String,
 
     #[arg(
         long,
-        env = "BACKEND_BLOCKED_NETWORKS",
-        default_value = "169.254.169.254/32"
+        env = "MCP_RUST_BACKEND_BLOCKED_NETWORKS",
+        default_value = "169.254.169.254/32,fd00::1/128"
     )]
     pub backend_blocked_networks: String,
 
-    #[arg(long, env = "BACKEND_MAX_URL_LENGTH", default_value_t = 2048)]
+    #[arg(long, env = "MCP_RUST_BACKEND_MAX_URL_LENGTH", default_value_t = 2048)]
     pub backend_max_url_length: usize,
 
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
