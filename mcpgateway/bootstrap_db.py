@@ -45,6 +45,8 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from filelock import FileLock
 from sqlalchemy import create_engine, inspect, or_, text
 from sqlalchemy.engine import Connection
@@ -97,6 +99,62 @@ def _schema_looks_current(inspector) -> bool:
         and _column_exists(inspector, "prompts", "custom_name")
         and _column_exists(inspector, "sso_providers", "jwks_uri")
     )
+
+
+def _alembic_at_head(conn: Connection, cfg: Config) -> bool:
+    """Return True when ``alembic_version`` in the DB matches the script directory head(s).
+
+    Used by ``main()`` to skip the migration advisory lock entirely when no
+    schema work is needed. This is the fast-path that keeps replicas 2..N
+    of a multi-pod deployment from serializing (and potentially hanging)
+    on a lock behind a transaction-pooling connection pooler (issue #4051).
+
+    Any error while probing — missing ``alembic_version`` table, connection
+    issue, unexpected Alembic state — causes this to return ``False`` so
+    the caller falls through to the fully-locked slow path, which handles
+    empty/partial/out-of-date databases explicitly.
+
+    Args:
+        conn: Active SQLAlchemy connection (not necessarily locked).
+        cfg: Alembic Config instance for this project.
+
+    Returns:
+        True if the DB schema is at the Alembic script directory's head;
+        False on mismatch, empty DB, or any error while probing.
+    """
+    try:
+        script_heads = set(ScriptDirectory.from_config(cfg).get_heads())
+        if not script_heads:
+            return False
+        context = MigrationContext.configure(conn)
+        db_heads = set(context.get_current_heads())
+        return bool(db_heads) and db_heads == script_heads
+    except Exception as exc:  # noqa: BLE001 - intentionally broad; fall through to slow path
+        logger.debug("Could not probe alembic head state: %s", exc)
+        return False
+
+
+async def _run_post_migration_bootstrap(conn: Connection) -> None:
+    """Run the idempotent post-migration bootstrap steps.
+
+    These steps (team-visibility normalization, admin user, default roles,
+    orphaned-resource assignment) are designed to be safe to re-run on
+    every startup — each checks for existing state and skips if already
+    populated. They must run on replicas that take the fast-path so that a
+    prior replica crashing mid-bootstrap doesn't leave downstream state
+    unpopulated.
+
+    Args:
+        conn: Active SQLAlchemy connection (locked on the slow path,
+            unlocked on the fast path). Writes are idempotent either way.
+    """
+    updated = normalize_team_visibility(conn)
+    if updated:
+        logger.info(f"Normalized {updated} team record(s) to supported visibility values")
+
+    await bootstrap_admin_user(conn)
+    await bootstrap_default_roles(conn)
+    await bootstrap_resource_assignments(conn)
 
 
 @contextmanager
@@ -706,8 +764,27 @@ async def main() -> None:
     cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = True
 
-    # Use advisory lock to prevent concurrent migrations
+    # Escape '%' characters in URL to avoid configparser interpolation errors
+    # (e.g., URL-encoded passwords like %40 for '@')
+    escaped_url = settings.database_url.replace("%", "%%")
+    cfg.set_main_option("sqlalchemy.url", escaped_url)
+
     try:
+        # Fast path: if the schema is already at the current Alembic head,
+        # skip the migration advisory lock entirely. This is critical for
+        # deployments behind a transaction-pooling connection pooler — the
+        # session-scoped advisory lock can be orphaned across pgbouncer's
+        # backend handoffs, causing N-th pod startup to spin indefinitely
+        # (issue #4051). Replicas 2..N take this branch on normal restarts.
+        with engine.connect() as probe_conn:
+            probe_conn.commit()
+            if _alembic_at_head(probe_conn, cfg):
+                logger.info("Schema already at Alembic head; skipping migration lock")
+                await _run_post_migration_bootstrap(probe_conn)
+                probe_conn.commit()
+                return
+
+        # Slow path: acquire the migration advisory lock and run schema work.
         with engine.connect() as conn:
             # Commit any open transaction on the connection before locking (though it should be fresh)
             conn.commit()
@@ -717,11 +794,6 @@ async def main() -> None:
 
                 # Pass the LOCKED connection to Alembic config
                 cfg.attributes["connection"] = conn
-
-                # Escape '%' characters in URL to avoid configparser interpolation errors
-                # (e.g., URL-encoded passwords like %40 for '@')
-                escaped_url = settings.database_url.replace("%", "%%")
-                cfg.set_main_option("sqlalchemy.url", escaped_url)
 
                 insp = inspect(conn)
                 table_names = insp.get_table_names()
@@ -746,20 +818,7 @@ async def main() -> None:
                         logger.info("Running Alembic migrations to ensure schema is up to date")
                         command.upgrade(cfg, "head")
 
-                # Post-upgrade normalization passes (inside lock to be safe)
-                updated = normalize_team_visibility(conn)
-                if updated:
-                    logger.info(f"Normalized {updated} team record(s) to supported visibility values")
-
-                # Bootstrap admin user after database is ready, using the LOCKED connection
-                await bootstrap_admin_user(conn)
-
-                # Bootstrap default RBAC roles after admin user is created
-                await bootstrap_default_roles(conn)
-
-                # Assign orphaned resources to admin personal team after all setup is complete
-                await bootstrap_resource_assignments(conn)
-
+                await _run_post_migration_bootstrap(conn)
                 conn.commit()  # Ensure all migration changes are permanently committed
 
     except Exception as e:
