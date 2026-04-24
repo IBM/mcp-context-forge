@@ -168,7 +168,6 @@ class RegistryCache:
             >>> cache._enabled
             True
         """
-        # Import settings lazily to avoid circular imports
         try:
             # First-Party
             from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
@@ -182,6 +181,9 @@ class RegistryCache:
             self._gateways_ttl = getattr(settings, "registry_cache_gateways_ttl", 20)
             self._catalog_ttl = getattr(settings, "registry_cache_catalog_ttl", 300)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
+            self._redis_operation_timeout = getattr(settings, "redis_operation_timeout", 0.5)
+            self._redis_failure_threshold = getattr(settings, "redis_circuit_failure_threshold", 3)
+            self._redis_circuit_open_duration = getattr(settings, "redis_circuit_open_duration", 30.0)
         except ImportError:
             cfg = config or RegistryCacheConfig()
             self._enabled = cfg.enabled
@@ -193,6 +195,9 @@ class RegistryCache:
             self._gateways_ttl = cfg.gateways_ttl
             self._catalog_ttl = cfg.catalog_ttl
             self._cache_prefix = "mcpgw:"
+            self._redis_operation_timeout = 0.5
+            self._redis_failure_threshold = 3
+            self._redis_circuit_open_duration = 30.0
 
         # In-memory cache (fallback when Redis unavailable)
         self._cache: Dict[str, CacheEntry] = {}
@@ -210,10 +215,8 @@ class RegistryCache:
         self._redis_hit_count = 0
         self._redis_miss_count = 0
 
-        # Circuit breaker for Redis operations
+        # Circuit breaker state (threshold and cooldown come from settings above).
         self._redis_failure_count = 0
-        self._redis_failure_threshold = 3  # Failures before opening circuit
-        self._redis_circuit_open_duration = 30.0  # Seconds to wait before retry
         self._redis_last_failure_time = 0.0
         self._redis_circuit_open = False
         # Guard used to gate the single half-open probe: while True, other
@@ -224,15 +227,11 @@ class RegistryCache:
         # happens to exist at module-import time (singleton is created at
         # import). _ensure_circuit_lock() creates it on first async use.
         self._circuit_breaker_lock: Optional[asyncio.Lock] = None
-
-        # Cache Redis operation timeout to avoid repeated imports in hot path
-        try:
-            # First-Party
-            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-            self._redis_operation_timeout = settings.redis_operation_timeout
-        except (ImportError, AttributeError):
-            self._redis_operation_timeout = 0.5  # Default fallback
+        # scan_iter traversal on large keysets can legitimately exceed the
+        # per-op timeout; give it 10x room with a 5s floor so delete+publish
+        # aren't silently dropped. Exposed as an attribute so tests can tune
+        # it without waiting for the production floor.
+        self._scan_timeout = max(self._redis_operation_timeout * 10, 5.0)
 
         logger.info(
             f"RegistryCache initialized: enabled={self._enabled}, "
@@ -484,11 +483,21 @@ class RegistryCache:
                 logger.debug("RegistryCache: Redis unavailable, using in-memory cache")
             return None
 
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             if not self._redis_checked:
                 self._redis_checked = True
                 self._redis_available = False
-                logger.debug(f"RegistryCache: Redis unavailable, using in-memory cache: {e}")
+                logger.debug("RegistryCache: Redis client factory unavailable, using in-memory cache: %s", e)
+            return None
+        except _REDIS_CONNECTION_EXCEPTIONS as e:
+            await self._record_failure("factory", f"connection error: {e}", is_probe=False)
+            self._redis_available = False
+            return None
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if not self._redis_checked:
+                self._redis_checked = True
+            self._redis_available = False
+            logger.exception("RegistryCache: Unexpected error from Redis factory, using in-memory cache: %s", e)
             return None
 
     async def get(self, cache_type: str, filters_hash: str = "") -> Optional[Any]:
@@ -621,13 +630,7 @@ class RegistryCache:
                         keys.append(key)
                     return keys
 
-                # scan_iter can legitimately take longer than the per-op timeout
-                # on large keysets (many cached filter variants). Use a 10x
-                # override (or 5s floor) so we don't silently drop the delete
-                # and publish steps — which would leave stale data on peer
-                # workers until TTL expiry.
-                scan_timeout = max(self._redis_operation_timeout * 10, 5.0)
-                keys_to_delete = await self._redis_operation_with_timeout(scan_keys, operation_name="scan_iter", timeout_override=scan_timeout) or []
+                keys_to_delete = await self._redis_operation_with_timeout(scan_keys, operation_name="scan_iter", timeout_override=self._scan_timeout) or []
 
                 for key in keys_to_delete:
                     await self._redis_operation_with_timeout(redis.delete, key, operation_name="delete")
@@ -721,7 +724,13 @@ class RegistryCache:
         """Get cache statistics.
 
         Returns:
-            Dictionary with hit/miss counts and hit rate
+            Dictionary with hit/miss counts and hit rate.
+
+        WARNING:
+            ``redis_circuit_open`` and ``redis_failure_count`` are admin-only
+            diagnostic signals. Do NOT surface them via public ``/health`` or
+            ``/metrics`` endpoints — they reveal internal Redis failure topology
+            that could aid attackers probing for cache-tier weaknesses.
 
         Examples:
             >>> cache = RegistryCache()

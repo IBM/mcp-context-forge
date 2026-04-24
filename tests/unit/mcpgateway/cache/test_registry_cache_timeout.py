@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 import pytest
@@ -149,23 +149,19 @@ async def test_set_operation_timeout():
 
 @pytest.mark.asyncio
 async def test_invalidate_operation_timeout():
-    """Test that Redis invalidate operations timeout properly."""
+    """Test that invalidate() times out the scan cleanly and still clears L1."""
     cache = RegistryCache()
+    cache._scan_timeout = 0.1  # avoid waiting for the production 5s floor
 
-    # Mock Redis client that hangs on scan_iter
-    mock_redis = AsyncMock()
-
-    async def hanging_scan(*args, **kwargs):
+    async def hanging_scan_iter(*args, **kwargs):
         await asyncio.sleep(10)
-        return []
+        yield b""  # unreachable; makes this a true async generator
 
-    mock_redis.scan_iter = MagicMock(return_value=hanging_scan())
+    mock_redis = AsyncMock()
+    mock_redis.scan_iter = hanging_scan_iter
 
     with patch.object(cache, "_get_redis_client", return_value=mock_redis):
-        # Should timeout but still clear in-memory cache
         await cache.invalidate("tools")
-
-        # In-memory cache should be cleared
         assert len([k for k in cache._cache if k.startswith(cache._get_redis_key("tools"))]) == 0
 
 
