@@ -121,14 +121,14 @@ def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: s
 
 
 def get_cached_ssl_context(
-    ca_certificate: str,
+    ca_certificate: str | bytes | None,
     client_cert: str | None = None,
     client_key: str | None = None,
 ) -> ssl.SSLContext:
     """Get or create cached SSL context for a CA certificate.
 
     Args:
-        ca_certificate: CA certificate in PEM format (str or bytes)
+        ca_certificate: Optional CA certificate in PEM format (str or bytes)
         client_cert: Optional client cert path or PEM for mTLS
         client_key: Optional client key path or PEM for mTLS
 
@@ -191,7 +191,8 @@ def get_cached_ssl_context(
 
     # Create new SSL context and configure CA cert
     ctx = ssl.create_default_context()
-    ctx.load_verify_locations(cadata=ca_certificate)
+    if ca_certificate:
+        ctx.load_verify_locations(cadata=ca_certificate)
 
     # Validate mTLS: require both or neither
     if bool(client_cert) != bool(client_key):
