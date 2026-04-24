@@ -401,6 +401,42 @@ method. Once fixed, remove the `xfail_on` from this test.
 
 ---
 
+### GAP-013 — Id-less JSON-RPC messages treated as requests instead of notifications
+
+| | |
+|---|---|
+| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
+| **Tests** | `test_jsonrpc_envelope.py::test_request_without_id_is_rejected_or_treated_as_notification` |
+| **Spec** | [JSON-RPC 2.0 § 4.1 Notification](https://www.jsonrpc.org/specification#notification), referenced by MCP 2025-11-25 base protocol (REQ-007, REQ-008) |
+| **Related** | [#4438](https://github.com/IBM/mcp-context-forge/issues/4438) |
+
+**Observed**: POSTing a JSON-RPC message without an `id` field (e.g.
+`{"jsonrpc":"2.0","method":"ping","params":{}}`) returns a successful
+result envelope with a server-fabricated UUID as the `id`:
+
+```json
+{"jsonrpc": "2.0", "result": {}, "id": "5baca3f1-a093-40f2-b76f-cb4e1afb0c29"}
+```
+
+**Expected**: JSON-RPC 2.0 § 4.1 defines a message without `id` as a
+*Notification* — "the Server MUST NOT reply to a Notification." The
+server should either reject the message (HTTP 4xx) or accept it as a
+notification (HTTP 202 Accepted with no id-bearing body).
+
+**Why**: the gateway's MCP handler (`main.py:10201-10202`) unconditionally
+auto-generates a UUID when `req_id is None`, then processes the message
+as a normal request. This erases the JSON-RPC distinction between
+requests and notifications.
+
+**How to close**: guard the `req_id is None` → `uuid4()` fallback so it
+only fires for messages that already have an `id` field set to a
+non-None value (i.e. the field is present but needs normalization).
+Messages with no `id` at all should be dispatched as notifications
+(return 202, no response envelope). Once fixed, drop the `@pytest.mark.xfail`
+on this test.
+
+---
+
 ## Closed gaps
 
 ### GAP-007 — `tools/list` pagination cap below upstream tool count *(closed 2026-04-18)*
