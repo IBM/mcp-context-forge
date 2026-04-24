@@ -375,12 +375,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         csp_nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = csp_nonce
 
-        # CSP directives without unsafe-inline and unsafe-eval
-        # Use nonce for legitimate inline scripts
+        # CSP directives with nonce-based approach for scripts
+        # Note: style-src uses 'unsafe-inline' without nonce (nonce would disable unsafe-inline)
+        # This is needed for Alpine.js dynamic inline styles and is acceptable security trade-off
+        # 'unsafe-hashes' allows onclick/onload/etc inline event handlers
+        # Scripts still require nonces - no 'unsafe-inline' for script-src (pentesting compliance)
         csp_directives = [
             "default-src 'self'",
-            f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
-            f"style-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+            f"script-src 'self' 'nonce-{csp_nonce}' 'unsafe-hashes' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
             "img-src 'self' data: https:",
             "font-src 'self' data: https://cdnjs.cloudflare.com",
             "connect-src 'self' ws: wss: https:",

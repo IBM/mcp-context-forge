@@ -318,6 +318,13 @@
       crossorigin="anonymous">
     </script>
     {% endif %}
+    <!-- Configure HTMX to use CSP nonce for inline event handlers BEFORE bundle loads -->
+    <script nonce="{{ csp_nonce(request) }}">
+      // HTMX needs the nonce configured before it processes any elements
+      // This allows hx-on:* attributes to work with strict CSP
+      window.htmxConfig = window.htmxConfig || {};
+      window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
+    </script>
     <script src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
