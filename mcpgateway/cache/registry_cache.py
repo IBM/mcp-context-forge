@@ -29,48 +29,29 @@ import hashlib
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Optional
+
+# Third-Party
+from redis import exceptions as redis_exceptions
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class _RedisExceptionBuckets:
-    """Exception types that indicate Redis connectivity problems vs bugs.
-
-    Grouped into `timeout` (wait_for / redis TimeoutError) and `connection`
-    (network / redis RedisError) so the circuit breaker can match both
-    stdlib and redis-py classes. redis-py's ConnectionError / TimeoutError
-    do NOT inherit from the stdlib counterparts, so they must be listed
-    explicitly or the breaker is silently bypassed on real Redis failures.
-    """
-
-    timeout: Tuple[Type[BaseException], ...]
-    connection: Tuple[Type[BaseException], ...]
-
-
-def _build_redis_exception_buckets() -> _RedisExceptionBuckets:
-    """Build the exception-type buckets at import time.
-
-    Returns:
-        _RedisExceptionBuckets: Populated with stdlib types plus redis-py
-        types when redis is installed. See the class docstring for why the
-        redis-py types must be listed explicitly.
-    """
-    timeout_types: Tuple[Type[BaseException], ...] = (asyncio.TimeoutError,)
-    conn_types: Tuple[Type[BaseException], ...] = (ConnectionError, OSError)
-    try:
-        # Third-Party
-        from redis import exceptions as _redis_exceptions  # pylint: disable=import-outside-toplevel
-
-        timeout_types = timeout_types + (_redis_exceptions.TimeoutError,)
-        conn_types = conn_types + (_redis_exceptions.ConnectionError, _redis_exceptions.RedisError)
-    except ImportError:
-        pass
-    return _RedisExceptionBuckets(timeout=timeout_types, connection=conn_types)
-
-
-_REDIS_EXCEPTIONS = _build_redis_exception_buckets()
+# Exception types that indicate a Redis connectivity problem (as opposed
+# to a programming bug). These MUST be listed explicitly because redis-py's
+# ConnectionError / TimeoutError do NOT inherit from the stdlib equivalents,
+# so a bare `except ConnectionError` silently misses real Redis failures.
+# Module-level tuple literals so pylint can statically resolve the types in
+# except clauses (avoids E0712 catching-non-exception). The `redis` module
+# is imported as `redis_exceptions` to avoid shadowing
+# `redis = await self._get_redis_client()` locals (pylint W0621).
+_REDIS_TIMEOUT_EXCEPTIONS = (asyncio.TimeoutError, redis_exceptions.TimeoutError)
+_REDIS_CONNECTION_EXCEPTIONS = (
+    ConnectionError,
+    OSError,
+    redis_exceptions.ConnectionError,
+    redis_exceptions.RedisError,
+)
 
 
 @dataclass(frozen=True)
@@ -470,21 +451,21 @@ class RegistryCache:
         try:
             try:
                 result = await asyncio.wait_for(operation(*args, **kwargs), timeout=timeout)
-            except _REDIS_EXCEPTIONS.timeout:
+            except _REDIS_TIMEOUT_EXCEPTIONS:
                 await self._record_failure(operation_name, f"timeout after {timeout}s", lease.is_probe)
                 finished_cleanly = True
                 return None
-            except _REDIS_EXCEPTIONS.connection as exc:
+            except _REDIS_CONNECTION_EXCEPTIONS as exc:
                 await self._record_failure(operation_name, f"connection error: {exc}", lease.is_probe)
                 finished_cleanly = True
                 return None
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.exception("Unexpected error in Redis %s: %s", operation_name, exc)
                 return None
-            else:
-                await self._record_success(lease.is_probe)
-                finished_cleanly = True
-                return result
+            # Fall-through (try succeeded; all except branches returned).
+            await self._record_success(lease.is_probe)
+            finished_cleanly = True
+            return result
         finally:
             # Safety net for CancelledError (BaseException) and any path
             # that bypassed the record_* calls above. Idempotent: releases
@@ -518,7 +499,7 @@ class RegistryCache:
             self._redis_checked = True
             self._redis_available = False
             return None
-        except _REDIS_EXCEPTIONS.connection as e:
+        except _REDIS_CONNECTION_EXCEPTIONS as e:
             await self._record_failure("factory", f"connection error: {e}", is_probe=False)
             self._redis_checked = True
             self._redis_available = False
