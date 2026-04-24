@@ -352,3 +352,76 @@ def test_bootstrap_db_skips_lock_when_schema_already_at_head(
         )
     finally:
         holder.close()
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(60)
+def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second ``bootstrap_db.main()`` call must not touch ``advisory_lock``.
+
+    The first invocation populates the schema and stamps ``alembic_version``.
+    The second should recognise the DB is at head and take the fast-path
+    exclusively — never entering the ``advisory_lock`` context manager at
+    all. Pins the fast-path wiring against regressions that would re-route
+    bootstrap through the lock even when no schema work is needed.
+    """
+    # Standard
+    import asyncio
+    import time
+    from contextlib import contextmanager
+
+    # First-Party
+    from mcpgateway import bootstrap_db as bootstrap_module  # pylint: disable=import-outside-toplevel
+    from mcpgateway import config as mcp_config  # pylint: disable=import-outside-toplevel
+
+    _drop_public_schema()
+
+    monkeypatch.setattr(
+        mcp_config.settings,
+        "database_url",
+        _as_sqlalchemy_url(PGBOUNCER_URL),
+    )
+    monkeypatch.setattr(mcp_config.settings, "email_auth_enabled", False)
+
+    # First call: real advisory_lock (slow path on empty DB is expected).
+    asyncio.run(bootstrap_module.main())
+
+    # Install a spy that wraps the real advisory_lock so we can assert
+    # whether the second call entered it. We keep the wrapped behavior
+    # (rather than replacing with a no-op) so that if the spy IS hit, the
+    # test can still tear down cleanly.
+    advisory_lock_entries: list[object] = []
+    original_advisory_lock = bootstrap_module.advisory_lock
+
+    @contextmanager
+    def spy_advisory_lock(conn: object):
+        advisory_lock_entries.append(conn)
+        with original_advisory_lock(conn):  # type: ignore[arg-type]
+            yield
+
+    monkeypatch.setattr(bootstrap_module, "advisory_lock", spy_advisory_lock)
+
+    # Second call: schema is at head, fast-path should fire exclusively.
+    start = time.monotonic()
+    asyncio.run(bootstrap_module.main())
+    elapsed = time.monotonic() - start
+
+    assert advisory_lock_entries == [], (
+        f"bootstrap_db.main() entered advisory_lock {len(advisory_lock_entries)} "
+        f"time(s) on the second invocation, when the schema was already at head. "
+        f"Expected zero entries via the fast-path. This is a regression of the "
+        f"issue #4051 fast-path."
+    )
+
+    assert elapsed < 3.0, (
+        f"Second bootstrap_db.main() took {elapsed:.1f}s; expected < 3s via the "
+        f"fast-path. Either the probe connection or the post-migration bootstrap "
+        f"has acquired hidden cost — investigate before relaxing this threshold."
+    )
+
+    assert _count_advisory_locks_held(42_424_242_424_242) == 0, (
+        "Fast-path must not leave any advisory locks held after bootstrap_db "
+        "completes."
+    )
