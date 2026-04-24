@@ -181,11 +181,28 @@ Test-specific TypeScript configuration:
 - **[`src/vitest.d.ts`](./src/vitest.d.ts)** - Global type declarations for test utilities
 - **[`vitest.config.ts`](./vitest.config.ts)** - Vitest configuration with jsdom environment
 
+## End-to-End Testing
+
+End-to-end tests live in [`e2e/`](./e2e/) and are written in TypeScript with
+Playwright. They run against the Vite dev server and stub backend API calls
+with `page.route()`, so no Python gateway is required.
+
+```bash
+npm run e2e:install   # Install Playwright browsers (one-time)
+npm run e2e           # Headless run
+npm run e2e:ui        # Interactive UI mode
+npm run e2e:debug     # Playwright Inspector
+npm run e2e:report    # Open the last HTML report
+```
+
+See [`e2e/README.md`](./e2e/README.md) for layout, fixtures, and guidelines.
+
 ## CI/CD
 
 ### GitHub Actions
 
 Tests and linting run automatically on pull requests via [`.github/workflows/client-lint-test.yml`](../.github/workflows/client-lint-test.yml).
+E2E tests run via [`.github/workflows/client-e2e.yml`](../.github/workflows/client-e2e.yml).
 
 **Workflow Steps:**
 
@@ -243,6 +260,11 @@ client/
 | `npm run test:run`      | Run tests once (CI mode)         |
 | `npm run test:ui`       | Run tests with UI                |
 | `npm run test:coverage` | Generate coverage report         |
+| `npm run e2e`           | Run Playwright E2E tests         |
+| `npm run e2e:ui`        | Playwright UI mode               |
+| `npm run e2e:debug`     | Playwright Inspector             |
+| `npm run e2e:install`   | Install Playwright browsers      |
+| `npm run e2e:report`    | Open last Playwright report      |
 
 ## Internationalization (i18n)
 
