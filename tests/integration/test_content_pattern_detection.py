@@ -172,9 +172,9 @@ class TestXSSPatternDetection:
         assert "detail" in data
         detail = data["detail"]
         assert "violation_type" in detail
-        assert detail["violation_type"] == "xss_script_tag"
-        assert "pattern" in detail
-        assert "validation_mode" in detail
+        assert detail["violation_type"] == "xss"
+        assert "content_type" in detail
+        assert "message" in detail
 
     def test_resource_blocks_event_handler(self, client, auth_headers):
         """Test that resources with event handlers are blocked."""
@@ -183,7 +183,7 @@ class TestXSSPatternDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "xss_event_handler"
+        assert data["detail"]["violation_type"] == "xss"
 
     def test_resource_blocks_javascript_protocol(self, client, auth_headers):
         """Test that resources with javascript: protocol are blocked."""
@@ -192,7 +192,7 @@ class TestXSSPatternDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "xss_javascript_protocol"
+        assert data["detail"]["violation_type"] == "xss"
 
     def test_prompt_blocks_script_tag(self, client, auth_headers):
         """Test that prompts with <script> tags are blocked."""
@@ -201,7 +201,7 @@ class TestXSSPatternDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "xss_script_tag"
+        assert data["detail"]["violation_type"] == "xss"
 
 
 class TestTemplateInjectionDetection:
@@ -214,7 +214,7 @@ class TestTemplateInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "template_injection_jinja"
+        assert data["detail"]["violation_type"] == "template_injection"
 
     def test_resource_blocks_expression_evaluation(self, client, auth_headers):
         """Test that resources with ${} expressions are blocked."""
@@ -223,7 +223,7 @@ class TestTemplateInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "template_injection_expression"
+        assert data["detail"]["violation_type"] == "template_injection"
 
     def test_prompt_blocks_template_syntax(self, client, auth_headers):
         """Test that prompts with template injection are blocked."""
@@ -232,7 +232,7 @@ class TestTemplateInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "template_injection_jinja"
+        assert data["detail"]["violation_type"] == "template_injection"
 
 
 class TestCommandInjectionDetection:
@@ -245,7 +245,7 @@ class TestCommandInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "command_injection_shell"
+        assert data["detail"]["violation_type"] == "command_injection"
 
     def test_resource_blocks_command_chaining(self, client, auth_headers):
         """Test that resources with command chaining are blocked."""
@@ -254,7 +254,7 @@ class TestCommandInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "command_injection_chaining"
+        assert data["detail"]["violation_type"] == "command_injection"
 
     def test_resource_blocks_backtick_execution(self, client, auth_headers):
         """Test that resources with backtick command execution are blocked."""
@@ -263,7 +263,7 @@ class TestCommandInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "command_injection_backtick"
+        assert data["detail"]["violation_type"] == "command_injection"
 
 
 class TestSQLInjectionDetection:
@@ -276,7 +276,7 @@ class TestSQLInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "sql_injection_keywords"
+        assert data["detail"]["violation_type"] == "sql_injection"
 
     def test_resource_blocks_sql_comments(self, client, auth_headers):
         """Test that resources with SQL comment injection are blocked."""
@@ -285,7 +285,7 @@ class TestSQLInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "sql_injection_comment"
+        assert data["detail"]["violation_type"] == "sql_injection"
 
     def test_resource_blocks_sql_string_concat(self, client, auth_headers):
         """Test that resources with SQL string concatenation are blocked."""
@@ -294,7 +294,7 @@ class TestSQLInjectionDetection:
 
         assert response.status_code == 400
         data = response.json()
-        assert data["detail"]["violation_type"] == "sql_injection_string_concat"
+        assert data["detail"]["violation_type"] == "sql_injection"
 
 
 class TestPatternValidationConsistency:
@@ -359,7 +359,7 @@ class TestPatternValidationConsistency:
         assert data["detail"]["error"] == "Malicious pattern detected"
         assert "violation_type" in data["detail"]
         assert data["detail"]["violation_type"] == "xss"
-        assert "pattern_matched" in data["detail"]
+        # NOTE: pattern_matched intentionally omitted from response (CWE-209)
         assert "content_type" in data["detail"]
         assert data["detail"]["content_type"] == "prompt"
         assert "message" in data["detail"]
@@ -513,17 +513,15 @@ class TestErrorMessageClarity:
         data = response.json()
         detail = data["detail"]
 
-        # Verify error structure
+        # Verify error structure (pattern and validation_mode intentionally omitted - CWE-209)
         assert "error" in detail
         assert "message" in detail
         assert "violation_type" in detail
-        assert "pattern" in detail
-        assert "validation_mode" in detail
+        assert "content_type" in detail
 
         # Verify error message is human-readable
         message = detail["message"]
-        assert "malicious pattern" in message.lower()
-        assert "xss" in message.lower()
+        assert "malicious pattern" in message.lower() or "potentially malicious" in message.lower()
 
     def test_multiple_patterns_reported_clearly(self, client, auth_headers):
         """Test that content with multiple violations is reported clearly."""
