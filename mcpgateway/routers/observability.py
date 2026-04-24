@@ -9,6 +9,7 @@ Provides REST endpoints for querying traces, spans, events, and metrics.
 """
 
 # Standard
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -23,6 +24,8 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 
@@ -646,7 +649,7 @@ async def export_traces(
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
-    except (ValueError, Exception) as e:
+    except (ValueError, Exception):
         logger.exception("Trace export failed")
         raise HTTPException(status_code=400, detail="Export failed")
 

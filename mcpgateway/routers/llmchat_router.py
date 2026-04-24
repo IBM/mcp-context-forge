@@ -828,9 +828,9 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         # Build and validate configuration
         try:
             config = build_config(input_data)
-        except ValueError as ve:
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid configuration")
-        except Exception as config_error:
+        except Exception:
             raise HTTPException(status_code=400, detail="Configuration error")
 
         # Store user configuration
@@ -843,15 +843,15 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
 
             # Clear chat history on new connection
             await chat_service.clear_history()
-        except ConnectionError as ce:
+        except ConnectionError:
             # Clean up partial state
             await delete_user_config(user_id)
             raise HTTPException(status_code=503, detail="Failed to connect to MCP server. Please verify the server URL and authentication.")
-        except ValueError as ve:
+        except ValueError:
             # Clean up partial state
             await delete_user_config(user_id)
             raise HTTPException(status_code=400, detail="Invalid LLM configuration")
-        except Exception as init_error:
+        except Exception:
             # Clean up partial state
             await delete_user_config(user_id)
             raise HTTPException(status_code=500, detail="Service initialization failed")
@@ -1084,10 +1084,10 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                     "tool_invocations": result["tool_invocations"],
                     "elapsed_ms": result["elapsed_ms"],
                 }
-            except RuntimeError as re:
+            except RuntimeError:
                 raise HTTPException(status_code=503, detail="Chat service error")
 
-    except ConnectionError as ce:
+    except ConnectionError:
         raise HTTPException(status_code=503, detail="Lost connection to MCP server. Please reconnect.")
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")

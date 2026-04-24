@@ -434,7 +434,7 @@ async def send_request_to_session(
         await session.send_message(message)
         return {"status": "sent", "session_id": session_id}
     except Exception as e:
-        logger.debug("Failed to send request to session %s: %s", session_id, e)
+        LOGGER.debug("Failed to send request to session %s: %s", session_id, e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
 
 

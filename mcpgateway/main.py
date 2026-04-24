@@ -2410,7 +2410,7 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> ORJSONResponse:
     """Catch-all handler for unhandled exceptions.
 
     Logs the full exception server-side and returns a generic message to the
@@ -2419,7 +2419,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> ORJSO
 
     Args:
         request: The incoming request.
-        exc: The unhandled exception.
+        _exc: The unhandled exception (unused; logged via logger.exception context).
 
     Returns:
         ORJSONResponse: 500 response with a generic error message.

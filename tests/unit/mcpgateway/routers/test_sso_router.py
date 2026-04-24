@@ -163,7 +163,7 @@ async def test_initiate_sso_login_invalid_scopes(monkeypatch: pytest.MonkeyPatch
         await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes="admin", db=MagicMock())
 
     assert excinfo.value.status_code == 400
-    assert "Invalid scopes requested: admin" in str(excinfo.value.detail)
+    assert "Invalid OAuth authorization request" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio

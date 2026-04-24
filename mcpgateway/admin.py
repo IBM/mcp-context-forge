@@ -15288,7 +15288,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         # Parse request data
         try:
             data = await _read_request_json(request)
-        except ValueError as e:
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid JSON in request body")
 
         # Extract import data
