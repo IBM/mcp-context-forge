@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.services_auth import decode_auth
 
 # Header name used by clients to target a specific gateway for direct_proxy mode.
@@ -73,16 +74,12 @@ async def check_gateway_access(
     gateway_team_id = gateway.team_id if hasattr(gateway, "team_id") else None
     gateway_owner_email = gateway.owner_email if hasattr(gateway, "owner_email") else None
 
-    # Public gateways are accessible by everyone
     if visibility == "public":
         return True
 
-    # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-    # This happens when is_admin=True and no team scoping in token
-    if token_teams is None and user_email is None:
+    if is_admin_bypass_granted(db, user_email, token_teams):
         return True
 
-    # No user context (but not admin) = deny access to non-public gateways
     if not user_email:
         return False
 

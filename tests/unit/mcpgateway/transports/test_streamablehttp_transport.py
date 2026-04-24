@@ -736,9 +736,12 @@ async def test_call_tool_header_direct_proxy_preserves_is_error(monkeypatch):
     u_token = user_context_var.set({"email": "user@example.com", "teams": ["team1"], "is_authenticated": True, "is_admin": False})
 
     try:
+        # This test verifies is_error preservation, not RBAC.  Bypass the
+        # streamable RBAC check so we exercise the direct-proxy egress path.
         with (
             patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
             patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True)),
             patch.object(tool_service, "invoke_tool_direct", mock_invoke_direct),
         ):
             result = await call_tool("mytool", {"foo": "bar"})
@@ -7038,9 +7041,9 @@ async def test_handle_streamable_http_get_bus_unavailable_returns_503(monkeypatc
     """ADR-052: when the event bus raises after the listener is claimed, return 503 and release the claim."""
     # First-Party
     from mcpgateway.services.session_affinity import (
-        ListenerClaimResult,
         get_session_affinity,
         init_session_affinity,
+        ListenerClaimResult,
     )
     from mcpgateway.transports.server_event_bus import reset_server_event_bus
 
@@ -7352,8 +7355,8 @@ def test_resolve_intercept_target_swallows_service_not_initialized():
     request response. The narrow catch is a deliberate guard.
     """
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import _resolve_intercept_target  # pylint: disable=import-outside-toplevel
     import mcpgateway.transports.streamablehttp_transport as transport_mod  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _resolve_intercept_target  # pylint: disable=import-outside-toplevel
 
     # Bypass the cached module ref so the test patches the live import.
     transport_mod._notification_service_module = None
@@ -7597,9 +7600,9 @@ async def test_handle_streamable_http_get_heartbeat_loss_closes_stream_then_recl
     """
     # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
-        ListenerClaimResult,
         get_session_affinity,
         init_session_affinity,
+        ListenerClaimResult,
     )
     from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
 
@@ -7663,14 +7666,18 @@ async def test_handle_streamable_http_get_heartbeat_loss_closes_stream_then_recl
 @pytest.mark.asyncio
 async def test_handle_streamable_http_get_replays_from_last_event_id(monkeypatch):
     """ADR-052 resume: ``Last-Event-Id`` causes replay of buffered events on connect."""
-    # First-Party
+    # Third-Party
     from mcp.types import JSONRPCMessage, JSONRPCNotification
+
+    # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import (
         get_server_event_bus,
         reset_server_event_bus,
     )
 
     await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
 
     sdk = _CountingSessionManager()
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
@@ -7812,8 +7819,10 @@ async def test_handle_streamable_http_get_preempt_then_reclaim_replays_gap_event
     loses messages whenever a heartbeat-loss preemption races with a
     publish.
     """
-    # First-Party
+    # Third-Party
     from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
+
+    # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
         get_session_affinity,
         init_session_affinity,
@@ -15450,6 +15459,7 @@ class TestProxyReadResourceMetaInjection:
         the output dict has "_meta" as the field key, which is then correctly overwritten with the
         caller-supplied metadata before model_validate is called.
         """
+        # Third-Party
         from mcp.types import ReadResourceRequestParams
 
         meta_data = {"trace_id": "abc", "request_id": "123"}
@@ -15476,6 +15486,7 @@ class TestDirectProxyValidatesMeta:
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_rejects_oversized_meta(self, monkeypatch):
         """meta_data must be validated before _proxy_read_resource_to_gateway is called (Finding 1 / CWE-400)."""
+        # First-Party
         from mcpgateway.common.validators import META_MAX_KEYS
         from mcpgateway.transports.streamablehttp_transport import _validate_meta_data
 
@@ -15486,6 +15497,7 @@ class TestDirectProxyValidatesMeta:
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_rejects_list_of_dicts_depth_bypass(self, monkeypatch):
         """List-of-dicts depth bypass must be caught before _proxy_read_resource_to_gateway (Finding 1/3 / CWE-400)."""
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import _validate_meta_data
 
         hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
@@ -15612,8 +15624,8 @@ async def test_dispatch_peek_outcome_intercepted_emits_202():
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
         _BodyPeekResult,
-        _PeekDispatchOutcome,
         _dispatch_peek_outcome,
+        _PeekDispatchOutcome,
     )
 
     send, messages = _make_send_collector()
@@ -15641,8 +15653,8 @@ async def test_dispatch_peek_outcome_disconnected_returns_aborted(caplog):
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
         _BodyPeekResult,
-        _PeekDispatchOutcome,
         _dispatch_peek_outcome,
+        _PeekDispatchOutcome,
     )
 
     send, messages = _make_send_collector()
@@ -15671,8 +15683,8 @@ async def test_dispatch_peek_outcome_too_large_logs_and_falls_through(caplog):
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (  # pylint: disable=import-outside-toplevel
         _BodyPeekResult,
-        _PeekDispatchOutcome,
         _dispatch_peek_outcome,
+        _PeekDispatchOutcome,
     )
 
     send, _messages = _make_send_collector()
@@ -15759,8 +15771,8 @@ async def test_handle_get_stream_session_affinity_not_initialized_returns_503(mo
     """Lines 3315, 3320-3327: SessionAffinityNotInitializedError → 503."""
     # First-Party
     import mcpgateway.services.session_affinity as sa_mod  # pylint: disable=import-outside-toplevel
-    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
 
     await reset_server_event_bus()
     # Force the "not initialized" condition by clearing the singleton.
@@ -15798,12 +15810,12 @@ async def test_handle_get_stream_claim_unavailable_returns_503(monkeypatch):
     """Lines 3348-3354: ListenerClaimResult.UNAVAILABLE → 503 with retry hint."""
     # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
-        ListenerClaimResult,
         get_session_affinity,
         init_session_affinity,
+        ListenerClaimResult,
     )
-    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
 
     await reset_server_event_bus()
     init_session_affinity(enable_notifications=False)
@@ -15848,8 +15860,8 @@ async def test_handle_get_stream_unreachable_claim_variant_triggers_assert_never
         get_session_affinity,
         init_session_affinity,
     )
-    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _handle_get_stream  # pylint: disable=import-outside-toplevel
 
     await reset_server_event_bus()
     init_session_affinity(enable_notifications=False)
@@ -15886,8 +15898,8 @@ async def test_handle_get_stream_event_gen_handles_backlog_overflow(monkeypatch,
     # First-Party
     from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
-        ListenerBacklogOverflow,
         get_server_event_bus,
+        ListenerBacklogOverflow,
         reset_server_event_bus,
     )
 
@@ -16274,9 +16286,9 @@ async def test_handle_get_stream_gauge_dec_exception_is_logged(monkeypatch, capl
 async def test_handle_get_stream_heartbeat_task_drain_exception_is_logged(monkeypatch, caplog):
     """Lines 3524-3525: a heartbeat-task failure during cleanup is logged, not propagated."""
     # First-Party
-    import mcpgateway.transports.streamablehttp_transport as tr_mod  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import reset_server_event_bus  # pylint: disable=import-outside-toplevel
+    import mcpgateway.transports.streamablehttp_transport as tr_mod  # pylint: disable=import-outside-toplevel
 
     await reset_server_event_bus()
     init_session_affinity(enable_notifications=False)

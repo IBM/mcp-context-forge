@@ -5,17 +5,19 @@
 
 # Standard
 from abc import ABC
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Type
 
 # Third-Party
 from sqlalchemy import and_
 from sqlalchemy import exists as sa_exists
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 # First-Party
 from mcpgateway.plugins.framework import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 
 
 class BaseService(ABC):
@@ -63,10 +65,11 @@ class BaseService(ABC):
         """Resolve team membership and apply visibility filtering to a query.
 
         Handles the full access-control flow for list endpoints:
-        1. Returns query unmodified when no auth context is present (admin bypass)
-        2. Resolves effective teams from JWT token_teams or DB lookup
-        3. Suppresses owner matching for public-only tokens (token_teams=[])
-        4. Delegates to _apply_visibility_filter for SQL WHERE construction
+        1. Returns query unmodified for admin bypass (see
+           :func:`~mcpgateway.utils.admin_check.is_admin_bypass_granted`).
+        2. Resolves effective teams from JWT token_teams or DB lookup.
+        3. Suppresses owner matching for public-only tokens (token_teams=[]).
+        4. Delegates to _apply_visibility_filter for SQL WHERE construction.
 
         Args:
             query: SQLAlchemy query to filter
@@ -80,9 +83,9 @@ class BaseService(ABC):
 
         Returns:
             Query with visibility WHERE clauses applied, or unmodified
-            if no auth context is present.
+            when admin bypass is granted.
         """
-        if user_email is None and token_teams is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return query
 
         effective_teams: List[str] = []
@@ -127,22 +130,16 @@ class BaseService(ABC):
         model_cls = self._visibility_model_cls
 
         if team_id:
-            # User requesting specific team - verify access
             if team_id not in token_teams:
                 return query.where(False)
 
-            # Scope results strictly to the requested team
             access_conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
             if user_email:
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))
 
-        # Global listing: public resources visible to everyone
         access_conditions = [model_cls.visibility == "public"]
 
-        # Owner can see their own private resources (but NOT team resources
-        # from teams outside token scope — those are covered by the
-        # token_teams condition below)
         if user_email:
             access_conditions.append(and_(model_cls.owner_email == user_email, model_cls.visibility == "private"))
 
@@ -150,6 +147,59 @@ class BaseService(ABC):
             access_conditions.append(and_(model_cls.team_id.in_(token_teams), model_cls.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
+
+    @staticmethod
+    def _apply_visibility_scope(
+        stmt: Select,
+        model: Type[Any],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        team_ids: List[str],
+        db: Session,
+    ) -> Select:
+        """Apply token/user visibility scope to a SQLAlchemy statement.
+
+        Static because subclasses and sibling services (completion, tag) call
+        it without inheriting from :class:`BaseService`.  The required ``db``
+        parameter is intentional: an optional ``db`` turns out to be a
+        footgun — any caller that forgets it silently loses the admin
+        bypass and re-introduces #4106.
+
+        Semantics:
+
+        - ``token_teams is None and user_email is None`` → unrestricted
+          (auth layer granted admin bypass with no identity).
+        - ``token_teams is None and user_email`` set, user is admin in DB
+          → unrestricted (auth layer granted admin bypass via session).
+        - ``token_teams == []`` (public-only) → public only, **even for
+          DB admins**.  See :mod:`mcpgateway.utils.admin_check` for why.
+        - ``token_teams == [...]`` → public + matching team (+ owner if
+          ``user_email`` set), even for DB admins.
+
+        Args:
+            stmt: SQLAlchemy statement to constrain
+            model: ORM model that includes visibility/team/owner columns
+            user_email: Caller email used for owner visibility
+            token_teams: Explicit token team scope when present
+            team_ids: Effective team IDs for team visibility
+            db: Required database session for the admin bypass check.
+
+        Returns:
+            Scoped SQLAlchemy statement.
+        """
+        if is_admin_bypass_granted(db, user_email, token_teams):
+            return stmt
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        access_conditions = [model.visibility == "public"]
+
+        if not is_public_only_token and user_email:
+            access_conditions.append(model.owner_email == user_email)
+
+        if team_ids:
+            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
+
+        return stmt.where(or_(*access_conditions))
 
     async def _get_plugin_manager(self, server_id: str | None) -> Any:
         """Return the context-scoped plugin manager from the global factory.

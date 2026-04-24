@@ -21,7 +21,7 @@ Examples:
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -161,32 +161,29 @@ class CompletionService:
         user_teams = await team_service.get_user_teams(user_email)
         return [team.id for team in user_teams]
 
-    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
-        """Apply token/user visibility scope to a SQLAlchemy statement.
+    @staticmethod
+    def _apply_visibility_scope(stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Session):
+        """Thin passthrough to :meth:`BaseService._apply_visibility_scope`.
+
+        Kept as a method on this class for API stability with existing
+        callers; the actual logic (including the admin-bypass caller
+        contract) lives in :class:`BaseService`.
 
         Args:
             stmt: SQLAlchemy statement to constrain
-            model: ORM model that includes visibility/team/owner columns
+            model: ORM model with visibility/team/owner columns
             user_email: Caller email used for owner visibility
             token_teams: Explicit token team scope when present
             team_ids: Effective team IDs for team visibility
+            db: Required session for the admin bypass check.
 
         Returns:
             Scoped SQLAlchemy statement.
         """
-        if token_teams is None and user_email is None:
-            return stmt
+        # First-Party
+        from mcpgateway.services.base_service import BaseService  # pylint: disable=import-outside-toplevel
 
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        access_conditions = [model.visibility == "public"]
-
-        if not is_public_only_token and user_email:
-            access_conditions.append(model.owner_email == user_email)
-
-        if team_ids:
-            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
-
-        return stmt.where(or_(*access_conditions))
+        return BaseService._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
     async def _complete_prompt_argument(
         self,
@@ -247,7 +244,7 @@ class CompletionService:
         # Only consider prompts that are enabled and visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
         stmt = select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)  # pylint: disable=comparison-with-callable
-        stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
         stmt = stmt.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id)).limit(1)
         prompt = db.execute(stmt).scalar_one_or_none()
 
@@ -349,7 +346,7 @@ class CompletionService:
         # List matching resources visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
         stmt = select(DbResource).where(DbResource.enabled)
-        stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
         resources = db.execute(stmt).scalars().all()
 
         # Filter by URI pattern

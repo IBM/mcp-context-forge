@@ -30,6 +30,9 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 
+# Local
+from tests.helpers.admin_mocks import install_admin_user
+
 # --------------------------------------------------------------------------- #
 # Fixtures and test helpers                                                   #
 # --------------------------------------------------------------------------- #
@@ -1506,6 +1509,82 @@ class TestResourceSubscriptions:
         async for event in resource_service.subscribe_events(user_email="user@example.com", token_teams=[]):
             events.append(event)
 
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_admin_bypass_yields_private_events(self, resource_service):
+        """Pre-resolved is_admin_bypass=True yields all events including private/team."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://private", "visibility": "private", "owner_email": "other@example.com"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://team", "visibility": "team", "team_id": "other-team"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(
+            user_email="admin@example.com",
+            token_teams=None,
+            is_admin_bypass=True,
+        ):
+            events.append(event)
+
+        # All 3 events (including private owned by another user and team from another team) yielded.
+        assert len(events) == 3
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_admin_bypass_is_sticky_for_stream_lifetime(self, resource_service):
+        """is_admin_bypass is snapshotted at call time — caller controls freshness.
+
+        Documents the TOCTOU contract: subscribe_events does not re-check
+        admin status mid-stream.  Even if the user is demoted after the
+        generator starts, the bypass remains in effect until reconnect.
+        """
+        events_to_emit = [
+            {"type": "resource_updated", "data": {"uri": "resource://private-1", "visibility": "private", "owner_email": "other@example.com"}},
+            {"type": "resource_updated", "data": {"uri": "resource://private-2", "visibility": "private", "owner_email": "other@example.com"}},
+        ]
+
+        async def mock_generator():
+            for event in events_to_emit:
+                yield event
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        # Ensure no admin lookup happens inside subscribe_events (caller resolved it).
+        with patch("mcpgateway.utils.admin_check.is_user_admin") as mock_is_admin:
+            events = []
+            async for event in resource_service.subscribe_events(
+                user_email="admin@example.com",
+                token_teams=None,
+                is_admin_bypass=True,
+            ):
+                events.append(event)
+            mock_is_admin.assert_not_called()
+
+        assert len(events) == 2
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_bypass_false_falls_through_to_filtering(self, resource_service):
+        """is_admin_bypass=False must NOT grant visibility; per-event filtering still applies."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://private", "visibility": "private", "owner_email": "other@example.com"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(
+            user_email="user@example.com",
+            token_teams=[],
+            is_admin_bypass=False,
+        ):
+            events.append(event)
+
+        # Only public event yielded (public-only token).
         assert len(events) == 1
         assert events[0]["data"]["uri"] == "resource://public"
 
@@ -3084,6 +3163,33 @@ class TestResourceAccessAuthorization:
 
         # Admin bypass: both None = unrestricted access
         assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_database_admin_bypass(self, resource_service, mock_db):
+        """User with is_admin=True in database should get bypass ONLY with unrestricted token."""
+        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="admin@test.com", token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_with_narrowed_token_still_narrowed(self, resource_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass (#4106 guard)."""
+        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_with_public_only_token_stays_public_only(self, resource_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public."""
+        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_resource_access_private_denied_to_unauthenticated(self, resource_service, mock_db):

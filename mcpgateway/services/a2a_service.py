@@ -44,6 +44,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -304,8 +305,9 @@ class A2AAgentService(BaseService):
 
         return {team.id: team.name for team in teams}
 
-    def _check_agent_access(
+    async def _check_agent_access(
         self,
+        db: Session,
         agent: DbA2AAgent,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
@@ -320,6 +322,7 @@ class A2AAgentService(BaseService):
         - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
 
         Args:
+            db: Database session for admin lookup
             agent: The agent to check access for
             user_email: User's email for owner matching
             token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
@@ -331,9 +334,7 @@ class A2AAgentService(BaseService):
         if agent.visibility == "public":
             return True
 
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return True
 
         # No user context (but not admin) = deny access to non-public agents
@@ -378,8 +379,7 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
         """
-        # Admin bypass — only when both are unset (pure admin, no email context)
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return None
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
@@ -399,7 +399,7 @@ class A2AAgentService(BaseService):
         query = query.filter(or_(*visibility_filters))
         return [row[0] for row in query.all()]
 
-    def _check_agent_access_by_id(
+    async def _check_agent_access_by_id(
         self,
         db: Session,
         agent_id: str,
@@ -414,7 +414,7 @@ class A2AAgentService(BaseService):
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_id).first()
         if agent is None:
             return False
-        return self._check_agent_access(agent, user_email, token_teams)
+        return await self._check_agent_access(db, agent, user_email, token_teams)
 
     async def register_agent(
         self,
@@ -1056,7 +1056,7 @@ class A2AAgentService(BaseService):
 
         # SECURITY: Check visibility/team access
         # Return 404 (not 403) to avoid leaking existence of private agents
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
         # Delegate conversion and masking to convert_agent_to_read()
@@ -1755,7 +1755,7 @@ class A2AAgentService(BaseService):
         # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
         # Return 404 (not 403) to avoid leaking existence of private agents
         # ═══════════════════════════════════════════════════════════════════════════
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
             if is_name_lookup:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
             raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
@@ -2677,7 +2677,7 @@ class A2AAgentService(BaseService):
         db.refresh(task)
         return self._task_to_wire(task)
 
-    def get_task(
+    async def get_task(
         self,
         db: Session,
         task_id: str,
@@ -2703,11 +2703,11 @@ class A2AAgentService(BaseService):
             return None
         # Enforce agent visibility on the owning agent.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
+        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         return self._task_to_wire(task)
 
-    def cancel_task(
+    async def cancel_task(
         self,
         db: Session,
         task_id: str,
@@ -2733,7 +2733,7 @@ class A2AAgentService(BaseService):
         if task is None:
             return None
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not self._check_agent_access(agent, user_email, token_teams):
+        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         if task.state in ("completed", "failed", "canceled"):
             return self._task_to_wire(task)
