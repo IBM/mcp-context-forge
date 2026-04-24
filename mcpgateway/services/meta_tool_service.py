@@ -83,11 +83,17 @@ class MetaToolService:
         if not tool:
             raise ValueError(f"Tool not found: {tool_name}")
 
-        # Fetch server information
+        # Fetch server information — prefer gateway (MCP backend) over M2M servers
         server_id = None
         server_name = None
-        if tool.servers:
-            # Get first server (tools can be associated with multiple servers)
+        if tool.gateway_id:
+            server_id = tool.gateway_id
+            try:
+                if tool.gateway:
+                    server_name = tool.gateway.name
+            except Exception:
+                pass
+        elif tool.servers:
             server = tool.servers[0]
             server_id = server.id
             server_name = server.name
@@ -102,6 +108,18 @@ class MetaToolService:
         tags_list = tool.tags or []
         if tags_list and isinstance(tags_list[0], dict):
             tags_list = [tag.get("id") or tag.get("label") for tag in tags_list if isinstance(tag, dict)]
+
+        # Inherit tags from gateway if the tool has no tags of its own
+        if not tags_list and tool.gateway_id:
+            try:
+                if tool.gateway and tool.gateway.tags:
+                    gw_tags = tool.gateway.tags
+                    if gw_tags and isinstance(gw_tags[0], dict):
+                        tags_list = [t.get("id") or t.get("label") for t in gw_tags if isinstance(t, dict)]
+                    else:
+                        tags_list = list(gw_tags)
+            except Exception:
+                pass
 
         # Build response
         response = DescribeToolResponse(
@@ -247,7 +265,7 @@ class MetaToolService:
             Tool object or None if not found/accessible
         """
         # Build query with eager loading of relationships
-        query = select(DbTool).options(joinedload(DbTool.servers)).where(DbTool.name == tool_name, DbTool.enabled == True)
+        query = select(DbTool).options(joinedload(DbTool.servers), joinedload(DbTool.gateway)).where(DbTool.name == tool_name, DbTool.enabled == True)
 
         # Apply scope filtering if provided
         # Scope filtering logic:

@@ -36,7 +36,7 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 # First-Party
-from mcpgateway.db import fresh_db_session, get_db, Tool
+from mcpgateway.db import fresh_db_session, Gateway, get_db, Tool
 from mcpgateway.meta_server.schemas import (
     AuthorizeAllGatewaysResponse,
     AuthorizeGatewayResponse,
@@ -552,11 +552,22 @@ class MetaServerService:
             logger.warning(f"Failed to retrieve embedding for tool '{tool_name}': {e}")
 
         if embedding_vector is None:
-            logger.info(f"No embedding found for tool '{tool_name}', returning empty results")
+            logger.info(f"No embedding found for tool '{tool_name}', falling back to keyword similarity")
+            # -- Keyword-based similarity fallback --
+            # Use the reference tool's name tokens and description keywords
+            # to find tools with overlapping vocabulary.
+            similar_results = await self._keyword_similar_tools(
+                reference_tool, tool_name, limit, user_email, token_teams,
+            )
+
+            # Apply scope filtering
+            filtered_results = self._apply_scope_filtering(similar_results, arguments.get("scope"))
+            tool_summaries = self._map_to_tool_summaries(filtered_results)
+
             return GetSimilarToolsResponse(
                 reference_tool=tool_name,
-                similar_tools=[],
-                total_found=0,
+                similar_tools=tool_summaries,
+                total_found=len(tool_summaries),
             ).model_dump(by_alias=True)
 
         # -- Step 3: Query vector search for nearest neighbors --
@@ -626,6 +637,107 @@ class MetaServerService:
     # ------------------------------------------------------------------
     # Helper methods for search and scope filtering
     # ------------------------------------------------------------------
+
+    async def _keyword_similar_tools(
+        self,
+        reference_tool: Any,
+        tool_name: str,
+        limit: int,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> List[ToolSearchResult]:
+        """Find similar tools using keyword overlap when embeddings are unavailable.
+
+        Tokenizes the reference tool's name and description, then scores all
+        other accessible tools by token overlap.  Tools from the same gateway
+        get a small boost since they belong to the same MCP server.
+
+        Args:
+            reference_tool: The DB Tool object used as reference.
+            tool_name: Computed name of the reference tool.
+            limit: Max results to return.
+            user_email: User email for access control.
+            token_teams: Token team IDs for access control.
+
+        Returns:
+            List of ToolSearchResult sorted by similarity score (descending).
+        """
+        ref_desc = (getattr(reference_tool, "description", "") or getattr(reference_tool, "original_description", "") or "").lower()
+        ref_name = tool_name.lower()
+        ref_gateway_id = getattr(reference_tool, "gateway_id", None)
+
+        # Build token set from name + description
+        _re = re  # module-level import already available
+        ref_tokens = set(_re.split(r'[\s\-_/.]+', ref_name))
+        ref_tokens |= {w for w in _re.split(r'[\s\-_/.,:;()]+', ref_desc) if len(w) >= 3}
+        ref_tokens.discard("")
+
+        if not ref_tokens:
+            return []
+
+        # Fetch all accessible tools
+        from mcpgateway.services.tool_service import ToolService as _SimToolService  # pylint: disable=import-outside-toplevel
+
+        _sim_ts = _SimToolService()
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                result = await _sim_ts.list_tools(
+                    db=db, include_inactive=False, limit=0,
+                    user_email=user_email, token_teams=token_teams,
+                )
+                all_tools, _ = result if isinstance(result, tuple) else (result, None)
+            finally:
+                try:
+                    next(db_gen)
+                except StopIteration:
+                    pass
+        except Exception as e:
+            logger.warning(f"Keyword similar tools: failed to list tools: {e}")
+            return []
+
+        scored: List[ToolSearchResult] = []
+        for tool in all_tools:
+            t_name = getattr(tool, "name", "")
+            if t_name == tool_name:
+                continue  # skip self
+
+            t_name_lower = t_name.lower()
+            t_desc = (getattr(tool, "description", "") or "").lower()
+
+            t_tokens = set(_re.split(r'[\s\-_/.]+', t_name_lower))
+            t_tokens |= {w for w in _re.split(r'[\s\-_/.,:;()]+', t_desc) if len(w) >= 3}
+            t_tokens.discard("")
+
+            if not t_tokens:
+                continue
+
+            overlap = ref_tokens & t_tokens
+            if not overlap:
+                continue
+
+            # Jaccard-like score
+            score = len(overlap) / len(ref_tokens | t_tokens)
+
+            # Boost tools from the same gateway (same MCP server)
+            t_gateway = getattr(tool, "gateway_id", None)
+            if ref_gateway_id and t_gateway == ref_gateway_id:
+                score = min(score + 0.1, 1.0)
+
+            scored.append(
+                ToolSearchResult(
+                    tool_name=t_name,
+                    description=getattr(tool, "description", "") or "",
+                    server_id=t_gateway,
+                    server_name=None,
+                    similarity_score=round(score, 3),
+                )
+            )
+
+        # Sort descending by score, take top N
+        scored.sort(key=lambda r: r.similarity_score, reverse=True)
+        return scored[:limit]
 
     def _apply_scope_filtering(
         self,
@@ -703,6 +815,8 @@ class MetaServerService:
         """Batch-fetch tool metadata from the database for scope filtering.
 
         Retrieves tags, visibility, and team_id for the given tool names.
+        When a tool has no tags of its own, it inherits tags from its
+        parent Gateway (MCP server).
 
         Args:
             tool_names: List of tool names to look up.
@@ -715,16 +829,30 @@ class MetaServerService:
 
         metadata: Dict[str, Dict[str, Any]] = {}
         try:
+            from sqlalchemy.orm import joinedload as _jl  # pylint: disable=import-outside-toplevel
+
             db_gen = get_db()
             db = next(db_gen)
             try:
-                tools = db.query(Tool).filter(Tool._computed_name.in_(tool_names)).all()
+                tools = (
+                    db.query(Tool)
+                    .options(_jl(Tool.gateway))
+                    .filter(Tool._computed_name.in_(tool_names))
+                    .all()
+                )
                 for tool in tools:
                     # Extract tag strings from tag objects
                     tags_list = tool.tags or []
                     if tags_list and isinstance(tags_list[0], dict):
-                        # Tags are stored as dicts with 'id' and 'label', extract just the 'id'
                         tags_list = [tag.get("id") or tag.get("label") for tag in tags_list if isinstance(tag, dict)]
+
+                    # Inherit tags from parent gateway when the tool has none
+                    if not tags_list and tool.gateway_id and tool.gateway:
+                        gw_tags = tool.gateway.tags or []
+                        if gw_tags and isinstance(gw_tags[0], dict):
+                            tags_list = [t.get("id") or t.get("label") for t in gw_tags if isinstance(t, dict)]
+                        elif gw_tags:
+                            tags_list = list(gw_tags)
 
                     metadata[tool.name] = {
                         "tags": tags_list,
@@ -904,25 +1032,42 @@ class MetaServerService:
         from mcpgateway.schemas import ToolSearchResult
 
         search_results = []
+        # Keep a created_at lookup for sorting
+        _created_at_map: Dict[str, Any] = {}
         for tool in all_tools:
             # ToolService.list_tools returns ToolRead objects (Pydantic)
             # which have gateway_id but not gateway relationship
             server_id_val = getattr(tool, "gateway_id", None)
+            tool_name_val = tool.name
 
             search_results.append(
                 ToolSearchResult(
-                    tool_name=tool.name,
+                    tool_name=tool_name_val,
                     description=getattr(tool, "description", "") or "",
                     server_id=server_id_val,
                     server_name=None,
                     similarity_score=1.0,  # Not relevant for listing
                 )
             )
+            _created_at_map[tool_name_val] = getattr(tool, "created_at", None)
 
         # -- Step 3: Apply scope filtering (must be last gate) --
         filtered_results = self._apply_scope_filtering(search_results, arguments.get("scope"))
 
-        # -- Step 4: Paginate --
+        # -- Step 4: Sort results --
+        _reverse = sort_order == "desc"
+        if sort_by == "name":
+            filtered_results.sort(key=lambda r: r.tool_name.lower(), reverse=_reverse)
+        elif sort_by == "created_at":
+            # Sort by created_at from the original tool objects
+            _epoch = None  # sentinel for tools missing created_at
+            filtered_results.sort(
+                key=lambda r: _created_at_map.get(r.tool_name) or _epoch,
+                reverse=_reverse,
+            )
+        # else: keep original DB order (default)
+
+        # -- Step 5: Paginate --
         total_count = len(filtered_results)
         paginated = filtered_results[offset : offset + limit]
         has_more = total_count > offset + limit
