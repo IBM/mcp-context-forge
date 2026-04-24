@@ -8,7 +8,6 @@ Tests for the registry cache module.
 """
 
 # Standard
-import asyncio
 import builtins
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +17,7 @@ import orjson
 import pytest
 
 # First-Party
-from mcpgateway.cache.registry_cache import CacheEntry, CacheInvalidationSubscriber, RegistryCache, RegistryCacheConfig, _get_cleanup_timeout
+from mcpgateway.cache.registry_cache import _get_cleanup_timeout, CacheEntry, RegistryCache, RegistryCacheConfig
 
 
 class TestCacheEntry:

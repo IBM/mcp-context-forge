@@ -29,9 +29,45 @@ import hashlib
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
+
+
+# Build the tuple of exception types that indicate a Redis connectivity problem
+# (as opposed to a programming bug). This is evaluated at import time so the
+# circuit breaker can catch the *actual* exception classes raised by redis-py,
+# which do NOT inherit from builtins.ConnectionError / asyncio.TimeoutError.
+def _build_redis_exception_types() -> Tuple[Tuple[Type[BaseException], ...], Tuple[Type[BaseException], ...]]:
+    """Return (timeout_types, connection_types) tuples for circuit-breaker catches.
+
+    Returns:
+        Tuple of (timeout_exception_types, connection_exception_types). Each
+        tuple is suitable for use in an ``except`` clause.
+
+    The returned tuples always include the stdlib types (``asyncio.TimeoutError``,
+    ``ConnectionError``, ``OSError``) and, when redis-py is installed, its
+    ``redis.exceptions.TimeoutError`` / ``redis.exceptions.ConnectionError`` /
+    ``redis.exceptions.RedisError`` so they are counted as real failures.
+    """
+    timeout_types: Tuple[Type[BaseException], ...] = (asyncio.TimeoutError,)
+    conn_types: Tuple[Type[BaseException], ...] = (ConnectionError, OSError)
+    try:
+        # Third-Party
+        from redis import exceptions as _redis_exceptions  # pylint: disable=import-outside-toplevel
+
+        timeout_types = timeout_types + (_redis_exceptions.TimeoutError,)
+        # RedisError is the base class for all redis-py errors; catching it here
+        # ensures real protocol/response failures also count against the breaker.
+        conn_types = conn_types + (_redis_exceptions.ConnectionError, _redis_exceptions.RedisError)
+    except ImportError:
+        # redis is not installed in this environment — the in-memory cache path
+        # will still function; the circuit breaker simply has a narrower catch.
+        pass
+    return timeout_types, conn_types
+
+
+_REDIS_TIMEOUT_EXCEPTIONS, _REDIS_CONNECTION_EXCEPTIONS = _build_redis_exception_types()
 
 
 def _get_cleanup_timeout() -> float:
@@ -180,7 +216,14 @@ class RegistryCache:
         self._redis_circuit_open_duration = 30.0  # Seconds to wait before retry
         self._redis_last_failure_time = 0.0
         self._redis_circuit_open = False
-        self._circuit_breaker_lock = asyncio.Lock()  # Async lock for circuit breaker state
+        # Guard used to gate the single half-open probe: while True, other
+        # callers must treat the circuit as open (prevents thundering herd
+        # when the cooldown expires on a still-down Redis).
+        self._half_open_probe_in_flight = False
+        # Lazy-init to avoid binding asyncio.Lock to whatever event loop
+        # happens to exist at module-import time (singleton is created at
+        # import). _ensure_circuit_lock() creates it on first async use.
+        self._circuit_breaker_lock: Optional[asyncio.Lock] = None
 
         # Cache Redis operation timeout to avoid repeated imports in hot path
         try:
@@ -237,13 +280,133 @@ class RegistryCache:
         filter_str = str(sorted_items)
         return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324
 
-    async def _redis_operation_with_timeout(self, operation: Callable, *args, operation_name: str = "redis_op", **kwargs) -> Optional[Any]:
+    def _ensure_circuit_lock(self) -> asyncio.Lock:
+        """Create the asyncio.Lock lazily on first async use.
+
+        Returns:
+            asyncio.Lock: The singleton circuit-breaker lock bound to the
+            current event loop.
+        """
+        if self._circuit_breaker_lock is None:
+            self._circuit_breaker_lock = asyncio.Lock()
+        return self._circuit_breaker_lock
+
+    async def _acquire_probe_slot(self, operation_name: str, timeout: float) -> Tuple[bool, bool]:
+        """Check the circuit and reserve a probe slot if half-open.
+
+        Args:
+            operation_name: Name of the Redis operation, used for log output.
+            timeout: Configured per-operation timeout; forwarded only so
+                callers that want to log can reuse this context.
+
+        Returns:
+            Tuple ``(allowed, is_probe)`` where ``allowed`` indicates that
+            the caller may execute the Redis operation, and ``is_probe`` is
+            True when this caller holds the exclusive half-open probe slot
+            and must release it in the finish path.
+        """
+        del timeout
+        lock = self._ensure_circuit_lock()
+        log_half_open = False
+        async with lock:
+            if self._redis_circuit_open:
+                if time.time() - self._redis_last_failure_time < self._redis_circuit_open_duration:
+                    allowed, is_probe = False, False
+                elif self._half_open_probe_in_flight:
+                    allowed, is_probe = False, False
+                else:
+                    self._half_open_probe_in_flight = True
+                    allowed, is_probe = True, True
+                    log_half_open = True
+            else:
+                allowed, is_probe = True, False
+        if not allowed:
+            logger.debug("Redis circuit open, skipping %s", operation_name)
+        elif log_half_open:
+            logger.info("Redis circuit half-open, sending single probe via %s", operation_name)
+        return allowed, is_probe
+
+    async def _record_success(self, is_probe: bool) -> None:
+        """Update breaker state after a successful Redis operation.
+
+        Args:
+            is_probe: True when the caller held the half-open probe slot.
+                A successful probe closes the circuit; routine successes
+                merely reset the accumulated failure count.
+        """
+        lock = self._ensure_circuit_lock()
+        circuit_closed_now = False
+        failures_cleared = 0
+        async with lock:
+            if is_probe:
+                self._half_open_probe_in_flight = False
+                if self._redis_circuit_open:
+                    self._redis_circuit_open = False
+                    circuit_closed_now = True
+            if self._redis_failure_count > 0:
+                failures_cleared = self._redis_failure_count
+                self._redis_failure_count = 0
+        if circuit_closed_now:
+            logger.info("Redis circuit closed after successful probe")
+        if failures_cleared > 0:
+            logger.info("Redis recovered after %d failure(s)", failures_cleared)
+
+    async def _record_failure(self, operation_name: str, error_msg: str, is_probe: bool) -> None:
+        """Update breaker state after a Redis timeout or connection error.
+
+        Args:
+            operation_name: Name of the failing operation (for log messages).
+            error_msg: Short description of the failure ("timeout after 0.5s",
+                exception text, etc.).
+            is_probe: True when the caller held the half-open probe slot;
+                a probe failure keeps the circuit open and extends cooldown.
+        """
+        lock = self._ensure_circuit_lock()
+        new_failure_count = 0
+        circuit_opened_now = False
+        async with lock:
+            if is_probe:
+                self._half_open_probe_in_flight = False
+            self._redis_failure_count += 1
+            self._redis_last_failure_time = time.time()
+            new_failure_count = self._redis_failure_count
+            if self._redis_failure_count >= self._redis_failure_threshold and not self._redis_circuit_open:
+                self._redis_circuit_open = True
+                circuit_opened_now = True
+            elif is_probe and not self._redis_circuit_open:
+                self._redis_circuit_open = True
+                circuit_opened_now = True
+        logger.warning(
+            "Redis %s failed: %s (failure %d/%d)",
+            operation_name,
+            error_msg,
+            new_failure_count,
+            self._redis_failure_threshold,
+        )
+        if circuit_opened_now:
+            logger.error(
+                "Redis circuit opened after %d failure(s). Will retry in %.1fs",
+                new_failure_count,
+                self._redis_circuit_open_duration,
+            )
+
+    async def _redis_operation_with_timeout(
+        self,
+        operation: Callable,
+        *args,
+        operation_name: str = "redis_op",
+        timeout_override: Optional[float] = None,
+        **kwargs,
+    ) -> Optional[Any]:
         """Execute Redis operation with timeout and circuit breaker.
 
         Args:
             operation: Async callable to execute
             *args: Positional arguments for operation
             operation_name: Name for logging
+            timeout_override: Override the default per-operation timeout for
+                legitimately slow operations (e.g. ``scan_iter`` on large
+                keysets). Defaults to ``self._redis_operation_timeout``.
             **kwargs: Keyword arguments for operation
 
         Returns:
@@ -256,60 +419,30 @@ class RegistryCache:
             ...     return "result"
             >>> result = asyncio.run(cache._redis_operation_with_timeout(mock_op, operation_name="test"))
         """
-        # Use cached timeout value (set at init)
-        timeout = self._redis_operation_timeout
+        timeout = timeout_override if timeout_override is not None else self._redis_operation_timeout
 
-        # Check circuit breaker with lock to prevent TOCTOU race
-        async with self._circuit_breaker_lock:
-            if self._redis_circuit_open:
-                if time.time() - self._redis_last_failure_time < self._redis_circuit_open_duration:
-                    logger.debug(f"Redis circuit open, skipping {operation_name}")
-                    return None
-                # Half-open: try one operation
-                logger.info("Redis circuit half-open, attempting recovery")
-                self._redis_circuit_open = False
+        allowed, is_probe = await self._acquire_probe_slot(operation_name, timeout)
+        if not allowed:
+            return None
 
         try:
-            # Execute with timeout
             result = await asyncio.wait_for(operation(*args, **kwargs), timeout=timeout)
-
-            # Success: reset failure count with lock
-            async with self._circuit_breaker_lock:
-                if self._redis_failure_count > 0:
-                    logger.info(f"Redis recovered after {self._redis_failure_count} failures")
-                    self._redis_failure_count = 0
-
-            return result
-
-        except asyncio.TimeoutError:
-            async with self._circuit_breaker_lock:
-                self._redis_failure_count += 1
-                self._redis_last_failure_time = time.time()
-                logger.warning(f"Redis {operation_name} timeout after {timeout}s " f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})")
-
-                # Open circuit if threshold reached
-                if self._redis_failure_count >= self._redis_failure_threshold:
-                    self._redis_circuit_open = True
-                    logger.error(f"Redis circuit opened after {self._redis_failure_count} failures. " f"Will retry in {self._redis_circuit_open_duration}s")
-
+        except _REDIS_TIMEOUT_EXCEPTIONS:
+            await self._record_failure(operation_name, f"timeout after {timeout}s", is_probe)
+            return None
+        except _REDIS_CONNECTION_EXCEPTIONS as exc:
+            await self._record_failure(operation_name, f"connection error: {exc}", is_probe)
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.exception("Unexpected error in Redis %s: %s", operation_name, exc)
+            if is_probe:
+                lock = self._ensure_circuit_lock()
+                async with lock:
+                    self._half_open_probe_in_flight = False
             return None
 
-        except (ConnectionError, OSError) as e:
-            # Redis-specific connection errors
-            async with self._circuit_breaker_lock:
-                self._redis_failure_count += 1
-                self._redis_last_failure_time = time.time()
-                logger.warning(f"Redis {operation_name} connection error: {e}")
-
-                if self._redis_failure_count >= self._redis_failure_threshold:
-                    self._redis_circuit_open = True
-
-            return None
-
-        except Exception as e:
-            # Unexpected errors (programming bugs) - log but don't count as Redis failures
-            logger.exception(f"Unexpected error in Redis {operation_name}: {e}")
-            return None
+        await self._record_success(is_probe)
+        return result
 
     async def _get_redis_client(self):
         """Get Redis client if available, with periodic reconnection attempts.
@@ -477,9 +610,6 @@ class RegistryCache:
             try:
                 pattern = f"{prefix}*"
 
-                # Wrap scan_iter with timeout
-                keys_to_delete = []
-
                 async def scan_keys():
                     """Scan Redis keys matching pattern.
 
@@ -491,15 +621,19 @@ class RegistryCache:
                         keys.append(key)
                     return keys
 
-                keys_to_delete = await self._redis_operation_with_timeout(scan_keys, operation_name="scan_iter") or []
+                # scan_iter can legitimately take longer than the per-op timeout
+                # on large keysets (many cached filter variants). Use a 10x
+                # override (or 5s floor) so we don't silently drop the delete
+                # and publish steps — which would leave stale data on peer
+                # workers until TTL expiry.
+                scan_timeout = max(self._redis_operation_timeout * 10, 5.0)
+                keys_to_delete = await self._redis_operation_with_timeout(scan_keys, operation_name="scan_iter", timeout_override=scan_timeout) or []
 
-                # Delete keys with timeout
                 for key in keys_to_delete:
                     await self._redis_operation_with_timeout(redis.delete, key, operation_name="delete")
 
-                # Publish invalidation for other workers
                 await self._redis_operation_with_timeout(redis.publish, "mcpgw:cache:invalidate", f"registry:{cache_type}", operation_name="publish")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning(f"RegistryCache Redis invalidate failed: {e}")
 
     async def invalidate_tools(self) -> None:
