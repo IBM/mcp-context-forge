@@ -32,6 +32,9 @@ from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
 
+# Local
+from tests.helpers.admin_mocks import install_admin_user
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -1761,24 +1764,30 @@ class TestPromptAccessAuthorization:
 
     @pytest.mark.asyncio
     async def test_check_prompt_access_database_admin_bypass(self, prompt_service, mock_db):
-        """User with is_admin=True in database should have full access."""
-        # First-Party
-        from mcpgateway.db import EmailUser
-
+        """User with is_admin=True in database should get bypass ONLY with unrestricted token."""
         private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
 
-        # Mock database user with is_admin=True
-        admin_user = MagicMock(spec=EmailUser)
-        admin_user.email = "admin@test.com"
-        admin_user.is_admin = True
+        install_admin_user(mock_db)
 
-        # Mock the database query to return admin user
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = admin_user
-        mock_db.execute.return_value = mock_result
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=None) is True
 
-        # Admin user should have full access to private prompt
-        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=["some-team"]) is True
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_with_narrowed_token_still_narrowed(self, prompt_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass (#4106 guard)."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_with_public_only_token_stays_public_only(self, prompt_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_prompt_access_private_denied_to_unauthenticated(self, prompt_service, mock_db):
@@ -3098,10 +3107,15 @@ class TestUpdatePromptFieldsAndExceptions:
             return existing
 
         db = MagicMock()
+        # Caller is an admin so the update is allowed; the test only verifies
+        # that the persisted owner (not the payload owner_email) is used in
+        # the WHERE clause.  Explicit is_user_admin patch avoids depending
+        # on MagicMock-is-truthy in the real admin check.
         with (
             patch("mcpgateway.services.prompt_service.get_for_update", side_effect=fake_get_for_update),
             patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+            patch("mcpgateway.utils.admin_check.is_user_admin", return_value=True),
         ):
             mock_cache = AsyncMock()
             mock_cache_fn.return_value = mock_cache

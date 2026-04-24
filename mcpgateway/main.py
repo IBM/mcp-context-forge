@@ -179,6 +179,7 @@ from mcpgateway.transports.streamablehttp_transport import (
     user_context_var,
 )
 from mcpgateway.utils import uaid as uaid_utils
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -6137,13 +6138,20 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is subscribing to resource")
     user_email, token_teams = _get_scoped_resource_access_context(request, user)
 
+    # Pre-resolve admin bypass once using a request-scoped session, keeping
+    # auth context at the HTTP boundary instead of inside the long-lived
+    # SSE generator.  is_admin_bypass_granted encodes the full security
+    # contract (including the token_teams=None guard for #4106).
+    with SessionLocal() as _admin_db:
+        is_admin_bypass = is_admin_bypass_granted(_admin_db, user_email, token_teams)
+
     async def sse_generator():
         """Generate SSE-formatted events from resource subscription changes.
 
         Yields:
             str: SSE-formatted event data.
         """
-        async for event in resource_service.subscribe_events(user_email=user_email, token_teams=token_teams):
+        async for event in resource_service.subscribe_events(user_email=user_email, token_teams=token_teams, is_admin_bypass=is_admin_bypass):
             yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(sse_generator(), media_type="text/event-stream")

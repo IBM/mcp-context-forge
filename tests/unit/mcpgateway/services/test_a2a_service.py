@@ -28,6 +28,9 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.utils.services_auth import encode_auth
 
+# Local
+from tests.helpers.admin_mocks import install_admin_user
+
 
 @pytest.fixture(autouse=True)
 def mock_logging_services():
@@ -1042,6 +1045,21 @@ class TestA2AAgentService:
         # Team-scoped tokens: owner can access their own private agents
         assert await service._check_agent_access(mock_db, agent, user_email="owner@example.com", token_teams=["team-1"]) is True
         assert await service._check_agent_access(mock_db, agent, user_email="other@example.com", token_teams=["team-1"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_agent_access_db_admin_bypass_only_with_unrestricted_token(self, service):
+        """DB admin gets bypass ONLY with token_teams=None; narrowed tokens stay narrowed (#4106)."""
+        private_agent = SimpleNamespace(visibility="private", team_id="secret", owner_email="other@example.com")
+        mock_db = MagicMock()
+        mock_db.info = {}
+        install_admin_user(mock_db, email="admin@example.com")
+
+        # token_teams=None → DB admin bypass applies
+        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=None) is True
+        # token_teams=["x"] → admin narrowed to team scope, cannot see non-team private
+        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=["some-team"]) is False
+        # token_teams=[] → admin is public-only, cannot see private
+        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=[]) is False
 
     def test_apply_visibility_filter(self, service):
         """Test visibility filter branches."""

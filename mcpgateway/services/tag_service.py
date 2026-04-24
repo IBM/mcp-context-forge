@@ -357,15 +357,11 @@ class TagService:
         user_teams = await team_service.get_user_teams(user_email)
         return [team.id for team in user_teams]
 
-    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Optional[Session] = None):
-        """Apply token/user visibility scope to a SQLAlchemy statement.
+    @staticmethod
+    def _apply_visibility_scope(stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Session):
+        """Thin passthrough to :meth:`BaseService._apply_visibility_scope`.
 
-        Semantics mirror list/read endpoints:
-        - token_teams is None and user_email is None -> unrestricted (admin bypass)
-        - user with is_admin=True -> unrestricted (admin bypass)
-        - token_teams == [] -> public-only
-        - token_teams == [...] -> public + matching-team (+ owner if user_email present)
-        - token_teams is None and user_email present -> use DB team memberships
+        See :class:`BaseService` for the full admin-bypass contract.
 
         Args:
             stmt: SQLAlchemy statement to constrain
@@ -373,7 +369,7 @@ class TagService:
             user_email: Caller email used for owner visibility
             token_teams: Explicit token team scope when present
             team_ids: Effective team IDs for team visibility
-            db: Database session for admin check (optional)
+            db: Required session for the admin bypass check.
 
         Returns:
             Scoped SQLAlchemy statement.
@@ -381,9 +377,7 @@ class TagService:
         # First-Party
         from mcpgateway.services.base_service import BaseService  # pylint: disable=import-outside-toplevel
 
-        # Delegate to BaseService implementation to avoid code duplication
-        base_service = BaseService.__new__(BaseService)
-        return base_service._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
+        return BaseService._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
     async def get_entities_by_tag(
         self,
@@ -481,7 +475,7 @@ class TagService:
             # Query entities that have this tag
             # Using json_contains_tag_expr for cross-database compatibility (PostgreSQL/SQLite)
             stmt = select(model).where(json_contains_tag_expr(db, model.tags, [tag_name], match_any=True))
-            stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+            stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
             result = db.execute(stmt)
 
             for entity in result.scalars():

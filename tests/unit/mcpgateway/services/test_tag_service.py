@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import Base, Resource as DbResource
-from mcpgateway.services.tag_service import TagService
+from mcpgateway.db import Base
+from mcpgateway.db import Resource as DbResource
 import mcpgateway.services.tag_service as tag_service_module
+from mcpgateway.services.tag_service import TagService
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +67,7 @@ def tag_visibility_db():
     """Create an in-memory DB with visibility-scoped resource tags."""
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(bind=engine)
+    # Third-Party
     from sqlalchemy.orm import sessionmaker
 
     SessionLocal = sessionmaker(bind=engine)
@@ -446,6 +448,25 @@ async def test_get_entities_by_tag_team_token_sees_team_entity(tag_service, tag_
     )
     assert len(entities) == 1
     assert entities[0].name == "Team Resource"
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_admin_bypass_sees_all_tagged(tag_service, tag_visibility_db):
+    """Regression for #4106 Blocking #2: admin bypass must reach get_entities_by_tag.
+
+    Prior to the fix, tag_service._apply_visibility_scope was called without
+    db=db here, silently skipping the admin check and hiding private-tagged
+    entities from DB admins.
+    """
+    entities = await tag_service.get_entities_by_tag(
+        tag_visibility_db,
+        "private-tag",
+        entity_types=["resources"],
+        user_email=None,
+        token_teams=None,
+    )
+    names = {e.name for e in entities}
+    assert "Private Resource" in names
 
 
 @pytest.mark.asyncio

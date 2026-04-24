@@ -652,7 +652,14 @@ class PermissionService:
         return age.total_seconds() < self.cache_ttl
 
     async def _is_user_admin(self, user_email: str) -> bool:
-        """Check if user is admin by looking up user record directly.
+        """Check if user is admin for RBAC permission evaluation.
+
+        Delegates to the single shared helper in
+        :mod:`mcpgateway.utils.admin_check` to keep Layer 1 (visibility)
+        and Layer 2 (RBAC) consistent.  The shared helper is fail-closed
+        on DB errors and uses ``user.is_admin is True`` (strict) rather
+        than a truthy check, which avoids MagicMock-spec pitfalls in
+        tests.
 
         Args:
             user_email: Email address of the user
@@ -661,14 +668,9 @@ class PermissionService:
             bool: True if user is admin
         """
         # First-Party
-        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
 
-        # Special case for platform admin (virtual user)
-        if user_email == getattr(settings, "platform_admin_email", ""):
-            return True
-
-        user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
-        return bool(user and user.is_admin)
+        return is_user_admin(self.db, user_email)
 
     async def _check_team_fallback_permissions(self, user_email: str, permission: str, team_id: Optional[str]) -> bool:
         """Check fallback team permissions for users without explicit RBAC roles.

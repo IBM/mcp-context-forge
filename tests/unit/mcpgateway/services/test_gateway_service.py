@@ -965,26 +965,24 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_list_gateways_database_exception_handling(self, gateway_service, mock_gateway, test_db, monkeypatch):
-        """Database exceptions during admin check should be handled gracefully."""
+        """DB exception during admin check (token_teams=None path) should fail-closed to non-admin filtering, not crash."""
 
-        # Track call count
         call_count = [0]
 
         def mock_execute(stmt):
             call_count[0] += 1
-            # Raise exception on first call (admin check)
+            # Admin check runs first when token_teams=None — simulate DB failure there.
             if call_count[0] == 1:
                 raise Exception("Database error")
-            # Return empty result on second call (actual query)
             return _make_execute_result(scalars_list=[])
 
         test_db.execute = Mock(side_effect=mock_execute)
 
-        # Should not raise exception, should continue with normal filtering
-        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", token_teams=["team-1"])
+        # token_teams=None is the only path that triggers admin check; non-admin users
+        # should fall through to normal (team-scoped) filtering after exception.
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", token_teams=None)
 
-        # Exception was caught and handled, query continued
-        assert call_count[0] == 2
+        assert call_count[0] >= 2
         assert result == []
 
     @pytest.mark.asyncio

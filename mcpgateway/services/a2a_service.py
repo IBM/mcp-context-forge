@@ -44,6 +44,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -333,13 +334,7 @@ class A2AAgentService(BaseService):
         if agent.visibility == "public":
             return True
 
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
-            return True
-
-        # Admin bypass: check if user is an admin in the database
-        if user_email and await self._is_user_admin(db, user_email):
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return True
 
         # No user context (but not admin) = deny access to non-public agents
@@ -384,8 +379,7 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
         """
-        # Admin bypass — only when both are unset (pure admin, no email context)
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return None
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))

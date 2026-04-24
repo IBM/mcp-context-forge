@@ -161,16 +161,21 @@ class CompletionService:
         user_teams = await team_service.get_user_teams(user_email)
         return [team.id for team in user_teams]
 
-    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Optional[Session] = None):
-        """Apply token/user visibility scope to a SQLAlchemy statement.
+    @staticmethod
+    def _apply_visibility_scope(stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Session):
+        """Thin passthrough to :meth:`BaseService._apply_visibility_scope`.
+
+        Kept as a method on this class for API stability with existing
+        callers; the actual logic (including the admin-bypass caller
+        contract) lives in :class:`BaseService`.
 
         Args:
             stmt: SQLAlchemy statement to constrain
-            model: ORM model that includes visibility/team/owner columns
+            model: ORM model with visibility/team/owner columns
             user_email: Caller email used for owner visibility
             token_teams: Explicit token team scope when present
             team_ids: Effective team IDs for team visibility
-            db: Database session for admin check (optional)
+            db: Required session for the admin bypass check.
 
         Returns:
             Scoped SQLAlchemy statement.
@@ -178,9 +183,7 @@ class CompletionService:
         # First-Party
         from mcpgateway.services.base_service import BaseService  # pylint: disable=import-outside-toplevel
 
-        # Delegate to BaseService implementation to avoid code duplication
-        base_service = BaseService.__new__(BaseService)
-        return base_service._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
+        return BaseService._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
     async def _complete_prompt_argument(
         self,

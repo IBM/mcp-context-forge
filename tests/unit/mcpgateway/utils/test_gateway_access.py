@@ -15,6 +15,9 @@ import pytest
 # First-Party
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 
+# Local
+from tests.helpers.admin_mocks import install_admin_user
+
 
 class TestBuildGatewayAuthHeaders:
     """Test suite for build_gateway_auth_headers function."""
@@ -204,33 +207,49 @@ class TestCheckGatewayAccess:
 
     @pytest.mark.asyncio
     async def test_database_admin_bypass(self):
-        """User with is_admin=True in database should have unrestricted access."""
-        # First-Party
-        from mcpgateway.db import EmailUser
-
+        """DB admin should get bypass ONLY with unrestricted token (token_teams=None)."""
         db = MagicMock()
         gateway = MagicMock()
         gateway.visibility = "private"
         gateway.team_id = "team1"
         gateway.owner_email = "owner@example.com"
 
-        # Mock database user with is_admin=True
-        admin_user = MagicMock(spec=EmailUser)
-        admin_user.email = "admin@test.com"
-        admin_user.is_admin = True
+        install_admin_user(db)
 
-        # Mock the database query to return admin user
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = admin_user
-        db.execute.return_value = mock_result
-
-        # Admin user should have full access to private gateway
-        result = await check_gateway_access(db, gateway, "admin@test.com", ["some-team"])
+        result = await check_gateway_access(db, gateway, "admin@test.com", None)
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_database_admin_with_narrowed_token_still_narrowed(self):
+        """DB admin with team-scoped token must NOT bypass (#4106 guard)."""
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
+        install_admin_user(db)
+
+        result = await check_gateway_access(db, gateway, "admin@test.com", ["some-team"])
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_database_admin_with_public_only_token_stays_public_only(self):
+        """DB admin with public-only token (token_teams=[]) sees only public gateways."""
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
+        install_admin_user(db)
+
+        result = await check_gateway_access(db, gateway, "admin@test.com", [])
+        assert result is False
+
+    @pytest.mark.asyncio
     async def test_platform_admin_bypass(self, monkeypatch):
-        """Platform admin email should bypass all access checks."""
+        """Platform admin email gets bypass ONLY with unrestricted token."""
         # First-Party
         from mcpgateway.config import settings
 
@@ -240,11 +259,9 @@ class TestCheckGatewayAccess:
         gateway.team_id = "team1"
         gateway.owner_email = "owner@example.com"
 
-        # Mock platform admin email
         monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
 
-        # Platform admin should have full access
-        result = await check_gateway_access(db, gateway, "platform-admin@example.com", ["some-team"])
+        result = await check_gateway_access(db, gateway, "platform-admin@example.com", None)
         assert result is True
 
     @pytest.mark.asyncio
