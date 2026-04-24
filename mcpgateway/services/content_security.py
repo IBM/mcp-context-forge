@@ -644,10 +644,11 @@ class ContentSecurityService:
                         },
                     )
 
-                    # In lenient mode, just log and continue
+                    # Lenient mode must `continue`, not `return`: keep scanning so
+                    # co-occurring violations (e.g. XSS+SQLi in one payload) all land in the audit log.
                     if validation_mode == "lenient":
                         logger.info(f"Lenient mode: allowing {content_type} with {violation_type} pattern")
-                        return
+                        continue
 
                     # In strict or moderate mode, raise exception
                     raise ContentPatternError(

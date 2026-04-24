@@ -128,6 +128,30 @@ class TestMaliciousPatternDetection:
             # Should not raise in lenient mode
             service.detect_malicious_patterns(content="<script>alert('XSS')</script>", content_type="Resource content")
 
+    def test_lenient_mode_logs_all_co_occurring_violations(self, caplog):
+        """Regression: lenient mode must scan every pattern, not stop at the first match."""
+        import logging
+
+        service = ContentSecurityService()
+
+        with patch("mcpgateway.services.content_security.settings") as mock_settings:
+            mock_settings.content_pattern_detection_enabled = True
+            mock_settings.content_pattern_validation_mode = "lenient"
+            mock_settings.content_blocked_patterns = [
+                r"<script[^>]*>.*?</script>",
+                r"(?i)(union|select|insert|update|delete|drop)\s+",
+                r"&&|\|\|",
+            ]
+
+            with caplog.at_level(logging.INFO, logger="mcpgateway.services.content_security"):
+                service.detect_malicious_patterns(
+                    content="<script>alert(1)</script> SELECT * FROM users && rm -rf /",
+                    content_type="Resource content",
+                )
+
+            allowed_messages = [r.message for r in caplog.records if r.message.startswith("Lenient mode: allowing")]
+            assert len(allowed_messages) >= 3, f"Expected 3 co-occurring violations to be logged, got {len(allowed_messages)}: {allowed_messages}"
+
     def test_disabled_detection_allows_all(self):
         """Test that disabled detection allows all content."""
         service = ContentSecurityService()
