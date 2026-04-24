@@ -442,6 +442,16 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
         user_info = await auth_service.get_user_by_email(proxy_user)
 
         if user_info:
+            # Enforce account-active check (matches the JWT path in _enforce_revocation_and_active_user:398-399).
+            # Without this, a disabled user - including a disabled admin - could authenticate via trusted-proxy
+            # mode and inherit their pre-disable authorizations.
+            if not user_info.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Account disabled",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
             # Resolve teams from DB (returns None for admin bypass, [] for no teams, or list of team IDs)
             token_teams = await _resolve_teams_from_db(proxy_user, user_info)
             payload = {
@@ -451,6 +461,10 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                 "is_admin": user_info.is_admin,
                 "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
                 "email": proxy_user,
+                # token_use: "session" signals DB-backed team resolution to downstream dispatchers
+                # (main.py:2870, streamablehttp_transport.py:1998) so they route via resolve_session_teams
+                # rather than treating the proxy payload as an API-token payload with embedded teams.
+                "token_use": "session",  # nosec B105 - Not a password; JWT claim type
             }
         else:
             # User not in DB - handle based on REQUIRE_USER_IN_DB setting
@@ -464,6 +478,7 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                     "is_admin": True,
                     "teams": None,  # Admin bypass
                     "email": proxy_user,
+                    "token_use": "session",  # nosec B105 - Not a password; JWT claim type
                 }
             else:
                 raise HTTPException(
@@ -483,9 +498,21 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
     """Require authentication via JWT token or proxy headers.
 
     FastAPI dependency that checks for authentication via:
-    1. Proxy headers (if mcp_client_auth_enabled=false and trust_proxy_auth=true)
+    1. Proxy headers (if mcp_client_auth_enabled=false and is_proxy_auth_trust_active())
     2. JWT token in Authorization header (Bearer scheme)
     3. JWT token in cookies
+
+    Proxy authentication path (see :func:`_authenticate_proxy_user`):
+        When configured, the proxy-supplied user identity is looked up in
+        the DB via ``EmailAuthService`` and their team/admin context is
+        resolved. The resulting enriched payload
+        (``sub``, ``source``, ``token``, ``is_admin``, ``teams``, ``email``)
+        is cached on ``request.state._jwt_verified_payload`` so downstream
+        middleware and handlers get the same shape used for JWT-authenticated
+        requests. When ``REQUIRE_USER_IN_DB=False`` and the proxy user matches
+        ``settings.platform_admin_email``, a platform-admin bootstrap payload
+        (``is_admin=True``, ``teams=None``) is returned without requiring a
+        DB record; otherwise an unknown proxy user raises 401.
 
     If authentication is required but no token is provided, raises an HTTP 401 error.
 
@@ -496,11 +523,13 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
 
     Returns:
         str | dict: The verified credentials payload if authenticated,
-            proxy user if proxy auth enabled, or "anonymous" if authentication is not required.
+            the enriched proxy payload if proxy auth succeeded, or
+            ``"anonymous"`` if authentication is not required.
 
     Raises:
         HTTPException: 401 status if authentication is required but no valid
-            token is provided.
+            token is provided, or if a proxy-identified user is unknown and
+            the platform-admin bootstrap conditions do not apply.
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc

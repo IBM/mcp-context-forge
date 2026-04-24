@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
 from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -4871,7 +4871,7 @@ async def test_complete_exception(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeypatch):
-    """Test auth sets user context for proxy user when client auth disabled (lines 1740-1750)."""
+    """Proxy user with valid DB record authenticates and gets DB-backed team/admin context."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
@@ -4888,7 +4888,22 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
     async def send(msg):
         sent.append(msg)
 
-    result = await streamable_http_auth(scope, None, send)
+    mock_user = Mock()
+    mock_user.is_admin = False
+    mock_user.is_active = True
+    mock_user.email = "proxy_user@example.com"
+
+    with patch("mcpgateway.db.get_db") as mock_get_db, patch(
+        "mcpgateway.services.email_auth_service.EmailAuthService"
+    ) as mock_auth_service, patch(
+        "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+    ) as mock_resolve_teams:
+        mock_get_db.return_value = iter([Mock()])
+        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_resolve_teams.return_value = []
+
+        result = await streamable_http_auth(scope, None, send)
+
     assert result is True
     assert sent == []  # No 401 sent
 
@@ -4924,7 +4939,22 @@ async def test_streamable_http_auth_proxy_user_with_bearer_header(monkeypatch):
     async def send(msg):
         sent.append(msg)
 
-    result = await streamable_http_auth(scope, None, send)
+    mock_user = Mock()
+    mock_user.is_admin = False
+    mock_user.is_active = True
+    mock_user.email = "proxy_fallback@example.com"
+
+    with patch("mcpgateway.db.get_db") as mock_get_db, patch(
+        "mcpgateway.services.email_auth_service.EmailAuthService"
+    ) as mock_auth_service, patch(
+        "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+    ) as mock_resolve_teams:
+        mock_get_db.return_value = iter([Mock()])
+        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_resolve_teams.return_value = []
+
+        result = await streamable_http_auth(scope, None, send)
+
     assert result is True
     assert sent == []
 
@@ -4960,7 +4990,22 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
     async def send(msg):
         sent.append(msg)
 
-    result = await streamable_http_auth(scope, None, send)
+    mock_user = Mock()
+    mock_user.is_admin = False
+    mock_user.is_active = True
+    mock_user.email = "proxy_user@example.com"
+
+    with patch("mcpgateway.db.get_db") as mock_get_db, patch(
+        "mcpgateway.services.email_auth_service.EmailAuthService"
+    ) as mock_auth_service, patch(
+        "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+    ) as mock_resolve_teams:
+        mock_get_db.return_value = iter([Mock()])
+        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_resolve_teams.return_value = []
+
+        result = await streamable_http_auth(scope, None, send)
+
     assert result is True
 
     user_ctx = tr.user_context_var.get()
