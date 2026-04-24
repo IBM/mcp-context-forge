@@ -22,6 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 # Third-Party
 import httpx
 import orjson
+from sqlalchemy import exists as sa_exists
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -34,10 +35,14 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
+# Hex-only on purpose: server IDs are uuid4().hex (32 hex chars).  Non-hex
+# segments (e.g. "ndh45", "my-server") will never match here and instead fall
+# through to the _SERVER_SCOPED_PATH_RE defense-in-depth guard, which rejects
+# them without a database round-trip.
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 # Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
 # match (e.g. empty segment: /servers//mcp). Used as a defense-in-depth guard.
-_SERVER_SCOPED_PATH_RE = re.compile(r"/servers/.*/mcp(?:/)?$")
+_SERVER_SCOPED_PATH_RE = re.compile(r"^/servers/.*/mcp(?:/)?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
 _CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER = "x-contextforge-affinity-forwarded"
@@ -83,8 +88,7 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
         # to prevent unauthorized access via invalid server IDs.
         try:
             with fresh_db_session() as db:
-                # Simple synchronous existence check
-                exists = db.query(DbServer).filter(DbServer.id == server_id).first() is not None
+                exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
                 if not exists:
                     logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
                     response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
@@ -143,16 +147,15 @@ class RustMCPRuntimeProxy:
             await self.python_fallback_app(scope, receive, send)
             return
 
-        target_url = _build_runtime_mcp_url(scope)
-        headers = _build_forward_headers(scope)
-        timeout = httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds)
-
-        # SECURITY: Validate server_id before forwarding to Rust runtime
         modified_path = str(scope.get("modified_path") or scope.get("path") or "")
         match = _SERVER_ID_RE.search(modified_path)
         validated = await _validate_server_id(match, modified_path, scope, receive, send)
         if validated is _REJECT:
             return  # Error response already sent
+
+        target_url = _build_runtime_mcp_url(scope)
+        headers = _build_forward_headers(scope)
+        timeout = httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds)
 
         try:
             client = await self._get_runtime_client()

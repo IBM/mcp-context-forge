@@ -3,8 +3,10 @@
 
 # Standard
 import base64
+from contextlib import contextmanager
 import json
-from unittest.mock import AsyncMock
+import re
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import httpx
@@ -713,20 +715,38 @@ async def test_runtime_failure_returns_jsonrpc_bad_gateway(monkeypatch):
     assert body["error"]["data"] == "See server logs"
 
 
+@pytest.mark.asyncio
+async def test_validate_server_id_returns_server_id_when_exists(monkeypatch):
+    """_validate_server_id should return the server_id string when the server exists."""
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = True
+    mock_db.execute.return_value = mock_result
+
+    @contextmanager
+    def mock_fresh_db_session():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.fresh_db_session", mock_fresh_db_session)
+
+    scope = {"type": "http", "method": "POST"}
+    receive = _make_receive(b"")
+    send = AsyncMock()
+
+    match = re.match(r"/servers/(?P<server_id>[^/]+)/mcp", "/servers/aabbccdd11223344/mcp")
+    result = await proxy_mod._validate_server_id(match, "/servers/aabbccdd11223344/mcp", scope, receive, send)
+
+    assert result == "aabbccdd11223344"
+    send.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_validate_server_id_returns_404_when_server_not_found(monkeypatch):
     """_validate_server_id should return 404 when server doesn't exist in database."""
-    import re
-    from contextlib import contextmanager
-    from unittest.mock import MagicMock
-
     mock_db = MagicMock()
-    mock_query = MagicMock()
-    mock_filter = MagicMock()
-    mock_filter.first.return_value = None
-    mock_query.filter.return_value = mock_filter
-    mock_db.query.return_value = mock_query
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = False
+    mock_db.execute.return_value = mock_result
 
     @contextmanager
     def mock_fresh_db_session():
@@ -735,6 +755,7 @@ async def test_validate_server_id_returns_404_when_server_not_found(monkeypatch)
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.fresh_db_session", mock_fresh_db_session)
 
     events = []
+
     async def send(message):
         events.append(message)
 
@@ -755,17 +776,16 @@ async def test_validate_server_id_returns_404_when_server_not_found(monkeypatch)
 @pytest.mark.asyncio
 async def test_validate_server_id_returns_503_on_database_error(monkeypatch):
     """_validate_server_id should return 503 when database query fails."""
-    import re
-    from contextlib import contextmanager
 
     @contextmanager
     def mock_fresh_db_session():
         raise Exception("Database connection failed")
-        yield  # noqa: unreachable — required by contextmanager protocol
+        yield  # unreachable — required by contextmanager protocol
 
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.fresh_db_session", mock_fresh_db_session)
 
     events = []
+
     async def send(message):
         events.append(message)
 
@@ -787,6 +807,7 @@ async def test_validate_server_id_returns_503_on_database_error(monkeypatch):
 async def test_validate_server_id_rejects_malformed_server_scoped_paths(monkeypatch):
     """_validate_server_id should reject server-scoped paths with unparseable server IDs."""
     events = []
+
     async def send(message):
         events.append(message)
 
@@ -806,15 +827,10 @@ async def test_validate_server_id_rejects_malformed_server_scoped_paths(monkeypa
 @pytest.mark.asyncio
 async def test_handle_streamable_http_rejects_invalid_server_id(monkeypatch):
     """handle_streamable_http should reject requests when server validation fails."""
-    from contextlib import contextmanager
-    from unittest.mock import MagicMock
-
     mock_db = MagicMock()
-    mock_query = MagicMock()
-    mock_filter = MagicMock()
-    mock_filter.first.return_value = None
-    mock_query.filter.return_value = mock_filter
-    mock_db.query.return_value = mock_query
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = False
+    mock_db.execute.return_value = mock_result
 
     @contextmanager
     def mock_fresh_db_session():
@@ -849,3 +865,38 @@ async def test_handle_streamable_http_rejects_invalid_server_id(monkeypatch):
     assert len(events) == 2
     assert events[0]["status"] == 404
     assert b"Server not found" in events[1]["body"]
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_rejects_non_hex_server_id_via_defense_in_depth(monkeypatch):
+    """Proxy-level: non-hex server IDs should be rejected by the defense-in-depth guard without reaching fallback or Rust."""
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+
+    get_http_client_mock = AsyncMock()
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
+
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+
+    async def send(message):
+        events.append(message)
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "modified_path": "/servers/ndh45/mcp",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        _make_receive(b'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'),
+        send,
+    )
+
+    fallback.assert_not_awaited()
+    get_http_client_mock.assert_not_awaited()
+    assert len(events) == 2
+    assert events[0]["status"] == 404
+    assert b"Invalid server identifier" in events[1]["body"]
