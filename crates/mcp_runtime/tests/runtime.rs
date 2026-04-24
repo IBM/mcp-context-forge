@@ -1644,7 +1644,6 @@ async fn session_core_transport_denies_same_email_with_different_auth_binding() 
     };
     let runtime_url = spawn_router(runtime).await;
     let owner_auth = URL_SAFE_NO_PAD.encode(
-        // pragma: allowlist secret
         serde_json::to_vec(&json!({
             "email": "owner@example.com", // pragma: allowlist secret
             "teams": ["team-a"],

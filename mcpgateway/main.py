@@ -153,7 +153,7 @@ from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -1817,10 +1817,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # only the cross-worker affinity machinery is gated here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
-                get_session_affinity,
-                start_affinity_notification_service,
-            )
+            from mcpgateway.services.session_affinity import get_session_affinity, start_affinity_notification_service  # pylint: disable=import-outside-toplevel
 
             await start_affinity_notification_service(gateway_service)
             pool = get_session_affinity()
@@ -2422,6 +2419,55 @@ async def content_size_exception_handler(_request: Request, exc: ContentSizeErro
         ORJSONResponse: A 413 Payload Too Large response with structured error details.
     """
     return ORJSONResponse(status_code=413, content={"detail": {"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size}})
+
+
+@app.exception_handler(TemplateValidationError)
+async def template_validation_exception_handler(_request: Request, exc: TemplateValidationError):
+    """Handle template validation errors globally.
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The TemplateValidationError with template_name, reason, and pattern.
+
+    Returns:
+        ORJSONResponse: A 400 Bad Request response with structured error details.
+    """
+    error_detail = {
+        "error": "Template validation failed",
+        "message": str(exc),
+        "template_name": exc.template_name,
+        "reason": exc.reason,
+    }
+    # DO NOT include pattern - it leaks internal security policy (CWE-209 fix)
+    return ORJSONResponse(status_code=400, content={"detail": error_detail})
+
+
+@app.exception_handler(ContentPatternError)
+async def content_pattern_error_handler(_request: Request, exc: ContentPatternError):
+    """Handle malicious pattern detection errors globally (US-3).
+
+    Returns HTTP 400 with structured error response.
+    Does NOT leak internal patterns or content snippets (CWE-209 fix).
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentPatternError with violation details.
+
+    Returns:
+        ORJSONResponse: A 400 Bad Request response with structured error details.
+    """
+    return ORJSONResponse(
+        status_code=400,
+        content={
+            "detail": {
+                "error": "Malicious pattern detected",
+                "message": f"Content validation failed: {exc.content_type} contains potentially malicious patterns",
+                "violation_type": exc.violation_type or "unknown",
+                "content_type": exc.content_type,
+                # DO NOT include pattern_matched or content_snippet (security)
+            }
+        },
+    )
 
 
 # RFC 9110 §5.6.2 'token' pattern for header field names:
@@ -6360,6 +6406,12 @@ async def create_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in creating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, TemplateValidationError):
+            logger.error(f"Template validation failed while creating prompt: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "Template validation failed", "message": str(e), "template_name": e.template_name, "reason": e.reason, "pattern": e.pattern if e.pattern else None},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -6557,6 +6609,12 @@ async def update_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in updating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, TemplateValidationError):
+            logger.error(f"Template validation failed while updating prompt: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "Template validation failed", "message": str(e), "template_name": e.template_name, "reason": e.reason, "pattern": e.pattern if e.pattern else None},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")

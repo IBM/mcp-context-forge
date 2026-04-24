@@ -64,7 +64,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, Reso
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
@@ -457,10 +457,13 @@ class ResourceService(BaseService):
     ) -> ResourceRead:
         """Register a new resource.
 
-        MIME Type Resolution Priority:
-        1. **User-provided type** (highest priority) - Caller explicitly declares content type
-        2. **URI-detected type** - Fallback via ``mimetypes.guess_type(uri)``
-        3. **Content-based fallback** - ``text/plain`` for strings, ``application/octet-stream`` for bytes
+        MIME Type Detection Priority (NEW BEHAVIOR):
+        1. **URL-detected type** (highest priority) - If MIME type can be detected from URI extension
+        2. **User-provided type** - Only used if URL detection fails
+        3. **Content-based fallback** - If no type provided and no URL detection
+
+        This ensures accuracy by preferring URL-detected types (e.g., .md → text/markdown)
+        over potentially incorrect user input.
 
         Args:
             db: Database session
@@ -526,15 +529,30 @@ class ResourceService(BaseService):
 
             content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)
 
-            # MIME type resolution priority:
-            # 1. User-provided type (caller explicitly declares the content type)
-            # 2. URI-detected type (fallback when user omits the field)
-            # 3. Content-based fallback (text/plain for str, application/octet-stream for bytes)
-            if resource.mime_type:
+            # Validate content for malicious patterns (US-3) - CWE-116 fix
+            if content_to_validate:
+                content_str = content_to_validate if isinstance(content_to_validate, str) else content_to_validate.decode("utf-8", errors="ignore")
+                content_security.detect_malicious_patterns(
+                    content=content_str,
+                    content_type="Resource content",
+                    user_email=created_by,
+                    ip_address=created_from_ip,
+                )
+
+            # Prefer URL-detected MIME type over user-provided to ensure accuracy
+            # This prevents users from entering incorrect MIME types
+            url_detected_mime = self._detect_mime_type_from_uri(resource.uri)
+            if url_detected_mime:
+                mime_type = url_detected_mime
+                if resource.mime_type and resource.mime_type != url_detected_mime:
+                    logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource.mime_type}' for URI: {resource.uri}")
+            elif resource.mime_type:
+                # No URL detection possible, use user-provided
                 mime_type = resource.mime_type
             else:
+                # No URL detection and no user input, fallback to content-based detection
                 mime_type = self._detect_mime_type(resource.uri, resource.content)
-                logger.info(f"Auto-detected MIME type for {resource.uri}: {mime_type}")
+                logger.info(f"Fallback MIME type detection for {resource.uri}: {mime_type}")
 
             # Validate MIME type against allowlist
             content_security.validate_resource_mime_type(
@@ -682,7 +700,7 @@ class ResourceService(BaseService):
             )
             raise rce
         except ContentSizeError as cse:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
@@ -697,7 +715,7 @@ class ResourceService(BaseService):
             )
             raise cse
         except ContentTypeError as cte:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource MIME type not allowed: {cte.mime_type}",
@@ -712,6 +730,22 @@ class ResourceService(BaseService):
                 },
             )
             raise cte
+        except ContentPatternError as cpe:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content blocked by malicious pattern detection: {cpe.violation_type}",
+                event_type="resource_pattern_rejected",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "violation_type": cpe.violation_type,
+                    "visibility": visibility,
+                },
+            )
+            raise cpe
         except Exception as e:
             db.rollback()
 
@@ -835,20 +869,24 @@ class ResourceService(BaseService):
                                 ip_address=created_from_ip,
                             )
 
-                        # MIME type resolution (same priority as register_resource):
-                        # user-provided > URI-detected > content-based fallback
-                        if getattr(resource, "mime_type", None):
-                            bulk_mime_type = resource.mime_type
-                        else:
-                            bulk_mime_type = self._detect_mime_type(resource.uri, getattr(resource, "content", "") or "")
-
                         # Validate MIME type against allowlist
                         content_security.validate_resource_mime_type(
-                            mime_type=bulk_mime_type,
+                            mime_type=getattr(resource, "mime_type", None),
                             uri=resource.uri,
                             user_email=created_by,
                             ip_address=created_from_ip,
                         )
+
+                        # Same US-3 malicious-pattern scan that register_resource() runs.
+                        # Keep in lock-step with the single-resource path.
+                        if hasattr(resource, "content") and resource.content:
+                            content_str = resource.content if isinstance(resource.content, str) else resource.content.decode("utf-8", errors="ignore")
+                            content_security.detect_malicious_patterns(
+                                content=content_str,
+                                content_type="Resource content",
+                                user_email=created_by,
+                                ip_address=created_from_ip,
+                            )
 
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
@@ -869,7 +907,7 @@ class ResourceService(BaseService):
                                 existing_resource.name = resource.name
                                 existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
-                                existing_resource.mime_type = bulk_mime_type
+                                existing_resource.mime_type = getattr(resource, "mime_type", None)
                                 existing_resource.size = getattr(resource, "size", None)
                                 existing_resource.uri_template = resource.uri_template
                                 existing_resource.tags = resource.tags or []
@@ -890,7 +928,7 @@ class ResourceService(BaseService):
                                     name=resource.name,
                                     title=getattr(resource, "title", None),
                                     description=resource.description,
-                                    mime_type=bulk_mime_type,
+                                    mime_type=getattr(resource, "mime_type", None),
                                     size=getattr(resource, "size", None),
                                     uri_template=resource.uri_template,
                                     gateway_id=getattr(resource, "gateway_id", None),
@@ -919,7 +957,7 @@ class ResourceService(BaseService):
                                 name=resource.name,
                                 title=getattr(resource, "title", None),
                                 description=resource.description,
-                                mime_type=bulk_mime_type,
+                                mime_type=getattr(resource, "mime_type", None),
                                 size=getattr(resource, "size", None),
                                 uri_template=resource.uri_template,
                                 gateway_id=getattr(resource, "gateway_id", None),
@@ -2890,10 +2928,10 @@ class ResourceService(BaseService):
         """
         Update a resource.
 
-        MIME Type Resolution Priority:
-        1. **User-provided type** (highest priority) - Caller explicitly declares content type
-        2. **URI-detected type** - Fallback when empty string provided
-        3. **Content-based fallback** - If empty string and no URI detection
+        MIME Type Detection Priority (NEW BEHAVIOR):
+        1. **URL-detected type** (highest priority) - If MIME type can be detected from URI extension
+        2. **User-provided type** - Only used if URL detection fails
+        3. **Content-based fallback** - If empty string provided and no URL detection
         4. **Preserve existing** - If None/not provided
 
         This ensures accuracy by preferring URL-detected types (e.g., .md → text/markdown)
@@ -2980,42 +3018,31 @@ class ResourceService(BaseService):
                 resource.uri = resource_update.uri
             if resource_update.name is not None:
                 resource.name = resource_update.name
-            if resource_update.description is not None:
-                resource.description = resource_update.description
             if resource_update.title is not None:
                 resource.title = resource_update.title
-            # Resolve the new MIME type into a local variable and validate
-            # BEFORE writing to the tracked model to avoid dirty session state.
-            # Priority: user-provided > URI-detected > content-based fallback.
-            resolved_mime_type = None
-            if resource_update.mime_type is not None:
-                if resource_update.mime_type:
-                    # Non-empty: user explicitly provided a type — trust it
-                    resolved_mime_type = resource_update.mime_type
-                else:
-                    # Empty string: auto-detect from URI/content
-                    content_for_detection = resource_update.content if resource_update.content is not None else (resource.text_content or resource.binary_content)
-                    uri_for_detection = resource_update.uri if resource_update.uri is not None else resource.uri
-                    resolved_mime_type = self._detect_mime_type(uri_for_detection, content_for_detection)
-                    logger.info(f"Auto-detected MIME type for resource {resource_id}: {resolved_mime_type}")
-            elif resource_update.uri is not None:
-                # URI changed but no MIME type provided — try URI detection as fallback
-                url_detected_mime = self._detect_mime_type_from_uri(resource_update.uri)
+            if resource_update.description is not None:
+                resource.description = resource_update.description
+            if resource_update.mime_type is not None or resource_update.uri is not None:
+                # Prefer URL-detected MIME type over user-provided to ensure accuracy
+                uri_for_detection = resource_update.uri if resource_update.uri is not None else resource.uri
+                url_detected_mime = self._detect_mime_type_from_uri(uri_for_detection)
+
                 if url_detected_mime:
-                    resolved_mime_type = url_detected_mime
-
-            # Validate the candidate MIME type BEFORE mutating the model
-            content_security = get_content_security_service()
-            if resolved_mime_type is not None:
-                content_security.validate_resource_mime_type(
-                    mime_type=resolved_mime_type,
-                    uri=resource_update.uri or resource.uri,
-                    user_email=modified_by or user_email,
-                    ip_address=modified_from_ip,
-                )
-                # Validation passed — safe to assign
-                resource.mime_type = resolved_mime_type
-
+                    # URL detection successful - use it
+                    if resource_update.mime_type and resource_update.mime_type != url_detected_mime:
+                        logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource_update.mime_type}' for resource {resource_id}")
+                    resource.mime_type = url_detected_mime
+                elif resource_update.mime_type is not None:
+                    # No URL detection, handle user-provided value
+                    if not resource_update.mime_type:
+                        # Empty string - fallback to content-based detection
+                        content_for_detection = resource_update.content if resource_update.content is not None else (resource.text_content or resource.binary_content)
+                        detected_mime_type = self._detect_mime_type(uri_for_detection, content_for_detection)
+                        logger.info(f"Fallback MIME type detection for resource {resource_id}: {detected_mime_type}")
+                        resource.mime_type = detected_mime_type
+                    else:
+                        # Use user-provided MIME type
+                        resource.mime_type = resource_update.mime_type
             if resource_update.uri_template is not None:
                 resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
@@ -3027,6 +3054,9 @@ class ResourceService(BaseService):
 
             # Update content if provided
             if resource_update.content is not None:
+                # Initialize content security service
+                content_security = get_content_security_service()
+
                 # Validate content size before updating
                 content_security.validate_resource_size(
                     content=resource_update.content,
@@ -3034,6 +3064,25 @@ class ResourceService(BaseService):
                     user_email=modified_by or user_email,
                     ip_address=modified_from_ip,
                 )
+
+                # Validate content for malicious patterns (US-3) - CWE-116 fix
+                content_str = resource_update.content if isinstance(resource_update.content, str) else resource_update.content.decode("utf-8", errors="ignore")
+                content_security.detect_malicious_patterns(
+                    content=content_str,
+                    content_type="Resource content",
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
+
+                # Validate MIME type (use detected type if empty was provided)
+                mime_type_to_validate = resource.mime_type if resource_update.mime_type is not None else None
+                if mime_type_to_validate:
+                    content_security.validate_resource_mime_type(
+                        mime_type=mime_type_to_validate,
+                        uri=resource_update.uri or resource.uri,
+                        user_email=modified_by or user_email,
+                        ip_address=modified_from_ip,
+                    )
 
                 # Determine content storage
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
@@ -3202,6 +3251,23 @@ class ResourceService(BaseService):
                 },
             )
             raise cte
+        except ContentPatternError as cpe:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content blocked by malicious pattern detection: {cpe.violation_type}",
+                event_type="resource_pattern_rejected",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cpe,
+                custom_fields={
+                    "violation_type": cpe.violation_type,
+                },
+            )
+            raise cpe
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 

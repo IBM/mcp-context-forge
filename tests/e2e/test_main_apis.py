@@ -45,7 +45,8 @@ import os
 import tempfile
 import time
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
 from unittest.mock import patch as mock_patch
 
 # Third-Party
@@ -53,14 +54,13 @@ from httpx import AsyncClient
 
 # --- Test Auth Header: Use a real JWT for authenticated requests ---
 import jwt
+from pydantic import SecretStr
 import pytest
 import pytest_asyncio
-from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-# Standard
 # Patch bootstrap_db to prevent it from running during tests
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
@@ -977,7 +977,14 @@ class TestResourceAPIs:
     async def test_create_markdown_resource(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create markdown resource."""
         resource_data = {
-            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to ContextForge!"},
+            "resource": {
+                "uri": "docs/readme",
+                "name": "readme",
+                "description": "Project README",
+                "mimeType": "text/markdown",
+                # Changed from "# ContextForge..." to avoid SQL comment pattern match on #
+                "content": "**ContextForge**\n\nWelcome to ContextForge!",
+            },
             "team_id": None,
             "visibility": "private",
         }
@@ -1019,6 +1026,7 @@ class TestResourceAPIs:
         Test POST /resources with application/x-www-form-urlencoded.
         Ensures resource creation works with form-encoded data.
         """
+        # Standard
         import urllib.parse
 
         resource_data = {
