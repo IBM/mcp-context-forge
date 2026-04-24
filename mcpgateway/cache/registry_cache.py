@@ -31,9 +31,6 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
-# Third-Party
-from redis import exceptions as redis_exceptions
-
 logger = logging.getLogger(__name__)
 
 
@@ -41,17 +38,32 @@ logger = logging.getLogger(__name__)
 # to a programming bug). These MUST be listed explicitly because redis-py's
 # ConnectionError / TimeoutError do NOT inherit from the stdlib equivalents,
 # so a bare `except ConnectionError` silently misses real Redis failures.
-# Module-level tuple literals so pylint can statically resolve the types in
-# except clauses (avoids E0712 catching-non-exception). The `redis` module
-# is imported as `redis_exceptions` to avoid shadowing
-# `redis = await self._get_redis_client()` locals (pylint W0621).
-_REDIS_TIMEOUT_EXCEPTIONS = (asyncio.TimeoutError, redis_exceptions.TimeoutError)
-_REDIS_CONNECTION_EXCEPTIONS = (
-    ConnectionError,
-    OSError,
-    redis_exceptions.ConnectionError,
-    redis_exceptions.RedisError,
-)
+#
+# The import is guarded because redis is an OPTIONAL dependency (see
+# [project.optional-dependencies] redis in pyproject.toml); environments
+# without the redis extra installed — e.g. the Playwright UI smoke job —
+# must still be able to import this module. When redis is missing the
+# tuples fall back to stdlib-only catches; the Redis code paths are never
+# actually reached because `_get_redis_client()` returns None in that case.
+#
+# Aliased as `redis_exceptions` (not plain `redis`) to avoid shadowing the
+# many `redis = await self._get_redis_client()` locals (pylint W0621).
+# Module-level tuple literals so pylint statically resolves the types in
+# except clauses (avoids E0712 catching-non-exception).
+try:
+    # Third-Party
+    from redis import exceptions as redis_exceptions  # pylint: disable=import-error
+
+    _REDIS_TIMEOUT_EXCEPTIONS = (asyncio.TimeoutError, redis_exceptions.TimeoutError)
+    _REDIS_CONNECTION_EXCEPTIONS = (
+        ConnectionError,
+        OSError,
+        redis_exceptions.ConnectionError,
+        redis_exceptions.RedisError,
+    )
+except ImportError:
+    _REDIS_TIMEOUT_EXCEPTIONS = (asyncio.TimeoutError,)
+    _REDIS_CONNECTION_EXCEPTIONS = (ConnectionError, OSError)
 
 
 @dataclass(frozen=True)
