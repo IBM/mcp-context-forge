@@ -493,4 +493,4 @@ class TestObservabilityRouterEndpoints:
                 await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
 
         assert exc_info.value.status_code == 400
-        assert "Export failed:" in exc_info.value.detail
+        assert "Export failed" in exc_info.value.detail
