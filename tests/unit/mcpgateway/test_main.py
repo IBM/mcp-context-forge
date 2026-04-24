@@ -1358,6 +1358,22 @@ class TestResourceEndpoints:
         assert response.status_code == 200
         mock_list.assert_called_once()
 
+    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    def test_list_resource_templates_admin_bypass_nulls_user_email(self, mock_list, test_client, auth_headers):
+        """SECURITY: admin bypass must pass (user_email=None, token_teams=None) to list_resource_templates.
+
+        Regression for Oracle review of PR #4341 — earlier wiring passed the admin's email
+        while nulling token_teams, which caused the service to skip the private-exclusion
+        WHERE clause and leak other users' private templates.
+        """
+        mock_list.return_value = []
+        response = test_client.get("/resources/templates/list", headers=auth_headers)
+        assert response.status_code == 200
+        mock_list.assert_called_once()
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs.get("user_email") is None
+        assert call_kwargs.get("token_teams") is None
+
     @patch("mcpgateway.main.resource_service.set_resource_state")
     def test_set_resource_state(self, mock_toggle, test_client, auth_headers):
         """Test setting resource active/inactive state."""
@@ -1458,13 +1474,21 @@ class TestPromptEndpoints:
         assert response.status_code == 422
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
-    def test_get_prompt_no_args_secondary(self, mock_get, test_client, auth_headers):
-        """Test getting a prompt without arguments."""
+    def test_get_prompt_no_args_non_jwt_admin_bypass(self, mock_get, test_client, auth_headers):
+        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via _get_scoped_resource_access_context."""
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        # After security fix: user_email is passed when token_teams is not set in request.state
-        mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get.assert_called_once_with(
+            ANY,
+            "test",
+            {},
+            user=None,
+            server_id=None,
+            token_teams=None,
+            plugin_context_table=None,
+            plugin_global_context=ANY,
+        )
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1790,16 +1814,6 @@ class TestPromptEndpoints:
         body = response.json()
         assert body["messages"][0]["content"]["text"] == "Rendered prompt"
         mock_get.assert_called_once()
-
-    @patch("mcpgateway.main.prompt_service.get_prompt")
-    def test_get_prompt_no_args(self, mock_get, test_client, auth_headers):
-        """Test getting a prompt without arguments."""
-        mock_get.return_value = {"name": "test", "template": "Hello"}
-        response = test_client.get("/prompts/test", headers=auth_headers)
-        assert response.status_code == 200
-        # After security fix: user_email is passed when token_teams is not set in request.state
-        mock_get.assert_called_once_with(ANY, "test", {}, user="test_user@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
-
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
@@ -2511,6 +2525,29 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()["result"]
         assert body["resourceTemplates"][0]["uri"] == "tpl://1"
+
+    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    def test_rpc_resource_templates_list_admin_bypass_nulls_user_email(self, mock_list_templates, test_client, auth_headers):
+        """SECURITY: admin bypass via JSON-RPC must pass (user_email=None, token_teams=None).
+
+        Regression for Oracle review of PR #4341 — the JSON-RPC resources/templates/list
+        handler in main.py previously kept the admin's email while nulling token_teams,
+        causing list_resource_templates to skip the private-exclusion filter.
+        """
+        mock_list_templates.return_value = []
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/templates/list",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_list_templates.assert_called_once()
+        call_kwargs = mock_list_templates.call_args.kwargs
+        assert call_kwargs.get("user_email") is None
+        assert call_kwargs.get("token_teams") is None
 
     @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
     def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):

@@ -2685,6 +2685,9 @@ class TestInvokeAgentEdgeCases:
             version=2,
             protocol_version="1.0",
             capabilities={"streaming": True, "pushNotifications": True, "stateTransitionHistory": False, "skills": [{"id": "s1"}]},
+            visibility="public",
+            team_id=None,
+            owner_email=None,
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
@@ -3794,11 +3797,26 @@ class TestCancelTask:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_cancel_task_admin_bypass(self, service, mock_db):
-        """Admin can cancel any task regardless of visibility."""
+    async def test_cancel_task_admin_bypass_denies_private(self, service, mock_db):
+        """SECURITY: admin bypass cannot cancel tasks on private agents (Layer 1 visibility applies)."""
         task = self._make_task("submitted")
         agent = MagicMock()
         agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        self._setup_task_and_agent(mock_db, task, agent)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = await service.cancel_task(mock_db, "task-1", user_email=None, token_teams=None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_admin_bypass_allows_team(self, service, mock_db):
+        """Admin bypass can cancel tasks on team agents (only private is denied)."""
+        task = self._make_task("submitted")
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-a"
         agent.owner_email = "other@test.com"
         self._setup_task_and_agent(mock_db, task, agent)
         mock_db.commit = MagicMock()
@@ -4658,9 +4676,20 @@ class TestCheckAgentAccessById:
         assert await service._check_agent_access_by_id(mock_db, "agent-1", "user@test.com", ["team1"]) is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_returns_true(self, service, mock_db):
+    async def test_admin_bypass_denies_private(self, service, mock_db):
+        """SECURITY: admin bypass (user_email=None, token_teams=None) must NOT grant access to private agents."""
         agent = MagicMock()
         agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        mock_db.query.return_value.filter.return_value.first.return_value = agent
+        assert await service._check_agent_access_by_id(mock_db, "agent-1", None, None) is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_allows_team(self, service, mock_db):
+        """Admin bypass grants access to team agents (only private is denied)."""
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-a"
         agent.owner_email = "other@test.com"
         mock_db.query.return_value.filter.return_value.first.return_value = agent
         assert await service._check_agent_access_by_id(mock_db, "agent-1", None, None) is True
@@ -4795,11 +4824,25 @@ class TestGetTask:
         return t
 
     @pytest.mark.asyncio
-    async def test_task_visible_to_admin(self, service, mock_db):
-        """Admin bypass (user_email=None, token_teams=None) sees any task."""
+    async def test_task_hidden_from_admin_for_private(self, service, mock_db):
+        """SECURITY: admin bypass cannot see tasks on private agents (Layer 1 visibility)."""
         task = self._wire_task()
         agent = MagicMock()
         agent.visibility = "private"
+        agent.owner_email = "other@test.com"
+        self._setup_task_query(mock_db, task, agent)
+
+        result = await service.get_task(mock_db, "t1", user_email=None, token_teams=None)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_task_visible_to_admin_for_team(self, service, mock_db):
+        """Admin bypass sees tasks on team agents (only private is denied)."""
+        task = self._wire_task()
+        agent = MagicMock()
+        agent.visibility = "team"
+        agent.team_id = "team-a"
         agent.owner_email = "other@test.com"
         self._setup_task_query(mock_db, task, agent)
 

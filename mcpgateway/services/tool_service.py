@@ -3107,6 +3107,7 @@ class ToolService(BaseService):
         requesting_user_email: Optional[str] = None,
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """
         Retrieve a tool by its ID with access control.
@@ -3117,6 +3118,12 @@ class ToolService(BaseService):
             requesting_user_email (Optional[str]): Email of the requesting user for access control.
             requesting_user_is_admin (bool): Whether the requester is an admin.
             requesting_user_team_roles (Optional[Dict[str, str]]): {team_id: role} for the requester.
+                Used only for response masking (``convert_tool_to_read``), not for visibility.
+            token_teams (Optional[List[str]]): JWT-scoped team list used for visibility checks.
+                ``None`` means unrestricted admin (paired with ``requesting_user_email=None``).
+                ``[]`` means public-only scope. ``[...]`` means team-scoped.
+                This is kept separate from ``requesting_user_team_roles`` to avoid the Layer 1
+                visibility check silently widening a scoped token to full DB team membership.
 
         Returns:
             ToolRead: The tool object.
@@ -3140,11 +3147,10 @@ class ToolService(BaseService):
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
-        # Access control check: verify user has permission to access this tool
-        # Admin bypass: requesting_user_is_admin=True AND requesting_user_email=None
-        # means unrestricted access to public and team tools (NOT private)
-        user_email = None if (requesting_user_is_admin and requesting_user_email is None) else requesting_user_email
-        token_teams = None if (requesting_user_is_admin and requesting_user_email is None) else (list(requesting_user_team_roles.keys()) if requesting_user_team_roles else None)
+        # SECURITY (Layer 1): forward JWT-scoped token_teams; DO NOT widen to DB team roles.
+        is_admin_bypass = requesting_user_is_admin and requesting_user_email is None
+        access_user_email = None if is_admin_bypass else requesting_user_email
+        access_token_teams = None if is_admin_bypass else token_teams
 
         tool_payload = {
             "visibility": tool.visibility,
@@ -3152,8 +3158,21 @@ class ToolService(BaseService):
             "owner_email": tool.owner_email,
         }
 
-        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
-            # Don't reveal tool existence - return generic "not found"
+        if not await self._check_tool_access(db, tool_payload, access_user_email, access_token_teams):
+            structured_logger.log(
+                level="INFO",
+                message="Tool access denied",
+                event_type="tool_access_denied",
+                component="tool_service",
+                resource_type="tool",
+                resource_id=str(tool.id),
+                team_id=getattr(tool, "team_id", None),
+                user_email=requesting_user_email,
+                custom_fields={
+                    "visibility": tool.visibility,
+                    "admin_bypass": is_admin_bypass,
+                },
+            )
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
         tool_read = self.convert_tool_to_read(

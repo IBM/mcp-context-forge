@@ -334,8 +334,14 @@ class A2AAgentService(BaseService):
         if agent.visibility == "public":
             return True
 
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return True
+        # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private agents. Mirrors _check_*_access in
+        # tool/prompt/resource services for consistency.
+        if token_teams is None and user_email is None:
+            return agent.visibility != "private"
+        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+            return agent.visibility != "private" or agent.owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public agents
         if not user_email:
@@ -1062,18 +1068,27 @@ class A2AAgentService(BaseService):
         # Delegate conversion and masking to convert_agent_to_read()
         return self.convert_agent_to_read(agent, db=db)
 
-    async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
-        """Retrieve an A2A agent by name.
+    async def get_agent_by_name(
+        self,
+        db: Session,
+        agent_name: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentRead:
+        """Retrieve an A2A agent by name with access control.
 
         Args:
             db: Database session.
             agent_name: Agent name.
+            user_email: Email of the requesting user for access control.
+                None combined with token_teams=None means admin bypass.
+            token_teams: JWT-scoped team list. None=admin bypass, []=public-only, [...]=team-scoped.
 
         Returns:
             Agent data.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found.
+            A2AAgentNotFoundError: If the agent is not found or access is denied.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)  # pylint: disable=comparison-with-callable
         agent = db.execute(query).scalar_one_or_none()
@@ -1081,21 +1096,33 @@ class A2AAgentService(BaseService):
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
+        if not self._check_agent_access(agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
         return self.convert_agent_to_read(agent, db=db)
 
-    def get_agent_card(self, db: Session, agent_name: str) -> Optional[Dict[str, Any]]:
+    def get_agent_card(
+        self,
+        db: Session,
+        agent_name: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard dict for the named agent.
 
         Queries the database for an enabled agent with the given name and
         returns a dict that conforms to the A2A AgentCard schema.  Returns
-        None when no matching enabled agent is found.
+        None when no matching enabled agent is found or visibility denies access.
 
         Args:
             db: Database session.
             agent_name: Name of the agent to look up.
+            user_email: Email of the requesting user for access control.
+                None combined with token_teams=None means admin bypass.
+            token_teams: JWT-scoped team list. None=admin bypass, []=public-only, [...]=team-scoped.
 
         Returns:
-            AgentCard dict, or None if the agent is not found / disabled.
+            AgentCard dict, or None if the agent is not found / disabled / denied.
 
         Examples:
             >>> from unittest.mock import MagicMock
@@ -1109,6 +1136,9 @@ class A2AAgentService(BaseService):
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
+            return None
+
+        if not self._check_agent_access(agent, user_email, token_teams):
             return None
 
         capabilities = agent.capabilities or {}

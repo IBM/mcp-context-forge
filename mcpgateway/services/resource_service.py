@@ -3481,20 +3481,29 @@ class ResourceService(BaseService):
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(
+        self,
+        db: Session,
+        resource_id: str,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> ResourceRead:
         """
-        Get a resource by ID.
+        Get a resource by ID with access control.
 
         Args:
             db: Database session
             resource_id: Resource ID
             include_inactive: Whether to include inactive resources
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             ResourceRead: The resource object
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
+            ResourceNotFoundError: If the resource is not found or the caller lacks visibility.
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -3524,6 +3533,23 @@ class ResourceService(BaseService):
                     if inactive_resource:
                         raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
+                raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+
+            if not await self._check_resource_access(db, resource, user_email, token_teams):
+                structured_logger.log(
+                    level="INFO",
+                    message="Resource access denied",
+                    event_type="resource_access_denied",
+                    component="resource_service",
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    team_id=getattr(resource, "team_id", None),
+                    user_email=user_email,
+                    custom_fields={
+                        "visibility": getattr(resource, "visibility", None),
+                        "admin_bypass": user_email is None and token_teams is None,
+                    },
+                )
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
             resource_read = self.convert_resource_to_read(resource)
@@ -4022,15 +4048,15 @@ class ResourceService(BaseService):
             if not include_inactive:
                 query = query.where(DbResource.enabled)
 
-            # Apply visibility filtering when token_teams is set (non-admin access)
-            if token_teams is not None:
-                # Check if this is a public-only token (empty teams array)
-                # Public-only tokens can ONLY see public templates - no owner access
+            # SECURITY (Layer 1): admin bypass (user_email=None AND token_teams=None)
+            # still filters out private templates so admin cannot enumerate other
+            # users' private templates via this endpoint.
+            if user_email is None and token_teams is None:
+                query = query.where(DbResource.visibility != "private")
+            elif token_teams is not None:
                 is_public_only_token = len(token_teams) == 0
-
                 conditions = [DbResource.visibility == "public"]
 
-                # Only include owner access for non-public-only tokens with user_email
                 if not is_public_only_token and user_email:
                     conditions.append(DbResource.owner_email == user_email)
 

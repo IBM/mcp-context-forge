@@ -4513,9 +4513,16 @@ class TestGatewayEndpointsCoverage:
         monkeypatch.setattr(db, "commit", MagicMock())
         monkeypatch.setattr(db, "close", MagicMock())
 
+        request = MagicMock(spec=Request)
+        request.state = MagicMock(spec=["token_teams", "_jwt_verified_payload"])
+        request.state.token_teams = None
+        request.state._jwt_verified_payload = None
+        request.headers = MagicMock()
+        request.headers.get = MagicMock(return_value=None)
+
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway("gw-1", request, db=db, user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
 
         # First-Party
@@ -4523,12 +4530,12 @@ class TestGatewayEndpointsCoverage:
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway("gw-1", request, db=db, user={"email": "user@example.com"})
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway("gw-1", request, db=db, user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -4540,13 +4547,20 @@ class TestGatewayEndpointsCoverage:
         monkeypatch.setattr(db, "commit", MagicMock())
         monkeypatch.setattr(db, "close", MagicMock())
 
+        request = MagicMock(spec=Request)
+        request.state = MagicMock(spec=["token_teams", "_jwt_verified_payload"])
+        request.state.token_teams = None
+        request.state._jwt_verified_payload = None
+        request.headers = MagicMock()
+        request.headers.get = MagicMock(return_value=None)
+
         current = SimpleNamespace(capabilities={"resources": True})
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=current))
         monkeypatch.setattr(main_mod.gateway_service, "delete_gateway", AsyncMock(return_value=None))
         invalidate = AsyncMock(return_value=None)
         monkeypatch.setattr(main_mod, "invalidate_resource_cache", invalidate)
 
-        result = await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+        result = await main_mod.delete_gateway("gw-1", request, db=db, user={"email": "user@example.com"})
         assert result["status"] == "success"
         invalidate.assert_awaited_once()
 
@@ -11000,15 +11014,22 @@ class TestRemainingCoverageGaps:
         import mcpgateway.main as main_mod
         from mcpgateway.services.server_service import ServerError
 
+        request = MagicMock(spec=Request)
+        request.state = MagicMock(spec=["token_teams", "_jwt_verified_payload"])
+        request.state.token_teams = None
+        request.state._jwt_verified_payload = None
+        request.headers = MagicMock()
+        request.headers.get = MagicMock(return_value=None)
+
         monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.server_service, "delete_server", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_server.__wrapped__("s1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+            await main_mod.delete_server.__wrapped__("s1", request, purge_metrics=False, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 403
 
         monkeypatch.setattr(main_mod.server_service, "delete_server", AsyncMock(side_effect=ServerError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_server.__wrapped__("s1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+            await main_mod.delete_server.__wrapped__("s1", request, purge_metrics=False, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
     async def test_message_endpoints_generic_exception_mapping(self, monkeypatch):

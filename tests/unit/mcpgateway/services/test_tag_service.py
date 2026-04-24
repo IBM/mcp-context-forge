@@ -199,8 +199,12 @@ async def test_get_all_tags_team_scoped_token_filters_other_teams(tag_service, t
 
 
 @pytest.mark.asyncio
-async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db):
-    """Explicit admin bypass context should return all tags across visibility levels."""
+async def test_get_all_tags_admin_bypass_sees_public_and_team_not_private(tag_service, tag_visibility_db):
+    """SECURITY: admin bypass sees tags from public and team entities but NEVER from other users' private.
+
+    Regression for PR #4341 follow-up — admin bypass must not enumerate tags that would
+    reveal the existence of another user's private resources.
+    """
     tags = await tag_service.get_all_tags(
         tag_visibility_db,
         entity_types=["resources"],
@@ -209,7 +213,11 @@ async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db
         token_teams=None,
     )
     tag_names = {tag.name for tag in tags}
-    assert {"public-tag", "team-tag", "other-team-tag", "private-tag", "shared-tag"} <= tag_names
+    assert "public-tag" in tag_names
+    assert "team-tag" in tag_names
+    assert "other-team-tag" in tag_names
+    assert "shared-tag" in tag_names
+    assert "private-tag" not in tag_names
 
 
 @pytest.mark.asyncio

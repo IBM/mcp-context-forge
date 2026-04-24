@@ -4089,7 +4089,8 @@ async def get_server(server_id: str, request: Request, db: Session = Depends(get
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested server with ID {server_id}")
-        server = await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}")
         return server
     except ServerNotFoundError as e:
@@ -4310,6 +4311,7 @@ async def toggle_server_status(
 @require_permission("servers.delete")
 async def delete_server(
     server_id: str,
+    request: Request,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4319,6 +4321,7 @@ async def delete_server(
 
     Args:
         server_id (str): The ID of the server to delete.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -4332,7 +4335,8 @@ async def delete_server(
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -4369,7 +4373,8 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is establishing SSE connection for server {server_id}")
-        await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/sse")
 
         base_url = update_url_protocol(request)
@@ -5386,9 +5391,19 @@ async def get_tool(
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tool with ID {tool_id}")
-        _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
+        # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        _req_email = get_user_email(user)
+        _req_is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else False)
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-        data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
+        data = await tool_service.get_tool(
+            db,
+            tool_id,
+            requesting_user_email=auth_user_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+            token_teams=auth_token_teams,
+        )
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
 
         # Parse apijsonpath parameter (handles both string and JsonPathModifier inputs)
@@ -5619,19 +5634,15 @@ async def list_resource_templates(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    # Using this helper ensures admin-bypass requests reach list_resource_templates with
+    # (user_email=None, token_teams=None), which triggers the private-exclusion WHERE clause.
+    auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
 
     resource_templates = await resource_service.list_resource_templates(
         db,
-        user_email=user_email,
-        token_teams=token_teams,
+        user_email=auth_user_email,
+        token_teams=auth_token_teams,
         include_inactive=include_inactive,
         tags=tags_list,
         visibility=visibility,
@@ -5926,29 +5937,8 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
     try:
-        # Extract user email and token teams for authorization
-        user_email = get_user_email(user)
-        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
-
-        # Check if token_teams exists in request.state (set by auth middleware)
-        # Use a sentinel to distinguish "not set" from "set to None"
-        _UNSET = object()
-        token_teams = getattr(request.state, "token_teams", _UNSET)
-
-        # Determine authorization parameters based on token configuration
-        # Admin with teams=None: admin bypass (public + team access, NOT private)
-        # Admin with teams=[...]: team-scoped access (can see own private resources)
-        # Non-admin or token_teams not set: use user_email for owner checks
-        if is_admin and token_teams is None:
-            # Admin bypass: unrestricted access to public and team resources
-            auth_user_email = None
-            auth_token_teams = None
-        else:
-            # Team-scoped, non-admin, or token_teams not set: normal access control
-            auth_user_email = user_email
-            auth_token_teams = None if token_teams is _UNSET else token_teams
-
-        # Call service with context for plugin support
+        # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
         content = await resource_service.read_resource(
             db,
             resource_id=resource_id,
@@ -6025,7 +6015,14 @@ async def get_resource_info(
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested resource info for ID {resource_id}")
-        result = await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        result = await resource_service.get_resource_by_id(
+            db,
+            resource_id,
+            include_inactive=include_inactive,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         return result
     except ResourceNotFoundError as e:
@@ -6473,27 +6470,9 @@ async def get_prompt(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, token teams, and server_id for authorization
-    user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
     server_id = request.headers.get("X-Server-ID")
-
-    # Check if token_teams exists in request.state (set by auth middleware)
-    _UNSET = object()
-    token_teams = getattr(request.state, "token_teams", _UNSET)
-
-    # Determine authorization parameters based on token configuration
-    # Admin with teams=None: admin bypass (public + team access, NOT private)
-    # Admin with teams=[...]: team-scoped access (can see own private resources)
-    # Non-admin or token_teams not set: use user_email for owner checks
-    if is_admin and token_teams is None:
-        # Admin bypass: unrestricted access to public and team resources
-        auth_user_email = None
-        auth_token_teams = None
-    else:
-        # Team-scoped, non-admin, or token_teams not set: normal access control
-        auth_user_email = user_email
-        auth_token_teams = None if token_teams is _UNSET else token_teams
 
     try:
         PromptExecuteArgs(args=args)
@@ -6551,27 +6530,9 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, token teams, and server_id for authorization
-    user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
     server_id = request.headers.get("X-Server-ID")
-
-    # Check if token_teams exists in request.state (set by auth middleware)
-    _UNSET = object()
-    token_teams = getattr(request.state, "token_teams", _UNSET)
-
-    # Determine authorization parameters based on token configuration
-    # Admin with teams=None: admin bypass (public + team access, NOT private)
-    # Admin with teams=[...]: team-scoped access (can see own private resources)
-    # Non-admin or token_teams not set: use user_email for owner checks
-    if is_admin and token_teams is None:
-        # Admin bypass: unrestricted access to public and team resources
-        auth_user_email = None
-        auth_token_teams = None
-    else:
-        # Team-scoped, non-admin, or token_teams not set: normal access control
-        auth_user_email = user_email
-        auth_token_teams = None if token_teams is _UNSET else token_teams
 
     try:
         return await prompt_service.get_prompt(
@@ -6972,7 +6933,8 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
     """
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested gateway {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
     except GatewayNotFoundError as e:
@@ -7044,12 +7006,13 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -7062,7 +7025,8 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        current = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
         await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
@@ -7117,7 +7081,8 @@ async def refresh_gateway_tools(
     """
     logger.info(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested manual refresh for gateway {gateway_id}")
     try:
-        await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
@@ -8320,16 +8285,13 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        # SECURITY (Layer 1): (None, None) for admin bypass triggers the private-exclusion WHERE clause in the service.
+        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
 
         resource_templates = await resource_service.list_resource_templates(
             db,
-            user_email=user_email,
-            token_teams=token_teams,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
             server_id=server_id,
         )
         payload = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
@@ -9278,8 +9240,8 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
 
-        # Check agent visibility before building the card to avoid loading
-        # sensitive relationship data for agents the caller cannot see.
+        # get_agent_card() enforces Layer 1 visibility internally; this pre-check only
+        # logs a denial so operators can spot probing without adding HTTP log noise.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
         if agent is not None:
@@ -10646,20 +10608,13 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
-            # MCP spec-compliant resource templates list endpoint
-            # Use _get_rpc_filter_context - same pattern as tools/list
-            user_email_rpc, token_teams_rpc, is_admin_rpc = _get_rpc_filter_context(request, user)
-
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin_rpc and token_teams_rpc is None:
-                token_teams_rpc = None  # Admin unrestricted
-            elif token_teams_rpc is None:
-                token_teams_rpc = []  # Non-admin without teams = public-only
+            # SECURITY (Layer 1): (None, None) for admin bypass triggers the private-exclusion WHERE clause in the service.
+            auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
 
             resource_templates = await resource_service.list_resource_templates(
                 db,
-                user_email=user_email_rpc,
-                token_teams=token_teams_rpc,
+                user_email=auth_user_email,
+                token_teams=auth_token_teams,
                 server_id=server_id,
             )
             db.commit()

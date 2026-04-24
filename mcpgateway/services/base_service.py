@@ -65,25 +65,31 @@ class BaseService(ABC):
         """Resolve team membership and apply visibility filtering to a query.
 
         Handles the full access-control flow for list endpoints:
-        1. Returns query unmodified for admin bypass (see
-           :func:`~mcpgateway.utils.admin_check.is_admin_bypass_granted`).
+        1. Admin bypass: anonymous (user_email=None AND token_teams=None) sees
+           public + team rows only. DB-resolved admin (email + token_teams=None)
+           also sees their OWN private rows. No bypass shape exposes another
+           user's private rows (PR #4341 / issue #4323). Detection of the
+           DB-resolved admin shape uses
+           :func:`~mcpgateway.utils.admin_check.is_admin_bypass_granted`.
         2. Resolves effective teams from JWT token_teams or DB lookup.
         3. Suppresses owner matching for public-only tokens (token_teams=[]).
         4. Delegates to _apply_visibility_filter for SQL WHERE construction.
 
         Args:
-            query: SQLAlchemy query to filter
-            db: Database session (for team membership lookup when token_teams is None)
-            user_email: User's email. None = no user context.
+            query: SQLAlchemy query to filter.
+            db: Database session (for team membership lookup when token_teams is None).
+            user_email: User's email. ``None`` = no user context.
             token_teams: Teams from JWT via normalize_token_teams().
-                None = admin bypass or no auth context.
-                [] = public-only token.
-                [...] = team-scoped token.
-            team_id: Optional specific team filter
+                ``None`` = admin bypass or no auth context.
+                ``[]`` = public-only token.
+                ``[...]`` = team-scoped token.
+            team_id: Optional specific team filter.
 
         Returns:
-            Query with visibility WHERE clauses applied, or unmodified
-            when admin bypass is granted.
+            Query with visibility WHERE clauses applied. Admin bypass excludes
+            another user's private rows (security invariant from PR #4341); the
+            caller's own private rows remain visible when the bypass shape is
+            DB-resolved admin with an email.
         """
         # Admin bypass: respect PR #4341's invariant that admin bypass NEVER reveals
         # another user's private rows. Anonymous bypass (no email) sees public + team
@@ -177,12 +183,13 @@ class BaseService(ABC):
         footgun — any caller that forgets it silently loses the admin
         bypass and re-introduces #4106.
 
-        Semantics:
+        Semantics (post-PR #4341 / issue #4323):
 
-        - ``token_teams is None and user_email is None`` → unrestricted
-          (auth layer granted admin bypass with no identity).
+        - ``token_teams is None and user_email is None`` → public + team rows
+          (admin bypass with no identity; private rows excluded).
         - ``token_teams is None and user_email`` set, user is admin in DB
-          → unrestricted (auth layer granted admin bypass via session).
+          → public + team rows + caller's own private rows (DB-admin bypass;
+          another user's private rows still excluded).
         - ``token_teams == []`` (public-only) → public only, **even for
           DB admins**.  See :mod:`mcpgateway.utils.admin_check` for why.
         - ``token_teams == [...]`` → public + matching team (+ owner if
@@ -199,8 +206,18 @@ class BaseService(ABC):
         Returns:
             Scoped SQLAlchemy statement.
         """
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return stmt
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Mirrors _apply_access_control.
+        if token_teams is None and user_email is None:
+            return stmt.where(model.visibility != "private")
+        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+            return stmt.where(
+                or_(
+                    model.visibility != "private",
+                    and_(model.visibility == "private", model.owner_email == user_email),
+                )
+            )
 
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         access_conditions = [model.visibility == "public"]
