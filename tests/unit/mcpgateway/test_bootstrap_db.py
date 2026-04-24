@@ -1702,6 +1702,96 @@ class TestMain:
                                                         mock_logger.info.assert_any_call("Database ready")
 
 
+class TestAlembicAtHead:
+    """Unit tests for the ``_alembic_at_head`` fast-path probe.
+
+    ``_alembic_at_head`` decides whether ``main()`` skips the migration
+    advisory lock (issue #4051). Its truth-table needs pinning independently
+    of the integration test so a future refactor cannot silently widen or
+    narrow the fast-path's trigger.
+    """
+
+    def test_returns_true_when_db_heads_match_script_heads(self):
+        """At-head DB → fast-path fires."""
+        # First-Party
+        from mcpgateway.bootstrap_db import _alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_conn = Mock()
+        mock_cfg = Mock()
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("abc123",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ("abc123",)
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert _alembic_at_head(mock_conn, mock_cfg) is True
+
+        mock_sd.from_config.assert_called_once_with(mock_cfg)
+        mock_mc.configure.assert_called_once_with(mock_conn)
+
+    def test_returns_false_when_db_has_no_alembic_version(self):
+        """Empty DB or missing ``alembic_version`` row → must take slow path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import _alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("abc123",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ()  # no version rows
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert _alembic_at_head(Mock(), Mock()) is False
+
+    def test_returns_false_when_db_head_does_not_match_script_head(self):
+        """Out-of-date DB → must take slow path so migrations actually run."""
+        # First-Party
+        from mcpgateway.bootstrap_db import _alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("newhead",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ("oldhead",)
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert _alembic_at_head(Mock(), Mock()) is False
+
+    def test_returns_false_when_script_directory_has_no_heads(self):
+        """Defensive: a zero-revision script dir must not fast-path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import _alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ()
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            # MigrationContext must never be consulted in this case.
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                assert _alembic_at_head(Mock(), Mock()) is False
+                mock_mc.configure.assert_not_called()
+
+    def test_returns_false_on_probe_exception(self):
+        """Any error while probing falls through to the slow path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import _alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        with patch(
+            "mcpgateway.bootstrap_db.ScriptDirectory.from_config",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert _alembic_at_head(Mock(), Mock()) is False
+
+
 class TestModuleLevel:
     """Test module-level code and imports."""
 
