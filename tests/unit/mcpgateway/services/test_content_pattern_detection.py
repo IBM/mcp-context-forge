@@ -130,6 +130,7 @@ class TestMaliciousPatternDetection:
 
     def test_lenient_mode_logs_all_co_occurring_violations(self, caplog):
         """Regression: lenient mode must scan every pattern, not stop at the first match."""
+        # Standard
         import logging
 
         service = ContentSecurityService()

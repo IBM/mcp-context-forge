@@ -24,7 +24,9 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
-from jinja2 import Environment, meta, select_autoescape, Template
+from jinja2 import meta, select_autoescape, Template
+from jinja2.exceptions import SecurityError as JinjaSecurityError
+from jinja2.sandbox import SandboxedEnvironment
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -74,18 +76,27 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 _REGISTRY_CACHE = None
 
 # Module-level Jinja environment singleton for template caching
-_JINJA_ENV: Optional[Environment] = None
+_JINJA_ENV: Optional[SandboxedEnvironment] = None
 
 
-def _get_jinja_env() -> Environment:
+def _get_jinja_env() -> SandboxedEnvironment:
     """Get or create the module-level Jinja environment singleton.
 
+    Uses SandboxedEnvironment (not plain Environment) so rendered templates
+    cannot reach Python internals via __class__, __mro__, __subclasses__,
+    getattr chains, etc. Regex-based template blocklist validation in
+    content_security.validate_prompt_template() catches only literal
+    occurrences in the template source; SandboxedEnvironment is what
+    actually enforces the restriction at render time against hex escapes,
+    string concatenation, attr() filter chains, and other well-known SSTI
+    techniques. This is the primary defense; the regex list is advisory.
+
     Returns:
-        Jinja2 Environment with autoescape and trim settings.
+        Jinja2 SandboxedEnvironment with autoescape and trim settings.
     """
     global _JINJA_ENV  # pylint: disable=global-statement
     if _JINJA_ENV is None:
-        _JINJA_ENV = Environment(
+        _JINJA_ENV = SandboxedEnvironment(
             autoescape=select_autoescape(["html", "xml"]),
             trim_blocks=True,
             lstrip_blocks=True,
@@ -2968,6 +2979,12 @@ class PromptService(BaseService):
         try:
             jinja_template = _compile_jinja_template(template)
             return jinja_template.render(**arguments)
+        except JinjaSecurityError as sec_err:
+            # SandboxedEnvironment caught an unsafe attribute / call access
+            # (e.g. {{ x.__class__.__subclasses__() }}). Do NOT fall through
+            # to str.format: its attribute-access syntax ({x.__class__}) would
+            # re-open the same hole we just blocked.
+            raise PromptError(f"Failed to render template: sandbox rejected unsafe operation ({sec_err})")
         except Exception:
             try:
                 return template.format(**arguments)
