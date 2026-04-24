@@ -1036,3 +1036,76 @@ def test_flush_to_db_a2a_agent_metrics_exception_is_logged(monkeypatch):
 
     # Verify A2A agent metrics were attempted
     assert A2AAgentMetric in attempted_types
+
+def test_flush_to_db_tool_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during tool metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import ToolMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == ToolMetric:
+                raise Exception("FK violation on tool_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+
+    service._flush_to_db([tool_metric], [], [], [], [])
+
+    assert ToolMetric in attempted_types
+
+
+def test_flush_to_db_resource_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during resource metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import ResourceMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == ResourceMetric:
+                raise Exception("FK violation on resource_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+
+    service._flush_to_db([], [resource_metric], [], [], [])
+
+    assert ResourceMetric in attempted_types
