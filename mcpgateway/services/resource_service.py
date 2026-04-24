@@ -64,7 +64,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, Reso
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
@@ -700,7 +700,7 @@ class ResourceService(BaseService):
             )
             raise rce
         except ContentSizeError as cse:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
@@ -715,7 +715,7 @@ class ResourceService(BaseService):
             )
             raise cse
         except ContentTypeError as cte:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource MIME type not allowed: {cte.mime_type}",
@@ -730,6 +730,22 @@ class ResourceService(BaseService):
                 },
             )
             raise cte
+        except ContentPatternError as cpe:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content blocked by malicious pattern detection: {cpe.violation_type}",
+                event_type="resource_pattern_rejected",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "violation_type": cpe.violation_type,
+                    "visibility": visibility,
+                },
+            )
+            raise cpe
         except Exception as e:
             db.rollback()
 
@@ -2991,6 +3007,8 @@ class ResourceService(BaseService):
                 resource.uri = resource_update.uri
             if resource_update.name is not None:
                 resource.name = resource_update.name
+            if resource_update.title is not None:
+                resource.title = resource_update.title
             if resource_update.description is not None:
                 resource.description = resource_update.description
             if resource_update.mime_type is not None or resource_update.uri is not None:
@@ -3192,7 +3210,7 @@ class ResourceService(BaseService):
             )
             raise ie
         except ContentSizeError as cse:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
@@ -3206,7 +3224,7 @@ class ResourceService(BaseService):
             )
             raise cse
         except ContentTypeError as cte:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource MIME type not allowed: {cte.mime_type}",
@@ -3222,6 +3240,23 @@ class ResourceService(BaseService):
                 },
             )
             raise cte
+        except ContentPatternError as cpe:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content blocked by malicious pattern detection: {cpe.violation_type}",
+                event_type="resource_pattern_rejected",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cpe,
+                custom_fields={
+                    "violation_type": cpe.violation_type,
+                },
+            )
+            raise cpe
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 
