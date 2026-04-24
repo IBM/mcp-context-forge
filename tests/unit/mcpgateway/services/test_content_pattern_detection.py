@@ -118,12 +118,15 @@ class TestMaliciousPatternDetection:
 
     def test_lenient_mode_allows_malicious_content(self):
         """Test that lenient mode logs but allows malicious content."""
-        service = ContentSecurityService()
-
         with patch("mcpgateway.services.content_security.settings") as mock_settings:
             mock_settings.content_pattern_detection_enabled = True
             mock_settings.content_pattern_validation_mode = "lenient"
             mock_settings.content_blocked_patterns = [r"<script[^>]*>.*?</script>"]
+            mock_settings.content_blocked_template_patterns = []
+            mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_regex_timeout = 1.0
+
+            service = ContentSecurityService()
 
             # Should not raise in lenient mode
             service.detect_malicious_patterns(content="<script>alert('XSS')</script>", content_type="Resource content")
@@ -133,8 +136,6 @@ class TestMaliciousPatternDetection:
         # Standard
         import logging
 
-        service = ContentSecurityService()
-
         with patch("mcpgateway.services.content_security.settings") as mock_settings:
             mock_settings.content_pattern_detection_enabled = True
             mock_settings.content_pattern_validation_mode = "lenient"
@@ -143,6 +144,11 @@ class TestMaliciousPatternDetection:
                 r"(?i)(union|select|insert|update|delete|drop)\s+",
                 r"&&|\|\|",
             ]
+            mock_settings.content_blocked_template_patterns = []
+            mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_regex_timeout = 1.0
+
+            service = ContentSecurityService()
 
             with caplog.at_level(logging.INFO, logger="mcpgateway.services.content_security"):
                 service.detect_malicious_patterns(
@@ -234,10 +240,9 @@ class TestTimeoutAndEdgeCases:
         """Test TimeoutError is caught and converted to ContentPatternError."""
         service = ContentSecurityService()
 
-        # Mock re.search to raise TimeoutError
-        with patch("mcpgateway.services.content_security.re.search") as mock_search:
-            mock_search.side_effect = TimeoutError("Pattern timeout")
-
+        # Force the thread-based fallback path (Py<3.13 semantics) regardless of
+        # the interpreter the tests are running on, then make that helper raise.
+        with patch("mcpgateway.services.content_security._HAS_NATIVE_REGEX_TIMEOUT", False), patch.object(service, "_regex_search_with_timeout", side_effect=TimeoutError("Pattern timeout")):
             with pytest.raises(ContentPatternError) as exc_info:
                 service.detect_malicious_patterns(content="test content", content_type="Test content")
 
@@ -254,32 +259,40 @@ class TestTimeoutAndEdgeCases:
 
     def test_lenient_mode_return_path(self):
         """Test lenient mode allows malicious content and returns early."""
-        service = ContentSecurityService()
-
         with patch("mcpgateway.services.content_security.settings") as mock_settings:
             mock_settings.content_pattern_detection_enabled = True
             mock_settings.content_pattern_validation_mode = "lenient"
             mock_settings.content_blocked_patterns = [r"<script"]
+            mock_settings.content_blocked_template_patterns = []
+            mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_regex_timeout = 1.0
+
+            service = ContentSecurityService()
 
             # Should NOT raise in lenient mode
             service.detect_malicious_patterns(content="<script>alert(1)</script>", content_type="Test")
             # If we get here without exception, lenient mode worked
 
-    def test_python313_timeout_path_coverage(self):
-        """Test Python 3.13+ code path with mocked version (covers line 514)."""
-        service = ContentSecurityService()
+    def test_python313_native_timeout_path_coverage(self):
+        """Cover the Python 3.13+ native `compiled.search(..., timeout=)` branch.
 
-        # Mock sys.version_info to simulate Python 3.13+
+        Stubs the compiled pattern list with a mock whose ``.search`` accepts the
+        timeout kwarg (real re.Pattern.search rejects it on Py<3.13), forces the
+        module-level ``_HAS_NATIVE_REGEX_TIMEOUT`` constant True, and asserts the
+        thread-based fallback helper is not invoked.
+        """
         # Standard
-        import sys
+        from unittest.mock import MagicMock
 
-        with patch.object(sys, "version_info", (3, 13, 0)):
-            # Mock re.search to avoid actual timeout parameter error on Python 3.12
-            with patch("mcpgateway.services.content_security.re.search") as mock_search:
-                mock_search.return_value = None  # No match
+        service = ContentSecurityService()
+        mock_compiled = MagicMock()
+        mock_compiled.search.return_value = None
 
-                # This will execute line 514 (Python 3.13+ path)
-                service.detect_malicious_patterns(content="Clean content", content_type="Test")
-
-                # Verify re.search was called (line 514 executed)
-                assert mock_search.called
+        with (
+            patch("mcpgateway.services.content_security._HAS_NATIVE_REGEX_TIMEOUT", True),
+            patch.object(service, "_compiled_blocked_patterns", [("test_pattern", mock_compiled)]),
+            patch.object(service, "_regex_search_with_timeout") as mock_fallback,
+        ):
+            service.detect_malicious_patterns(content="Clean content", content_type="Test")
+            assert not mock_fallback.called, "Py3.13+ path incorrectly fell back to thread-based timeout"
+            mock_compiled.search.assert_called_once_with("Clean content", timeout=1.0)

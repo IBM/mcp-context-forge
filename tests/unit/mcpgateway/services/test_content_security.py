@@ -870,6 +870,9 @@ class TestValidatePromptTemplate:
     def test_validate_safe_template(self, mock_settings):
         """Test validating a safe template passes."""
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
@@ -896,6 +899,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = []
 
         service = ContentSecurityService()
@@ -915,6 +921,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
@@ -935,6 +944,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"eval\s*\("]
 
         service = ContentSecurityService()
@@ -955,6 +967,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"exec\s*\("]
 
         service = ContentSecurityService()
@@ -974,6 +989,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__.*__"]
 
         service = ContentSecurityService()
@@ -993,6 +1011,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = []
 
         service = ContentSecurityService()
@@ -1012,6 +1033,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
@@ -1027,6 +1051,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__"]
 
         service = ContentSecurityService()
@@ -1045,6 +1072,9 @@ class TestValidatePromptTemplate:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\("]
 
         service = ContentSecurityService()
@@ -1061,6 +1091,9 @@ class TestValidatePromptTemplate:
     def test_validate_complex_safe_template(self, mock_settings):
         """Test validation passes for complex but safe template."""
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
@@ -1087,6 +1120,9 @@ class TestValidatePromptTemplate:
 
         with patch("mcpgateway.services.content_security.settings") as mock_settings:
             mock_settings.content_validate_prompt_templates = True
+            mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+            mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+            mock_settings.content_pattern_max_scan_size = 1_000_000
             mock_settings.content_blocked_template_patterns = []
 
             service = ContentSecurityService()
@@ -1106,6 +1142,9 @@ class TestTemplateValidationIntegration:
     def test_full_validation_pipeline_safe(self, mock_settings):
         """Test the complete validation pipeline with safe template."""
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()
@@ -1121,6 +1160,9 @@ class TestTemplateValidationIntegration:
         from mcpgateway.services.content_security import TemplateValidationError
 
         mock_settings.content_validate_prompt_templates = True
+        mock_settings.content_pattern_detection_enabled = False  # skip Step-0 pattern scan; these tests exercise template validation only
+        mock_settings.content_pattern_regex_timeout = 1.0  # real float for thread.join(timeout) in _regex_search_with_timeout
+        mock_settings.content_pattern_max_scan_size = 1_000_000
         mock_settings.content_blocked_template_patterns = [r"__import__", r"eval\s*\(", r"exec\s*\(", r"__.*__"]
 
         service = ContentSecurityService()

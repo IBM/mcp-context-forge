@@ -344,23 +344,29 @@ class ContentSecurityService:
                 logger.error("Skipping invalid regex in %s: %r (%s)", pattern_kind, raw, exc)
         return compiled
 
-    def _regex_search_with_timeout(self, pattern: re.Pattern, content: str, timeout: float = 1.0):
+    def _regex_search_with_timeout(self, pattern, content: str, timeout: float = 1.0):
         """Execute regex search with timeout protection for Python < 3.13.
 
         Uses threading to implement timeout for regex operations that don't
         natively support it. This prevents ReDoS attacks on Python 3.11/3.12.
 
         Args:
-            pattern: Regex pattern to search for
-            content: Content to search in
-            timeout: Maximum time in seconds to allow for regex execution
+            pattern: Regex pattern to search for. Accepts either a raw source
+                string (compiled on the fly with IGNORECASE | DOTALL to match
+                the detect_malicious_patterns hot path) or a pre-compiled
+                re.Pattern for callers that already compiled once.
+            content: Content to search in.
+            timeout: Maximum time in seconds to allow for regex execution.
 
         Returns:
-            Match object if pattern found, None otherwise
+            Match object if pattern found, None otherwise.
 
         Raises:
-            TimeoutError: If regex execution exceeds timeout
+            TimeoutError: If regex execution exceeds timeout.
         """
+        if isinstance(pattern, str):
+            pattern = re.compile(pattern, re.IGNORECASE | re.DOTALL)
+
         result = [None]
         exception = [None]
 
