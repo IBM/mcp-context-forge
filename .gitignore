@@ -103,6 +103,10 @@ test-results/
 tests/playwright/reports/
 tests/playwright/videos/
 tests/playwright/screenshots/
+client/playwright-report/
+client/test-results/
+client/.playwright/
+tests/jmeter/results/
 tests/async/reports/
 tests/async/profiles/
 tests/migration/reports/
