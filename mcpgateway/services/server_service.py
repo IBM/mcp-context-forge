@@ -1554,21 +1554,6 @@ class ServerService(BaseService):
             ServerNotFoundError: If the server is not found.
             PermissionError: If user doesn't own the server.
             ServerError: For other deletion errors.
-
-        Examples:
-            >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock, patch
-            >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> server = MagicMock()
-            >>> db.get.return_value = server
-            >>> db.delete = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> service._notify_server_deleted = AsyncMock()
-            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
-            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
-            >>> import asyncio
-            >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
             server = db.get(DbServer, server_id)

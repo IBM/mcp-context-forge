@@ -7670,12 +7670,14 @@ async def test_handle_streamable_http_get_replays_from_last_event_id(monkeypatch
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
     # First-Party
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
     from mcpgateway.transports.server_event_bus import (
         get_server_event_bus,
         reset_server_event_bus,
     )
 
     await reset_server_event_bus()
+    init_session_affinity(enable_notifications=False)
 
     sdk = _CountingSessionManager()
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
