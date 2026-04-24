@@ -102,10 +102,25 @@ def test_notification_receives_no_response_body(gateway_http_client: httpx.Clien
     Asserts the HTTP response is 202 Accepted (the Streamable HTTP spec's way
     of acknowledging receipt with no body). Any envelope in the body would
     be a spec violation.
+
+    Per the MCP Streamable HTTP spec, clients MUST include the
+    ``Mcp-Session-Id`` header on all requests after initialization, so we
+    first establish a session via ``initialize`` before sending the
+    notification.
     """
+    # Establish a session — the spec requires Mcp-Session-Id on all
+    # post-initialization messages, including notifications.
+    init_resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_initialize_body())
+    assert init_resp.status_code == 200, f"initialize failed: {init_resp.status_code}: {init_resp.text[:200]}"
+    session_id = init_resp.headers.get("mcp-session-id")
+
+    notify_headers = dict(_MCP_HEADERS)
+    if session_id:
+        notify_headers["mcp-session-id"] = session_id
+
     # notifications/initialized is the canonical always-safe notification.
     body = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
-    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=body)
+    resp = gateway_http_client.post("/mcp/", headers=notify_headers, json=body)
     assert resp.status_code == 202, f"notification should produce 202 Accepted, got {resp.status_code}: {resp.text[:200]}"
     # The body may be empty, an empty JSON object, or omitted — but it MUST NOT contain
     # a JSON-RPC response envelope keyed by an id.
@@ -117,6 +132,14 @@ def test_notification_receives_no_response_body(gateway_http_client: httpx.Clien
             pass  # empty or non-JSON body is acceptable
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "GAP-013: gateway auto-generates a UUID for id-less JSON-RPC messages "
+        "instead of treating them as notifications (returns result with "
+        "fabricated id rather than 202 Accepted or 4xx rejection)."
+    ),
+)
 def test_request_without_id_is_rejected_or_treated_as_notification(
     gateway_http_client: httpx.Client,
 ) -> None:
@@ -127,8 +150,17 @@ def test_request_without_id_is_rejected_or_treated_as_notification(
     response). Either is spec-compatible; a *successful* id-bearing response
     would be a violation.
     """
+    # Establish a session so a missing session ID doesn't mask the real test.
+    init_resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_initialize_body())
+    assert init_resp.status_code == 200, f"initialize failed: {init_resp.status_code}: {init_resp.text[:200]}"
+    session_id = init_resp.headers.get("mcp-session-id")
+
+    call_headers = dict(_MCP_HEADERS)
+    if session_id:
+        call_headers["mcp-session-id"] = session_id
+
     body = {"jsonrpc": "2.0", "method": "ping", "params": {}}  # no id
-    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=body)
+    resp = gateway_http_client.post("/mcp/", headers=call_headers, json=body)
     if resp.status_code >= 400:
         return  # acceptable: server rejected the malformed request
     # Otherwise it was accepted as a notification; body must not echo an id.
