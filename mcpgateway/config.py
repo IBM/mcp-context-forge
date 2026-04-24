@@ -90,7 +90,6 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
-        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
         "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
     ]
     for key in keys:
@@ -1736,6 +1735,7 @@ class Settings(BaseSettings):
             "application/xml",
             "application/yaml",
             "application/pdf",
+            "application/octet-stream",
             "image/png",
             "image/jpeg",
             "image/gif",
@@ -1751,6 +1751,79 @@ class Settings(BaseSettings):
     content_strict_mime_validation: bool = Field(
         default=False,
         description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
+    )
+
+    # Content Security - Template Validation (US-4)
+    content_validate_prompt_templates: bool = Field(
+        default=True,
+        description="Enable prompt template validation for syntax and security patterns (US-4). Validates Jinja2 syntax and blocks dangerous patterns.",
+    )
+    content_blocked_template_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"__import__",  # Python import injection
+            r"__builtins__",  # Access to builtins
+            r"__globals__",  # Access to globals
+            r"__locals__",  # Access to locals
+            r"__class__",  # Class introspection
+            r"__base__",  # Base class access
+            r"__subclasses__",  # Subclass enumeration
+            r"eval\s*\(",  # Eval function
+            r"exec\s*\(",  # Exec function
+            r"compile\s*\(",  # Compile function
+            r"open\s*\(",  # File operations
+            r"file\s*\(",  # File operations
+            r"input\s*\(",  # Input operations
+            r"__\w+__",  # Any dunder method
+        ],
+        description="Regex patterns for dangerous template constructs (US-4). Blocks Python injection attempts in Jinja2 templates.",
+    )
+
+    # Content Security - Malicious Pattern Detection (US-3)
+    content_pattern_detection_enabled: bool = Field(
+        default=True,
+        description="Enable malicious pattern detection in resources and prompts (US-3). Scans for XSS, command injection, SQL injection, and template injection patterns.",
+    )
+    content_pattern_validation_mode: str = Field(
+        default="strict",
+        description="Validation mode for pattern detection (US-3): 'strict' (block), 'moderate' (warn+block), 'lenient' (warn only).",
+    )
+    content_blocked_patterns: List[str] = Field(
+        default_factory=lambda: [
+            # XSS patterns
+            r"<script[^>]*>.*?</script>",  # Script tags
+            r"javascript:",  # JavaScript protocol
+            r"on\w+\s*=",  # Event handlers: onclick, onerror, etc.
+            r"<iframe[^>]*>",  # Iframe injection
+            # Command injection
+            r";\s*rm\s+-rf",  # Dangerous rm command
+            r"&&|\|\|",  # Command chaining
+            r"`[^`]+`",  # Backtick execution
+            r"\$\([^)]+\)",  # Command substitution
+            # SQL injection
+            r"(?i)(union|select|insert|update|delete|drop)\s+",  # SQL keywords
+            r"--\s*$",  # SQL comments
+            r"'\s*or\s*'1'\s*=\s*'1",  # Classic SQL injection
+            # Template injection - more specific patterns to avoid false positives
+            r"\{\{\s*config\s*\}\}",  # Direct Jinja2 config object access (not variables containing "config")
+            r"\{\{\s*config\.",  # Jinja2 config attribute access
+            r"\{%\s*for\s+\w+\s+in\s+config",  # Jinja2 loops over config object
+            r"\$\{.*\}",  # Expression evaluation
+        ],
+        description="Regex patterns for malicious content detection (US-3). Blocks XSS, command injection, SQL injection, and template injection attempts.",
+    )
+    content_pattern_cache_enabled: bool = Field(
+        default=True,
+        description="Enable caching of pattern validation results (US-3). Improves performance by caching validation outcomes.",
+    )
+    content_pattern_max_scan_size: int = Field(
+        default=200_000,
+        ge=1024,
+        description="Maximum bytes of content that will be scanned for malicious patterns (US-3). Content exceeding this limit is rejected with a ContentPatternError. This bounds worst-case regex execution time as hard defense against ReDoS (CWE-400) independent of the per-pattern timeout.",
+    )
+    content_pattern_regex_timeout: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Per-pattern regex execution timeout in seconds (US-3). Used natively on Python 3.13+ via re.search(..., timeout=) and as a soft thread-join timeout on older Pythons. Primary ReDoS defense is content_pattern_max_scan_size; this is defense-in-depth.",
     )
 
     # Timeout for SSE task group cleanup (seconds).

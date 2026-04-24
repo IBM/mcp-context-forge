@@ -274,6 +274,89 @@ As of version 1.0.0-RC-2, ContextForge implements log injection protection to pr
 **Attack Prevention:**
 - Prevents fake log entry injection
 - Protects log parsing and SIEM systems
+
+### Template Injection Protection (CWE-1336)
+
+As of version 1.0.0-RC-2, ContextForge implements comprehensive Jinja2 template injection protection to prevent code execution attacks through malicious prompt templates:
+
+**Protection Mechanism:**
+- [`validate_prompt_template()`](mcpgateway/services/content_security.py:411) - Multi-layer template validation
+- Three-stage validation pipeline: syntax → patterns → Jinja2 parsing
+- Configurable via `CONTENT_VALIDATE_PROMPT_TEMPLATES` (enabled by default)
+- Customizable blocked patterns via `CONTENT_BLOCKED_TEMPLATE_PATTERNS`
+
+**Validation Layers:**
+
+1. **Balanced Braces Check:**
+   - Stack-based validation of Jinja2 delimiters (`{{`, `}}`, `{%`, `%}`, `{#`, `#}`)
+   - Prevents malformed templates that could bypass security checks
+   - Detects mismatched or incomplete delimiter pairs
+
+2. **Dangerous Pattern Detection:**
+   - Case-insensitive regex scanning for injection vectors
+   - Default blocked patterns:
+     - `__import__` - Prevents module imports
+     - `eval\s*\(` - Blocks eval() calls
+     - `exec\s*\(` - Blocks exec() calls
+     - `__.*__` - Prevents dunder method access (e.g., `__class__`, `__mro__`)
+   - First-match early exit for performance
+
+3. **Jinja2 Syntax Validation:**
+   - Parses template with Jinja2 Environment
+   - Validates template semantics and structure
+   - Catches syntax errors before template execution
+
+**Attack Prevention:**
+- Prevents arbitrary code execution via `__import__('os').system()`
+- Blocks object introspection attacks via `__class__.__bases__`
+- Prevents eval/exec injection
+- Protects against template syntax manipulation
+
+**Configuration:**
+```bash
+# Enable validation (default: true)
+CONTENT_VALIDATE_PROMPT_TEMPLATES=true
+
+# Customize blocked patterns (JSON array of regex patterns)
+CONTENT_BLOCKED_TEMPLATE_PATTERNS='["__import__","eval\\s*\\(","exec\\s*\\(","__.*__"]'
+```
+
+**Example Usage:**
+```python
+from mcpgateway.services.content_security import get_content_security_service, TemplateValidationError
+
+security = get_content_security_service()
+
+try:
+    # Validate template before storage
+    security.validate_prompt_template(
+        template="Hello {{ name }}!",
+        name="greeting_prompt",
+        user_email="user@example.com",
+        ip_address="192.168.1.1"
+    )
+except TemplateValidationError as e:
+    logger.error(f"Template validation failed: {e.reason}")
+    # Returns HTTP 400 with detailed error information
+```
+
+**Security Audit Trail:**
+- All validation failures are logged with sanitized PII
+- User emails hashed (8-character prefix)
+- IP addresses masked (last octet/segment hidden)
+- Template name, failure reason, and matched pattern recorded
+
+**Integration Points:**
+- Automatic validation in `register_prompt()` - prompt creation
+- Automatic validation in `update_prompt()` - prompt updates
+- Automatic validation in `register_prompts_bulk()` - bulk imports
+- Global exception handler returns HTTP 400 with structured error details
+
+**Performance:**
+- Validation overhead: < 1ms for simple templates, < 5ms for complex templates
+- Can be disabled via configuration if needed (not recommended)
+- Patterns compiled once at startup for efficiency
+
 - Prevents hiding malicious activity in logs
 - Ensures log integrity for security auditing
 
@@ -372,6 +455,8 @@ When deploying ContextForge in production:
 - [ ] Verify XSS protection is active (SecurityValidator automatically applied via Pydantic schemas)
 - [ ] Verify SSRF protection is active (validate_url() used for all external requests)
 - [ ] Verify log injection protection is applied to user-controlled data in logs
+- [ ] Verify template injection protection is enabled (CONTENT_VALIDATE_PROMPT_TEMPLATES=true)
+- [ ] Review and customize blocked template patterns if needed (CONTENT_BLOCKED_TEMPLATE_PATTERNS)
 - [ ] Secure database connections (use TLS, strong passwords, restricted access)
 - [ ] Secure Redis connections if using Redis (password, TLS, network isolation)
 - [ ] Configure resource limits (CPU, memory) to prevent DoS attacks

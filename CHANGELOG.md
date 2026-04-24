@@ -2,6 +2,43 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [Unreleased]
+
+### Added
+
+- **🛡️ Content Security – Malicious Pattern Detection (US-3)** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072), [#538](https://github.com/IBM/mcp-context-forge/issues/538)) – Regex-based scanning for XSS, SQL injection, command injection, and template-injection patterns. Applied on the single **and** bulk create/update paths for resources, prompts, and tools (tool `name`, `description`, and JSON-serialized `inputSchema`). New config: `CONTENT_PATTERN_DETECTION_ENABLED`, `CONTENT_BLOCKED_PATTERNS`, `CONTENT_PATTERN_VALIDATION_MODE` (`strict` | `moderate` | `lenient`). Lenient mode logs every matched pattern in a payload (was: only the first).
+- **🔒 Content Security – Prompt Template Validation (US-4)** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072), [#538](https://github.com/IBM/mcp-context-forge/issues/538)) – Pre-render validation of prompt templates: balanced-brace check, Jinja2 syntax check, and dangerous-pattern scan (`__import__`, `eval(`, dunders, etc.). New config: `CONTENT_VALIDATE_PROMPT_TEMPLATES`, `CONTENT_BLOCKED_TEMPLATE_PATTERNS`.
+- **⚡ ReDoS Defense for Pattern Scanning** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072)) – `CONTENT_PATTERN_MAX_SCAN_SIZE` (default 200 KB) caps scan input length deterministically; `CONTENT_PATTERN_REGEX_TIMEOUT` (default 1.0 s) per-pattern. Patterns are pre-compiled once at service init instead of re-compiled per request.
+
+### ⚠️ Behavior Changes
+
+#### **🧪 Prompt templates are now rendered in a Jinja2 sandbox** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072))
+
+**Impact**: `prompt_service` now uses `jinja2.sandbox.SandboxedEnvironment` instead of plain `jinja2.Environment`. Templates that previously reached Python internals at render time will raise `PromptError: sandbox rejected unsafe operation`.
+
+**What breaks at render time**:
+- `{{ x.__class__ }}`, `{{ obj.__repr__ }}` and similar attribute traversal into Python internals
+- `{{ ''.join(items) }}` and other calls to non-whitelisted methods
+- Templates relying on `getattr()` chains or hex-escaped attribute access
+
+**Why**: The regex-based template blocklist can only match literals in the template source; Jinja2 SSTI bypasses via hex escapes (`\x5f\x5fclass\x5f\x5f`), `attr()` filter chains, or string concatenation defeat it trivially. `SandboxedEnvironment` is Jinja2's upstream-recommended defense and enforces the restriction at runtime — the regex list stays as a pre-flight hint.
+
+**Migration**: Audit stored prompt templates for attribute access on user-supplied or internal objects. Move reflection-style operations into application code; keep templates focused on data substitution.
+
+**Rollback**: If an emergency rollback is required, revert the one-line change in `mcpgateway/services/prompt_service.py::_get_jinja_env()` and restart. The regex template blocklist will continue to provide the (weaker) prior level of protection.
+
+#### **📏 Content scan-size cap (new rejection path)** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072))
+
+**Impact**: `detect_malicious_patterns()` now rejects content larger than `CONTENT_PATTERN_MAX_SCAN_SIZE` (default 200 KB) with `ContentPatternError(violation_type="content_too_large_to_scan")` → HTTP 400. This is independent of `CONTENT_MAX_RESOURCE_SIZE`.
+
+**Why**: Hard upper bound on regex execution time is the primary ReDoS defense (CWE-400). The prior thread-based timeout on Python < 3.13 was a soft timeout only — the worker thread could not be killed and kept running in the background after `join()` returned.
+
+**Migration**: If you store resources with body > 200 KB that need pattern scanning, raise `CONTENT_PATTERN_MAX_SCAN_SIZE`. Be aware that larger values raise the ReDoS blast radius proportionally — prefer keeping very large content out of pattern-scanned fields where practical.
+
+#### **🔔 Pattern detection and template validation default to enabled** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072))
+
+`CONTENT_PATTERN_DETECTION_ENABLED=true` and `CONTENT_VALIDATE_PROMPT_TEMPLATES=true` ship as defaults (in contrast to `CONTENT_STRICT_MIME_VALIDATION=false` which had a soft-launch default for US-2). Existing deployments containing any of the default blocked patterns in stored resources or prompts (e.g. Jinja2 `{{ config }}` access, shell metacharacters, `UNION SELECT`) will start returning 400s on subsequent update calls. Set either flag to `false` temporarily to audit and clean existing content before re-enabling.
+
 ## [1.0.0-RC3] - 2026-04-14 - Auth Hardening, Plugin Multi-Tenancy, Rust Runtime & Multi-Arch
 
 ### Overview

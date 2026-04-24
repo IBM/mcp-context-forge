@@ -30,13 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import (
-    PromptError,
-    PromptNameConflictError,
-    PromptNotFoundError,
-    PromptService,
-    PromptValidationError,
-)
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -376,15 +370,21 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
+        """Test that template validation errors are raised as TemplateValidationError."""
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
         prompt_service._notify_prompt_added = AsyncMock()
-        # Patch _validate_template to raise
-        prompt_service._validate_template = Mock(side_effect=Exception("bad template"))
-        pc = PromptCreate(name="fail", description="", template="bad", arguments=[])
-        with pytest.raises(PromptError) as exc_info:
+
+        # Use a template with nonexistent filter (passes Pydantic, fails service validation)
+        pc = PromptCreate(name="fail", description="", template="Hello {{ name | nonexistent_filter }}", arguments=[])
+
+        with pytest.raises(TemplateValidationError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
-        assert "Failed to register prompt" in str(exc_info.value)
+        # Generic error message to avoid leaking template details (CWE-209 fix)
+        assert "invalid jinja2 syntax" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1176,6 +1176,188 @@ class TestPromptService:
             # Verify rollback was called
             test_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_register_prompt_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
+        """Test that ContentPatternError is caught and re-raised during prompt registration."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentPatternError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
+            pattern_matched="__import__", content_type="Prompt template", content_snippet="{{__import__('os')}}", violation_type="python_injection"
+        )
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service),
+            patch("mcpgateway.services.prompt_service.logger") as mock_logger,
+            patch("mcpgateway.services.prompt_service.structured_logger") as mock_structured_logger,
+        ):
+            # Use model_construct to bypass Pydantic validation
+            prompt = PromptCreate.model_construct(name="malicious-prompt", template="{{__import__('os')}}")
+
+            with pytest.raises(ContentPatternError) as exc_info:
+                await prompt_service.register_prompt(test_db, prompt, created_by="test_user", owner_email="test@example.com")
+
+            # Verify the error details
+            assert exc_info.value.pattern_matched == "__import__"
+            assert exc_info.value.violation_type == "python_injection"
+            assert exc_info.value.content_snippet == "{{__import__('os')}}"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
+            # Verify logger.error was called (covers line 908)
+            mock_logger.error.assert_called_once()
+            assert "__import__" in str(mock_logger.error.call_args)
+
+            # Verify structured_logger.log was called (covers lines 909-918)
+            mock_structured_logger.log.assert_called_once()
+            call_args = mock_structured_logger.log.call_args
+            assert call_args[1]["level"] == "ERROR"
+            assert call_args[1]["message"] == "Prompt creation failed - Malicious pattern detected"
+            assert call_args[1]["event_type"] == "prompt_creation_failed"
+            assert call_args[1]["component"] == "prompt_service"
+            assert call_args[1]["user_id"] == "test_user"
+            assert call_args[1]["user_email"] == "test@example.com"
+            assert call_args[1]["custom_fields"]["prompt_name"] == "malicious-prompt"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_with_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
+        """Test that ContentPatternError is caught and re-raised during prompt update."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),  # get_for_update call
+                _make_execute_result(scalar=None),  # conflict check (if name changes)
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentPatternError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
+            pattern_matched="eval(", content_type="Prompt template", content_snippet="{{eval(user_input)}}", violation_type="code_injection"
+        )
+
+        mock_structured_logger = mock_logging_services["structured_logger"]
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service), patch("mcpgateway.services.prompt_service.logger") as mock_logger:
+            upd = PromptUpdate(template="{{eval(user_input)}}")
+
+            with pytest.raises(ContentPatternError) as exc_info:
+                # Don't pass user_email to skip permission check
+                await prompt_service.update_prompt(test_db, 1, upd, modified_by="test_user")
+
+            # Verify the error details
+            assert exc_info.value.pattern_matched == "eval("
+            assert exc_info.value.violation_type == "code_injection"
+
+            # Verify rollback was called (covers line 2444)
+            test_db.rollback.assert_called_once()
+
+            # Verify logger.error was called (covers line 2445)
+            mock_logger.error.assert_called_once()
+            assert "eval(" in str(mock_logger.error.call_args)
+
+            # Verify structured_logger.log was called (covers line 2446)
+            mock_structured_logger.log.assert_called_once()
+            call_args = mock_structured_logger.log.call_args
+            assert call_args[1]["level"] == "ERROR"
+            assert call_args[1]["message"] == "Prompt update failed - Malicious pattern detected"
+            assert call_args[1]["event_type"] == "prompt_update_failed"
+            assert call_args[1]["component"] == "prompt_service"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_content_pattern_error(self, prompt_service, test_db):
+        """Test that TemplateValidationError is caught and re-raised during prompt update.
+
+        This test covers:
+        - prompt_service.py template validation with dangerous patterns
+        """
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises TemplateValidationError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(
+            template_name="test-prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__"
+        )
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use a simple template that passes Pydantic validation
+            upd = PromptUpdate(template="Hello {{name}}")
+
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.template_name == "test-prompt"
+            assert "dangerous pattern" in exc_info.value.reason.lower()
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_template_validation_error(self, prompt_service, test_db):
+        """Test that TemplateValidationError is caught and re-raised during prompt update."""
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises TemplateValidationError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(template_name="test-template", reason="Template contains dangerous pattern", pattern="__import__")
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use a safe template that passes Pydantic validation
+            # The mock will raise TemplateValidationError when validate_prompt_template is called
+            upd = PromptUpdate(template="Hello {{ name }}")
+
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.template_name == "test-template"
+            assert "dangerous pattern" in exc_info.value.reason.lower()
+            assert exc_info.value.pattern == "__import__"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
     # ──────────────────────────────────────────────────────────────────
     #   set state
     # ──────────────────────────────────────────────────────────────────
@@ -1960,16 +2142,28 @@ class TestPromptBulkRegistration:
         assert any("Prompt name conflict" in err for err in result["errors"])
 
     @pytest.mark.asyncio
-    async def test_register_prompts_bulk_invalid_template_counts_failed(self, prompt_service):
+    async def test_register_prompts_bulk_invalid_template_counts_failed(self, prompt_service, monkeypatch):
+        """Test that template validation errors cause fail-fast in bulk operations."""
+        # First-Party
+        from mcpgateway import config
+        from mcpgateway.services.content_security import ContentSecurityService, TemplateValidationError
+
+        # Ensure validation is enabled by monkeypatching settings
+        monkeypatch.setattr(config.settings, "content_validate_prompt_templates", True)
+
+        # Create a fresh ContentSecurityService with validation enabled
+        mock_security_service = ContentSecurityService()
+
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         db.commit = MagicMock()
         db.refresh = MagicMock()
+        db.rollback = MagicMock()
         prompt_service._notify_prompt_added = AsyncMock()
 
         prompt = SimpleNamespace(
             name="bad",
-            template="Hello {{ invalid",
+            template="Hello {{ invalid",  # Unbalanced braces
             description=None,
             arguments=[],
             tags=[],
@@ -1981,15 +2175,20 @@ class TestPromptBulkRegistration:
             visibility="public",
         )
 
-        result = await prompt_service.register_prompts_bulk(
-            db=db,
-            prompts=[prompt],
-            created_by="tester",
-            conflict_strategy="skip",
-        )
+        # Mock get_content_security_service to return our service with validation enabled
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Template validation errors now cause fail-fast behavior
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.register_prompts_bulk(
+                    db=db,
+                    prompts=[prompt],
+                    created_by="tester",
+                    conflict_strategy="skip",
+                )
 
-        assert result["failed"] == 1
-        assert any("Failed to process prompt" in err for err in result["errors"])
+            assert "Unbalanced template braces" in str(exc_info.value)
+            # Verify rollback was called
+            db.rollback.assert_called()
 
 
 # ---------------------------------------------------------------------------

@@ -12,18 +12,22 @@ Tests verify that get_for_update() is used correctly in all critical
 methods to prevent race conditions under high concurrency.
 """
 
+# Standard
+from unittest.mock import AsyncMock, call, MagicMock, patch
+
+# Third-Party
 import pytest
-from unittest.mock import MagicMock, patch, call, AsyncMock
 from sqlalchemy.orm import Session
 
-from mcpgateway.db import get_for_update, Tool, Server, Resource, Prompt, Gateway, A2AAgent
-from mcpgateway.services.tool_service import ToolService
-from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.gateway_service import GatewayService
+# First-Party
+from mcpgateway.db import A2AAgent, Gateway, get_for_update, Prompt, Resource, Server, Tool
+from mcpgateway.schemas import A2AAgentUpdate, PromptUpdate, ResourceUpdate, ServerCreate, ToolUpdate
 from mcpgateway.services.a2a_service import A2AAgentService
-from mcpgateway.schemas import ToolUpdate, ServerCreate, ResourceUpdate, PromptUpdate, A2AAgentUpdate
+from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.prompt_service import PromptService
+from mcpgateway.services.resource_service import ResourceService
+from mcpgateway.services.server_service import ServerService
+from mcpgateway.services.tool_service import ToolService
 
 
 class TestGetForUpdateHelper:
@@ -74,12 +78,10 @@ class TestGetForUpdateHelper:
     @pytest.mark.skip(reason="Requires actual SQLAlchemy objects; covered by service-level tests")
     def test_get_for_update_with_where_clause(self):
         """Test get_for_update with custom WHERE clause."""
-        pass
 
     @pytest.mark.skip(reason="Requires actual SQLAlchemy objects; covered by service-level tests")
     def test_get_for_update_with_options(self):
         """Test get_for_update with eager loading options."""
-        pass
 
 
 class TestToolServiceLocking:
@@ -141,6 +143,7 @@ class TestToolServiceLocking:
         Delete operations don't need get_for_update because they use DELETE...RETURNING
         which provides atomicity at the database level.
         """
+        # Standard
         from unittest.mock import AsyncMock
 
         service = ToolService()
@@ -440,6 +443,7 @@ class TestA2AServiceLocking:
         agent_update.model_dump.return_value = {"description": "Updated"}
 
         # Mock tool_service.update_tool_from_a2a_agent using the singleton
+        # First-Party
         from mcpgateway.services.tool_service import tool_service
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent) as mock_get:
@@ -507,18 +511,26 @@ class TestConcurrencyScenarios:
         mock_tool = MagicMock(spec=Tool)
         mock_tool.id = "tool-id"
         mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
         mock_tool.visibility = "public"
+        mock_tool.team_id = None
+        mock_tool.owner_email = "test@example.com"
 
         # Mock a conflicting tool
         mock_conflict = MagicMock(spec=Tool)
         mock_conflict.id = "other-id"
         mock_conflict.name = "new-name"
+        mock_conflict.custom_name = "new-name"
         mock_conflict.enabled = True
+        mock_conflict.visibility = "public"
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "new-name"
         tool_update.custom_name = "new-name"
-        tool_update.visibility = "public"
+        tool_update.visibility = MagicMock()
+        tool_update.visibility.lower.return_value = "public"
+        tool_update.description = None
+        tool_update.input_schema = None
 
         get_for_update_calls = []
 
