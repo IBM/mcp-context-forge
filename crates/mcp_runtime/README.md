@@ -111,6 +111,52 @@ Generated profiling artifacts are written under:
 crates/mcp_runtime/profiles/
 ```
 
+## Configuration
+
+### Backend URL Validation
+
+Validates outgoing HTTP requests from Rust → Python backend services to protect against SSRF via misconfigured environment variables.
+
+**Scope**: Validates `MCP_RUST_BACKEND_RPC_URL` and derived backend service URLs (NOT incoming client requests).
+
+**Threat Model**: Defends against misconfigured environment variables pointing to cloud metadata endpoints or blocked internal networks.
+
+**Out of scope (deliberate, NOT a security guarantee)**:
+- DNS rebinding / DNS poisoning / `/etc/hosts` manipulation — the allowlist is a string match on the URL host; the resolved IP is never checked.
+- HTTP redirects to blocked hosts — mitigated at the shared `reqwest::Client` builder via `redirect::Policy::none()`, not by this module.
+
+Operators who need defense-in-depth against DNS-layer attacks must pin DNS resolution at the connector level.
+
+**Environment Variables:**
+
+```bash
+MCP_RUST_BACKEND_VALIDATION_ENABLED=true                        # Enable validation (default: true)
+MCP_RUST_BACKEND_ALLOWED_HOSTS="localhost,127.0.0.1,[::1]"      # Approved backend hosts (default)
+MCP_RUST_BACKEND_BLOCKED_NETWORKS="169.254.169.254/32,fd00::1/128" # CIDR ranges to block (default; IPv4 + IPv6 metadata)
+MCP_RUST_BACKEND_MAX_URL_LENGTH=2048                            # Per-URL byte cap for DoS / log-bloat mitigation (default: 2048)
+```
+
+The validator runs once at startup (fast-fail on misconfig) and again on every outbound backend request (defense-in-depth). `MCP_RUST_BACKEND_RPC_URL` is rejected at startup if it does not satisfy the policy.
+
+IPv6 literals are matched post-bracket-strip (e.g. allowlisting `[::1]` matches `http://[::1]/`), and `::ffff:…` IPv4-mapped addresses are compared against IPv4 CIDR rules — so `http://[::ffff:169.254.169.254]/` is caught by the default `169.254.169.254/32` block.
+
+**Examples:**
+
+```bash
+# Production: strict allowlist with IPv4 + IPv6 metadata endpoints blocked
+MCP_RUST_BACKEND_ALLOWED_HOSTS="backend.internal,10.0.1.50" \
+MCP_RUST_BACKEND_BLOCKED_NETWORKS="169.254.169.254/32,fd00::1/128,10.0.0.0/8" \
+cargo run
+
+# Development: local only (dual-stack loopback)
+MCP_RUST_BACKEND_ALLOWED_HOSTS="localhost,127.0.0.1,[::1]" cargo run
+
+# Disable validation (NOT recommended)
+MCP_RUST_BACKEND_VALIDATION_ENABLED=false cargo run
+```
+
+URLs not in the allowlist or IPs in blocked networks are rejected with a Bad Gateway (502) response.
+
 ## Verify what is running
 
 ### Compose/gateway view

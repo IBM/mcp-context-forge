@@ -1,6 +1,12 @@
 
 # cargo-vet audits file
 
+[[audits.ipnetwork]]
+who = "Mohan Lakshmaiah <mohan.economist@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.21.1"
+notes = "CIDR network parsing for backend URL validation SSRF protection. Reviewed for safe IP/CIDR parsing with no unsafe code or network I/O."
+
 [[audits.rustls-webpki]]
 who = "lucarlig <luca.carlig@ibm.com>"
 criteria = "safe-to-deploy"

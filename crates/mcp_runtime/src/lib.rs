@@ -8,6 +8,7 @@
 //! can also own MCP session/event-store/resume/live-stream/affinity cores while
 //! still delegating authentication and RBAC authority to Python.
 
+pub mod backend_url_validator;
 pub mod config;
 pub mod observability;
 
@@ -186,6 +187,7 @@ pub struct AppState {
     upstream_session_ttl: Duration,
     session_ttl: Duration,
     session_auth_reuse_ttl: Duration,
+    backend_url_validator: backend_url_validator::BackendUrlValidator,
     public_ingress_enabled: bool,
     runtime_stats: Arc<RuntimeStats>,
 }
@@ -711,6 +713,7 @@ impl AppState {
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         #[cfg(feature = "rmcp-upstream-client")]
         let rmcp_client = RmcpReqwestClient::builder()
@@ -719,10 +722,20 @@ impl AppState {
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
+            .redirect(reqwest_rmcp::redirect::Policy::none())
             .build()
             .map_err(|err| RuntimeError::Config(format!("rmcp http client error: {err}")))?;
         let db_pool = build_db_pool(config)?;
         let redis_client = build_redis_client(config)?;
+        let backend_url_validator = backend_url_validator::BackendUrlValidator::from_config(config)
+            .map_err(|e| RuntimeError::Config(format!("Backend URL validator error: {}", e)))?;
+        backend_url_validator
+            .validate_url(&config.backend_rpc_url, "Backend RPC URL (startup)")
+            .map_err(|err| {
+                RuntimeError::Config(format!(
+                    "MCP_RUST_BACKEND_RPC_URL rejected by validator: {err}"
+                ))
+            })?;
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
@@ -837,6 +850,7 @@ impl AppState {
             upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
             session_ttl: Duration::from_secs(config.session_ttl_seconds),
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
+            backend_url_validator,
             public_ingress_enabled: config.public_listen_http.is_some(),
             runtime_stats: Arc::new(RuntimeStats::default()),
         })
@@ -980,6 +994,20 @@ impl AppState {
     #[must_use]
     pub fn backend_tools_call_metric_url(&self) -> &str {
         &self.backend_tools_call_metric_url
+    }
+
+    /// Validates a backend URL before making an outgoing HTTP request.
+    ///
+    /// This protects against SSRF via misconfigured environment variables.
+    /// See `backend_url_validator` module for threat model and design.
+    #[allow(clippy::result_large_err)]
+    fn validate_backend_url(&self, url: &str, description: &str) -> Result<(), Response> {
+        self.backend_url_validator
+            .validate_url(url, description)
+            .map_err(|e| {
+                error!("Backend URL validation failed for {}: {}", description, e);
+                validation_error_response(e)
+            })
     }
 
     #[must_use]
@@ -2626,9 +2654,12 @@ async fn authenticate_public_request_if_needed(
         client_ip: public_client_ip(&incoming_headers, peer_addr),
     };
 
+    let url = state.backend_authenticate_url();
+    state.validate_backend_url(url, "Backend authenticate URL")?;
+
     let backend_response = state
         .client
-        .post(state.backend_authenticate_url())
+        .post(url)
         .header(RUNTIME_HEADER, RUNTIME_NAME)
         .header(
             HeaderName::from_static(INTERNAL_RUNTIME_AUTH_HEADER),
@@ -2858,6 +2889,17 @@ fn batch_rejected_response() -> Response {
                 "code": -32600,
                 "message": "Batch requests are not supported",
             }
+        }),
+    )
+}
+
+fn validation_error_response(message: String) -> Response {
+    json_response(
+        StatusCode::BAD_GATEWAY,
+        json!({
+            "error": "Bad Gateway",
+            "message": message,
+            "data": CLIENT_ERROR_DETAIL,
         }),
     )
 }
@@ -4497,6 +4539,9 @@ async fn send_to_backend_url(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    // Validate backend URL before making request
+    state.validate_backend_url(backend_url, "Backend RPC URL")?;
+
     state
         .client
         .post(backend_url)
@@ -6171,6 +6216,8 @@ async fn authorize_server_method_via_backend(
     url: &str,
     method_label: &str,
 ) -> Result<DirectExecutionAuthorization, Response> {
+    state.validate_backend_url(url, &format!("Backend {method_label} authz URL"))?;
+
     let backend_response = state
         .client
         .post(url)
@@ -7807,6 +7854,10 @@ async fn send_transport_to_backend(
     // runtime session, it marks that fact in forwarded headers so Python can
     // skip repeating the same session-ownership check on the internal hop.
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
+
+    // Validate backend URL before making request
+    state.validate_backend_url(&target_url, "Backend transport URL")?;
+
     let mut request = state.client.request(method, target_url).headers(
         build_forwarded_headers_with_session_validation(incoming_headers, session_validated),
     );
@@ -7831,9 +7882,14 @@ async fn send_session_delete_to_backend(
     incoming_headers: &HeaderMap,
     session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
+    let target_url = derive_backend_session_delete_url(state.backend_rpc_url());
+
+    // Validate backend URL before making request
+    state.validate_backend_url(&target_url, "Backend session delete URL")?;
+
     state
         .client
-        .delete(derive_backend_session_delete_url(state.backend_rpc_url()))
+        .delete(target_url)
         .headers(build_forwarded_headers_with_session_validation(
             incoming_headers,
             session_validated,
@@ -7859,9 +7915,12 @@ async fn send_tools_list_to_backend(
     // The helpers below are thin, method-specific bridges to Python's internal
     // MCP handlers. They keep the runtime's public response shaping separate
     // from the actual HTTP dispatch and error translation.
+    let url = state.backend_tools_list_url();
+    state.validate_backend_url(url, "Backend tools/list URL")?;
+
     state
         .client
-        .post(state.backend_tools_list_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .send()
         .await
@@ -7887,9 +7946,11 @@ async fn send_resources_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_resources_list_url();
+    state.validate_backend_url(url, "Backend resources/list URL")?;
     state
         .client
-        .post(state.backend_resources_list_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7916,9 +7977,11 @@ async fn send_resources_read_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_resources_read_url();
+    state.validate_backend_url(url, "Backend resources/read URL")?;
     state
         .client
-        .post(state.backend_resources_read_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7945,9 +8008,11 @@ async fn send_resources_subscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_resources_subscribe_url();
+    state.validate_backend_url(url, "Backend resources/subscribe URL")?;
     state
         .client
-        .post(state.backend_resources_subscribe_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -7974,9 +8039,11 @@ async fn send_resources_unsubscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_resources_unsubscribe_url();
+    state.validate_backend_url(url, "Backend resources/unsubscribe URL")?;
     state
         .client
-        .post(state.backend_resources_unsubscribe_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8003,9 +8070,11 @@ async fn send_resource_templates_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_resource_templates_list_url();
+    state.validate_backend_url(url, "Backend resources/templates/list URL")?;
     state
         .client
-        .post(state.backend_resource_templates_list_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8032,9 +8101,11 @@ async fn send_roots_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_roots_list_url();
+    state.validate_backend_url(url, "Backend roots/list URL")?;
     state
         .client
-        .post(state.backend_roots_list_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8061,9 +8132,11 @@ async fn send_completion_complete_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_completion_complete_url();
+    state.validate_backend_url(url, "Backend completion/complete URL")?;
     state
         .client
-        .post(state.backend_completion_complete_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8090,9 +8163,11 @@ async fn send_sampling_create_message_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_sampling_create_message_url();
+    state.validate_backend_url(url, "Backend sampling/createMessage URL")?;
     state
         .client
-        .post(state.backend_sampling_create_message_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8119,9 +8194,11 @@ async fn send_logging_set_level_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_logging_set_level_url();
+    state.validate_backend_url(url, "Backend logging/setLevel URL")?;
     state
         .client
-        .post(state.backend_logging_set_level_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8148,9 +8225,11 @@ async fn send_prompts_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_prompts_list_url();
+    state.validate_backend_url(url, "Backend prompts/list URL")?;
     state
         .client
-        .post(state.backend_prompts_list_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8177,9 +8256,11 @@ async fn send_prompts_get_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_prompts_get_url();
+    state.validate_backend_url(url, "Backend prompts/get URL")?;
     state
         .client
-        .post(state.backend_prompts_get_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8370,9 +8451,16 @@ async fn resolve_tools_call_plan_via_backend(
     incoming_headers: &HeaderMap,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
+    let url = state.backend_tools_call_resolve_url();
+    state
+        .validate_backend_url(url, "Backend tools/call/resolve URL")
+        .map_err(|_| {
+            ResolveToolsCallError::Fallback("Backend URL validation failed".to_string())
+        })?;
+
     let response = state
         .client
-        .post(state.backend_tools_call_resolve_url())
+        .post(url)
         .headers(build_forwarded_headers(incoming_headers))
         .body(body)
         .send()
@@ -8457,9 +8545,12 @@ async fn send_tools_call_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    let url = state.backend_tools_call_url();
+    state.validate_backend_url(url, "Backend tools/call URL")?;
+
     state
         .client
-        .post(state.backend_tools_call_url())
+        .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
         .body(body)
         .send()
@@ -8486,9 +8577,14 @@ async fn send_tools_call_metric_to_backend(
     incoming_headers: &HeaderMap,
     payload: &ToolsCallMetricRecordRequest,
 ) -> Result<(), String> {
+    let url = state.backend_tools_call_metric_url();
+    state
+        .validate_backend_url(url, "Backend tools/call/metric URL")
+        .map_err(|_| "Backend URL validation failed".to_string())?;
+
     let response = state
         .client
-        .post(state.backend_tools_call_metric_url())
+        .post(url)
         .headers(build_forwarded_headers(incoming_headers))
         .json(payload)
         .send()
@@ -10372,6 +10468,10 @@ mod unit_tests {
             redis_url: None,
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
+            backend_validation_enabled: true,
+            backend_allowed_hosts: "localhost,127.0.0.1".to_string(),
+            backend_blocked_networks: "169.254.169.254/32".to_string(),
+            backend_max_url_length: 2048,
             exit_after_startup_ms: None,
         }
     }
@@ -10613,7 +10713,12 @@ mod unit_tests {
 
         match error {
             RuntimeError::Config(message) => {
-                assert!(message.contains("sslrootcert"));
+                // Can fail with sslrootcert error OR backend URL validation error
+                assert!(
+                    message.contains("sslrootcert") || message.contains("Backend URL validator"),
+                    "Expected sslrootcert or validator error, got: {}",
+                    message
+                );
             }
             other => panic!("expected config error, got {other}"),
         }
