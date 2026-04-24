@@ -7,6 +7,13 @@
 services:
   # Override gateway to add Phoenix environment variables
   gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     environment:
       # Phoenix Observability Integration
       - PHOENIX_ENDPOINT=http://phoenix:6006

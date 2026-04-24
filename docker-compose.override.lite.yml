@@ -32,6 +32,13 @@ services:
 
   # Reduce gateway replicas and resources for lite mode
   gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     deploy:
       mode: replicated
       replicas: 2
