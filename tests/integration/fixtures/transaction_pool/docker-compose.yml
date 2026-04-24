@@ -1,0 +1,81 @@
+# Reproduction harness for issue #4051.
+#
+# Minimal stack to reproduce the Alembic advisory-lock hang when multiple
+# gateway replicas start concurrently behind PgBouncer in transaction-pooling
+# mode. Intentionally excludes everything unrelated (redis, nginx, monitoring,
+# admin UI) so the failure mode is attributable.
+
+name: mcf4051
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: reprosecret
+      POSTGRES_DB: mcp
+    ports:
+      - "54320:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mcp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:reprosecret@postgres:5432/mcp
+      LISTEN_PORT: 6432
+      # The setting that makes this bug reproducible. In transaction pooling
+      # mode, PgBouncer hands the server backend to another client between
+      # transactions — so the session-scoped advisory lock Alembic acquires
+      # outlives the pooler "session" of the original caller.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      # Force multiplexing: keep server-side backends well below total client
+      # connections. With N replicas × M gunicorn workers competing, PgBouncer
+      # must hand the same server backend to multiple clients between
+      # transactions — which is how session-scoped advisory locks get orphaned.
+      # Production OCP/Helm deployments that hit this bug see the same ratio.
+      DEFAULT_POOL_SIZE: "2"
+      MIN_POOL_SIZE: "1"
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "64320:6432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      # Route gateway traffic through PgBouncer (transaction pool). This is
+      # the scenario documented in the issue.
+      DATABASE_URL: postgresql+psycopg://postgres:reprosecret@pgbouncer:6432/mcp
+      HOST: 0.0.0.0
+      PORT: "4444"
+      LOG_LEVEL: INFO
+      # Strip the gateway down to just the bootstrap path we care about.
+      AUTH_REQUIRED: "false"
+      MCPGATEWAY_UI_ENABLED: "false"
+      MCPGATEWAY_ADMIN_API_ENABLED: "false"
+      MCPGATEWAY_A2A_ENABLED: "false"
+      PLUGINS_ENABLED: "false"
+      CACHE_TYPE: none
+      FEDERATION_ENABLED: "false"
+      REDIS_URL: "redis://127.0.0.1:6379/0"
+      # Keep bootstrap quiet on the retry side so the hang is obvious.
+      DB_MAX_RETRIES: "10"
+      # Several workers per replica so total client connections comfortably
+      # exceed PgBouncer's DEFAULT_POOL_SIZE, forcing backend multiplexing.
+      GUNICORN_WORKERS: "4"
