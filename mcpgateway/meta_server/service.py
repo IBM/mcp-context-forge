@@ -355,11 +355,13 @@ class MetaServerService:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                # Use ToolService.list_tools for consistent access control
+                # Use ToolService.list_tools for consistent access control.
+                # Fetch ALL tools (limit=0) so keyword matching covers the
+                # full catalog; pagination is applied after scoring.
                 kw_result = await _kw_ts.list_tools(
                     db=db,
                     include_inactive=False,
-                    limit=limit,
+                    limit=0,
                     user_email=user_email,
                     token_teams=token_teams,
                 )
