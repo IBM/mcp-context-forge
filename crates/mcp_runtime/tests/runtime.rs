@@ -129,6 +129,10 @@ fn test_runtime_config() -> RuntimeConfig {
         redis_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
+        backend_validation_enabled: true,
+        backend_allowed_hosts: "localhost,127.0.0.1".to_string(),
+        backend_blocked_networks: "169.254.169.254/32".to_string(),
+        backend_max_url_length: 2048,
         exit_after_startup_ms: None,
     }
 }
