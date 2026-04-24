@@ -46,6 +46,13 @@ services:
 
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     environment:
       # ── Embedded UI ──
       - MCPGATEWAY_UI_EMBEDDED=true

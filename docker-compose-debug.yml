@@ -61,6 +61,9 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
@@ -373,6 +376,9 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
 
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
@@ -449,6 +455,9 @@ services:
       nofile:
         soft: 8192
         hard: 8192
+      nproc:
+        soft: 5000
+        hard: 5000
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
@@ -577,6 +586,9 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+      nproc:
+        soft: 5000
+        hard: 5000
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
@@ -656,6 +668,9 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+      nproc:
+        soft: 5000
+        hard: 5000
     # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
@@ -1279,6 +1294,9 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
       interval: 30s
