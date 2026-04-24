@@ -321,6 +321,127 @@ class TestProxyAuthentication:
                     assert exc_info.value.status_code == 401
                     assert "User not found in database" in exc_info.value.detail
 
+    @pytest.mark.asyncio
+    async def test_proxy_auth_admin_user_in_db_yields_admin_bypass(self, mock_settings, mock_request):
+        """Admin user found in DB gets is_admin=True and teams=None (admin bypass)."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_request.headers = {"X-Authenticated-User": "admin-user@example.com"}
+        mock_request.state = Mock()
+
+        mock_user = Mock()
+        mock_user.is_admin = True
+        mock_user.email = "admin-user@example.com"
+
+        with patch.object(vc, "settings", mock_settings), patch(
+            "mcpgateway.db.get_db"
+        ) as mock_get_db, patch(
+            "mcpgateway.services.email_auth_service.EmailAuthService"
+        ) as mock_auth_service, patch(
+            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+        ) as mock_resolve_teams:
+            mock_get_db.return_value = iter([Mock()])
+            mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+            # _resolve_teams_from_db returns None for admins (admin bypass)
+            mock_resolve_teams.return_value = None
+
+            result = await vc.require_auth(mock_request, None, None)
+
+        assert result["sub"] == "admin-user@example.com"
+        assert result["is_admin"] is True
+        assert result["teams"] is None
+        assert result["source"] == "proxy"
+
+    @pytest.mark.asyncio
+    async def test_proxy_auth_multiple_teams(self, mock_settings, mock_request):
+        """Non-admin user with multiple team memberships returns the full list."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_request.headers = {"X-Authenticated-User": "multi-team-user@example.com"}
+        mock_request.state = Mock()
+
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.email = "multi-team-user@example.com"
+
+        with patch.object(vc, "settings", mock_settings), patch(
+            "mcpgateway.db.get_db"
+        ) as mock_get_db, patch(
+            "mcpgateway.services.email_auth_service.EmailAuthService"
+        ) as mock_auth_service, patch(
+            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+        ) as mock_resolve_teams:
+            mock_get_db.return_value = iter([Mock()])
+            mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+            mock_resolve_teams.return_value = ["team-a", "team-b", "team-c"]
+
+            result = await vc.require_auth(mock_request, None, None)
+
+        assert result["is_admin"] is False
+        assert result["teams"] == ["team-a", "team-b", "team-c"]
+
+    @pytest.mark.asyncio
+    async def test_require_auth_header_first_proxy_returns_enriched_payload(self, mock_settings, mock_request):
+        """Parity test: require_auth_header_first returns the enriched payload (same helper)."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_request.headers = {"X-Authenticated-User": "mcp-user@example.com"}
+        mock_request.cookies = {}
+        mock_request.state = Mock()
+
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.email = "mcp-user@example.com"
+
+        with patch.object(vc, "settings", mock_settings), patch(
+            "mcpgateway.db.get_db"
+        ) as mock_get_db, patch(
+            "mcpgateway.services.email_auth_service.EmailAuthService"
+        ) as mock_auth_service, patch(
+            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+        ) as mock_resolve_teams:
+            mock_get_db.return_value = iter([Mock()])
+            mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+            mock_resolve_teams.return_value = ["team1"]
+
+            result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+        # Same enriched shape as require_auth (both go through _authenticate_proxy_user)
+        assert result["sub"] == "mcp-user@example.com"
+        assert result["source"] == "proxy"
+        assert result["token"] is None
+        assert result["is_admin"] is False
+        assert result["teams"] == ["team1"]
+        assert result["email"] == "mcp-user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_require_auth_header_first_proxy_admin_bootstrap(self, mock_settings, mock_request):
+        """Parity test: require_auth_header_first supports platform-admin bootstrap."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.trust_proxy_auth_dangerously = True
+        mock_settings.require_user_in_db = False
+        mock_settings.platform_admin_email = "admin@example.com"
+        mock_request.headers = {"X-Authenticated-User": "admin@example.com"}
+        mock_request.cookies = {}
+        mock_request.state = Mock()
+
+        with patch.object(vc, "settings", mock_settings), patch(
+            "mcpgateway.db.get_db"
+        ) as mock_get_db, patch(
+            "mcpgateway.services.email_auth_service.EmailAuthService"
+        ) as mock_auth_service:
+            mock_get_db.return_value = iter([Mock()])
+            mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=None)
+
+            result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+        assert result["is_admin"] is True
+        assert result["teams"] is None
+
 
 class TestRBACProxyAuthentication:
     """Test cases for RBAC middleware proxy authentication functionality."""

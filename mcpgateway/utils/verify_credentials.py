@@ -399,6 +399,86 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         _raise_auth_401("Account disabled")
 
 
+async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
+    """Authenticate a proxy-identified user and build an enriched auth payload.
+
+    Performs a DB lookup for the proxy-identified user, resolves their teams
+    and admin status via ``_resolve_teams_from_db``, caches the payload on
+    ``request.state._jwt_verified_payload``, and returns it.
+
+    Supports a platform-admin bootstrap flow: when
+    ``settings.require_user_in_db`` is ``False`` **and** the proxy header
+    matches ``settings.platform_admin_email``, an admin payload is returned
+    without requiring a DB record (same policy applied to JWTs in
+    ``_enforce_revocation_and_active_user``).
+
+    This helper is shared by :func:`require_auth` and
+    :func:`require_auth_header_first` so that proxy-authenticated callers get
+    the same enriched context regardless of the entry point (REST admin paths
+    vs MCP streamable HTTP transport).
+
+    Args:
+        request: FastAPI request used to cache the payload for downstream code.
+        proxy_user: The authenticated user identifier from the configured
+            proxy header (e.g. ``X-Authenticated-User``).
+
+    Returns:
+        dict: Enriched auth payload with keys ``sub``, ``source``, ``token``,
+        ``is_admin``, ``teams``, and ``email``. ``teams`` is ``None`` for
+        admin bypass, ``[]`` for public-only, or a list of team ID strings.
+
+    Raises:
+        HTTPException: 401 when the proxy-identified user is not present in
+            the DB and the platform-admin bootstrap conditions do not apply.
+    """
+    # First-Party
+    from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+    db = next(get_db())
+    try:
+        auth_service = EmailAuthService(db)
+        user_info = await auth_service.get_user_by_email(proxy_user)
+
+        if user_info:
+            # Resolve teams from DB (returns None for admin bypass, [] for no teams, or list of team IDs)
+            token_teams = await _resolve_teams_from_db(proxy_user, user_info)
+            payload = {
+                "sub": proxy_user,
+                "source": "proxy",
+                "token": None,  # nosec B105 - None is not a password
+                "is_admin": user_info.is_admin,
+                "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
+                "email": proxy_user,
+            }
+        else:
+            # User not in DB - handle based on REQUIRE_USER_IN_DB setting
+            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+            if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                # Platform admin bootstrap (matches the JWT path in _enforce_revocation_and_active_user)
+                payload = {
+                    "sub": proxy_user,
+                    "source": "proxy",
+                    "token": None,  # nosec B105 - None is not a password
+                    "is_admin": True,
+                    "teams": None,  # Admin bypass
+                    "email": proxy_user,
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found in database",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        # Cache in request state for downstream use (same pattern as JWT tokens)
+        request.state._jwt_verified_payload = (None, payload)
+        return payload
+    finally:
+        db.close()
+
+
 async def require_auth(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None)) -> str | dict:
     """Require authentication via JWT token or proxy headers.
 
@@ -486,52 +566,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
-                # First-Party
-                from mcpgateway.auth import _resolve_teams_from_db
-                from mcpgateway.db import get_db
-                from mcpgateway.services.email_auth_service import EmailAuthService
-
-                # Query database for user info
-                db = next(get_db())
-                try:
-                    auth_service = EmailAuthService(db)
-                    user_info = await auth_service.get_user_by_email(proxy_user)
-
-                    if user_info:
-                        # Resolve teams from DB (returns None for admin bypass, [] for no teams, or list of team IDs)
-                        token_teams = await _resolve_teams_from_db(proxy_user, user_info)
-                        is_admin = user_info.is_admin
-
-                        # Build enriched payload similar to session tokens
-                        payload = {
-                            "sub": proxy_user,
-                            "source": "proxy",
-                            "token": None,
-                            "is_admin": is_admin,
-                            "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
-                            "email": proxy_user,
-                        }
-
-                        # Cache in request state for downstream use (same pattern as JWT tokens)
-                        request.state._jwt_verified_payload = (None, payload)
-
-                        return payload
-                    else:
-                        # User not in DB - handle based on REQUIRE_USER_IN_DB setting
-                        platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
-                        if not settings.require_user_in_db and proxy_user == platform_admin_email:
-                            # Platform admin bootstrap
-                            payload = {"sub": proxy_user, "source": "proxy", "token": None, "is_admin": True, "teams": None, "email": proxy_user}  # Admin bypass
-                            request.state._jwt_verified_payload = (None, payload)
-                            return payload
-                        else:
-                            raise HTTPException(
-                                status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="User not found in database",
-                                headers={"WWW-Authenticate": "Bearer"},
-                            )
-                finally:
-                    db.close()
+                return await _authenticate_proxy_user(request, proxy_user)
             # No proxy header - check auth_required (matches RBAC/WebSocket behavior)
             if settings.auth_required:
                 raise HTTPException(
@@ -1089,12 +1124,14 @@ async def require_auth_header_first(
     if request is None:
         request = Request(scope={"type": "http", "headers": []})
 
-    # Proxy auth path — identical to require_auth
+    # Proxy auth path — shares _authenticate_proxy_user() with require_auth
+    # so proxy-authenticated callers get the same enriched payload (teams,
+    # is_admin, email, request.state caching) regardless of entry point.
     if not settings.mcp_client_auth_enabled:
         if is_proxy_auth_trust_active():
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
-                return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
+                return await _authenticate_proxy_user(request, proxy_user)
             if settings.auth_required:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
