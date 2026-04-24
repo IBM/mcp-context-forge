@@ -2336,6 +2336,40 @@ class ToolService(BaseService):
                 and either "tool" (DbTool object) or "error" (error message).
         """
         try:
+            # Same three US-3 malicious-pattern scans that register_tool() runs.
+            # Keep these in lock-step with the single-tool path.
+            if tool.name:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.name),
+                    content_type="Tool name",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.description:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.description),
+                    content_type="Tool description",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.input_schema:
+                try:
+                    # Standard
+                    import json
+
+                    schema_str = json.dumps(tool.input_schema)
+                    self._content_security.detect_malicious_patterns(
+                        content=schema_str,
+                        content_type="Tool inputSchema",
+                        user_email=owner_email or created_by,
+                        ip_address=created_from_ip,
+                    )
+                except (TypeError, ValueError):
+                    # Mirror register_tool(): skip scan when inputSchema isn't JSON-serializable
+                    # (e.g. MagicMock in tests). Don't hide actual violations - only this narrow
+                    # pre-scan serialization step.
+                    pass
+
             # Extract auth information
             if tool.auth is None:
                 auth_type = None
