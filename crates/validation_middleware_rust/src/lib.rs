@@ -154,7 +154,11 @@ fn compile_validator(
     Ok(CompiledValidator {
         max_param_length,
         matcher,
-        allowed_roots: allowed_roots.into_iter().map(PathBuf::from).collect(),
+        allowed_roots: allowed_roots
+            .into_iter()
+            .map(PathBuf::from)
+            .map(normalize_absolute_path)
+            .collect(),
         max_path_depth,
     })
 }
@@ -601,7 +605,7 @@ fn validate_resource_path_impl(path: &str, validator: &CompiledValidator) -> PyR
         && !validator
             .allowed_roots
             .iter()
-            .any(|root| resolved_path.starts_with(normalize_absolute_path(root.clone())))
+            .any(|root| resolved_path.starts_with(root))
     {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "invalid_path: Path outside allowed roots",
@@ -896,17 +900,13 @@ mod tests {
     fn validate_resource_path_accepts_configured_roots() {
         let tempdir = tempfile::tempdir().unwrap();
         let allowed_root = tempdir.path().canonicalize().unwrap();
-        let validator = CompiledValidator {
-            max_param_length: 32,
-            matcher: DangerousPatternMatcher {
-                shell_metacharacters: false,
-                path_traversal: false,
-                control_characters: false,
-                fallback_pattern: None,
-            },
-            allowed_roots: vec![allowed_root.clone()],
-            max_path_depth: 1024,
-        };
+        let validator = compile_validator(
+            32,
+            Vec::new(),
+            vec![allowed_root.to_string_lossy().into_owned()],
+            1024,
+        )
+        .unwrap();
 
         let candidate = tempdir.path().join("file.txt");
         let result = validate_resource_path_impl(candidate.to_str().unwrap(), &validator).unwrap();
