@@ -574,7 +574,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 @email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
 @require_permission("admin.user_management")
 async def list_users(
-    cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Pagination cursor for fetching the next set of results"),
     limit: Optional[int] = Query(
         None,
         ge=0,

@@ -126,7 +126,7 @@ async def get_providers_partial(
 @require_permission("admin.system_config")
 async def get_models_partial(
     request: Request,
-    provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
+    provider_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by provider ID"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),

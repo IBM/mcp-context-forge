@@ -411,10 +411,18 @@ async def initiate_oauth_flow(
 
 @oauth_router.get("/callback")
 async def oauth_callback(
-    code: Annotated[str | None, Query(description="Authorization code from OAuth provider")] = None,
-    state: Annotated[str | None, Query(description="State parameter for CSRF protection")] = None,
-    error: Annotated[str | None, Query(description="OAuth provider error code")] = None,
-    error_description: Annotated[str | None, Query(description="OAuth provider error description")] = None,
+    # NOTE on validation strategy for OAuth callback parameters:
+    # - RFC 6749 defines `code` and `state` as opaque VSCHAR (%x20-7E) strings.
+    #   Tight allow-lists (e.g. only [a-zA-Z0-9_-]) break Google (uses `/`), Microsoft
+    #   (uses `!*%`), and our own session-bound state (uses `.` separator). Keep length
+    #   caps but no pattern. Downstream token exchange & HMAC verification do the real
+    #   validation.
+    # - `error` is a small, well-defined RFC 6749 Section 4.1.2.1 enum-like value.
+    # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
+    code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
+    state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
+    error: Annotated[str | None, Query(max_length=100, pattern=r"^[a-zA-Z0-9_]+$", description="OAuth provider error code")] = None,
+    error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,
     db: Session = Depends(get_db),
