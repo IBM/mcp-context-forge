@@ -1653,20 +1653,40 @@ async def test_require_auth_header_first_no_request_uses_jwt_token_param(monkeyp
 
 @pytest.mark.asyncio
 async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypatch):
-    """Proxy user is returned when mcp_client_auth_enabled=False and trust_proxy_auth=True."""
+    """Proxy user returns the enriched payload (shared helper with require_auth)."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
 
     mock_request = Mock(spec=Request)
     mock_request.headers = {"x-authenticated-user": "proxy-user@example.com"}
     mock_request.cookies = {}
+    mock_request.state = Mock()
 
-    result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    mock_user = Mock()
+    mock_user.is_admin = False
+    mock_user.email = "proxy-user@example.com"
+
+    with patch("mcpgateway.db.get_db") as mock_get_db, patch(
+        "mcpgateway.services.email_auth_service.EmailAuthService"
+    ) as mock_auth_service, patch(
+        "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
+    ) as mock_resolve_teams:
+        mock_get_db.return_value = iter([Mock()])
+        mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_resolve_teams.return_value = ["team1"]
+
+        result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
     assert result["sub"] == "proxy-user@example.com"
     assert result["source"] == "proxy"
+    assert result["token"] is None
+    assert result["is_admin"] is False
+    assert result["teams"] == ["team1"]
+    assert result["email"] == "proxy-user@example.com"
 
 
 @pytest.mark.asyncio
