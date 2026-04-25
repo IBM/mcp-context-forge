@@ -776,6 +776,25 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+
+    # Migration runner ownership.
+    # When True, the gateway lifespan does NOT call bootstrap_db.main();
+    # the deployment is expected to run migrations as a separate step
+    # (Helm pre-install Job, init container, CI step, etc.). The library
+    # default is False so `docker run mcpgateway:latest` continues to
+    # bootstrap its own schema without operator action. The Helm chart
+    # ships this as True when the migration Job is enabled, so the
+    # contract "Job runs migrations, app pods skip" is enforced at the
+    # chart layer. See issue #4051 (Layer 2).
+    mcpgateway_skip_migrations: bool = Field(
+        default=False,
+        description=(
+            "When True, gateway pods skip the in-pod bootstrap_db call. "
+            "Pair with a dedicated migration runner (Helm pre-install Job, "
+            "init container, etc.) that ensures the schema is at head before "
+            "pods start."
+        ),
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(

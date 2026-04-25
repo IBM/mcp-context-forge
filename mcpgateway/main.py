@@ -1583,6 +1583,33 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+async def _run_initial_db_bootstrap() -> None:
+    """Run ``bootstrap_db.main()`` unless ``MCPGATEWAY_SKIP_MIGRATIONS`` is set.
+
+    The flag tells the gateway that a separate migration runner — typically
+    a Helm pre-install Job, an init container, or a CI step — has already
+    populated the schema, so the in-pod bootstrap is redundant. When the
+    flag is True the call is suppressed and a single INFO line is emitted
+    so operators can audit the choice in pod logs.
+
+    Library default is False (preserves the ``docker run`` happy path);
+    Helm chart and compose overlays flip it to True when they pair the
+    gateway Deployment with a dedicated migration runner. See issue #4051
+    Layer 2.
+    """
+    if settings.mcpgateway_skip_migrations:
+        logger.info(
+            "Skipping in-pod migration bootstrap (MCPGATEWAY_SKIP_MIGRATIONS=true). "
+            "A dedicated migration runner is expected to have populated the schema."
+        )
+        return
+    # First-Party (deferred to keep import-time light for tests that don't
+    # need to pay the migration cost just by importing mcpgateway.main).
+    from mcpgateway.bootstrap_db import main as bootstrap_db_main  # pylint: disable=import-outside-toplevel
+
+    await bootstrap_db_main()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1617,7 +1644,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # `wait_for_db_ready(sync=True)` is a blocking probe, so offload it to
     # a worker thread to avoid stalling the event loop during startup.
     # First-Party
-    from mcpgateway.bootstrap_db import main as bootstrap_db  # pylint: disable=import-outside-toplevel
     from mcpgateway.utils.db_isready import wait_for_db_ready  # pylint: disable=import-outside-toplevel
 
     await asyncio.to_thread(
@@ -1626,7 +1652,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         interval=int(settings.db_retry_interval_ms) / 1000,
         sync=True,
     )
-    await bootstrap_db()
+    await _run_initial_db_bootstrap()
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()

@@ -261,6 +261,56 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
     return Request(scope)
 
 
+# --------------------------------------------------------------------------- #
+#       MCPGATEWAY_SKIP_MIGRATIONS — issue #4051 Layer 2 lifespan gate         #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_run_initial_db_bootstrap_invokes_bootstrap_when_flag_off(monkeypatch):
+    """Default behavior: lifespan calls ``bootstrap_db.main()``.
+
+    The library default for ``mcpgateway_skip_migrations`` is False so that
+    direct ``docker run mcpgateway`` users still get the schema populated
+    by the gateway itself.
+    """
+    # First-Party
+    import mcpgateway.main as main_mod  # pylint: disable=import-outside-toplevel
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(settings, "mcpgateway_skip_migrations", False, raising=False)
+    spy = AsyncMock()
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", spy)
+
+    await main_mod._run_initial_db_bootstrap()  # pylint: disable=protected-access
+
+    spy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_initial_db_bootstrap_skips_when_flag_on(monkeypatch, caplog):
+    """When ``MCPGATEWAY_SKIP_MIGRATIONS=true``, bootstrap_db is NOT called.
+
+    Helm chart and compose overlays set this when a dedicated migration
+    runner (Helm pre-install Job, init container, etc.) has already
+    populated the schema. See issue #4051 Layer 2.
+    """
+    # First-Party
+    import logging  # pylint: disable=import-outside-toplevel
+    import mcpgateway.main as main_mod  # pylint: disable=import-outside-toplevel
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(settings, "mcpgateway_skip_migrations", True, raising=False)
+    spy = AsyncMock()
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", spy)
+
+    with caplog.at_level(logging.INFO, logger="mcpgateway"):
+        await main_mod._run_initial_db_bootstrap()  # pylint: disable=protected-access
+
+    spy.assert_not_awaited()
+    assert any(
+        "MCPGATEWAY_SKIP_MIGRATIONS" in record.message for record in caplog.records
+    ), "Expected an INFO log line announcing the skip; helps operators audit the choice"
+
+
 def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     """Import-time app setup should register the OTEL request middleware when enabled."""
     # First-Party
