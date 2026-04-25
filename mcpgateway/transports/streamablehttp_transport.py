@@ -4527,23 +4527,70 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
         )
 
 
-def _set_proxy_user_context(proxy_user: str) -> None:
-    """Set user context for a proxy-authenticated request (no team context, non-admin).
+async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
+    """Authenticate a proxy-identified user and set per-request transport context.
+
+    Performs a DB lookup via EmailAuthService, resolves team/admin state via
+    :func:`mcpgateway.auth._resolve_teams_from_db`, enforces ``is_active``, and
+    handles the platform-admin bootstrap (``REQUIRE_USER_IN_DB=False`` + email
+    matches ``settings.platform_admin_email``).  On success, sets
+    ``user_context_var``, user identity, and trace context.  Mirrors the REST
+    ``_authenticate_proxy_user`` helper in ``verify_credentials.py`` so that
+    trusted-proxy MCP clients receive the same DB-backed team/admin resolution
+    as REST admin/API callers (fixes #4262 on the primary MCP transport path).
 
     Args:
-        proxy_user: Email address of the proxy-authenticated user.
+        proxy_user: Email address supplied by the trusted upstream proxy via
+            ``settings.proxy_user_header``.
+
+    Returns:
+        ``None`` on success.  On failure, returns a dict with ``detail`` (str)
+        and optional ``headers`` (dict) suitable for passing to
+        ``_StreamableHttpAuthHandler._send_error`` to produce a 401 response.
     """
-    _proxy_ctx: dict[str, Any] = {
-        "email": proxy_user,
-        "teams": [],
-        "is_authenticated": True,
-        "is_admin": False,
-        "permission_is_admin": False,
-        "auth_method": "proxy",
-    }
-    user_context_var.set(_proxy_ctx)
-    _set_user_identity_from_dict(_proxy_ctx)
-    set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
+    # First-Party
+    from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+    # Use the module-local async get_db() context manager (line 721) rather than
+    # mcpgateway.db.get_db: it provides proper cancellation handling for MCP
+    # handlers cancelled mid-auth (client disconnect, timeout).
+    async with get_db() as db:
+        auth_service = EmailAuthService(db)
+        user_info = await auth_service.get_user_by_email(proxy_user)
+
+        if user_info:
+            # Enforce account-active check (matches JWT path in _enforce_revocation_and_active_user).
+            # A disabled user - including a disabled admin - must not be able to authenticate via
+            # trusted-proxy mode and inherit their pre-disable authorizations.
+            if not user_info.is_active:
+                return {"detail": "Account disabled", "headers": {"WWW-Authenticate": "Bearer"}}
+
+            token_teams = await _resolve_teams_from_db(proxy_user, user_info)
+            is_admin = user_info.is_admin
+        else:
+            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+            if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                token_teams = None  # Admin bypass
+                is_admin = True
+            else:
+                return {"detail": "User not found in database", "headers": {"WWW-Authenticate": "Bearer"}}
+
+        _proxy_ctx: dict[str, Any] = {
+            "email": proxy_user,
+            "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
+            "is_authenticated": True,
+            "is_admin": is_admin,
+            "permission_is_admin": is_admin,
+            "auth_method": "proxy",
+            "token_use": "session",  # nosec B105 - Not a password; JWT claim type. DB-backed team resolution.
+        }
+        user_context_var.set(_proxy_ctx)
+        _set_user_identity_from_dict(_proxy_ctx)
+        # For trace context, admin bypass (teams=None) is represented as [] to match the existing
+        # pre-authentication contract of set_trace_context_from_teams.
+        set_trace_context_from_teams(token_teams or [], user_email=proxy_user, is_admin=is_admin, auth_method="proxy")
+        return None
 
 
 def get_streamable_http_auth_context() -> dict[str, Any]:
@@ -4673,8 +4720,12 @@ class _StreamableHttpAuthHandler:
 
         # Determine authentication strategy based on settings
         if proxy_trusted and proxy_user:
-            _set_proxy_user_context(proxy_user)
-            return True  # Trusted proxy supplied user
+            # DB-backed authentication of the proxy-supplied identity; returns None on success
+            # or {"detail": ..., "headers": ...} on failure (unknown user, disabled user).
+            proxy_error = await _set_proxy_user_context(proxy_user)
+            if proxy_error:
+                return await self._send_error(**proxy_error)
+            return True  # Trusted proxy supplied valid, active user
 
         # --- Standard JWT authentication flow (client auth enabled) ---
         token: str | None = None
