@@ -66,6 +66,7 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -2821,8 +2822,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
     """
     try:
         LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
-        from mcpgateway.main import _get_scoped_resource_access_context  # pylint: disable=import-outside-toplevel
-        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return server.masked().model_dump(by_alias=True)
     except ServerNotFoundError as e:
@@ -11343,8 +11343,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
-    from mcpgateway.main import _get_scoped_resource_access_context  # pylint: disable=import-outside-toplevel
-    auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     _user_email = get_user_email(user)
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
@@ -11982,8 +11981,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
-        from mcpgateway.main import _get_scoped_resource_access_context  # pylint: disable=import-outside-toplevel
-        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
@@ -12584,8 +12582,7 @@ async def admin_get_resource(resource_id: str, request: Request, db: Session = D
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        from mcpgateway.main import _get_scoped_resource_access_context  # pylint: disable=import-outside-toplevel
-        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         resource = await resource_service.get_resource_by_id(
             db,
             resource_id,
@@ -12990,8 +12987,7 @@ async def admin_get_prompt(prompt_id: str, request: Request, db: Session = Depen
     """
     LOGGER.info(f"User {get_user_email(user)} requested details for prompt ID {prompt_id}")
     try:
-        from mcpgateway.main import _get_scoped_resource_access_context  # pylint: disable=import-outside-toplevel
-        auth_user_email, auth_token_teams = _get_scoped_resource_access_context(request, user)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         prompt_details = await prompt_service.get_prompt_details(
             db,
             prompt_id,

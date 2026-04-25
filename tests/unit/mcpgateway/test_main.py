@@ -645,7 +645,7 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
@@ -659,7 +659,7 @@ class TestProtocolEndpoints:
         mock_cancel_run.assert_awaited_once_with("123", reason=None)
         mock_notify.assert_awaited_once()
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
@@ -674,7 +674,7 @@ class TestProtocolEndpoints:
         mock_cancel_run.assert_not_awaited()
         mock_notify.assert_not_awaited()
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
@@ -688,7 +688,7 @@ class TestProtocolEndpoints:
         mock_cancel_run.assert_awaited_once_with("unknown-run", reason=None)
         mock_notify.assert_awaited_once()
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
@@ -714,7 +714,7 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Test completion handling endpoint."""
@@ -725,7 +725,7 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="scoped@example.com", token_teams=["team-1"])
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion should preserve explicit admin bypass context."""
@@ -738,7 +738,7 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email=None, token_teams=None)
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion should treat token_teams=None as public-only for non-admin context."""
@@ -751,7 +751,7 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="viewer@example.com", token_teams=[])
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion endpoint should map completion validation errors to 400."""
@@ -1475,7 +1475,7 @@ class TestPromptEndpoints:
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_non_jwt_admin_bypass(self, mock_get, test_client, auth_headers):
-        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via _get_scoped_resource_access_context."""
+        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via get_scoped_resource_access_context."""
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
@@ -1514,12 +1514,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
 
         # Call the endpoint function directly
-        result = await get_prompt_no_args(
-            request=mock_request,
-            prompt_id="test",
-            db=mock_db,
-            user=admin_user
-        )
+        result = await get_prompt_no_args(request=mock_request, prompt_id="test", db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello"}
         # Admin bypass: both auth_user_email and auth_token_teams should be None
@@ -1549,13 +1544,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello {{name}}"}
 
         # Call the endpoint function directly with args
-        result = await get_prompt(
-            request=mock_request,
-            prompt_id="test",
-            args={"name": "World"},
-            db=mock_db,
-            user=admin_user
-        )
+        result = await get_prompt(request=mock_request, prompt_id="test", args={"name": "World"}, db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello {{name}}"}
         # Admin bypass: both auth_user_email and auth_token_teams should be None
@@ -1584,30 +1573,14 @@ class TestPromptEndpoints:
         mock_db = MagicMock()
         # Return a ResourceContent-like object
         from mcpgateway.common.models import ResourceContent
-        mock_read.return_value = ResourceContent(
-            type="resource",
-            id="test-resource",
-            uri="file://test.txt",
-            text="content"
-        )
+
+        mock_read.return_value = ResourceContent(type="resource", id="test-resource", uri="file://test.txt", text="content")
 
         # Call the endpoint function directly
-        result = await read_resource(
-            resource_id="test-resource",
-            request=mock_request,
-            db=mock_db,
-            user=admin_user
-        )
+        result = await read_resource(resource_id="test-resource", request=mock_request, db=mock_db, user=admin_user)
 
         # The endpoint converts ResourceContent to dict via model_dump()
-        assert result == {
-            "type": "resource",
-            "id": "test-resource",
-            "uri": "file://test.txt",
-            "mime_type": None,
-            "text": "content",
-            "blob": None
-        }
+        assert result == {"type": "resource", "id": "test-resource", "uri": "file://test.txt", "mime_type": None, "text": "content", "blob": None}
         # Admin bypass: both user and token_teams should be None
         mock_read.assert_called_once()
         call_kwargs = mock_read.call_args[1]
@@ -2021,7 +1994,7 @@ class TestGatewayEndpoints:
 # Tag Endpoints Tests                                   #
 # ----------------------------------------------------- #
 class TestTagEndpoints:
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_passes_token_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Tag list endpoint should pass scoped visibility context to service."""
@@ -2039,7 +2012,7 @@ class TestTagEndpoints:
             token_teams=["team-1"],
         )
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_passes_public_only_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Tag entity lookup should preserve public-only token semantics."""
@@ -2057,7 +2030,7 @@ class TestTagEndpoints:
             token_teams=[],
         )
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_admin_bypass_passes_unrestricted_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Explicit admin bypass token should pass unrestricted scope to tag service."""
@@ -2075,7 +2048,7 @@ class TestTagEndpoints:
             token_teams=None,
         )
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_defaults_to_public_scope_when_token_teams_none(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Non-admin token_teams=None should be normalized to public-only scope."""
@@ -2093,7 +2066,7 @@ class TestTagEndpoints:
             token_teams=[],
         )
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_admin_bypass_passes_unrestricted_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Admin bypass context should pass unrestricted scope to tag entity lookup."""
@@ -2111,7 +2084,7 @@ class TestTagEndpoints:
             token_teams=None,
         )
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_defaults_to_public_scope_when_token_teams_none(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Non-admin token_teams=None should be normalized to public-only for tag entity lookup."""
@@ -2743,7 +2716,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"] == {}
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Test completion/complete JSON-RPC method."""
@@ -2756,7 +2729,7 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="rpc-user@example.com", token_teams=["team-2"])
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion should preserve explicit admin bypass context."""
@@ -2770,7 +2743,7 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email=None, token_teams=None)
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion should normalize non-admin token_teams=None to public-only."""
@@ -2784,7 +2757,7 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="viewer@example.com", token_teams=[])
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion/complete should map CompletionError to JSON-RPC -32602."""
@@ -2901,7 +2874,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32600
         assert body["error"]["message"] == "Invalid Request"
 
-    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock)
     def test_rpc_null_params_normalized_to_empty_dict(self, mock_list, mock_filter, test_client, auth_headers):
         """RPC with null params should normalize to empty dict and dispatch normally."""
@@ -3017,7 +2990,7 @@ class TestRealtimeEndpoints:
         message = {"type": "test", "data": "hello"}
         with (
             patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="other@example.com")),
-            patch("mcpgateway.main._get_request_identity", return_value=("test_user@example.com", False)),
+            patch("mcpgateway.main.get_request_identity", return_value=("test_user@example.com", False)),
         ):
             response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
         assert response.status_code == 403
@@ -4453,133 +4426,133 @@ class TestNormalizeTokenTeams:
 
 
 class TestGetTokenTeamsFromRequest:
-    """Tests for _get_token_teams_from_request helper function."""
+    """Tests for get_token_teams_from_request helper function."""
 
     def test_get_token_teams_with_valid_cached_payload(self):
         """Test extraction of teams from cached JWT payload."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token_string", {"sub": "user@example.com", "teams": ["team_a", "team_b"]})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == ["team_a", "team_b"]
 
     def test_get_token_teams_with_dict_teams_payload(self):
         """Test extraction and normalization of dict format teams."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": [{"id": "t1", "name": "Team 1"}]})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == ["t1"]
 
     def test_get_token_teams_no_cached_payload_returns_empty_list(self):
         """Test that missing cached payload returns [] (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = None
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: No JWT = public-only (secure default)
 
     def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
         """Test that payload without teams key returns [] (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: Missing teams = public-only (secure default)
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": []})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # Empty list = JWT exists but no teams
 
     def test_get_token_teams_null_teams_non_admin_returns_empty_list(self):
         """Test that payload with teams: null (non-admin) returns [] (public-only)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": None})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: Null teams + non-admin = public-only
 
     def test_get_token_teams_null_teams_admin_returns_none(self):
         """Test that payload with teams: null + is_admin=true returns None (admin bypass)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "teams": None, "is_admin": True})
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result is None  # Admin with explicit null teams = admin bypass
 
     def test_get_token_teams_invalid_tuple_format_returns_empty_list(self):
         """Test that non-tuple cached payload returns [] (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = "not_a_tuple"
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
     def test_get_token_teams_short_tuple_returns_empty_list(self):
         """Test that tuple with wrong length returns [] (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("only_one_element",)
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
     def test_get_token_teams_none_payload_in_tuple_returns_empty_list(self):
         """Test that None payload in tuple returns [] (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_token_teams_from_request
+        from mcpgateway.main import get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", None)
 
-        result = _get_token_teams_from_request(mock_request)
+        result = get_token_teams_from_request(mock_request)
         assert result == []  # SECURITY: No payload = public-only (secure default)
 
 
 class TestGetRpcFilterContext:
-    """Tests for _get_rpc_filter_context helper function."""
+    """Tests for get_rpc_filter_context helper function."""
 
     def test_get_rpc_filter_context_dict_user(self):
         """Test with dict user containing email and is_admin."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         # is_admin must be in the token payload, not the user dict (security fix)
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1", "t2"], "is_admin": True})
         user = {"email": "test@example.com", "is_admin": True}  # User's is_admin is ignored
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "test@example.com"
         assert teams == ["t1", "t2"]
@@ -4588,13 +4561,13 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_dict_user_sub_field(self):
         """Test that sub field is used if email is not present."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": []})
         user = {"sub": "user@sub.com"}
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "user@sub.com"
         assert teams == []
@@ -4603,7 +4576,7 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_object_user(self):
         """Test with user object having email and is_admin attributes."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"]})
@@ -4612,7 +4585,7 @@ class TestGetRpcFilterContext:
             email = "obj@example.com"
             is_admin = False
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, UserObject())
+        email, teams, is_admin = get_rpc_filter_context(mock_request, UserObject())
 
         assert email == "obj@example.com"
         assert teams == ["team_x"]
@@ -4621,14 +4594,14 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_nested_is_admin(self):
         """Test that nested user.is_admin is extracted from token payload."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         # is_admin must be in token payload - use non-empty teams to allow admin bypass
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"], "user": {"is_admin": True}})
         user = {"email": "nested@example.com", "user": {"is_admin": True}}
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "nested@example.com"
         assert is_admin is True  # From token payload's nested user.is_admin
@@ -4636,14 +4609,14 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_empty_teams_disables_admin(self):
         """Test that empty teams array disables admin bypass even when is_admin is true."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         # Token has is_admin but empty teams - admin bypass should be disabled
         mock_request.state._jwt_verified_payload = ("token", {"teams": [], "is_admin": True})
         user = {"email": "admin@example.com", "is_admin": True}
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "admin@example.com"
         assert teams == []
@@ -4652,13 +4625,13 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_string_user(self):
         """Test with string user (fallback to str conversion)."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
         user = "plain_username"
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "plain_username"
         assert teams == ["t1"]
@@ -4667,12 +4640,12 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_none_user(self):
         """Test with None user."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": []})
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, None)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, None)
 
         assert email is None
         assert teams == []
@@ -4681,13 +4654,13 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_admin_not_in_dict(self):
         """Test that is_admin defaults to False if not present."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
         user = {"email": "user@example.com"}
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "user@example.com"
         assert is_admin is False
@@ -4695,13 +4668,13 @@ class TestGetRpcFilterContext:
     def test_get_rpc_filter_context_no_jwt_returns_empty_teams(self):
         """Test that missing JWT payload returns [] for teams (public-only, secure default)."""
         # First-Party
-        from mcpgateway.main import _get_rpc_filter_context
+        from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = None  # No JWT - e.g., plugin auth
         user = {"email": "plugin_user@example.com", "is_admin": False}
 
-        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "plugin_user@example.com"
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
