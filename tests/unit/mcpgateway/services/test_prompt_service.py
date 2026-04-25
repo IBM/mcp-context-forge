@@ -1772,12 +1772,16 @@ class TestPromptAccessAuthorization:
 
     @pytest.mark.asyncio
     async def test_check_prompt_access_database_admin_bypass(self, prompt_service, mock_db):
-        """User with is_admin=True in database should get bypass ONLY with unrestricted token."""
-        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+        """DB admin bypass: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+        own_private = self._create_mock_prompt(visibility="private", owner_email="admin@test.com", team_id="secret-team")
 
         install_admin_user(mock_db)
 
-        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OWN private → allowed (#4341 carve-out for self-access)
+        assert await prompt_service._check_prompt_access(mock_db, own_private, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OTHER user's private → denied (#4341 invariant)
+        assert await prompt_service._check_prompt_access(mock_db, other_users_private, user_email="admin@test.com", token_teams=None) is False
 
     @pytest.mark.asyncio
     async def test_check_prompt_access_admin_with_narrowed_token_still_narrowed(self, prompt_service, mock_db):

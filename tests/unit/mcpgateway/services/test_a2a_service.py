@@ -1048,18 +1048,21 @@ class TestA2AAgentService:
 
     @pytest.mark.asyncio
     async def test_check_agent_access_db_admin_bypass_only_with_unrestricted_token(self, service):
-        """DB admin gets bypass ONLY with token_teams=None; narrowed tokens stay narrowed (#4106)."""
-        private_agent = SimpleNamespace(visibility="private", team_id="secret", owner_email="other@example.com")
+        """DB admin bypass with token_teams=None: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = SimpleNamespace(visibility="private", team_id="secret", owner_email="other@example.com")
+        own_private = SimpleNamespace(visibility="private", team_id="secret", owner_email="admin@example.com")
         mock_db = MagicMock()
         mock_db.info = {}
         install_admin_user(mock_db, email="admin@example.com")
 
-        # token_teams=None → DB admin bypass applies
-        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=None) is True
+        # token_teams=None + admin viewing OWN private → allowed (PR #4341 carve-out for self-access)
+        assert await service._check_agent_access(mock_db, own_private, user_email="admin@example.com", token_teams=None) is True
+        # token_teams=None + admin viewing OTHER user's private → denied (PR #4341 invariant)
+        assert await service._check_agent_access(mock_db, other_users_private, user_email="admin@example.com", token_teams=None) is False
         # token_teams=["x"] → admin narrowed to team scope, cannot see non-team private
-        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=["some-team"]) is False
+        assert await service._check_agent_access(mock_db, other_users_private, user_email="admin@example.com", token_teams=["some-team"]) is False
         # token_teams=[] → admin is public-only, cannot see private
-        assert await service._check_agent_access(mock_db, private_agent, user_email="admin@example.com", token_teams=[]) is False
+        assert await service._check_agent_access(mock_db, other_users_private, user_email="admin@example.com", token_teams=[]) is False
 
     def test_apply_visibility_filter(self, service):
         """Test visibility filter branches."""

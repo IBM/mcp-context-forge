@@ -8900,8 +8900,10 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
 
-        # get_agent_card() enforces Layer 1 visibility internally; this pre-check only
-        # logs a denial so operators can spot probing without adding HTTP log noise.
+        # Layer-1 visibility is enforced here at the call site (PR #4341):
+        # admin bypass with no email cannot read another user's private agent.
+        # On denial we both log and refuse to fetch the card so the response
+        # falls through to the not-found path below without leaking existence.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
         if agent is not None:

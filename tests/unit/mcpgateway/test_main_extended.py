@@ -12663,7 +12663,10 @@ class TestHardeningHelperCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u"}))
 
-        with patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", ["team-1"], True)):
+        # The helpers live in mcpgateway.auth_context after the refactor; main.py
+        # only re-exports them. Patch at the real module so the in-module
+        # lookup inside get_request_identity sees the mock.
+        with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", ["team-1"], True)):
             email, is_admin = main_mod.get_request_identity(request, {"email": "user@example.com", "is_admin": False})
 
         assert email == "user@example.com"
@@ -12678,8 +12681,8 @@ class TestHardeningHelperCoverage:
         user = SimpleNamespace(is_admin=True)
 
         with (
-            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", None, False)),
-            patch.object(main_mod, "get_user_email", return_value="user@example.com"),
+            patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.auth_context.get_user_email", return_value="user@example.com"),
         ):
             email, is_admin = main_mod.get_request_identity(request, user)
 
@@ -12693,10 +12696,10 @@ class TestHardeningHelperCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u"}))
 
-        with patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", None, True)):
+        with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, True)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == (None, None)
 
-        with patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", None, False)):
+        with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", [])
 
     @pytest.mark.asyncio

@@ -5983,13 +5983,16 @@ class TestToolAccessAuthorization:
 
     @pytest.mark.asyncio
     async def test_check_tool_access_database_admin_bypass(self, tool_service, mock_db):
-        """User with is_admin=True in database should get bypass ONLY with unrestricted token."""
-        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+        """DB admin bypass: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+        own_private = {"id": "2", "visibility": "private", "owner_email": "admin@test.com", "team_id": "secret-team"}
 
         install_admin_user(mock_db)
 
-        # Unrestricted session token (token_teams=None) + DB admin → bypass
-        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OWN private → allowed (#4341 carve-out for self-access)
+        assert await tool_service._check_tool_access(mock_db, own_private, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OTHER user's private → denied (#4341 invariant)
+        assert await tool_service._check_tool_access(mock_db, other_users_private, user_email="admin@test.com", token_teams=None) is False
 
     @pytest.mark.asyncio
     async def test_check_tool_access_admin_with_narrowed_token_still_narrowed(self, tool_service, mock_db):
@@ -6049,6 +6052,7 @@ class TestToolAccessAuthorization:
 
         # Even owner with public-only token is denied
         assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+
     @pytest.mark.asyncio
     async def test_get_tool_access_denied_raises_not_found(self, tool_service, mock_db):
         """Test get_tool raises ToolNotFoundError when access is denied (line 3061)."""
@@ -6064,13 +6068,8 @@ class TestToolAccessAuthorization:
         # User without access tries to get the tool
         with pytest.raises(ToolNotFoundError, match="Tool not found: private-tool-1"):
             await tool_service.get_tool(
-                mock_db,
-                "private-tool-1",
-                requesting_user_email="other@test.com",
-                requesting_user_is_admin=False,
-                requesting_user_team_roles={"team-2": ["viewer"]}  # Different team
+                mock_db, "private-tool-1", requesting_user_email="other@test.com", requesting_user_is_admin=False, requesting_user_team_roles={"team-2": ["viewer"]}  # Different team
             )
-
 
 
 class TestToolListingGracefulErrorHandling:

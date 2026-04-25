@@ -1128,8 +1128,14 @@ class TestDirectGetAccessDenial:
         with pytest.raises(A2AAgentNotFoundError):
             await service.get_agent_by_name(db, "agent-x", user_email=None, token_teams=None)
 
-    def test_agent_card_admin_bypass_denies_private(self):
-        """SECURITY: A2AAgentService.get_agent_card must return None for private agents on admin bypass."""
+    @pytest.mark.asyncio
+    async def test_agent_card_admin_bypass_denies_private(self):
+        """SECURITY: callers of A2AAgentService.get_agent_card must gate via _check_agent_access; the gate denies private on admin bypass.
+
+        ``get_agent_card`` itself is the unscoped fetcher — visibility is the
+        caller's responsibility (see ``main.py`` ``handle_a2a_agent_card``).
+        This test asserts the gate that callers are required to use.
+        """
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService
 
@@ -1140,10 +1146,8 @@ class TestDirectGetAccessDenial:
         private_agent.visibility = "private"
         private_agent.owner_email = "other@example.com"
         private_agent.team_id = None
-        private_agent.capabilities = {}
-        db.execute.return_value.scalar_one_or_none.return_value = private_agent
 
-        assert service.get_agent_card(db, "agent-x", user_email=None, token_teams=None) is None
+        assert await service._check_agent_access(db, private_agent, user_email=None, token_teams=None) is False
 
     @pytest.mark.asyncio
     async def test_prompt_details_admin_bypass_denies_private(self, prompt_service, mock_db):
@@ -1247,7 +1251,7 @@ class TestDirectGetAccessDenial:
         service = CompletionService()
         stmt = select(DbPrompt)
 
-        scoped = service._apply_visibility_scope(stmt, DbPrompt, user_email=None, token_teams=None, team_ids=[])
+        scoped = service._apply_visibility_scope(stmt, DbPrompt, user_email=None, token_teams=None, team_ids=[], db=MagicMock())
         compiled = str(scoped.compile(compile_kwargs={"literal_binds": True}))
 
         assert "visibility" in compiled
@@ -1271,7 +1275,7 @@ class TestDirectGetAccessDenial:
         service = TagService()
         stmt = select(DbResource)
 
-        scoped = service._apply_visibility_scope(stmt, DbResource, user_email=None, token_teams=None, team_ids=[])
+        scoped = service._apply_visibility_scope(stmt, DbResource, user_email=None, token_teams=None, team_ids=[], db=MagicMock())
         compiled = str(scoped.compile(compile_kwargs={"literal_binds": True}))
 
         assert "visibility" in compiled
