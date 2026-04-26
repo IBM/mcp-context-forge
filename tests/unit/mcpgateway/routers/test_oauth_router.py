@@ -215,6 +215,29 @@ class TestPersistLearnedAudience:
 
         db.flush.assert_not_called()
 
+    @pytest.mark.parametrize("falsy_resource", ["", []])
+    @pytest.mark.asyncio
+    async def test_persists_when_existing_resource_is_falsy(self, falsy_resource):
+        """Empty string / empty list persisted resource counts as unset; re-learning proceeds.
+
+        This lets an admin clear the field via the gateway update API to trigger
+        re-learning on the next callback (recovery path after stale config).
+        """
+        oauth_result = {"token_aud": "fresh-client-id"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "resource": falsy_resource}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_called_once()
+        assert gateway.oauth_config["resource"] == "fresh-client-id"
+
 
 class TestOAuthRouter:
     """Test cases for OAuth router endpoints."""

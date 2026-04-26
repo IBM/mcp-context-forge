@@ -449,6 +449,92 @@ async def test_refresh_preserves_opaque_single_resource(service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_refresh_resource_list_all_empty_logs_warning(service, mock_db, caplog):
+    """Line 339: when every entry in the resource list normalizes to empty, log a warning.
+
+    Empty strings inside the list short-circuit ``normalize_resource`` to ``None`` via
+    its ``if not url`` guard, leaving the filtered list empty.  The gateway warns
+    operators that a misconfiguration silently dropped every audience identifier.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid", "resource": ["", ""]},
+        url="https://gw.com",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+            result = await service._refresh_access_token(_make_token_record())
+
+    assert result == "new_access"
+    assert any("All 2 configured resource values were empty and removed during refresh" in msg for msg in caplog.messages)
+    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
+    assert refresh_call_oauth_config["resource"] == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service, mock_db, caplog):
+    """Line 343: when a non-list resource normalizes to empty, log a warning.
+
+    Defensive code path: ``normalize_resource`` does not return falsy for truthy
+    URL inputs in the natural flow.  Patching ``urllib.parse.urlunparse`` to return
+    an empty string forces the defensive branch so the warning is exercised.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid", "resource": "https://api.example.com"},
+        url="https://gw.com",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        with patch("urllib.parse.urlunparse", return_value=""):
+            with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+                result = await service._refresh_access_token(_make_token_record())
+
+    assert result == "new_access"
+    assert any("Configured resource was empty and removed during refresh: https://api.example.com" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(service, mock_db, caplog):
+    """Line 349: when the auto-derived ``gateway.url`` normalizes to empty, log a warning.
+
+    Defensive code path: with no explicit ``resource`` configured, the gateway falls
+    back to ``gateway.url``.  ``normalize_resource`` does not return falsy for truthy
+    URL inputs in the natural flow, so we patch ``urllib.parse.urlunparse`` to return
+    an empty string and trip the defensive warning.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid"},
+        url="https://gw.example.com/api",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        with patch("urllib.parse.urlunparse", return_value=""):
+            with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+                result = await service._refresh_access_token(_make_token_record())
+
+    assert result == "new_access"
+    assert any("Gateway URL is empty, skipping resource parameter: https://gw.example.com/api" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
 async def test_refresh_client_secret_decrypt_fails_uses_plaintext(service, mock_db):
     gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "maybe_plain"}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
