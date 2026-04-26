@@ -43,7 +43,9 @@
 
 **Action Required for integrators relying on admin-bypass reads of other users' private resources.**
 
-Admin bypass (`is_admin=true` with `teams: null` in the JWT, or dev-mode basic-auth admin) now grants access only to **public** and **team** resources, plus the caller's own private rows when the bypass shape is a DB-resolved admin session. Another user's private resources (visibility=`private`) are only accessible to their owner — admin bypass can no longer read, update, delete, list, or enumerate another user's private tools, prompts, resources, servers, gateways, or A2A agents.
+Admin bypass (`is_admin=true` with `teams: null` in the JWT, or dev-mode basic-auth admin) now grants access only to **public** and **team** resources via the public HTTP routes. Another user's private resources (visibility=`private`) are only accessible to their owner — admin bypass can no longer read, update, delete, list, or enumerate another user's private tools, prompts, resources, servers, gateways, or A2A agents.
+
+The service layer additionally implements an own-private carve-out for the DB-resolved admin shape `(email, None)`: a session that resolves to admin in the database AND has not been narrowed by a token scope can still access its own private rows. This carve-out is reachable from internal callers (the trusted Rust runtime hop, OAuth token refresh, plugin/service code paths) where the email is preserved through the call chain. It is **not** reachable from the public HTTP routes today: `mcpgateway.auth_context.get_scoped_resource_access_context` collapses HTTP admin requests to `(None, None)`, so a normal browser-driven admin gets the same anonymous-bypass treatment as everyone else and is denied their own private rows on `GET /tools/{my_private_tool}`. Use `team`-scoped tokens or own-the-resource workflows if you need a HTTP admin to see their own private rows directly.
 
 **Enforcement applied at the service layer for:**
 
@@ -64,7 +66,8 @@ Admin bypass (`is_admin=true` with `teams: null` in the JWT, or dev-mode basic-a
 
 - Public-resource access for admin bypass — unchanged.
 - Team-resource access for admin bypass — unchanged.
-- Resource owners can still access their own private resources (including DB-resolved admins viewing their own private rows).
+- Resource owners can still access their own private resources via owner-email matching at the service layer.
+- DB-resolved admin sessions can still see their own private rows via internal / non-HTTP call paths (Rust runtime hop, OAuth refresh, in-process service callers). HTTP admin requests are intentionally collapsed to `(None, None)` and do not fire the own-private carve-out — by design, to avoid HTTP being a stealthy escalation surface.
 - Scoped tokens (`teams: [...]`) continue to use their scoped team list; admin-bypass detection still requires both `is_admin=true` **and** `teams: null`.
 
 **Migration guidance for integrators:**

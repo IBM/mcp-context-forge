@@ -861,6 +861,16 @@ class TestServerEndpoints:
         assert response.json()["name"] == "test_server"
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_get_server_admin_bypass_private_returns_404(self, mock_get, test_client, auth_headers):
+        """PR #4341: GET /servers/{id} returns 404 (not 403) when admin bypass tries to read another user's private server."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        mock_get.side_effect = ServerNotFoundError("Server not found: secret_server")
+        response = test_client.get("/servers/secret_server", headers=auth_headers)
+        assert response.status_code == 404
+
     @patch("mcpgateway.main.server_service.register_server")
     def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
         """Test creating a new server."""
@@ -1991,6 +2001,16 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_get_gateway_admin_bypass_private_returns_404(self, mock_get, test_client, auth_headers):
+        """PR #4341: GET /gateways/{id} returns 404 (not 403) when admin bypass tries to read another user's private gateway."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayNotFoundError
+
+        mock_get.side_effect = GatewayNotFoundError("Gateway not found: secret_gateway")
+        response = test_client.get("/gateways/secret_gateway", headers=auth_headers)
+        assert response.status_code == 404
 
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
