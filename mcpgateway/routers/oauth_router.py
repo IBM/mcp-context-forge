@@ -135,6 +135,26 @@ def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) ->
     return normalized
 
 
+def _is_well_formed_audience(value: Any) -> bool:
+    """Return True if *value* is a usable audience claim shape.
+
+    Accepts a non-empty string or a non-empty list of non-empty strings; any
+    other shape (None, empty container, mixed types, numbers, dicts) is
+    rejected so a malformed IdP response cannot pollute persisted state.
+
+    Args:
+        value: Candidate audience value pulled from a token claim.
+
+    Returns:
+        ``True`` iff the value is a well-formed audience identifier.
+    """
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value) and all(isinstance(item, str) and item.strip() for item in value)
+    return False
+
+
 async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, Any], db: Session) -> None:
     """Learn the IdP's audience identifier from the token and persist it.
 
@@ -154,32 +174,58 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     change, an admin must clear the ``resource`` field via the gateway update
     API (which does enforce ``gateways.update``).
 
-    This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
-    already-set (truthy) resources are silently skipped.  Empty strings and
-    empty lists count as unset, so an admin can clear the field to trigger
-    re-learning on the next callback.
+    Two additional defensive checks run before any write:
+
+    * **Shape validation** -- the candidate ``token_aud`` must be a non-empty
+      string or non-empty list of non-empty strings.  Anything else (numbers,
+      empty containers, mixed types) is silently dropped so a malformed IdP
+      response cannot pollute persisted state.
+    * **Issuer pinning** -- when ``oauth_config["issuer"]`` is configured, the
+      token's ``iss`` claim must match it.  This prevents a stale or misrouted
+      token from a different AS from injecting an audience for the wrong IdP.
+      The check is skipped when no issuer is configured (preserves existing
+      behavior for non-OIDC / non-discovery setups).
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims,
+    malformed shapes, mismatched issuers, and already-set resources are all
+    silently skipped.
 
     Args:
         gateway: The gateway ORM object (will be mutated and flushed).
         oauth_result: The result dict from ``complete_authorization_code_flow``,
-            expected to contain ``token_aud``.
+            expected to contain ``token_aud`` and ``token_iss``.
         db: Active database session.
     """
     token_aud = oauth_result.get("token_aud")
-    if token_aud is None:
+    if not _is_well_formed_audience(token_aud):
         return
 
     # First-write-only: do not overwrite an existing usable resource.  Empty
-    # strings and empty lists are treated as unset (Python truthiness) so an
-    # admin can clear the field via the gateway update API to trigger
+    # strings, empty lists, and lists of empty strings are treated as unset so
+    # an admin can clear the field via the gateway update API to trigger
     # re-learning on the next callback.  See docstring for the authorization
     # rationale.
     oauth_config = gateway.oauth_config or {}
-    if oauth_config.get("resource"):
+    if _is_well_formed_audience(oauth_config.get("resource")):
         return
 
-    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
-    updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
+    # Issuer pinning: refuse to persist an audience drawn from a token whose
+    # iss claim does not match the configured issuer.  Trailing slashes are
+    # stripped for comparison so ``https://idp.example.com`` and
+    # ``https://idp.example.com/`` are treated as equivalent (matches the
+    # convention used by token_validation_service for issuer comparison).
+    # See docstring for the cross-IdP bleed scenario this prevents.
+    configured_issuer = oauth_config.get("issuer")
+    if configured_issuer:
+        token_iss = oauth_result.get("token_iss")
+        if not isinstance(token_iss, str) or token_iss.rstrip("/") != configured_issuer.rstrip("/"):
+            logger.debug(
+                "Skipping audience persistence for gateway %s: token iss does not match configured issuer",
+                gateway.name,
+            )
+            return
+
+    updated_config = dict(oauth_config)
     updated_config["resource"] = token_aud
     gateway.oauth_config = updated_config
     db.flush()
