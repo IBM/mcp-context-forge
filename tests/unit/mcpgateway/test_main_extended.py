@@ -2362,6 +2362,37 @@ class TestAdminAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_admin_auth_legacy_unversioned_path_triggers_auth_check(self, monkeypatch):
+        """Legacy /admin/* paths (without /v1 prefix) must still trigger admin auth.
+
+        The new code supports both /v1/admin/* and /admin/* via:
+            is_admin_route = scope_path.startswith('/admin') or scope_path.startswith('/v1/admin')
+        """
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"accept": "text/html"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        # No credentials presented: should redirect to login rather than pass through
+        assert response.status_code == 302
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_legacy_unversioned_exempt_path_passes_through(self, monkeypatch):
+        """Legacy /admin/login (without /v1 prefix) must remain exempt from auth."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/login", headers={"accept": "application/json"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_admin_auth_prefixed_non_exempt_path_enforces_auth(self, monkeypatch):
         """A non-exempt prefixed admin path must be detected as admin and require auth."""
         middleware = AdminAuthMiddleware(None)

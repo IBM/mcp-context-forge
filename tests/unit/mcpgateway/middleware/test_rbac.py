@@ -2649,3 +2649,62 @@ def test_rbac_get_db_backwards_compatibility():
                 pass
 
             mock_session.commit.assert_called_once()
+
+
+
+
+@pytest.mark.asyncio
+async def test_browser_request_redirect_with_unauthenticated_admin_enabled():
+    """Test browser request redirects to login when allow_unauthenticated_admin is True.
+
+    Coverage: mcpgateway/middleware/rbac.py line 368
+    """
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"accept": "text/html"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = SimpleNamespace(request_id="test-123", team_id=None)
+    mock_request.cookies = {}
+
+    with patch("mcpgateway.middleware.rbac.settings") as mock_settings:
+        mock_settings.auth_required = False
+        mock_settings.allow_unauthenticated_admin = True
+        mock_settings.platform_admin_email = "admin@example.com"
+        mock_settings.app_root_path = ""
+
+        # Should redirect browser requests even with unauthenticated admin enabled
+        with pytest.raises(HTTPException) as exc_info:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+        assert exc_info.value.status_code == status.HTTP_302_FOUND
+        assert exc_info.value.detail == "Authentication required"
+        assert exc_info.value.headers["Location"] == "/v1/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_htmx_request_redirect_on_invalid_credentials():
+    """Test HTMX request redirects to login on invalid credentials.
+
+    Coverage: mcpgateway/middleware/rbac.py line 451
+    """
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {
+        "accept": "application/json",
+        "hx-request": "true"
+    }
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = SimpleNamespace(request_id="test-456", team_id=None)
+    mock_request.cookies = {}
+
+    with patch("mcpgateway.middleware.rbac.settings") as mock_settings:
+        mock_settings.auth_required = True
+        mock_settings.app_root_path = ""
+
+        # Should redirect HTMX requests to login when no token provided
+        with pytest.raises(HTTPException) as exc_info:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+        assert exc_info.value.status_code == status.HTTP_302_FOUND
+        assert exc_info.value.detail == "Authentication required"
+        assert exc_info.value.headers["Location"] == "/v1/admin/login"
