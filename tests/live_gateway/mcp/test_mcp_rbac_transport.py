@@ -848,7 +848,7 @@ class TestDenyPaths:
             {"sub": "admin@example.com"},
             user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
             teams=None,
-            secret="completely-wrong-secret-key-12345",
+            secret="completely-wrong-secret-key-12345",  # pragma: allowlist secret
         )
 
         with pytest.raises(Exception) as excinfo:

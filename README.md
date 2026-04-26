@@ -787,8 +787,6 @@ Content size limits prevent DoS attacks and ensure system stability:
 - Mutual TLS authentication
 - Trusted gateway registry with signature verification
 
-See [UAID Implementation Guide](docs/docs/architecture/UAID_APPROACH_B_IMPLEMENTATION.md) for technical details.
-
 ### ⚙️ Project Defaults (Dev Setup)
 
 These values differ from code defaults to provide a working local/dev setup:

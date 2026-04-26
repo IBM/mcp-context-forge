@@ -7732,8 +7732,7 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
 	@echo "📊 detect-secrets findings report:"
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline \
-		&& git diff .secrets.baseline
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings

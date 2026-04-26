@@ -197,7 +197,13 @@ if __name__ == "__main__":
         port = translate_server_process
 
         # Test with headers
-        headers = {"Authorization": "Bearer github-token-123", "X-Tenant-Id": "acme-corp", "X-API-Key": "api-key-456", "X-Environment": "production", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": "Bearer github-token-123",
+            "X-Tenant-Id": "acme-corp",
+            "X-API-Key": "api-key-456",  # pragma: allowlist secret
+            "X-Environment": "production",
+            "Content-Type": "application/json",
+        }
 
         async with httpx.AsyncClient() as client:
             try:
@@ -286,7 +292,7 @@ if __name__ == "__main__":
                                 continue
 
                 # Request 2: User 2 - Separate SSE session
-                headers2 = {"Authorization": "Bearer user2-token", "X-Tenant-Id": "tenant-2", "X-API-Key": "user2-api-key", "Content-Type": "application/json"}
+                headers2 = {"Authorization": "Bearer user2-token", "X-Tenant-Id": "tenant-2", "X-API-Key": "user2-api-key", "Content-Type": "application/json"}  # pragma: allowlist secret
 
                 async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers2, timeout=10.0) as sse_response:
                     endpoint_url = None
@@ -334,7 +340,7 @@ if __name__ == "__main__":
         headers = {
             "authorization": "Bearer mixed-case-token",  # lowercase
             "X-TENANT-ID": "MIXED-TENANT",  # uppercase
-            "x-api-key": "mixed-api-key",  # mixed case
+            "x-api-key": "mixed-api-key",  # pragma: allowlist secret
             "Content-Type": "application/json",
         }
 
@@ -550,7 +556,7 @@ if __name__ == "__main__":
         headers = {
             "Authorization": "Bearer token 123",  # Contains spaces (should be sanitized)
             "X-Tenant-Id": "acme=corp",  # Contains equals (should be sanitized)
-            "X-API-Key": "key;with;semicolons",  # Contains semicolons
+            "X-API-Key": "key;with;semicolons",  # pragma: allowlist secret
             "Content-Type": "application/json",
         }
 
