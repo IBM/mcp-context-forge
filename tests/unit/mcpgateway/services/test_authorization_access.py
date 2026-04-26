@@ -537,6 +537,41 @@ class TestInvokeToolAuthorization:
         assert "Tool not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_private_denial_runs_before_pre_invoke_hook(self, tool_service, mock_db):
+        """PR #4341: visibility deny happens BEFORE tool_pre_invoke hooks execute.
+
+        The check order matters because plugin hooks may have side effects (logging,
+        metrics, billing) that would leak existence/usage information about private
+        tools that the caller cannot see. The fix gates the hook chain behind the
+        access check at tool_service.py:4452-4455 / 4814-4830.
+        """
+        mock_tool = create_mock_tool(visibility="private", owner_email="secret@example.com", team_id="secret-team")
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
+        mock_db.execute = Mock(return_value=mock_scalar)
+
+        mock_plugin_manager = MagicMock()
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        mock_plugin_manager.tool_pre_invoke = AsyncMock(return_value=(MagicMock(continue_processing=True, modified_payload=None), None))
+        tool_service._plugin_manager = mock_plugin_manager
+
+        with pytest.raises(ToolNotFoundError):
+            await tool_service.invoke_tool(
+                mock_db,
+                "secret_tool",
+                {},
+                user_email=None,
+                token_teams=None,
+            )
+
+        # The pre_invoke hook MUST NOT run for a denied tool — otherwise plugins
+        # leak existence/usage information for resources the caller cannot see.
+        mock_plugin_manager.tool_pre_invoke.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_admin_bypass_works_for_team_tools(self, tool_service, mock_db):
         """Admin with unrestricted token can execute team-visible tools."""
         mock_tool = create_mock_tool(visibility="team", owner_email="owner@example.com", team_id="team-a")
@@ -1210,6 +1245,41 @@ class TestDirectGetAccessDenial:
             token_teams=None,
         )
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_tool_access_denied_emits_structured_log_event(self, tool_service, mock_db):
+        """PR #4341 forensics: denial path emits ``tool_access_denied`` event with the documented shape.
+
+        The CHANGELOG promises that direct-ID denials emit ``*_access_denied`` events
+        suitable for forensic review. Without this assertion, the event shape
+        (event_type, resource_type, resource_id, team_id, user_email, custom_fields)
+        could drift silently.
+        """
+        # First-Party
+        import mcpgateway.services.tool_service as tool_service_mod
+
+        private_tool = create_mock_tool(visibility="private", owner_email="other@example.com", team_id="team-other")
+        mock_db.get.return_value = private_tool
+
+        with patch.object(tool_service_mod, "structured_logger") as mock_logger:
+            with pytest.raises(ToolNotFoundError):
+                await tool_service.get_tool(
+                    mock_db,
+                    "tool-123",
+                    requesting_user_email=None,
+                    requesting_user_is_admin=True,
+                    requesting_user_team_roles=None,
+                    token_teams=None,
+                )
+
+            mock_logger.log.assert_called_once()
+            call_kwargs = mock_logger.log.call_args.kwargs
+            assert call_kwargs["event_type"] == "tool_access_denied"
+            assert call_kwargs["resource_type"] == "tool"
+            assert call_kwargs["resource_id"] == "tool-123"
+            assert "visibility" in call_kwargs["custom_fields"]
+            assert call_kwargs["custom_fields"]["visibility"] == "private"
+            assert "admin_bypass" in call_kwargs["custom_fields"]
 
     @pytest.mark.asyncio
     async def test_list_resource_templates_admin_bypass_excludes_private(self, resource_service, mock_db):

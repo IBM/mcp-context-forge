@@ -1051,6 +1051,21 @@ class TestToolEndpoints:
         assert response.status_code == 200
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.tool_service.get_tool")
+    def test_get_tool_admin_bypass_private_returns_404(self, mock_get, test_client, auth_headers):
+        """PR #4341: GET /tools/{id} returns 404 (not 403) when admin bypass tries to read another user's private tool.
+
+        404 is intentional — exposing 403 would let an attacker enumerate the existence
+        of private tools. The service layer raises ToolNotFoundError on visibility deny,
+        and the route maps it to 404.
+        """
+        # First-Party
+        from mcpgateway.services.tool_service import ToolNotFoundError
+
+        mock_get.side_effect = ToolNotFoundError("Tool not found: secret_tool")
+        response = test_client.get("/tools/secret_tool", headers=auth_headers)
+        assert response.status_code == 404
+
     @patch("mcpgateway.main.tool_service.update_tool")
     def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
         updated = {**MOCK_TOOL_READ_SNAKE, "description": "Updated description"}
@@ -1798,6 +1813,23 @@ class TestPromptEndpoints:
         response = test_client.get("/prompts/code_review", headers=auth_headers)
         assert response.status_code == 422
         assert "ambiguous" in response.json()["detail"]
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_post_prompt_with_args_not_found_returns_404(self, mock_get, test_client, auth_headers):
+        """POST /prompts/{id} returns 404 (not 422) when the prompt does not exist.
+
+        ``PromptNotFoundError`` is a subclass of ``PromptError``; without explicit
+        ordering, the broad ``PromptError`` branch matched first and returned 422,
+        leaking resource existence by emitting a different status than the GET
+        endpoint (which already maps NotFound→404).
+        """
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+
+        mock_get.side_effect = PromptNotFoundError("Prompt not found: secret_prompt")
+        response = test_client.post("/prompts/secret_prompt", json={"name": "value"}, headers=auth_headers)
+        assert response.status_code == 404
+        assert "not found" in response.json()["message"].lower()
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):

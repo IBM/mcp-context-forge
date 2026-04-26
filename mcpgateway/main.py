@@ -6152,6 +6152,12 @@ async def get_prompt(
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        # Map PromptNotFoundError to 404 BEFORE the broader PromptError branch.
+        # PromptNotFoundError is a subclass of PromptError, so without this
+        # ordering the 422 branch matches first and leaks resource existence
+        # by returning a different status than the GET endpoint.
+        if isinstance(ex, PromptNotFoundError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=404)
         if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
             return ORJSONResponse(content={"message": str(ex)}, status_code=422)

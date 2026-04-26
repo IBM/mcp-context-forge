@@ -857,9 +857,11 @@ class TestAgentCardTrusted:
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", return_value=None)
     @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
     @patch("mcpgateway.main.SessionLocal")
-    def test_card_server_fallback_returns_200(self, mock_session_local, mock_server_card, _mock_card, _mock_scope, _mock_trust, client):
+    def test_card_server_fallback_public_returns_200(self, mock_session_local, mock_server_card, _mock_card, _mock_scope, _mock_trust, client):
+        """Public-visibility server fallback returns the card (gate allows public)."""
         mock_agent = MagicMock()
         mock_agent.enabled = True
+        mock_agent.visibility = "public"
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
         mock_session_local.return_value = mock_db
@@ -870,6 +872,42 @@ class TestAgentCardTrusted:
 
         assert resp.status_code == 200
         assert resp.json()["name"] == "server-agent"
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@example.com", None))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", return_value=None)
+    @patch("mcpgateway.main.SessionLocal")
+    def test_card_server_fallback_admin_bypass_denies_private(self, mock_session_local, _mock_card, _mock_scope, _mock_trust, client):
+        """PR #4341: trusted admin context cannot read another user's private virtual-server card.
+
+        Mocks the (email, None) DB-admin bypass shape against a private server
+        owned by a different user. The fallback path through
+        ``A2AServerService._check_server_access`` must deny via the natural-flow
+        owner check (the admin is not the owner).
+        """
+        mock_agent = MagicMock()
+        mock_agent.enabled = True
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+
+        private_server = MagicMock()
+        private_server.visibility = "private"
+        private_server.owner_email = "other@example.com"
+        private_server.team_id = None
+
+        def query_side_effect(model):
+            mock_q = MagicMock()
+            mock_q.filter.return_value.first.return_value = mock_agent
+            return mock_q
+
+        mock_db.query.side_effect = query_side_effect
+        mock_db.execute.return_value.scalar_one_or_none.return_value = private_server
+        mock_session_local.return_value = mock_db
+
+        with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=False):
+            resp = client.post("/_internal/a2a/agents/secret-server/card", json={})
+
+        assert resp.status_code == 404
 
 
 class TestInternalA2AExceptionHandling:
