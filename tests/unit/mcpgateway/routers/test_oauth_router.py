@@ -22,8 +22,32 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import Gateway
 from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
+from mcpgateway.routers.oauth_router import _derive_resource_origin
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
+
+
+class TestDeriveResourceOrigin:
+    """Tests for _derive_resource_origin (origin-extraction fallback for auto-derived resource)."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://api.salesforce.com/platform/mcp/v1/sobject", "https://api.salesforce.com"),
+            ("https://api.example.com:8443/path?q=1#frag", "https://api.example.com:8443"),
+            ("http://localhost:9000/foo", "http://localhost:9000"),
+            ("https://gw.example.com", "https://gw.example.com"),
+            ("https://gw.example.com/", "https://gw.example.com"),
+        ],
+    )
+    def test_extracts_origin(self, url, expected):
+        """Hierarchical URLs return scheme+netloc only."""
+        assert _derive_resource_origin(url) == expected
+
+    @pytest.mark.parametrize("bad_input", [None, "", "   ", "no-scheme.com", "urn:example:resource", "/relative/path"])
+    def test_returns_none_for_non_hierarchical(self, bad_input):
+        """Empty, scheme-less, URN, and relative inputs return None (caller falls back to auto-learn)."""
+        assert _derive_resource_origin(bad_input) is None
 
 
 @pytest.fixture

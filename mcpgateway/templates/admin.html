@@ -5622,6 +5622,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
+                      Resource (Audience) <span class="text-gray-500">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_resource"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="https://api.example.com or your-client-id"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      RFC 8707 resource indicator sent to the IdP and used as the
+                      expected token audience. Leave blank to auto-derive from the
+                      gateway URL origin and auto-learn from the IdP's first token
+                      response. Set explicitly for IdPs (ServiceNow, Authentik) that
+                      use a client_id or other opaque audience identifier.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Client ID <span class="text-gray-500">(optional for DCR)</span>
                     </label>
                     <input
@@ -7059,6 +7080,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
                   <div class="oauth-discover-status mt-1 hidden"></div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Resource (Audience) <span class="text-gray-500">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_resource"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="https://api.example.com or your-client-id"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      RFC 8707 resource indicator sent to the IdP and used as the
+                      expected token audience. Leave blank to auto-derive from the
+                      gateway URL origin and auto-learn from the IdP's first token
+                      response. Set explicitly for IdPs (ServiceNow, Authentik) that
+                      use a client_id or other opaque audience identifier.
+                    </p>
                   </div>
 
                   <div>
@@ -10162,6 +10204,27 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
+                            Resource (Audience) <span class="text-gray-500">(optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_resource"
+                            id="oauth-resource-gw-edit"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="https://api.example.com or your-client-id"
+                          />
+                          <p class="mt-1 text-sm text-gray-500">
+                            RFC 8707 resource indicator. Leave blank to auto-derive
+                            from gateway URL and auto-learn from IdP. Set explicitly
+                            for IdPs that return an opaque audience identifier.
+                            Clear this field to trigger re-learning on next OAuth flow.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Client ID <span class="text-gray-500">(optional for DCR)</span>
                           </label>
                           <input
@@ -10620,34 +10683,46 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </div>
 
                           <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" >
+                              Issuer URL
+                            </label>
+                            <div class="mt-1 flex gap-2">
+                              <input
+                                type="url"
+                                name="oauth_issuer"
+                                id="oauth-issuer-a2a-edit"
+                                class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                                placeholder="http://localhost:3003 or https://oauth.example.com"
+                              />
+                              <button
+                                type="button"
+                                data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                                class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                                title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                              >🔍 Discover</button>
+                            </div>
+                          </div>
+
+                          <div>
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
-                            Issuer URL
+                            Resource (Audience) <span class="text-gray-500">(optional)</span>
                           </label>
-                          <div class="mt-1 flex gap-2">
-                            <input
-                              type="url"
-                              name="oauth_issuer"
-                              id="oauth-issuer-a2a-edit"
-                              class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                              placeholder="http://localhost:3003 or https://oauth.example.com"
-                            />
-                            <button
-                              type="button"
-                              data-action-click="discoverOAuthEndpoints" data-arg0="this"
-                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
-                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                            >🔍 Discover</button>
-                          </div>
-
-                          <!--
+                          <input
+                            type="text"
+                            name="oauth_resource"
+                            id="oauth-resource-a2a-edit"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="https://api.example.com or your-client-id"
+                          />
                           <p class="mt-1 text-sm text-gray-500">
-                            The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
+                            RFC 8707 resource indicator. Leave blank to auto-derive
+                            from gateway URL and auto-learn from IdP. Set explicitly
+                            for IdPs that return an opaque audience identifier.
+                            Clear this field to trigger re-learning on next OAuth flow.
                           </p>
                           <div class="oauth-discover-status mt-1 hidden"></div>
-                          -->
-
                           </div>
 
                           <div>

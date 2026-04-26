@@ -11420,8 +11420,8 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
         AsyncMock(
-            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}
-        ),  # pragma: allowlist secret
+            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}  # pragma: allowlist secret
+        ),
     )
     setup_team_service(monkeypatch, ["team-1"])
 
