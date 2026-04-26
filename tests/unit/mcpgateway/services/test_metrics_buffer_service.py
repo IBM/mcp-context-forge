@@ -266,6 +266,9 @@ class TestImmediateWritesWhenDisabled:
                 return self._session
 
             def __exit__(self, exc_type, exc, tb):
+                # Faithfully simulate fresh_db_session(): commit on success.
+                if exc_type is None:
+                    self._session.commit()
                 return False
 
         dummy_session = DummySession()
@@ -640,9 +643,12 @@ def test_flush_to_db_writes_batches(monkeypatch):
             return holder["db"]
 
         def __exit__(self, exc_type, exc, tb):
+            # Faithfully simulate fresh_db_session(): commit on success.
+            if exc_type is None:
+                holder["db"].commit()
             return False
 
-    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummySession())
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
 
     tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
     resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
@@ -658,7 +664,8 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service = MetricsBufferService(enabled=True)
 
-    # Track ALL sessions (server metrics use a separate transaction)
+    # One DummyDB per fresh_db_session() call - the fix splits the flush into
+    # five independent transactions, one per metric type.
     all_dbs = []
 
     class DummyDB:
@@ -673,15 +680,20 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
             self.committed = True
 
     class DummySession:
+        def __init__(self):
+            self.db = DummyDB()
+            all_dbs.append(self.db)
+
         def __enter__(self):
-            db = DummyDB()
-            all_dbs.append(db)
-            return db
+            return self.db
 
         def __exit__(self, exc_type, exc, tb):
+            # Faithfully simulate fresh_db_session(): commit on success.
+            if exc_type is None:
+                self.db.commit()
             return False
 
-    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummySession())
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
 
     tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
     resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
@@ -691,11 +703,9 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
 
-    # Two transactions: main (tool/resource/prompt/a2a) + server metrics
-    assert len(all_dbs) == 2
+    assert len(all_dbs) == 5
     assert all(db.committed for db in all_dbs)
 
-    # Collect models across both transactions
     models = [call[0] for db in all_dbs for call in db.bulk_calls]
     assert ToolMetric in models
     assert ResourceMetric in models
@@ -715,6 +725,7 @@ def test_record_tool_metric_falls_back_to_immediate_write(monkeypatch):
 
 
 def test_get_metrics_buffer_service_singleton(monkeypatch):
+    # First-Party
     from mcpgateway.services import metrics_buffer_service as mbs
 
     mbs._metrics_buffer_service = None
@@ -809,8 +820,8 @@ class TestMetricsSetup:
         from fastapi import FastAPI
 
         # First-Party
-        from mcpgateway.services import metrics as metrics_module
         from mcpgateway.services import http_client_service
+        from mcpgateway.services import metrics as metrics_module
 
         class DummyGauge:
             def __init__(self, _name, _doc, labelnames=None, registry=None):  # noqa: ARG002
@@ -860,7 +871,10 @@ class TestImmediateWriteMethods:
             def __enter__(self_inner):
                 return mock_db
 
-            def __exit__(self_inner, *args):
+            def __exit__(self_inner, exc_type, exc, tb):
+                # Faithfully simulate fresh_db_session(): commit on success.
+                if exc_type is None:
+                    mock_db.commit()
                 return False
 
         return Ctx(), mock_db
@@ -953,3 +967,257 @@ class TestImmediateWriteMethods:
         )
         service = MetricsBufferService(enabled=False)
         service._write_a2a_agent_metric_immediately("a1", time.monotonic(), False, "invoke", "err")
+        # Should not raise
+
+
+def test_flush_to_db_prompt_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during prompt metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import PromptMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    # Track which metric types were attempted
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == PromptMetric:
+                raise Exception("FK violation on prompt_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    prompt_metric = SimpleNamespace(prompt_id="p1", timestamp=time.time(), response_time=0.3, is_success=True, error_message=None)
+
+    # Should not raise despite the exception
+    service._flush_to_db([], [], [prompt_metric], [], [])
+
+    # Verify prompt metrics were attempted
+    assert PromptMetric in attempted_types
+
+
+def test_flush_to_db_a2a_agent_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during A2A agent metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import A2AAgentMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    # Track which metric types were attempted
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == A2AAgentMetric:
+                raise Exception("FK violation on a2a_agent_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    a2a_metric = SimpleNamespace(a2a_agent_id="a1", timestamp=time.time(), response_time=0.5, is_success=True, interaction_type="invoke", error_message=None)
+
+    # Should not raise despite the exception
+    service._flush_to_db([], [], [], [], [a2a_metric])
+
+    # Verify A2A agent metrics were attempted
+    assert A2AAgentMetric in attempted_types
+
+
+def test_flush_to_db_tool_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during tool metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import ToolMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == ToolMetric:
+                raise Exception("FK violation on tool_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+
+    service._flush_to_db([tool_metric], [], [], [], [])
+
+    assert ToolMetric in attempted_types
+
+
+def test_flush_to_db_resource_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during resource metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import ResourceMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == ResourceMetric:
+                raise Exception("FK violation on resource_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+
+    service._flush_to_db([], [resource_metric], [], [], [])
+
+    assert ResourceMetric in attempted_types
+
+
+def test_flush_to_db_server_metrics_exception_is_logged(monkeypatch):
+    """Test that exceptions during server metrics flush are logged but don't crash."""
+    # First-Party
+    from mcpgateway.db import ServerMetric
+
+    service = MetricsBufferService(enabled=True)
+
+    attempted_types = []
+
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            attempted_types.append(model)
+            if model == ServerMetric:
+                raise Exception("FK violation on server_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    server_metric = SimpleNamespace(server_id="s1", timestamp=time.time(), response_time=0.4, is_success=True, error_message=None)
+
+    service._flush_to_db([], [], [], [server_metric], [])
+
+    assert ServerMetric in attempted_types
+
+
+def test_flush_to_db_isolates_failed_metric_type(monkeypatch):
+    """Regression for issue #4420: a FK violation on one metric type must not roll back others.
+
+    This is the core property the fix delivers - splitting the single flush
+    transaction into one transaction per metric type.  If any future change
+    re-grouped two metric types into a shared transaction, this test would
+    catch the regression where one type's failure poisons the other.
+    """
+    # First-Party
+    from mcpgateway.db import A2AAgentMetric, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
+
+    sessions_by_model = {}
+
+    class DummyDB:
+        def __init__(self):
+            self.attempted_model = None
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            self.attempted_model = model
+            if model is ToolMetric:
+                raise Exception("simulated FK violation on tool_id")
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __init__(self):
+            self.db = DummyDB()
+
+        def __enter__(self):
+            return self.db
+
+        def __exit__(self, exc_type, exc, tb):
+            # Faithfully simulate fresh_db_session(): commit on success.
+            if exc_type is None:
+                self.db.commit()
+            if self.db.attempted_model is not None:
+                sessions_by_model[self.db.attempted_model] = self.db
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", DummySession)
+
+    service = MetricsBufferService(enabled=True)
+
+    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+    prompt_metric = SimpleNamespace(prompt_id="p1", timestamp=time.time(), response_time=0.3, is_success=True, error_message=None)
+    server_metric = SimpleNamespace(server_id="s1", timestamp=time.time(), response_time=0.4, is_success=True, error_message=None)
+    a2a_metric = SimpleNamespace(a2a_agent_id="a1", timestamp=time.time(), response_time=0.5, is_success=True, interaction_type="invoke", error_message=None)
+
+    # Tool flush will raise; the call must still succeed and flush the other four types.
+    service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
+
+    assert set(sessions_by_model.keys()) == {ToolMetric, ResourceMetric, PromptMetric, ServerMetric, A2AAgentMetric}
+    assert sessions_by_model[ToolMetric].committed is False
+    assert sessions_by_model[ResourceMetric].committed is True
+    assert sessions_by_model[PromptMetric].committed is True
+    assert sessions_by_model[ServerMetric].committed is True
+    assert sessions_by_model[A2AAgentMetric].committed is True
