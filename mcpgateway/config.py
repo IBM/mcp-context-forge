@@ -342,9 +342,6 @@ class Settings(BaseSettings):
     # Session token configuration (short-lived for security)
     token_expiry: int = Field(default=20, ge=5, le=1440, description="Session token expiry in minutes (5-1440). Recommended: 5-20 minutes for security.")  # 20 minutes (was 10080 = 70 days)
 
-    # Refresh token configuration (longer-lived but revocable)
-    refresh_token_expiry: int = Field(default=10080, ge=60, le=43200, description="Refresh token expiry in minutes (1 hour to 30 days). Used to obtain new access tokens.")  # 7 days
-
     # Idle timeout configuration
     token_idle_timeout: int = Field(default=60, ge=5, le=1440, description="Maximum idle time in minutes before token requires refresh (5-1440).")  # 60 minutes
 

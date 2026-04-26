@@ -3,177 +3,210 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for /admin/logout token revocation functionality.
+HTTP-level tests for ``/admin/logout`` token revocation.
 
-Tests verify that the admin logout endpoint properly revokes tokens
-in the blocklist when users log out from the admin UI.
+These tests exercise the registered FastAPI route end-to-end (CSRF dependency,
+cookie parsing, response shaping). The earlier revision of this file invoked
+``_admin_logout`` directly via ``asyncio.run`` against a ``MagicMock`` request,
+which bypassed middleware/dependency injection and would have passed even if
+the route was unregistered or the CSRF dependency was removed. The current
+revision relies on ``TestClient`` and dependency overrides so that those
+regressions are caught.
 """
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
 import jwt
 import pytest
-from fastapi import Request
-from fastapi.responses import RedirectResponse
+from fastapi.testclient import TestClient
 
 # First-Party
+from mcpgateway.admin import enforce_admin_csrf
 from mcpgateway.config import settings
+from mcpgateway.main import app
+
+
+def _jwt_secret() -> str:
+    secret = settings.jwt_secret_key
+    return secret.get_secret_value() if hasattr(secret, "get_secret_value") else secret
+
+
+def _build_admin_jwt(*, include_jti: bool = True, expires_in_minutes: int = 20) -> tuple[str, dict]:
+    """Build a signed admin JWT and return (token, payload).
+
+    Returns:
+        Tuple of (encoded JWT string, payload dict).
+    """
+    now = datetime.now(timezone.utc)
+    payload: dict = {
+        "email": "admin@example.com",
+        "exp": int((now + timedelta(minutes=expires_in_minutes)).timestamp()),
+        "iat": int(now.timestamp()),
+        "last_activity": int(now.timestamp()),
+    }
+    if include_jti:
+        payload["jti"] = str(uuid.uuid4())
+    token = jwt.encode(payload, _jwt_secret(), algorithm=settings.jwt_algorithm)
+    return token, payload
+
+
+@pytest.fixture
+def disable_admin_csrf():
+    """Bypass admin CSRF for happy-path tests via dependency override.
+
+    A separate test (``test_admin_logout_post_rejects_missing_csrf_token``)
+    exercises the real CSRF path without this override.
+    """
+
+    async def _noop():
+        return None
+
+    app.dependency_overrides[enforce_admin_csrf] = _noop
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(enforce_admin_csrf, None)
 
 
 class TestAdminLogoutTokenRevocation:
-    """Test token revocation in admin logout endpoint."""
+    """Happy-path: ``/admin/logout`` revokes the caller's token in the blocklist."""
 
-    @pytest.fixture
-    def mock_request(self):
-        """Create a mock FastAPI request."""
-        request = MagicMock(spec=Request)
-        request.method = "POST"
-        request.scope = {"root_path": ""}
-        request.headers = {"accept": "text/html"}
-        return request
+    def test_post_revokes_token_in_blocklist(self, disable_admin_csrf):
+        token, payload = _build_admin_jwt()
 
-    @pytest.fixture
-    def valid_jwt_token(self):
-        """Create a valid JWT token for testing."""
-        jti = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        payload = {
-            "email": "admin@example.com",
-            "jti": jti,
-            "exp": int((now + timedelta(minutes=20)).timestamp()),  # Must be integer timestamp
-            "last_activity": now.timestamp()
-        }
-        # Handle SecretStr - get the actual string value
-        jwt_secret = settings.jwt_secret_key
-        if hasattr(jwt_secret, 'get_secret_value'):
-            jwt_secret = jwt_secret.get_secret_value()
-        token = jwt.encode(payload, jwt_secret, algorithm="HS256")
-        return token, jti, payload
+        with (
+            patch("mcpgateway.admin.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service,
+        ):
+            mock_verify.return_value = payload
+            mock_blocklist = MagicMock()
+            mock_blocklist.revoke_token.return_value = True
+            mock_get_service.return_value = mock_blocklist
 
-    def test_admin_logout_revokes_token(self, mock_request, valid_jwt_token):
-        """Test that admin logout revokes the token in blocklist."""
-        token, jti, payload = valid_jwt_token
-        
-        # Set up mock request with JWT cookie
-        mock_request.cookies = {"jwt_token": token}
-        
-        # Mock the token blocklist service at the import location
-        with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_get_service:
-            mock_blocklist_service = MagicMock()
-            mock_get_service.return_value = mock_blocklist_service
-            
-            # Mock verify_jwt_token_cached to return our payload
-            with patch('mcpgateway.admin.verify_jwt_token_cached') as mock_verify:
-                mock_verify.return_value = payload
-                
-                # Import and call the logout function
-                from mcpgateway.admin import _admin_logout
-                import asyncio
-                
-                response = asyncio.run(_admin_logout(mock_request))
-                
-                # Verify token was revoked
-                mock_blocklist_service.revoke_token.assert_called_once()
-                call_args = mock_blocklist_service.revoke_token.call_args
-                
-                assert call_args.kwargs['jti'] == jti
-                assert call_args.kwargs['revoked_by'] == "admin@example.com"
-                assert call_args.kwargs['reason'] == "admin_logout"
-                assert call_args.kwargs['token_expiry'] is not None
-                assert call_args.kwargs['last_activity'] is not None
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout", cookies={"jwt_token": token})
 
-    def test_admin_logout_handles_revocation_failure_gracefully(self, mock_request, valid_jwt_token):
-        """Test that admin logout continues even if token revocation fails."""
-        token, jti, payload = valid_jwt_token
-        
-        # Set up mock request with JWT cookie
-        mock_request.cookies = {"jwt_token": token}
-        
-        # Mock the token blocklist service to raise an exception
-        with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_get_service:
-            mock_blocklist_service = MagicMock()
-            mock_blocklist_service.revoke_token.side_effect = Exception("Database error")
-            mock_get_service.return_value = mock_blocklist_service
-            
-            # Mock verify_jwt_token_cached to return our payload
-            with patch('mcpgateway.admin.verify_jwt_token_cached') as mock_verify:
-                mock_verify.return_value = payload
-                
-                # Import and call the logout function
-                from mcpgateway.admin import _admin_logout
-                import asyncio
-                
-                # Should not raise exception - logout should continue
-                response = asyncio.run(_admin_logout(mock_request))
-                
-                # Verify response is still a redirect (logout succeeded)
-                assert isinstance(response, RedirectResponse)
+            assert response.status_code in (302, 303, 307, 200)
+            mock_blocklist.revoke_token.assert_called_once()
+            kwargs = mock_blocklist.revoke_token.call_args.kwargs
+            assert kwargs["jti"] == payload["jti"]
+            assert kwargs["revoked_by"] == "admin@example.com"
+            assert kwargs["reason"] == "admin_logout"
+            assert kwargs["token_expiry"] is not None
+            assert kwargs["last_activity"] is not None
 
-    def test_admin_logout_without_jwt_cookie(self, mock_request):
-        """Test that admin logout works even without JWT cookie."""
-        # Set up mock request without JWT cookie
-        mock_request.cookies = {}
-        
-        # Import and call the logout function
-        from mcpgateway.admin import _admin_logout
-        import asyncio
-        
-        # Should not raise exception
-        response = asyncio.run(_admin_logout(mock_request))
-        
-        # Verify response is a redirect
-        assert isinstance(response, RedirectResponse)
+    def test_post_without_jwt_cookie_does_not_call_blocklist(self, disable_admin_csrf):
+        with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service:
+            mock_blocklist = MagicMock()
+            mock_get_service.return_value = mock_blocklist
 
-    def test_admin_logout_with_invalid_jwt(self, mock_request):
-        """Test that admin logout handles invalid JWT gracefully."""
-        # Set up mock request with invalid JWT
-        mock_request.cookies = {"jwt_token": "invalid.jwt.token"}
-        
-        # Mock verify_jwt_token_cached to raise an exception
-        with patch('mcpgateway.admin.verify_jwt_token_cached') as mock_verify:
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout")
+
+            assert response.status_code in (302, 303, 307, 200)
+            mock_blocklist.revoke_token.assert_not_called()
+
+    def test_post_with_invalid_jwt_cookie_does_not_block_logout(self, disable_admin_csrf):
+        with (
+            patch("mcpgateway.admin.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service,
+        ):
             mock_verify.side_effect = Exception("Invalid token")
-            
-            # Import and call the logout function
-            from mcpgateway.admin import _admin_logout
-            import asyncio
-            
-            # Should not raise exception - logout should continue
-            response = asyncio.run(_admin_logout(mock_request))
-            
-            # Verify response is still a redirect (logout succeeded)
-            assert isinstance(response, RedirectResponse)
+            mock_blocklist = MagicMock()
+            mock_get_service.return_value = mock_blocklist
 
-    def test_admin_logout_with_missing_jti(self, mock_request, valid_jwt_token):
-        """Test that admin logout handles missing JTI gracefully."""
-        token, _, payload = valid_jwt_token
-        
-        # Remove JTI from payload
-        payload_without_jti = {k: v for k, v in payload.items() if k != 'jti'}
-        
-        # Set up mock request with JWT cookie
-        mock_request.cookies = {"jwt_token": token}
-        
-        # Mock verify_jwt_token_cached to return payload without JTI
-        with patch('mcpgateway.admin.verify_jwt_token_cached') as mock_verify:
-            mock_verify.return_value = payload_without_jti
-            
-            # Mock the token blocklist service
-            with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_get_service:
-                mock_blocklist_service = MagicMock()
-                mock_get_service.return_value = mock_blocklist_service
-                
-                # Import and call the logout function
-                from mcpgateway.admin import _admin_logout
-                import asyncio
-                
-                response = asyncio.run(_admin_logout(mock_request))
-                
-                # Verify token revocation was NOT called (no JTI)
-                mock_blocklist_service.revoke_token.assert_not_called()
-                
-                # Verify response is still a redirect (logout succeeded)
-                assert isinstance(response, RedirectResponse)
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout", cookies={"jwt_token": "not.a.valid.jwt"})
+
+            assert response.status_code in (302, 303, 307, 200)
+            mock_blocklist.revoke_token.assert_not_called()
+
+    def test_post_payload_without_jti_does_not_revoke(self, disable_admin_csrf):
+        token, payload = _build_admin_jwt(include_jti=False)
+        assert "jti" not in payload
+
+        with (
+            patch("mcpgateway.admin.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service,
+        ):
+            mock_verify.return_value = payload
+            mock_blocklist = MagicMock()
+            mock_get_service.return_value = mock_blocklist
+
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout", cookies={"jwt_token": token})
+
+            assert response.status_code in (302, 303, 307, 200)
+            mock_blocklist.revoke_token.assert_not_called()
+
+    def test_post_blocklist_failure_does_not_block_logout(self, disable_admin_csrf):
+        token, payload = _build_admin_jwt()
+
+        with (
+            patch("mcpgateway.admin.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service,
+        ):
+            mock_verify.return_value = payload
+            mock_blocklist = MagicMock()
+            mock_blocklist.revoke_token.side_effect = Exception("Database unavailable")
+            mock_get_service.return_value = mock_blocklist
+
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout", cookies={"jwt_token": token})
+
+            assert response.status_code in (302, 303, 307, 200)
+            mock_blocklist.revoke_token.assert_called_once()
+
+
+class TestAdminLogoutDenyPaths:
+    """Deny-path regression tests required by AGENTS.md for security-sensitive changes."""
+
+    def test_post_with_jwt_cookie_but_no_csrf_token_is_rejected(self):
+        """Cookie auth + state-changing POST without a CSRF token must return 403.
+
+        This protects against cross-site-forced-logout attacks. No
+        ``disable_admin_csrf`` fixture here — the real ``enforce_admin_csrf``
+        dependency runs and must reject the request.
+        """
+        token, _ = _build_admin_jwt()
+
+        with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service:
+            mock_blocklist = MagicMock()
+            mock_get_service.return_value = mock_blocklist
+
+            client = TestClient(app, follow_redirects=False)
+            response = client.post("/admin/logout", cookies={"jwt_token": token})
+
+            assert response.status_code == 403
+            assert "csrf" in response.json().get("detail", "").lower()
+            mock_blocklist.revoke_token.assert_not_called()
+
+    def test_get_logout_is_exempt_from_csrf(self):
+        """GET /admin/logout supports OIDC front-channel logout and is exempt from CSRF.
+
+        Per the OIDC Front-Channel Logout 1.0 spec the IdP issues a GET; we
+        must accept it without a CSRF token.
+        """
+        token, payload = _build_admin_jwt()
+
+        with (
+            patch("mcpgateway.admin.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_get_service,
+        ):
+            mock_verify.return_value = payload
+            mock_blocklist = MagicMock()
+            mock_blocklist.revoke_token.return_value = True
+            mock_get_service.return_value = mock_blocklist
+
+            client = TestClient(app, follow_redirects=False)
+            response = client.get(
+                "/admin/logout",
+                cookies={"jwt_token": token},
+                headers={"accept": "application/json"},
+            )
+
+            assert response.status_code in (200, 302, 303, 307)

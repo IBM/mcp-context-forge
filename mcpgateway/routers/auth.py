@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -189,7 +189,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
 
 
 @auth_router.post("/logout")
-async def logout(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+async def logout(request: Request, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Logout user and revoke session token.
 
     This endpoint implements server-side token revocation by adding the token

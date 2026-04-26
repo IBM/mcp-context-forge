@@ -33,10 +33,6 @@ token_expiry: int = 20  # minutes (was 10080 = 70 days)
     # Range: 5-1440 minutes
     # Recommended: 5-20 minutes for security
 
-# Refresh token configuration (longer-lived but revocable)
-refresh_token_expiry: int = 10080  # 7 days
-    # Range: 60-43200 minutes (1 hour to 30 days)
-
 # Idle timeout configuration
 token_idle_timeout: int = 60  # minutes
     # Range: 5-1440 minutes
@@ -184,7 +180,6 @@ async def logout(request: Request, db: Session = Depends(get_db)):
 ```bash
 TOKEN_EXPIRY=5                    # 5 minutes
 TOKEN_IDLE_TIMEOUT=15             # 15 minutes
-REFRESH_TOKEN_EXPIRY=1440         # 24 hours
 TOKEN_BLOCKLIST_CLEANUP_HOURS=12  # 12 hours
 ```
 
@@ -192,7 +187,6 @@ TOKEN_BLOCKLIST_CLEANUP_HOURS=12  # 12 hours
 ```bash
 TOKEN_EXPIRY=20                   # 20 minutes (default)
 TOKEN_IDLE_TIMEOUT=60             # 60 minutes (default)
-REFRESH_TOKEN_EXPIRY=10080        # 7 days (default)
 TOKEN_BLOCKLIST_CLEANUP_HOURS=24  # 24 hours (default)
 ```
 
@@ -200,7 +194,6 @@ TOKEN_BLOCKLIST_CLEANUP_HOURS=24  # 24 hours (default)
 ```bash
 TOKEN_EXPIRY=60                   # 60 minutes
 TOKEN_IDLE_TIMEOUT=120            # 120 minutes
-REFRESH_TOKEN_EXPIRY=10080        # 7 days
 TOKEN_BLOCKLIST_CLEANUP_HOURS=24  # 24 hours
 ```
 
@@ -310,7 +303,6 @@ Add to cron or scheduler:
    # Add to .env
    TOKEN_EXPIRY=20
    TOKEN_IDLE_TIMEOUT=60
-   REFRESH_TOKEN_EXPIRY=10080
    TOKEN_BLOCKLIST_CLEANUP_HOURS=24
    ```
 
