@@ -187,6 +187,45 @@ class TestApplyAccessControl:
         assert result == "filtered"
         query.where.assert_called_once()
 
+    def test_apply_visibility_scope_db_admin_includes_own_private_only(self):
+        """PR #4341 carve-out coverage for the static ``_apply_visibility_scope`` helper.
+
+        ``_apply_visibility_scope`` is the sibling of ``_apply_access_control`` used by
+        completion/tag enumeration. Without this test the (email, None) DB-admin
+        branch in base_service.py:215-221 was unexecuted by the suite; the existing
+        ``test_apply_visibility_scope_admin_bypass_excludes_private`` coverage in
+        test_authorization_access.py only exercises the ``(None, None)`` shape.
+        """
+        from mcpgateway.services.base_service import BaseService
+        from mcpgateway.services.tag_service import TagService
+
+        service = TagService()
+        stmt = sa.select(_FakeItem)
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            scoped = BaseService._apply_visibility_scope(
+                stmt,
+                _FakeItem,
+                user_email="dba@test.com",
+                token_teams=None,
+                team_ids=[],
+                db=mock_db,
+            )
+
+        compiled = _compile_where(scoped)
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller: {compiled}"
+        # Same OR-count guard as test_db_admin_bypass_includes_own_private_only.
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
+        # Sanity: TagService._apply_visibility_scope is unused here (the static
+        # helper on BaseService is what we exercise) but importing it ensures the
+        # module-level binding exists so this test fails loudly if a refactor
+        # removes the indirection.
+        assert callable(getattr(service, "_apply_visibility_scope", None))
+
     @pytest.mark.asyncio
     async def test_db_admin_bypass_includes_own_private_only(self, service, mock_db):
         """PR #4341 carve-out: DB-admin (email, None) shape compiles a WHERE that allows own private but not others'.

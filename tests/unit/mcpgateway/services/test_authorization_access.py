@@ -14,6 +14,7 @@ These tests verify the security fixes for:
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -1401,3 +1402,152 @@ class TestDirectGetAccessDenial:
         assert "visibility" in compiled
         assert "private" in compiled
         assert "!=" in compiled or "<>" in compiled
+
+
+class TestServerAccessCheckMatrix:
+    """Branch coverage for ServerService._check_server_access (server_service.py:1015-1044).
+
+    Mirrors the existing TestCheckToolAccess matrix in test_tool_service.py so that
+    every documented policy outcome (public allow, anonymous bypass deny private,
+    public-only token deny, own-private allow, team membership via JWT, team
+    membership via DB lookup, final deny) has at least one focused regression.
+    """
+
+    @pytest.fixture
+    def service(self):
+        from mcpgateway.services.server_service import ServerService
+
+        return ServerService()
+
+    @staticmethod
+    def _server(visibility: str, owner_email=None, team_id=None) -> MagicMock:
+        s = MagicMock()
+        s.visibility = visibility
+        s.owner_email = owner_email
+        s.team_id = team_id
+        return s
+
+    @pytest.mark.asyncio
+    async def test_public_always_allowed(self, service):
+        """Public visibility short-circuits before any other check."""
+        s = self._server("public")
+        assert await service._check_server_access(MagicMock(), s, user_email=None, token_teams=[]) is True
+        assert await service._check_server_access(MagicMock(), s, user_email="any@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_anonymous_admin_bypass_denies_private(self, service):
+        """(None, None) anonymous admin bypass: team allowed, private denied."""
+        assert await service._check_server_access(MagicMock(), self._server("private", owner_email="other@test.com"), user_email=None, token_teams=None) is False
+        assert await service._check_server_access(MagicMock(), self._server("team", team_id="team-x"), user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_no_user_email_with_token_teams_denied(self, service):
+        """(None, [team]) shape: server_service.py line 1022-1023 — without user_email, denied."""
+        assert await service._check_server_access(MagicMock(), self._server("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
+
+    @pytest.mark.asyncio
+    async def test_public_only_token_denies_non_public(self, service):
+        """(email, []) public-only token: covers server_service.py line 1025-1027."""
+        s_team = self._server("team", team_id="team-x")
+        s_private = self._server("private", owner_email="user@test.com")
+        assert await service._check_server_access(MagicMock(), s_team, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_server_access(MagicMock(), s_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_own_private_allowed(self, service):
+        """Owner of a private server can read it (covers line 1029-1031)."""
+        own = self._server("private", owner_email="user@test.com")
+        assert await service._check_server_access(MagicMock(), own, user_email="user@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_jwt_token_teams(self, service):
+        """token_teams from JWT carries team membership (covers line 1033-1036)."""
+        s = self._server("team", team_id="team-x")
+        assert await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=["team-x"]) is True
+        # Non-matching team in JWT → denied (covers line 1044 fall-through).
+        assert await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=["team-y"]) is False
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_db_lookup(self, service):
+        """token_teams=None with email + team server: falls back to TeamManagementService (covers line 1038-1042)."""
+        s = self._server("team", team_id="team-x")
+
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_tms_cls:
+            mock_tms_cls.return_value.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-x")])
+            allowed = await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=None)
+
+        assert allowed is True
+        mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@test.com")
+
+
+class TestGatewayAccessCheckMatrix:
+    """Branch coverage for GatewayService._check_gateway_access (gateway_service.py:2732-2761).
+
+    Same shape as TestServerAccessCheckMatrix above — both helpers were added by
+    PR #4341 and both implement the canonical hybrid visibility policy.
+    """
+
+    @pytest.fixture
+    def service(self):
+        from mcpgateway.services.gateway_service import GatewayService
+
+        return GatewayService()
+
+    @staticmethod
+    def _gw(visibility: str, owner_email=None, team_id=None) -> MagicMock:
+        g = MagicMock()
+        g.visibility = visibility
+        g.owner_email = owner_email
+        g.team_id = team_id
+        return g
+
+    @pytest.mark.asyncio
+    async def test_public_always_allowed(self, service):
+        """Covers gateway_service.py line 2734."""
+        g = self._gw("public")
+        assert await service._check_gateway_access(MagicMock(), g, user_email=None, token_teams=[]) is True
+
+    @pytest.mark.asyncio
+    async def test_anonymous_admin_bypass_denies_private(self, service):
+        """(None, None) anonymous admin bypass: team allowed, private denied."""
+        assert await service._check_gateway_access(MagicMock(), self._gw("private", owner_email="other@test.com"), user_email=None, token_teams=None) is False
+        assert await service._check_gateway_access(MagicMock(), self._gw("team", team_id="team-x"), user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_no_user_email_with_token_teams_denied(self, service):
+        """(None, [team]) shape: covers gateway_service.py line 2739-2740."""
+        assert await service._check_gateway_access(MagicMock(), self._gw("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
+
+    @pytest.mark.asyncio
+    async def test_public_only_token_denies_non_public(self, service):
+        """(email, []) public-only token: covers line 2742-2744."""
+        g_team = self._gw("team", team_id="team-x")
+        g_private = self._gw("private", owner_email="user@test.com")
+        assert await service._check_gateway_access(MagicMock(), g_team, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_gateway_access(MagicMock(), g_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_own_private_allowed(self, service):
+        """Owner of a private gateway can read it (covers line 2746-2748)."""
+        own = self._gw("private", owner_email="user@test.com")
+        assert await service._check_gateway_access(MagicMock(), own, user_email="user@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_jwt_token_teams(self, service):
+        """token_teams from JWT carries team membership (covers line 2750-2753)."""
+        g = self._gw("team", team_id="team-x")
+        assert await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=["team-x"]) is True
+        # Non-matching team in JWT → denied (covers line 2761 fall-through).
+        assert await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=["team-y"]) is False
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_db_lookup(self, service):
+        """token_teams=None with email + team gateway: falls back to TeamManagementService (covers line 2755-2759)."""
+        g = self._gw("team", team_id="team-x")
+
+        with patch("mcpgateway.services.gateway_service.TeamManagementService") as mock_tms_cls:
+            mock_tms_cls.return_value.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-x")])
+            allowed = await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=None)
+
+        assert allowed is True
+        mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@test.com")

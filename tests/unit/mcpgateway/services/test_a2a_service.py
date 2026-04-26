@@ -2680,6 +2680,30 @@ class TestInvokeAgentEdgeCases:
 
         assert await service.get_agent_card(mock_db, "missing") is None
 
+    async def test_get_agent_card_returns_none_when_visibility_denies(self, service, mock_db):
+        """PR #4341 (S6-a) coverage: in-service gate returns None on visibility deny.
+
+        Exercises a2a_service.py:1155 — the deny path of the gate ``get_agent_card``
+        adopted in cycle 2. A private agent owned by a different user with the
+        anonymous-bypass shape must return None (not raise, not return the card).
+        """
+        agent = SimpleNamespace(
+            name="ag",
+            description="desc",
+            endpoint_url="https://x.com",
+            version=1,
+            protocol_version="1.0",
+            capabilities={},
+            visibility="private",
+            team_id=None,
+            owner_email="other@example.com",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag", user_email=None, token_teams=None)
+
+        assert result is None
+
     async def test_get_agent_card_builds_capabilities(self, service, mock_db):
         agent = SimpleNamespace(
             name="ag",

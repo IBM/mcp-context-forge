@@ -1166,8 +1166,16 @@ class TestMcpSerialization:
 class TestInternalMcpHelperCoverage:
     """Target helper branches added for trusted Rust MCP forwarding."""
 
-    def testdecode_internal_mcp_auth_context_rejects_non_object_payload(self):
-        """Non-object JSON payloads should be rejected."""
+    def test_decode_internal_mcp_auth_context_rejects_non_object_payload(self):
+        """Non-object JSON payloads (lists, scalars) must raise ValueError.
+
+        The pre-fix name ``testdecode_*`` was missing the underscore separator
+        and silently failed pytest's default ``test_*`` collection pattern, so
+        the assertion below — guarding ``auth_context.decode_internal_mcp_auth_context``
+        line 215 — was never executed. A non-object payload smuggled past this
+        gate would let the helper return a list or scalar that the trust-header
+        plumbing assumes is a dict.
+        """
         header_value = base64.urlsafe_b64encode(orjson.dumps(["not-an-object"])).decode().rstrip("=")
         with pytest.raises(ValueError, match="must be an object"):
             decode_internal_mcp_auth_context(header_value)
