@@ -353,8 +353,8 @@ class TestPersistLearnedAudience:
 
     @pytest.mark.parametrize("malformed_aud", [42, [], [""], ["valid", 99], "", "   ", {"not": "a string"}])
     @pytest.mark.asyncio
-    async def test_skips_when_audience_shape_is_malformed(self, malformed_aud):
-        """Shape validation: numbers, empty containers, mixed lists, and dicts are dropped."""
+    async def test_skips_when_audience_shape_is_malformed(self, malformed_aud, caplog):
+        """Shape validation: numbers, empty containers, mixed lists, and dicts are dropped with a DEBUG breadcrumb."""
         oauth_result = {"token_aud": malformed_aud}
 
         gateway = Mock(spec=Gateway)
@@ -365,10 +365,12 @@ class TestPersistLearnedAudience:
 
         from mcpgateway.routers.oauth_router import _persist_learned_audience
 
-        await _persist_learned_audience(gateway, oauth_result, db)
+        with caplog.at_level("DEBUG", logger="mcpgateway.routers.oauth_router"):
+            await _persist_learned_audience(gateway, oauth_result, db)
 
         db.flush.assert_not_called()
         assert "resource" not in gateway.oauth_config
+        assert any("absent or malformed" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_persists_when_no_issuer_configured(self):
@@ -486,6 +488,35 @@ class TestPersistLearnedAudience:
 
         db.flush.assert_called_once()
         assert gateway.oauth_config["resource"] == "client-id-abc"
+
+    @pytest.mark.asyncio
+    async def test_multi_user_first_writes_second_does_not_overwrite(self):
+        """Multi-user regression guard for first-write-only semantics.
+
+        Two users complete the OAuth flow against the same shared gateway with
+        different audience values (e.g. per-tenant aud, or one user against a
+        legitimately-different tenant of the same IdP).  The first callback
+        learns and persists; the second callback must observe the
+        already-set resource and skip its write entirely.  The first user's
+        learned audience must remain untouched.
+        """
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Shared GW"
+        gateway.oauth_config = {"client_id": "cid"}
+        db = Mock(spec=Session)
+
+        await _persist_learned_audience(gateway, {"token_aud": "user1-tenant-aud"}, db)
+
+        assert gateway.oauth_config["resource"] == "user1-tenant-aud"
+        assert db.flush.call_count == 1
+
+        db.flush.reset_mock()
+        await _persist_learned_audience(gateway, {"token_aud": "user2-tenant-aud"}, db)
+
+        assert gateway.oauth_config["resource"] == "user1-tenant-aud"
+        db.flush.assert_not_called()
 
 
 class TestOAuthRouter:

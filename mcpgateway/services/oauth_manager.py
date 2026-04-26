@@ -1827,7 +1827,12 @@ class OAuthManager:
                 options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
                 algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # DEBUG-only: opaque/non-JWT access tokens are normal for some IdPs,
+            # so this is not a warning.  But operators chasing "audience never
+            # learned" need a breadcrumb to distinguish "token was opaque" from
+            # "JWT library raised something unexpected".
+            logger.debug("Unverified JWT decode failed (%s): %s", type(exc).__name__, exc)
             return {}
         return claims if isinstance(claims, dict) else {}
 

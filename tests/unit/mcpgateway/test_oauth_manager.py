@@ -2402,3 +2402,15 @@ class TestExtractTokenClaims:
     def test_issuer_empty_token_returns_none(self):
         """Empty access token short-circuits to None."""
         assert OAuthManager._extract_token_issuer("") is None
+
+    def test_decode_failure_emits_debug_breadcrumb(self, caplog):
+        """A decode failure logs at DEBUG so operators can chase 'audience never learned' reports."""
+        with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
+            assert OAuthManager._extract_token_audience("malformed.jwt.token") is None
+        assert any("Unverified JWT decode failed" in record.message for record in caplog.records)
+
+    def test_opaque_token_does_not_emit_debug_for_empty_input(self, caplog):
+        """An empty access token short-circuits before the decoder, so no breadcrumb is emitted."""
+        with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
+            assert OAuthManager._extract_token_audience("") is None
+        assert not any("Unverified JWT decode failed" in record.message for record in caplog.records)
