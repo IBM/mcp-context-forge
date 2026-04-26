@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.services_auth import decode_auth
 
 # Header name used by clients to target a specific gateway for direct_proxy mode.
@@ -84,7 +84,7 @@ async def check_gateway_access(
     # BaseService._apply_access_control / _check_*_access.
     if user_email is None and token_teams is None:
         return visibility != "private"
-    if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+    if token_teams is None and user_email and is_user_admin(db, user_email):
         return visibility != "private" or gateway_owner_email == user_email
 
     if not user_email:

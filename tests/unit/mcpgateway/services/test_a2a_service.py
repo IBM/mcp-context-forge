@@ -2678,7 +2678,7 @@ class TestInvokeAgentEdgeCases:
     async def test_get_agent_card_returns_none_when_agent_missing(self, service, mock_db):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        assert service.get_agent_card(mock_db, "missing") is None
+        assert await service.get_agent_card(mock_db, "missing") is None
 
     async def test_get_agent_card_builds_capabilities(self, service, mock_db):
         agent = SimpleNamespace(
@@ -2694,7 +2694,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        result = service.get_agent_card(mock_db, "ag")
+        result = await service.get_agent_card(mock_db, "ag")
 
         assert result["name"] == "ag"
         assert result["capabilities"]["streaming"] is True

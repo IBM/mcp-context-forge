@@ -80,7 +80,7 @@ from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, Ru
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -1152,7 +1152,7 @@ class ToolService(BaseService):
         # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
         if token_teams is None and user_email is None:
             return visibility != "private"
-        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+        if token_teams is None and user_email and is_user_admin(db, user_email):
             return visibility != "private" or tool_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public tools

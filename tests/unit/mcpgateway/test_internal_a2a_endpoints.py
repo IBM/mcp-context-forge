@@ -823,7 +823,7 @@ class TestAgentCardTrusted:
         "mcpgateway.main._build_internal_mcp_forwarded_user",
         return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
     )
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock)
     @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
     def test_card_not_found_returns_404(self, mock_server_card, mock_card, _mock_user, _mock_trust, client):
         mock_card.return_value = None
@@ -836,7 +836,7 @@ class TestAgentCardTrusted:
         "mcpgateway.main._build_internal_mcp_forwarded_user",
         return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
     )
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card")
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock)
     @patch("mcpgateway.main.SessionLocal")
     def test_card_found_returns_200(self, mock_session_local, mock_card, _mock_user, _mock_trust, client):
         mock_card.return_value = {"name": "my-agent", "url": "https://agent.example.com"}
@@ -854,7 +854,7 @@ class TestAgentCardTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", return_value=None)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock, return_value=None)
     @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
     @patch("mcpgateway.main.SessionLocal")
     def test_card_server_fallback_public_returns_200(self, mock_session_local, mock_server_card, _mock_card, _mock_scope, _mock_trust, client):
@@ -875,7 +875,7 @@ class TestAgentCardTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("admin@example.com", None))
-    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", return_value=None)
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock, return_value=None)
     @patch("mcpgateway.main.SessionLocal")
     def test_card_server_fallback_admin_bypass_denies_private(self, mock_session_local, _mock_card, _mock_scope, _mock_trust, client):
         """PR #4341: trusted admin context cannot read another user's private virtual-server card.
@@ -1035,7 +1035,7 @@ class TestInternalA2AExceptionHandling:
         mock_session_local.return_value = mock_db
 
         with patch("mcpgateway.services.a2a_service.A2AAgentService._check_agent_access", new_callable=AsyncMock, return_value=True):
-            with patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", side_effect=RuntimeError("boom")):
+            with patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
                 resp = client.post("/_internal/a2a/agents/my-agent/card", json={})
 
         assert resp.status_code == 500

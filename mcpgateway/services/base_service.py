@@ -17,7 +17,7 @@ from sqlalchemy.sql import Select
 # First-Party
 from mcpgateway.plugins.framework import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 
 
 class BaseService(ABC):
@@ -68,9 +68,10 @@ class BaseService(ABC):
         1. Admin bypass: anonymous (user_email=None AND token_teams=None) sees
            public + team rows only. DB-resolved admin (email + token_teams=None)
            also sees their OWN private rows. No bypass shape exposes another
-           user's private rows (PR #4341 / issue #4323). Detection of the
-           DB-resolved admin shape uses
-           :func:`~mcpgateway.utils.admin_check.is_admin_bypass_granted`.
+           user's private rows (PR #4341 / issue #4323). The DB-resolved admin
+           shape is detected via :func:`~mcpgateway.utils.admin_check.is_user_admin`
+           — using the broader ``is_admin_bypass_granted`` here would risk
+           re-introducing the leak this PR closes (see PR #4341 review B2/B5).
         2. Resolves effective teams from JWT token_teams or DB lookup.
         3. Suppresses owner matching for public-only tokens (token_teams=[]).
         4. Delegates to _apply_visibility_filter for SQL WHERE construction.
@@ -98,7 +99,7 @@ class BaseService(ABC):
         model_cls = self._visibility_model_cls
         if user_email is None and token_teams is None:
             return query.where(model_cls.visibility != "private")
-        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+        if token_teams is None and user_email and is_user_admin(db, user_email):
             return query.where(
                 or_(
                     model_cls.visibility != "private",
@@ -211,7 +212,7 @@ class BaseService(ABC):
         # additionally sees their own private rows. Mirrors _apply_access_control.
         if token_teams is None and user_email is None:
             return stmt.where(model.visibility != "private")
-        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+        if token_teams is None and user_email and is_user_admin(db, user_email):
             return stmt.where(
                 or_(
                     model.visibility != "private",

@@ -8906,16 +8906,17 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
 
-        # Layer-1 visibility is enforced here at the call site (PR #4341):
+        # Layer-1 visibility is enforced inside ``get_agent_card`` (PR #4341):
         # admin bypass with no email cannot read another user's private agent.
-        # On denial we both log and refuse to fetch the card so the response
-        # falls through to the not-found path below without leaking existence.
+        # The denial path returns None so the response falls through to the
+        # not-found branch below without leaking existence. We still pre-check
+        # existence to distinguish "agent does not exist" from "visibility
+        # deny" in the structured warning log emitted by service callers.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
         if agent is not None:
-            if await service._check_agent_access(db, agent, user_email, token_teams):  # pylint: disable=protected-access
-                card = service.get_agent_card(db, agent_name)
-            else:
+            card = await service.get_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+            if card is None:
                 logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
         if card is None:
             a2a_server_service = A2AServerService()

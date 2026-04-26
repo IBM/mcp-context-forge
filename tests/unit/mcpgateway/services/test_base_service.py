@@ -198,7 +198,7 @@ class TestApplyAccessControl:
         """
         base_query = sa.select(_FakeItem)
 
-        with patch("mcpgateway.services.base_service.is_admin_bypass_granted", return_value=True):
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
             result = await service._apply_access_control(
                 base_query,
                 mock_db,
@@ -217,7 +217,7 @@ class TestApplyAccessControl:
     async def test_non_admin_with_email_but_null_token_teams_does_not_bypass(self, service, mock_db, query):
         """Non-admin (email, None) shape must NOT take the DB-admin branch — falls through to TeamManagementService lookup."""
         with (
-            patch("mcpgateway.services.base_service.is_admin_bypass_granted", return_value=False),
+            patch("mcpgateway.services.base_service.is_user_admin", return_value=False),
             patch("mcpgateway.services.base_service.TeamManagementService") as mock_tms_cls,
             patch.object(service, "_apply_visibility_filter", return_value="filtered") as mock_filter,
         ):

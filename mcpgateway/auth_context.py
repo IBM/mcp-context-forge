@@ -3,39 +3,49 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-Request-context helpers for resolving the caller's identity, token scope, and
-Layer-1 visibility context for a single HTTP request.
+Per-request scope resolution and Rust-runtime trust-layer helpers.
 
 Purpose (for future implementers)
 ---------------------------------
-``mcpgateway`` separates authentication concerns into two modules:
+``mcpgateway`` keeps token primitives, request scope resolution, and the
+trusted Rust-runtime hop in three logical groups, even though only two
+modules currently exist:
 
-- ``mcpgateway.auth`` - the **token / session / team model layer**. Pure auth
-  primitives that operate on stored artifacts (JWT claims, revocation records,
-  API tokens, team membership rows) and return DB-shaped results. These helpers
-  do not know about the current ``Request`` and can be reused from any context
-  (tests, background tasks, transport hops).
+- ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
+  model layer** and the FastAPI auth dependency. Most helpers there are pure
+  primitives over stored artifacts (JWT claims, API tokens, revocation
+  records, team membership rows) and do not need a ``Request``. The single
+  exception is ``get_current_user``, which is the FastAPI dependency that
+  bridges the two layers and necessarily sees ``Request`` (it stashes
+  payload metadata on ``request.state`` for downstream helpers here).
 
-- ``mcpgateway.auth_context`` (this module) - the **per-request resolution
-  layer**. Helpers take a FastAPI ``Request`` plus the ``user`` produced by the
-  auth dependency and compute what the caller is allowed to see on this
-  specific request. This is the Layer 1 in the two-layer model documented in
-  ``AGENTS.md`` ("what you can SEE") - distinct from the Layer 2 RBAC checks
-  ("what you can DO") that live in ``mcpgateway.middleware.rbac``.
-
-If a helper takes a ``Request``, it belongs here. If it only takes JWT claims,
-a user email, or a team ID, it belongs in ``mcpgateway.auth``.
+- ``mcpgateway.auth_context`` (this module) - the **per-request scope
+  resolution layer** plus the **Rust-runtime trust-header helpers**. The
+  scope-resolution helpers take a FastAPI ``Request`` plus the ``user``
+  produced by the auth dependency and compute what the caller is allowed
+  to see on this specific request - this is Layer 1 in the two-layer model
+  documented in ``AGENTS.md`` ("what you can SEE"), distinct from the
+  Layer 2 RBAC checks in ``mcpgateway.middleware.rbac`` ("what you can
+  DO"). The trust-header helpers (``decode_internal_mcp_auth_context``,
+  ``has_valid_internal_mcp_runtime_auth_header``, the
+  ``_expected_internal_mcp_runtime_auth_header*`` family) implement the
+  HMAC contract between the Rust MCP runtime and the Python gateway. They
+  live here, not in ``auth.py``, because the trusted forwarded context
+  produces a synthetic ``user`` that the per-request helpers consume; the
+  two responsibilities are coupled at the request boundary. A future
+  refactor may extract them into a third ``mcpgateway.auth_runtime``
+  module if the coupling weakens.
 
 Why this module exists as a separate file
 -----------------------------------------
-Both ``mcpgateway.main`` and ``mcpgateway.admin`` need the scoped-access helper
-to pass ``(user_email, token_teams)`` into the service layer. Before this
-split, the helper lived in ``main.py`` and ``admin.py`` reached back through a
-lazy import, which created a static cyclic import (``admin -> main -> admin``)
-that ``pylint R0401`` flagged. Hoisting the helper (and its dependency chain)
-into a sibling module that depends only on ``mcpgateway.auth`` breaks the cycle
-at the architectural level rather than papering over it with
-``# pylint: disable``.
+Both ``mcpgateway.main`` and ``mcpgateway.admin`` need the scoped-access
+helper to pass ``(user_email, token_teams)`` into the service layer. Before
+this split, the helper lived in ``main.py`` and ``admin.py`` reached back
+through a lazy import, creating a static cyclic import
+(``admin -> main -> admin``) that ``pylint R0401`` flagged. Hoisting the
+helper (and its dependency chain) into a sibling module that depends only
+on ``mcpgateway.auth`` breaks the cycle at the architectural level rather
+than papering over it with ``# pylint: disable``.
 
 Public surface
 --------------
@@ -56,7 +66,6 @@ The names below are the **module's public API**. Callers in ``main.py``,
     Per-request JWT / scope resolution (the Layer-1 surface)
         get_token_teams_from_request(request) -> list[str] | None
         get_rpc_filter_context(request, user) -> (email, teams, is_admin)
-        has_verified_jwt_payload(request) -> bool
         get_request_identity(request, user) -> (email, is_admin)
         get_scoped_resource_access_context(request, user) -> (email, teams)
 
@@ -73,6 +82,7 @@ helper belongs in ``mcpgateway.auth`` instead.
     _auth_encryption_secret_value        (config-dependent secret accessor)
     _expected_internal_mcp_runtime_auth_header
     _expected_internal_mcp_runtime_auth_header_for_secret
+    _has_verified_jwt_payload            (probe used by the resolution helpers)
 
 Security invariants
 -------------------
@@ -366,7 +376,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
     return user_email, token_teams, is_admin
 
 
-def has_verified_jwt_payload(request: Request) -> bool:
+def _has_verified_jwt_payload(request: Request) -> bool:
     """Return whether request has a verified JWT payload cached in request state.
 
     Args:
@@ -397,7 +407,7 @@ def get_request_identity(request: Request, user) -> tuple[str, bool]:
 
     # When a JWT payload is present, respect token-derived admin semantics
     # (including public-only admin tokens where bypass is intentionally disabled).
-    if has_verified_jwt_payload(request):
+    if _has_verified_jwt_payload(request):
         return resolved_email, token_is_admin
 
     fallback_is_admin = False
@@ -435,7 +445,7 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
     # Non-JWT admin contexts (basic-auth / dev-mode) keep unrestricted access semantics.
-    if not has_verified_jwt_payload(request):
+    if not _has_verified_jwt_payload(request):
         _requester_email, fallback_admin = get_request_identity(request, user)
         if fallback_admin:
             return None, None

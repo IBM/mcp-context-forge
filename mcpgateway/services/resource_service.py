@@ -74,7 +74,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1090,7 +1090,7 @@ class ResourceService(BaseService):
         # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
         if token_teams is None and user_email is None:
             return visibility != "private"
-        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+        if token_teams is None and user_email and is_user_admin(db, user_email):
             return visibility != "private" or resource_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public resources
@@ -4055,7 +4055,7 @@ class ResourceService(BaseService):
             # visibility filter applied, leaking all private templates.
             if user_email is None and token_teams is None:
                 query = query.where(DbResource.visibility != "private")
-            elif token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+            elif token_teams is None and user_email and is_user_admin(db, user_email):
                 query = query.where(
                     or_(
                         DbResource.visibility != "private",

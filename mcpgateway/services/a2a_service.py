@@ -44,7 +44,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -340,7 +340,7 @@ class A2AAgentService(BaseService):
         # tool/prompt/resource services for consistency.
         if token_teams is None and user_email is None:
             return agent.visibility != "private"
-        if token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+        if token_teams is None and user_email and is_user_admin(db, user_email):
             return agent.visibility != "private" or agent.owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public agents
@@ -1109,41 +1109,49 @@ class A2AAgentService(BaseService):
 
         return self.convert_agent_to_read(agent, db=db)
 
-    def get_agent_card(
+    async def get_agent_card(
         self,
         db: Session,
         agent_name: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard dict for the named agent.
 
         Queries the database for an enabled agent with the given name and
-        returns a dict that conforms to the A2A AgentCard schema.  Returns
-        None when no matching enabled agent is found.
-
-        Layer-1 visibility is the caller's responsibility — gate this method
-        behind ``_check_agent_access`` (or an equivalent scoped fetch) when
-        invoking it from a request handler. ``main.py``'s internal A2A
-        endpoint follows that pattern (see ``handle_a2a_agent_card``).
+        returns a dict that conforms to the A2A AgentCard schema. Returns
+        None when no matching enabled agent is found OR when the caller's
+        scope cannot see the agent (PR #4341 invariant: admin bypass cannot
+        read another user's private agent card).
 
         Args:
             db: Database session.
             agent_name: Name of the agent to look up.
+            user_email: Caller's email for visibility scoping. Defaults to None,
+                which combines with ``token_teams=None`` for anonymous admin
+                bypass and denies private agents.
+            token_teams: Caller's team scope for visibility filtering. ``None``
+                means unrestricted (admin), ``[]`` means public-only, and
+                ``[team_id, ...]`` means team-scoped. Defaults to None.
 
         Returns:
-            AgentCard dict, or None if the agent is not found / disabled.
+            AgentCard dict, or None if the agent is not found / disabled / denied.
 
         Examples:
+            >>> import asyncio
             >>> from unittest.mock import MagicMock
             >>> from mcpgateway.services.a2a_service import A2AAgentService
             >>> service = A2AAgentService()
             >>> db = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_agent_card(db, "missing") is None
+            >>> asyncio.run(service.get_agent_card(db, "missing")) is None
             True
         """
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
+            return None
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
         capabilities = agent.capabilities or {}
