@@ -157,6 +157,28 @@ MCP_RUST_BACKEND_VALIDATION_ENABLED=false cargo run
 
 URLs not in the allowlist or IPs in blocked networks are rejected with a Bad Gateway (502) response.
 
+### Request Body Size Limits
+
+Control maximum request payload size to prevent resource exhaustion.
+
+**Environment Variables:**
+
+```bash
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=10485760  # Max body size (default: 10MB)
+```
+
+**Examples:**
+
+```bash
+# Increase limit for large tool payloads
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=52428800 cargo run  # 50MB
+
+# Strict limit for constrained environments
+MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=1048576 cargo run   # 1MB
+```
+
+Requests exceeding the limit receive a `413 Payload Too Large` response.
+
 ## Verify what is running
 
 ### Compose/gateway view

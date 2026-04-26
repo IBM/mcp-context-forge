@@ -245,6 +245,7 @@ mod tests {
             backend_allowed_hosts: allowed_hosts.to_string(),
             backend_blocked_networks: blocked_networks.to_string(),
             backend_max_url_length: 2048,
+            max_request_body_size_bytes: crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
         }
     }
 
