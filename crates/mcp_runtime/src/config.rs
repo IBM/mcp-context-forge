@@ -10,6 +10,9 @@ use std::{net::SocketAddr, path::PathBuf};
 const DEFAULT_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
+/// Default maximum request body size (10MB)
+pub const DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES: usize = 10_485_760;
+
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-mcp-runtime")]
 #[command(about = "Experimental Rust MCP runtime edge for ContextForge")]
@@ -205,6 +208,13 @@ pub struct RuntimeConfig {
 
     #[arg(long, env = "MCP_RUST_BACKEND_MAX_URL_LENGTH", default_value_t = 2048)]
     pub backend_max_url_length: usize,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES",
+        default_value_t = DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES
+    )]
+    pub max_request_body_size_bytes: usize,
 
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,

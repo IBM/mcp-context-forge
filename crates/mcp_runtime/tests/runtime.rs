@@ -133,6 +133,7 @@ fn test_runtime_config() -> RuntimeConfig {
         backend_allowed_hosts: "localhost,127.0.0.1".to_string(),
         backend_blocked_networks: "169.254.169.254/32".to_string(),
         backend_max_url_length: 2048,
+        max_request_body_size_bytes: contextforge_mcp_runtime::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
         exit_after_startup_ms: None,
     }
 }
