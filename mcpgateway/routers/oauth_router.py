@@ -155,13 +155,9 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     API (which does enforce ``gateways.update``).
 
     This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
-<<<<<<< HEAD
     already-set (truthy) resources are silently skipped.  Empty strings and
     empty lists count as unset, so an admin can clear the field to trigger
     re-learning on the next callback.
-=======
-    already-set resources are silently skipped.
->>>>>>> b3dc813ec (fix(oauth): restrict learned-audience persistence to first-write only)
 
     Args:
         gateway: The gateway ORM object (will be mutated and flushed).
@@ -173,10 +169,13 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     if token_aud is None:
         return
 
-    # First-write-only: do not overwrite an existing learned or admin-configured
-    # resource value.  See docstring for the authorization rationale.
-    current_resource = (gateway.oauth_config or {}).get("resource")
-    if current_resource is not None:
+    # First-write-only: do not overwrite an existing usable resource.  Empty
+    # strings and empty lists are treated as unset (Python truthiness) so an
+    # admin can clear the field via the gateway update API to trigger
+    # re-learning on the next callback.  See docstring for the authorization
+    # rationale.
+    oauth_config = gateway.oauth_config or {}
+    if oauth_config.get("resource"):
         return
 
     # Store aud as-is (string or list) -- RFC 7519 allows both forms.
