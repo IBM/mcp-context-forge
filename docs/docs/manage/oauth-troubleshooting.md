@@ -459,7 +459,6 @@ REDIS_RETRY_INTERVAL_MS=2000
 # OAuth settings
 OAUTH_REQUEST_TIMEOUT=30
 OAUTH_MAX_RETRIES=3
-OAUTH_DEFAULT_TIMEOUT=3600
 
 # PKCE settings
 OAUTH_DISCOVERY_ENABLED=true
@@ -509,7 +508,6 @@ DCR_METADATA_CACHE_TTL=3600
 | `AUTH_ENCRYPTION_SECRET` | `my-test-salt` | Secret for HMAC signing states (change in production!) |
 | `OAUTH_REQUEST_TIMEOUT` | `30` | Timeout for OAuth requests (seconds) |
 | `OAUTH_MAX_RETRIES` | `3` | Max retries for token requests |
-| `OAUTH_DEFAULT_TIMEOUT` | `3600` | Default token expiration (seconds) |
 | `LOG_LEVEL` | `INFO` | Set to `DEBUG` for troubleshooting |
 
 ---

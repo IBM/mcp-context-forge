@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 # First-Party
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, parse_expires_in
 
 
 @pytest.fixture
@@ -21,7 +21,6 @@ def oauth_manager():
             auth_encryption_secret=MagicMock(get_secret_value=MagicMock(return_value="test-secret")),
             cache_type="memory",
             redis_url=None,
-            oauth_default_timeout=3600,
         )
         mgr = OAuthManager(request_timeout=10, max_retries=1)
     return mgr
@@ -44,6 +43,56 @@ def test_init_custom():
     assert mgr.request_timeout == 60
     assert mgr.max_retries == 5
     assert mgr.token_storage == "store"
+
+
+# ---------- parse_expires_in ----------
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (3600, 3600),
+        ("3600", 3600),
+        (3600.0, 3600),
+        (0, 0),
+    ],
+)
+def test_parse_expires_in_valid(value, expected):
+    assert parse_expires_in({"expires_in": value}) == expected
+
+
+def test_parse_expires_in_missing_returns_none():
+    assert parse_expires_in({}) is None
+
+
+def test_parse_expires_in_explicit_null_returns_none():
+    assert parse_expires_in({"expires_in": None}) is None
+
+
+@pytest.mark.parametrize("bad_value", [-1, -3600, "-1", -0.5, -3600.7])
+def test_parse_expires_in_negative_raises(bad_value):
+    """Negative numerics raise even when int() would silently truncate (-0.5 -> 0)."""
+    with pytest.raises(OAuthError, match="negative"):
+        parse_expires_in({"expires_in": bad_value})
+
+
+@pytest.mark.parametrize("bad_value", ["garbage", "3600s", ""])
+def test_parse_expires_in_garbage_string_raises(bad_value):
+    with pytest.raises(OAuthError, match="Invalid expires_in"):
+        parse_expires_in({"expires_in": bad_value})
+
+
+@pytest.mark.parametrize("bad_value", [3600.5, 0.5, 3600.7])
+def test_parse_expires_in_non_integer_float_raises(bad_value):
+    """RFC 6749 §5.1 specifies integer seconds; non-integer floats are rejected."""
+    with pytest.raises(OAuthError, match="non-integer"):
+        parse_expires_in({"expires_in": bad_value})
+
+
+@pytest.mark.parametrize("bad_value", [True, False, [3600], {"seconds": 3600}, object()])
+def test_parse_expires_in_non_scalar_raises(bad_value):
+    with pytest.raises(OAuthError, match="Invalid expires_in"):
+        parse_expires_in({"expires_in": bad_value})
 
 
 # ---------- _generate_pkce_params ----------
@@ -1177,6 +1226,7 @@ def test_create_authorization_url_with_pkce_no_scopes(oauth_manager):
 
 @pytest.mark.asyncio
 async def test_resolve_gateway_id_from_state_uses_legacy_fallback(oauth_manager):
+    # First-Party
     import mcpgateway.services.oauth_manager as om
 
     with (
@@ -1193,6 +1243,7 @@ async def test_resolve_gateway_id_from_state_uses_legacy_fallback(oauth_manager)
 
 @pytest.mark.asyncio
 async def test_resolve_gateway_id_from_state_skips_legacy_fallback_when_disabled(oauth_manager):
+    # First-Party
     import mcpgateway.services.oauth_manager as om
 
     with (
@@ -1221,6 +1272,7 @@ def test_oauth_error():
 
 @pytest.mark.asyncio
 async def test_get_redis_client_already_initialized():
+    # First-Party
     import mcpgateway.services.oauth_manager as om
 
     original_init = om._REDIS_INITIALIZED
@@ -1237,6 +1289,7 @@ async def test_get_redis_client_already_initialized():
 
 @pytest.mark.asyncio
 async def test_get_redis_client_no_redis():
+    # First-Party
     import mcpgateway.services.oauth_manager as om
 
     original_init = om._REDIS_INITIALIZED

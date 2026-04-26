@@ -785,7 +785,7 @@ class OAuthManager:
                 app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
-                expires_in=token_response.get("expires_in", self.settings.oauth_default_timeout),
+                expires_in=parse_expires_in(token_response),
                 scopes=token_response.get("scope", "").split(),
             )
 
@@ -1660,3 +1660,68 @@ class OAuthEnforcementUnavailableError(OAuthError):
         """
         super().__init__(message)
         self.server_id = server_id
+
+
+def parse_expires_in(token_response: Dict[str, Any]) -> Optional[int]:
+    """Parse and validate the ``expires_in`` field from an OAuth token response.
+
+    RFC 6749 §5.1 marks ``expires_in`` as RECOMMENDED (not REQUIRED). When the
+    field is absent or null, the gateway records ``expires_at`` as ``None`` and
+    the token is treated as having no known local expiry, subject to the
+    stale-token cleanup policy in
+    :meth:`mcpgateway.services.token_storage_service.TokenStorageService.cleanup_expired_tokens`.
+
+    Args:
+        token_response: Raw OAuth token response dict from the provider.
+
+    Returns:
+        ``int`` lifetime in seconds when the provider supplied a non-negative
+        integer (or numeric string convertible to one), or ``None`` when the
+        field is absent or explicitly null.
+
+    Raises:
+        OAuthError: If ``expires_in`` is present but malformed (negative,
+            non-numeric, or a non-scalar type).
+
+    Examples:
+        >>> parse_expires_in({"expires_in": 3600})
+        3600
+        >>> parse_expires_in({"expires_in": "3600"})
+        3600
+        >>> parse_expires_in({"expires_in": 0})
+        0
+        >>> parse_expires_in({}) is None
+        True
+        >>> parse_expires_in({"expires_in": None}) is None
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": -1})
+        ... except OAuthError as exc:
+        ...     "negative" in str(exc)
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": "garbage"})
+        ... except OAuthError as exc:
+        ...     "Invalid expires_in" in str(exc)
+        True
+    """
+    raw = token_response.get("expires_in")
+    if raw is None:
+        return None
+    # Reject bools (True/False are int subclasses in Python) and any non-scalar types.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}")
+    # Sign-check the original numeric BEFORE int() truncation, otherwise int(-0.5) == 0
+    # would bypass the negative check.
+    if isinstance(raw, (int, float)) and raw < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {raw}")
+    # RFC 6749 §5.1 specifies integer seconds; reject non-integral floats explicitly.
+    if isinstance(raw, float) and not raw.is_integer():
+        raise OAuthError(f"Invalid expires_in from OAuth provider (non-integer): {raw}")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}") from exc
+    if value < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {value}")
+    return value
