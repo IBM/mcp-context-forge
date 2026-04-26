@@ -3937,7 +3937,7 @@ class ToolService(BaseService):
                         oauth_authcode_no_db_token = True
                         headers = {}
                         logger.info(
-                            "OAuth authorization_code gateway '%s' invoked without DB-stored token; " "deferring auth check to allow plugin injection",
+                            "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
                             gateway_name,
                             extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
                         )
@@ -5074,7 +5074,7 @@ class ToolService(BaseService):
                                     oauth_authcode_no_db_token = True
                                     headers = {}
                                     logger.info(
-                                        "OAuth authorization_code gateway '%s' invoked without DB-stored token; " "deferring auth check to allow plugin injection",
+                                        "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
                                         gateway_name,
                                         extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
                                     )
