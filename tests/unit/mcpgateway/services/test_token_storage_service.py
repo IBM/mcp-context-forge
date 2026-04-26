@@ -415,25 +415,37 @@ async def test_refresh_derives_resource_from_gateway_url(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_refresh_invalid_resource_list_filtered(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "resource": ["no-scheme", "also-bad"]}, url="https://gw.com")
+async def test_refresh_preserves_opaque_resource_list(service, mock_db):
+    """Opaque audience identifiers (non-URL) survive token refresh as-is.
+
+    This is the round-trip scenario for IdPs that don't honor RFC 8707 and
+    return aud=client_id (e.g. ServiceNow, Authentik).  The learned audience
+    must not be stripped during refresh, otherwise validation regresses to
+    the unfixed-bug state on the first refresh after callback.
+    """
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "resource": ["client-id-1", "client-id-2"]}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
+    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
+    assert refresh_call_oauth_config["resource"] == ["client-id-1", "client-id-2"]
 
 
 @pytest.mark.asyncio
-async def test_refresh_invalid_single_resource(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "resource": "no-scheme-url"}, url="https://gw.com")
+async def test_refresh_preserves_opaque_single_resource(service, mock_db):
+    """Opaque single-string audience identifier survives refresh as-is."""
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "resource": "my-client-id"}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
+    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
+    assert refresh_call_oauth_config["resource"] == "my-client-id"
 
 
 @pytest.mark.asyncio
