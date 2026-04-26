@@ -135,6 +135,38 @@ def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) ->
     return normalized
 
 
+def _derive_resource_origin(url: str | None) -> str | None:
+    """Derive the origin (scheme + netloc) from a gateway URL for use as a fallback resource.
+
+    Real-world OAuth providers (Salesforce, Azure AD, Okta) issue access tokens
+    with origin-level audiences (``https://api.salesforce.com``) rather than the
+    full URL of the protected MCP endpoint
+    (``https://api.salesforce.com/platform/mcp/v1/...``).  Using the full
+    gateway URL as the auto-derived resource therefore reliably mismatches the
+    token's actual aud and produces validation failures.
+
+    For an admin who has not explicitly configured ``oauth_config["resource"]``,
+    derive the URL's origin as a best-effort starting point.  The auto-learn
+    callback will overwrite it with the IdP's actual aud on the first
+    successful flow, but starting from the origin maximizes the chance the
+    initial flow succeeds against typical providers.
+
+    Args:
+        url: Gateway URL to extract the origin from.
+
+    Returns:
+        ``scheme://netloc`` for hierarchical URLs, or ``None`` for URNs / empty
+        / scheme-less inputs (caller should treat as "no auto-fallback
+        possible" and rely on auto-learning).
+    """
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _is_well_formed_audience(value: Any) -> bool:
     """Return True if *value* is a usable audience claim shape.
 
@@ -466,9 +498,12 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         # RFC 8707: Set resource parameter for JWT access tokens.
         # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # Otherwise derive the gateway URL's *origin* (not full path) since most OAuth
+        # providers issue tokens with origin-level audiences.  See _derive_resource_origin.
         if not oauth_config.get("resource"):
-            oauth_config["resource"] = _normalize_resource_url(gateway.url)
+            origin = _derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config["resource"] = origin
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -699,10 +734,13 @@ async def oauth_callback(
 
         # RFC 8707: Set resource parameter for the token exchange request.
         # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # Otherwise derive the gateway URL's *origin* (not full path); see
+        # _derive_resource_origin for the rationale.
         oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
-            oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
+            origin = _derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config_with_resource["resource"] = origin
 
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key

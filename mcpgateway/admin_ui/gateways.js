@@ -399,6 +399,7 @@ export const editGateway = async function (gatewayId) {
     const oauthAuthUrlField = safeGetElement("oauth-authorization-url-gw-edit");
     const oauthRedirectUriField = safeGetElement("oauth-redirect-uri-gw-edit");
     const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
+    const oauthResourceField = safeGetElement("oauth-resource-gw-edit");
     const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
     const oauthAuthCodeFields = safeGetElement(
       "oauth-auth-code-fields-gw-edit"
@@ -525,6 +526,12 @@ export const editGateway = async function (gatewayId) {
             oauthScopesField.value = Array.isArray(config.scopes)
               ? config.scopes.join(" ")
               : "";
+          }
+          if (oauthResourceField) {
+            // resource may be string or list (RFC 8707 allows both shapes)
+            oauthResourceField.value = Array.isArray(config.resource)
+              ? config.resource.join(", ")
+              : config.resource || "";
           }
         }
         break;
