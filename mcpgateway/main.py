@@ -2811,6 +2811,7 @@ class MCPPathRewriteMiddleware:
 
     - Rewrites exact '/mcp' to '/mcp/' so Starlette's mount does not emit a 307 redirect.
     - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
+    - Keeps ASGI ``raw_path`` aligned with rewritten paths when present.
     - Only exact '/mcp' and server-scoped MCP transport paths are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
@@ -2952,7 +2953,10 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
             if app_path == "/mcp":
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
+                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                scope["path"] = new_path
+                if "raw_path" in scope:
+                    scope["raw_path"] = new_path.encode("latin-1")
                 await self.application(scope, receive, send)
                 return
             if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
@@ -2976,7 +2980,10 @@ class MCPPathRewriteMiddleware:
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
+                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                scope["path"] = new_path
+                if "raw_path" in scope:
+                    scope["raw_path"] = new_path.encode("latin-1")
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)
