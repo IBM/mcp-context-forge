@@ -2809,8 +2809,9 @@ class MCPPathRewriteMiddleware:
     """
     Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
+    - Rewrites exact '/mcp' to '/mcp/' so Starlette's mount does not emit a 307 redirect.
     - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
-    - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
+    - Only exact '/mcp' and server-scoped MCP transport paths are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
@@ -2950,6 +2951,10 @@ class MCPPathRewriteMiddleware:
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
+            if app_path == "/mcp":
+                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
+                await self.application(scope, receive, send)
+                return
             if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
