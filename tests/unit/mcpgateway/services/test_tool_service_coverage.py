@@ -8541,7 +8541,13 @@ class TestInvokeToolMcpSse:
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_authorization_code_missing_token_raises(self, tool_service):
-        """When no stored token is found for authorization_code flow, a ToolInvocationError is raised."""
+        """When no stored token is found and no plugin injects Authorization, raise an actionable error locally.
+
+        Deny-path regression: with no DB token AND no plugin manager registered,
+        the post-pre-invoke check must raise locally with the actionable
+        ``Please authorize ... /oauth/authorize/{id}`` message rather than letting
+        the upstream return a generic 401.
+        """
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
         db = MagicMock()
@@ -8555,6 +8561,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8563,8 +8570,159 @@ class TestInvokeToolMcpSse:
             mock_mbuf.return_value = MagicMock()
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
 
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+            with pytest.raises(ToolInvocationError, match="Please authorize"):
                 await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
+
+    @pytest.mark.asyncio
+    async def test_mcp_gateway_oauth_authorization_code_plugin_injects_auth(self, tool_service):
+        """Plugin-injected Authorization (e.g. Vault) satisfies authorization_code without a DB token.
+
+        Positive plugin path: with no DB-stored OAuth token, a plugin
+        ``tool_pre_invoke`` hook sets the Authorization header. The post-hook
+        check sees Authorization is present and lets the request through to the
+        upstream MCP server. The header that reaches the SSE client must be the
+        plugin-injected value.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
+        db = MagicMock()
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    captured_headers.update(headers or {})
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type != ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(modified_payload=None, continue_processing=True), {}
+            new_headers = dict(payload.headers.root) if payload.headers else {}
+            new_headers["Authorization"] = "Bearer plugin-injected-token"
+            modified = ToolPreInvokePayload(name=payload.name, args=payload.args, headers=HttpHeaderPayload(new_headers))
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
+
+        assert result is not None
+        assert captured_headers.get("Authorization") == "Bearer plugin-injected-token"
+
+    @pytest.mark.asyncio
+    async def test_mcp_gateway_strips_x_vault_tokens_from_outbound_headers(self, tool_service):
+        """X-Vault-Tokens (any case) must be stripped from outbound headers regardless of plugin state.
+
+        Defense in depth: if the Vault plugin is disabled, errors out, or
+        ``X-Vault-Tokens`` is mistakenly added to ``passthrough_allowed``,
+        the gateway must still scrub the header before sending the request
+        upstream so vault tokens never leak outside the gateway boundary.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="bearer", auth_value=None)
+        db = MagicMock()
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    captured_headers.update(headers or {})
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch(
+                "mcpgateway.services.tool_service.compute_passthrough_headers_cached",
+                return_value={"Authorization": "Bearer real", "X-Vault-Tokens": '{"github.com": "ghp_xxx"}', "x-vault-tokens": "lower-case-leak"},
+            ),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            await tool_service.invoke_tool(db, "test_tool", {}, request_headers={"X-Tenant-Id": "acme"})
+
+        outbound_keys_lower = {k.lower() for k in captured_headers}
+        assert "x-vault-tokens" not in outbound_keys_lower
+        assert captured_headers.get("Authorization") == "Bearer real"
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_client_credentials_error_raises(self, tool_service):
