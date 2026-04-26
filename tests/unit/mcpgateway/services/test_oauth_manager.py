@@ -69,8 +69,9 @@ def test_parse_expires_in_explicit_null_returns_none():
     assert parse_expires_in({"expires_in": None}) is None
 
 
-@pytest.mark.parametrize("bad_value", [-1, -3600, "-1"])
+@pytest.mark.parametrize("bad_value", [-1, -3600, "-1", -0.5, -3600.7])
 def test_parse_expires_in_negative_raises(bad_value):
+    """Negative numerics raise even when int() would silently truncate (-0.5 -> 0)."""
     with pytest.raises(OAuthError, match="negative"):
         parse_expires_in({"expires_in": bad_value})
 
@@ -78,6 +79,13 @@ def test_parse_expires_in_negative_raises(bad_value):
 @pytest.mark.parametrize("bad_value", ["garbage", "3600s", ""])
 def test_parse_expires_in_garbage_string_raises(bad_value):
     with pytest.raises(OAuthError, match="Invalid expires_in"):
+        parse_expires_in({"expires_in": bad_value})
+
+
+@pytest.mark.parametrize("bad_value", [3600.5, 0.5, 3600.7])
+def test_parse_expires_in_non_integer_float_raises(bad_value):
+    """RFC 6749 §5.1 specifies integer seconds; non-integer floats are rejected."""
+    with pytest.raises(OAuthError, match="non-integer"):
         parse_expires_in({"expires_in": bad_value})
 
 

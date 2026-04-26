@@ -1711,6 +1711,13 @@ def parse_expires_in(token_response: Dict[str, Any]) -> Optional[int]:
     # Reject bools (True/False are int subclasses in Python) and any non-scalar types.
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}")
+    # Sign-check the original numeric BEFORE int() truncation, otherwise int(-0.5) == 0
+    # would bypass the negative check.
+    if isinstance(raw, (int, float)) and raw < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {raw}")
+    # RFC 6749 §5.1 specifies integer seconds; reject non-integral floats explicitly.
+    if isinstance(raw, float) and not raw.is_integer():
+        raise OAuthError(f"Invalid expires_in from OAuth provider (non-integer): {raw}")
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:

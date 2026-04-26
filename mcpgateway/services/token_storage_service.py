@@ -29,6 +29,48 @@ from mcpgateway.services.oauth_manager import OAuthError
 logger = logging.getLogger(__name__)
 
 
+def _preserve_prior_ttl(token_record: OAuthToken) -> Optional[int]:
+    """Compute the token's prior TTL in seconds, or ``None`` if not derivable.
+
+    Used when an OAuth refresh response omits ``expires_in`` but the token
+    previously had a finite lifetime - the gateway preserves the original
+    issuance TTL by computing ``expires_at - updated_at`` from the existing
+    record. Returns ``None`` when either timestamp is missing or the difference
+    is non-positive (clock skew or already-expired records).
+
+    Args:
+        token_record: Existing OAuth token row, before the refresh applies.
+
+    Returns:
+        Positive integer seconds of prior TTL, or ``None``.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> from datetime import datetime, timedelta, timezone
+        >>> issued = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        >>> rec = SimpleNamespace(expires_at=issued + timedelta(hours=1), updated_at=issued)
+        >>> _preserve_prior_ttl(rec)
+        3600
+        >>> _preserve_prior_ttl(SimpleNamespace(expires_at=None, updated_at=issued)) is None
+        True
+        >>> _preserve_prior_ttl(SimpleNamespace(expires_at=issued, updated_at=issued + timedelta(hours=1))) is None
+        True
+    """
+    prev_expires_at = token_record.expires_at
+    prev_updated_at = token_record.updated_at
+    if prev_expires_at is None or prev_updated_at is None:
+        return None
+    # Normalize naive timestamps to UTC for the subtraction.
+    if prev_expires_at.tzinfo is None:
+        prev_expires_at = prev_expires_at.replace(tzinfo=timezone.utc)
+    if prev_updated_at.tzinfo is None:
+        prev_updated_at = prev_updated_at.replace(tzinfo=timezone.utc)
+    prev_ttl = int((prev_expires_at - prev_updated_at).total_seconds())
+    if prev_ttl <= 0:
+        return None
+    return prev_ttl
+
+
 class TokenStorageService:
     """Manages OAuth token storage and retrieval.
 
@@ -330,15 +372,30 @@ class TokenStorageService:
             # Update the token record
             token_record.access_token = encrypted_access
             token_record.refresh_token = encrypted_refresh
+            now = datetime.now(timezone.utc)
             if expires_in is not None:
-                token_record.expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+                token_record.expires_at = now + timedelta(seconds=expires_in)
             else:
-                logger.info(
-                    "No expires_in on refresh response for gateway %s; clearing local expiry",
-                    SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                )
-                token_record.expires_at = None
-            token_record.updated_at = datetime.now(timezone.utc)
+                # Refresh response omitted expires_in. If the token previously had a finite
+                # expiry, preserve the prior TTL (expires_at - updated_at) so proactive
+                # refresh keeps working - clearing it outright would cause _is_token_expired
+                # to return False forever and stop the refresh loop. If there was no prior
+                # expiry, leave it as None (provider-level "no known lifetime").
+                preserved_ttl = _preserve_prior_ttl(token_record)
+                if preserved_ttl is not None:
+                    logger.info(
+                        "No expires_in on refresh response for gateway %s; preserving prior TTL of %d seconds",
+                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
+                        preserved_ttl,
+                    )
+                    token_record.expires_at = now + timedelta(seconds=preserved_ttl)
+                else:
+                    logger.info(
+                        "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
+                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
+                    )
+                    token_record.expires_at = None
+            token_record.updated_at = now
 
             self.db.commit()
             logger.info(f"Successfully refreshed token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
@@ -500,14 +557,18 @@ class TokenStorageService:
         1. Tokens whose ``expires_at`` is older than the cutoff (the original
            "expired more than N days ago" behaviour).
         2. Tokens with ``expires_at IS NULL`` (provider omitted ``expires_in``)
-           whose ``created_at`` is older than the cutoff. ``NULL < <cutoff>``
+           whose ``updated_at`` is older than the cutoff. ``NULL < <cutoff>``
            evaluates to ``NULL`` in SQL three-valued logic, so without this
-           branch those rows would never age out.
+           branch those rows would never age out. ``updated_at`` (rather than
+           ``created_at``) is the right freshness signal because
+           ``store_tokens`` advances it on re-authorization, so a recently
+           re-authorized token isn't deleted just because its original row was
+           old.
 
         Args:
             max_age_days: Maximum age of tokens to keep, measured from
                 ``expires_at`` for tokens with a known expiry and from
-                ``created_at`` for tokens with no provider-supplied expiry.
+                ``updated_at`` for tokens with no provider-supplied expiry.
 
         Returns:
             Number of tokens cleaned up
@@ -526,7 +587,7 @@ class TokenStorageService:
 
             stale_filter = or_(
                 OAuthToken.expires_at < cutoff_date,
-                and_(OAuthToken.expires_at.is_(None), OAuthToken.created_at < cutoff_date),
+                and_(OAuthToken.expires_at.is_(None), OAuthToken.updated_at < cutoff_date),
             )
             result = self.db.execute(delete(OAuthToken).where(stale_filter))
             count = result.rowcount
