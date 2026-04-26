@@ -11887,7 +11887,7 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
 # mounted directly on `app` below.
 
 # First-Party
-from mcpgateway.api.v1 import build_v1_router  # pylint: disable=import-outside-toplevel
+from mcpgateway.api.v1 import build_v1_router  # pylint: disable=import-outside-toplevel  # noqa: E402
 
 v1_router = build_v1_router(
     settings,
