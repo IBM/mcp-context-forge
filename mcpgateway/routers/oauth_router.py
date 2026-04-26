@@ -188,16 +188,23 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
 
     This is a best-effort operation: opaque tokens, missing ``aud`` claims,
     malformed shapes, mismatched issuers, and already-set resources are all
-    silently skipped.
+    silently skipped.  Each skip path emits a DEBUG log so operators tracing
+    "audience never learned" reports can distinguish the cause.
 
     Args:
         gateway: The gateway ORM object (will be mutated and flushed).
         oauth_result: The result dict from ``complete_authorization_code_flow``,
             expected to contain ``token_aud`` and ``token_iss``.
         db: Active database session.
+
+    Returns:
+        ``None``.  Persistence is a side effect on ``gateway.oauth_config``
+        (mutated in place via reassignment) and the database session
+        (``db.flush()``).
     """
     token_aud = oauth_result.get("token_aud")
     if not _is_well_formed_audience(token_aud):
+        logger.debug("Skipping audience persistence for gateway %s: token_aud absent or malformed", gateway.name)
         return
 
     # First-write-only: do not overwrite an existing usable resource.  Empty
@@ -207,6 +214,7 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     # rationale.
     oauth_config = gateway.oauth_config or {}
     if _is_well_formed_audience(oauth_config.get("resource")):
+        logger.debug("Skipping audience persistence for gateway %s: resource already set", gateway.name)
         return
 
     # Issuer pinning: refuse to persist an audience drawn from a token whose
