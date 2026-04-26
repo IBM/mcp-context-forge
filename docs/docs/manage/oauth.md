@@ -81,10 +81,14 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Token URL
    - Scopes (space-separated)
    - Authorization URL and Redirect URI (required for Authorization Code)
+   - Resource (optional - see [OAuth Resource Configuration](oauth-resource-configuration.md) for details)
 
 5. Save.
 
 Field mapping follows the architecture proposal and is used by the OAuth Manager service to request tokens.
+
+!!! tip "Resource (Audience) Configuration"
+    The **Resource** field controls the OAuth 2.0 `resource` parameter (RFC 8707) and token audience validation. In most cases, you can leave this empty and let ContextForge auto-derive and auto-learn the correct value. See [OAuth Resource Configuration](oauth-resource-configuration.md) for when to set it explicitly.
 
 ---
 

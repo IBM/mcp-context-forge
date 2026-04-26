@@ -634,6 +634,46 @@ curl -s http://localhost:4444/oauth/registered-clients | jq
 
 ---
 
+---
+
+## Token audience mismatch
+
+### Symptom
+The gateway logs or returns an error message:
+`Refusing to forward OAuth token for gateway 'X': Token audience mismatch: token aud does not match expected resource or gateway URL`
+
+### Diagnosis steps
+1.  **Check Gateway Configuration**: Verify the **Resource** field in the gateway's OAuth configuration (via `GET /admin/gateways/{id}` or the Admin UI). If it is empty, the gateway is using the auto-derived gateway URL origin as a fallback.
+2.  **Inspect the Token**: Decode the JWT access token (using a tool like [jwt.io](https://jwt.io)) and check the `aud` (audience) claim.
+3.  **Verify RFC 8707 Support**: Check if your Identity Provider (IdP) supports RFC 8707 (Resource Indicators). Some providers, like Authentik and ServiceNow, do not honor this parameter and may return a default audience instead.
+
+### Common causes and fixes
+
+-   **IdP returns `aud=client_id` (Authentik, ServiceNow)**: This is expected behavior for providers that don't support RFC 8707. The gateway's **auto-learn** flow should automatically pick this up on the first successful callback. If it didn't, check the gateway logs for `Skipping audience persistence for gateway X: ...` debug messages to understand why.
+-   **Multi-tenant Entra ID, wrong tenant**: If the token is being issued for the wrong audience in a multi-tenant setup, set the **Resource** field in the gateway's OAuth configuration explicitly to your Application ID URI (e.g., `api://{your-app-id}`).
+-   **Stale learned resource**: If you have migrated your IdP or changed client configurations, the learned resource may be stale. Clear the **Resource** field in the Admin UI to trigger a re-learn on the next OAuth flow.
+-   **Salesforce with full gateway URL**: Salesforce tokens typically use origin-level audiences. The gateway's origin-extraction fallback handles this automatically. If you are seeing mismatches on an older setup, ensure you are using a version of ContextForge that includes the origin-extraction fix.
+
+### Advisory validation log messages
+
+When validation is advisory (auto-derived fallback mode), the gateway logs a warning but still forwards the token:
+
+```
+WARNING - Token audience mismatch for gateway 'X' (advisory): token aud='Y' does not match expected resource 'Z'. Forwarding to upstream MCP server for authoritative validation.
+```
+
+Set `LOG_LEVEL=DEBUG` to see additional diagnostic messages about why audience persistence was skipped.
+
+### Useful debug logs
+To get more information, set `LOG_LEVEL=DEBUG` and look for:
+-   `mcpgateway.routers.oauth_router`: Look for "Skipping audience persistence" or "Learned OAuth audience" breadcrumbs.
+-   `mcpgateway.services.oauth_manager`: Look for "Unverified JWT decode failed" messages if the token cannot be parsed.
+
+### When the upstream MCP server still rejects the token
+ContextForge's local validation is advisory when using the auto-derived fallback. If you see the token being forwarded in the logs but the upstream MCP server still returns a `401 Unauthorized`, the audience configured at the MCP server does not match what the IdP provided. In this case, you may need to:
+1.  Configure the MCP server to accept the audience provided by the IdP.
+2.  Configure the IdP to mint a token with the audience expected by the MCP server.
+
 ## Related Documentation
 
 - [OAuth Integration](oauth.md) - Main OAuth setup guide
