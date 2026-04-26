@@ -44,7 +44,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -334,8 +334,14 @@ class A2AAgentService(BaseService):
         if agent.visibility == "public":
             return True
 
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return True
+        # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private agents. Mirrors _check_*_access in
+        # tool/prompt/resource services for consistency.
+        if token_teams is None and user_email is None:
+            return agent.visibility != "private"
+        if token_teams is None and user_email and is_user_admin(db, user_email):
+            return agent.visibility != "private" or agent.owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public agents
         if not user_email:
@@ -378,8 +384,16 @@ class A2AAgentService(BaseService):
         team-scoped agents — this is intentionally more restrictive than
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
+
+        PR #4341: only the unscoped admin shape (user_email=None AND
+        token_teams=None) returns ``None``. DB-resolved admin sessions
+        ((email, None) shape) fall through to the SQL filter below, which
+        already enforces public + team + own-private. Using
+        ``is_admin_bypass_granted`` here would let DB admins bypass the
+        per-agent visibility filter and enumerate other users' private
+        agents via list_tasks / list_push_configs_for_dispatch.
         """
-        if is_admin_bypass_granted(db, user_email, token_teams):
+        if user_email is None and token_teams is None:
             return None
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
@@ -1062,18 +1076,27 @@ class A2AAgentService(BaseService):
         # Delegate conversion and masking to convert_agent_to_read()
         return self.convert_agent_to_read(agent, db=db)
 
-    async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
-        """Retrieve an A2A agent by name.
+    async def get_agent_by_name(
+        self,
+        db: Session,
+        agent_name: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentRead:
+        """Retrieve an A2A agent by name with access control.
 
         Args:
             db: Database session.
             agent_name: Agent name.
+            user_email: Email of the requesting user for access control.
+                None combined with token_teams=None means admin bypass.
+            token_teams: JWT-scoped team list. None=admin bypass, []=public-only, [...]=team-scoped.
 
         Returns:
             Agent data.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found.
+            A2AAgentNotFoundError: If the agent is not found or access is denied.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)  # pylint: disable=comparison-with-callable
         agent = db.execute(query).scalar_one_or_none()
@@ -1081,34 +1104,54 @@ class A2AAgentService(BaseService):
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
         return self.convert_agent_to_read(agent, db=db)
 
-    def get_agent_card(self, db: Session, agent_name: str) -> Optional[Dict[str, Any]]:
+    async def get_agent_card(
+        self,
+        db: Session,
+        agent_name: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard dict for the named agent.
 
         Queries the database for an enabled agent with the given name and
-        returns a dict that conforms to the A2A AgentCard schema.  Returns
-        None when no matching enabled agent is found.
+        returns a dict that conforms to the A2A AgentCard schema. Returns
+        None when no matching enabled agent is found OR when the caller's
+        scope cannot see the agent (PR #4341 invariant: admin bypass cannot
+        read another user's private agent card).
 
         Args:
             db: Database session.
             agent_name: Name of the agent to look up.
+            user_email: Caller's email for visibility scoping. Defaults to None,
+                which combines with ``token_teams=None`` for anonymous admin
+                bypass and denies private agents.
+            token_teams: Caller's team scope for visibility filtering. ``None``
+                means unrestricted (admin), ``[]`` means public-only, and
+                ``[team_id, ...]`` means team-scoped. Defaults to None.
 
         Returns:
-            AgentCard dict, or None if the agent is not found / disabled.
+            AgentCard dict, or None if the agent is not found / disabled / denied.
 
         Examples:
+            >>> import asyncio
             >>> from unittest.mock import MagicMock
             >>> from mcpgateway.services.a2a_service import A2AAgentService
             >>> service = A2AAgentService()
             >>> db = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_agent_card(db, "missing") is None
+            >>> asyncio.run(service.get_agent_card(db, "missing")) is None
             True
         """
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
+            return None
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
         capabilities = agent.capabilities or {}

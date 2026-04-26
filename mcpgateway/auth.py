@@ -4,10 +4,61 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Shared authentication utilities.
+Authentication primitives: JWT, sessions, API tokens, and team membership.
 
-This module provides common authentication functions that can be shared
-across different parts of the application without creating circular imports.
+Purpose (for future implementers)
+---------------------------------
+``mcpgateway`` separates authentication concerns into two modules:
+
+- ``mcpgateway.auth`` (this module) - the **token / session / team model
+  layer**. Helpers here operate on stored artifacts: JWT payloads, session
+  records, API tokens, revocation records, and team-membership rows. They
+  return DB-shaped or dict results and never take a FastAPI ``Request``.
+  Because they are pure in that sense, they can be reused from any context
+  (tests, background tasks, transport hops, RBAC middleware).
+
+- ``mcpgateway.auth_context`` - the **per-request resolution layer**. Helpers
+  there take a FastAPI ``Request`` plus the ``user`` produced by the auth
+  dependency and compute what the caller is allowed to see on this request
+  (Layer 1 visibility context). See ``auth_context.py`` for its purpose block
+  and the ``AGENTS.md`` "Authentication & RBAC Overview" section for the
+  two-layer policy model.
+
+Rule of thumb
+-------------
+- Input is a ``Request``? -> belongs in ``auth_context.py``.
+- Input is a JWT payload, user email, token hash, or team ID? -> belongs here.
+
+Public surface
+--------------
+The names below form this module's stable public API. ``main.py``, routers,
+transports, middleware, and tests all consume them.
+
+    User and session resolution
+        get_current_user(...) - FastAPI dependency
+        get_user_team_roles(db, email) -> dict[team_id, role]
+
+    Token claim normalization (canonical per AGENTS.md)
+        normalize_token_teams(payload) -> list[str] | None
+        resolve_session_teams(...) -> list[str] | None
+
+Private-but-cross-module surface
+--------------------------------
+A few leading-underscore helpers are intentionally imported by other modules
+for a specific reason: they are the **synchronous variants** of async DB
+lookups, wrapped in ``asyncio.to_thread`` by callers in FastAPI hot paths.
+The underscore is a convention marker that says "prefer the async wrapper;
+if you must go sync, use this one" - not a "don't import" signal. The
+callers (``main.py``, ``transports/streamablehttp_transport.py``,
+``utils/verify_credentials.py``) all follow the same ``asyncio.to_thread``
+pattern.
+
+    _check_token_revoked_sync(jti) -> bool
+    _lookup_api_token_sync(token_hash) -> dict | None
+
+If you are tempted to import any other underscore-prefixed name from this
+module, stop and ask whether the caller should really go through a public
+wrapper or whether the helper genuinely deserves promotion to the public API.
 """
 
 # Standard

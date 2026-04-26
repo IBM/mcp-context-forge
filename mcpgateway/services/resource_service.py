@@ -74,7 +74,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1085,8 +1085,13 @@ class ResourceService(BaseService):
         if visibility == "public":
             return True
 
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return True
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+        if token_teams is None and user_email and is_user_admin(db, user_email):
+            return visibility != "private" or resource_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public resources
         if not user_email:
@@ -3476,20 +3481,29 @@ class ResourceService(BaseService):
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(
+        self,
+        db: Session,
+        resource_id: str,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> ResourceRead:
         """
-        Get a resource by ID.
+        Get a resource by ID with access control.
 
         Args:
             db: Database session
             resource_id: Resource ID
             include_inactive: Whether to include inactive resources
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             ResourceRead: The resource object
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
+            ResourceNotFoundError: If the resource is not found or the caller lacks visibility.
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -3519,6 +3533,23 @@ class ResourceService(BaseService):
                     if inactive_resource:
                         raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
+                raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+
+            if not await self._check_resource_access(db, resource, user_email, token_teams):
+                structured_logger.log(
+                    level="INFO",
+                    message="Resource access denied",
+                    event_type="resource_access_denied",
+                    component="resource_service",
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    team_id=getattr(resource, "team_id", None),
+                    user_email=user_email,
+                    custom_fields={
+                        "visibility": getattr(resource, "visibility", None),
+                        "admin_bypass": user_email is None and token_teams is None,
+                    },
+                )
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
             resource_read = self.convert_resource_to_read(resource)
@@ -4017,15 +4048,24 @@ class ResourceService(BaseService):
             if not include_inactive:
                 query = query.where(DbResource.enabled)
 
-            # Apply visibility filtering when token_teams is set (non-admin access)
-            if token_teams is not None:
-                # Check if this is a public-only token (empty teams array)
-                # Public-only tokens can ONLY see public templates - no owner access
+            # Admin bypass (PR #4341 invariant): never reveal another user's private
+            # templates. Anonymous bypass sees public + team only; a DB-resolved admin
+            # session additionally sees their own private templates. Without the
+            # second branch the (email, None) DB-admin shape fell through with no
+            # visibility filter applied, leaking all private templates.
+            if user_email is None and token_teams is None:
+                query = query.where(DbResource.visibility != "private")
+            elif token_teams is None and user_email and is_user_admin(db, user_email):
+                query = query.where(
+                    or_(
+                        DbResource.visibility != "private",
+                        and_(DbResource.visibility == "private", DbResource.owner_email == user_email),
+                    )
+                )
+            elif token_teams is not None:
                 is_public_only_token = len(token_teams) == 0
-
                 conditions = [DbResource.visibility == "public"]
 
-                # Only include owner access for non-public-only tokens with user_email
                 if not is_public_only_token and user_email:
                     conditions.append(DbResource.owner_email == user_email)
 

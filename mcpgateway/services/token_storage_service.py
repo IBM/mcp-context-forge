@@ -208,6 +208,24 @@ class TokenStorageService:
                 logger.error(f"No OAuth configuration found for gateway {token_record.gateway_id}")
                 return None
 
+            # Refuse refresh on a private gateway whose owner is not the token
+            # owner (PR #4341 invariant): prevents OAuth secret leakage when a
+            # gateway's ownership / visibility changes after token issuance.
+            # The token owner is ``app_user_email`` (ContextForge user), not
+            # the OAuth provider's ``user_id``. Public and team gateways are
+            # not gated here — their RBAC enforcement happens at the call
+            # sites that issue refreshes.
+            gateway_visibility = getattr(gateway, "visibility", "public")
+            gateway_owner_email = getattr(gateway, "owner_email", None)
+            if gateway_visibility == "private" and gateway_owner_email and gateway_owner_email != token_record.app_user_email:
+                logger.warning(
+                    "OAuth refresh denied: gateway %s is private and owned by %s, not token owner %s",
+                    token_record.gateway_id,
+                    gateway_owner_email,
+                    token_record.app_user_email,
+                )
+                return None
+
             # Decrypt the refresh token if encryption is available
             refresh_token = token_record.refresh_token
             if self.encryption:

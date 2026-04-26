@@ -317,15 +317,18 @@ Resources in ContextForge have three visibility levels:
 |------------|-------------|-------------|
 | `public` | Accessible to all authenticated users | Everyone with valid token |
 | `team` | Accessible to team members only | Team members + admins (with bypass) |
-| `private` | Accessible to owner only | Resource owner + admins (with bypass) |
+| `private` | Accessible to owner only | Resource owner only — **never** admin bypass |
 
 ### Access Matrix by Token Type
 
 | Token Type | Public Resources | Team Resources | Private Resources |
 |------------|-----------------|----------------|-------------------|
-| Admin Bypass (`teams=null`, `is_admin=true`) | ✅ | ✅ (all teams) | ✅ (all) |
+| Admin Bypass (`teams=null`, `is_admin=true`) | ✅ | ✅ (all teams) | ❌ (owner-only, see note) |
 | Team-Scoped (`teams=["t1"]`) | ✅ | ✅ (own team) | ✅ (own only) |
 | Public-Only (`teams=[]`) | ✅ | ❌ | ❌ |
+
+!!! warning "Admin Bypass Does Not Include Other Users' Private Resources"
+    Since [#4341](https://github.com/IBM/mcp-context-forge/pull/4341), admin bypass **cannot** read, list, update, or delete another user's private resources. Private resources (visibility=`private`) are strictly owner-scoped. If cross-user access is intentional, prefer `team` visibility or a scoped token over relying on bypass. See `docs/architecture/multitenancy.md` for the canonical multi-tenancy model.
 
 !!! warning "Public-Only Token Limitations"
     **Public-only tokens (`teams=[]`) cannot access private resources, even if the resource is owned by the token's user.**

@@ -14,6 +14,7 @@ These tests verify the security fixes for:
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -26,6 +27,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
+from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture
@@ -239,8 +241,8 @@ class TestToolAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, tool_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, tool_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         tool_payload = {
             "id": "tool-123",
             "visibility": "private",
@@ -249,7 +251,21 @@ class TestToolAccessChecks:
         }
 
         # Admin bypass: both user_email and token_teams are None
+        # Private resources are NEVER accessible via admin bypass
         result = await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, tool_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        team_tool_payload = {
+            "id": "tool-123",
+            "visibility": "team",
+            "owner_email": "owner@example.com",
+            "team_id": "team-abc",
+        }
+        result = await tool_service._check_tool_access(mock_db, team_tool_payload, user_email=None, token_teams=None)
         assert result is True
 
     @pytest.mark.asyncio
@@ -322,10 +338,19 @@ class TestResourceAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, resource_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, resource_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com", team_id="team-abc")
 
+        # Private resources are NEVER accessible via admin bypass
+        result = await resource_service._check_resource_access(mock_db, mock_resource, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, resource_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        mock_resource = create_mock_resource(visibility="team", owner_email="owner@example.com", team_id="team-abc")
         result = await resource_service._check_resource_access(mock_db, mock_resource, user_email=None, token_teams=None)
         assert result is True
 
@@ -384,10 +409,19 @@ class TestPromptAccessChecks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_grants_full_access(self, prompt_service, mock_db):
-        """Admins with token_teams=None and user_email=None should have full access."""
+    async def test_admin_bypass_denied_for_private_resources(self, prompt_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com", team_id="team-abc")
 
+        # Private resources are NEVER accessible via admin bypass
+        result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email=None, token_teams=None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_grants_access_to_team_resources(self, prompt_service, mock_db):
+        """Admin bypass grants access to team and public resources, but not private."""
+        # Test team visibility
+        mock_prompt = create_mock_prompt(visibility="team", owner_email="owner@example.com", team_id="team-abc")
         result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email=None, token_teams=None)
         assert result is True
 
@@ -480,9 +514,72 @@ class TestInvokeToolAuthorization:
         assert result.content[0].text is not None
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_admin_bypass_works(self, tool_service, mock_db):
-        """Admin with unrestricted token can execute any tool."""
+    async def test_invoke_tool_admin_bypass_denied_for_private(self, tool_service, mock_db):
+        """Admin bypass cannot execute private tools (security requirement)."""
         mock_tool = create_mock_tool(visibility="private", owner_email="secret@example.com", team_id="secret-team")
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
+        mock_db.execute = Mock(return_value=mock_scalar)
+
+        # Admin bypass: user_email=None and token_teams=None
+        # Should raise ToolNotFoundError because private tools are not accessible via admin bypass
+        with pytest.raises(ToolNotFoundError) as exc_info:
+            await tool_service.invoke_tool(
+                mock_db,
+                "test_tool",
+                {},
+                user_email=None,
+                token_teams=None,
+            )
+
+        assert "Tool not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_private_denial_runs_before_pre_invoke_hook(self, tool_service, mock_db):
+        """PR #4341: visibility deny happens BEFORE the plugin hook chain executes.
+
+        The check order matters because plugin hooks may have side effects (logging,
+        metrics, billing) that would leak existence/usage information about private
+        tools that the caller cannot see. The fix gates the hook chain behind the
+        access check at tool_service.py:4452-4455 / 4814-4830.
+
+        The production code resolves the manager via ``_get_plugin_manager(...)``
+        and then dispatches via ``plugin_manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, ...)``.
+        We patch both so a regression that calls the real hook chain is caught;
+        an earlier version of this test mocked an unused attribute and passed
+        vacuously regardless of hook ordering.
+        """
+        mock_tool = create_mock_tool(visibility="private", owner_email="secret@example.com", team_id="secret-team")
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
+        mock_db.execute = Mock(return_value=mock_scalar)
+
+        mock_plugin_manager = MagicMock()
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        mock_plugin_manager.invoke_hook = AsyncMock(return_value=(MagicMock(continue_processing=True, modified_payload=None), None))
+
+        with patch.object(tool_service, "_get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            with pytest.raises(ToolNotFoundError):
+                await tool_service.invoke_tool(
+                    mock_db,
+                    "secret_tool",
+                    {},
+                    user_email=None,
+                    token_teams=None,
+                )
+
+        mock_plugin_manager.invoke_hook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_admin_bypass_works_for_team_tools(self, tool_service, mock_db):
+        """Admin with unrestricted token can execute team-visible tools."""
+        mock_tool = create_mock_tool(visibility="team", owner_email="owner@example.com", team_id="team-a")
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
@@ -508,6 +605,7 @@ class TestInvokeToolAuthorization:
             )
 
         assert result is not None
+        assert result.content[0].text is not None
 
 
 class TestServerScoping:
@@ -974,3 +1072,482 @@ class TestTemplateResourceAuthorization:
             )
 
             assert result is not None
+
+
+class TestDirectGetAccessDenial:
+    """Regression tests for PR #4341 follow-up — admin bypass cannot read private resources via direct-ID getters.
+
+    These tests cover the service-level access checks added to:
+    - ServerService.get_server
+    - GatewayService.get_gateway
+    - A2AAgentService.get_agent_by_name / get_agent_card
+    - PromptService.get_prompt_details
+    - ResourceService.get_resource_by_id
+    - ToolService.get_tool (JWT-scoped token_teams, not DB-expanded)
+    """
+
+    @pytest.mark.asyncio
+    async def test_server_admin_bypass_denies_private(self):
+        """SECURITY: ServerService.get_server must deny admin bypass access to private servers."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNotFoundError, ServerService
+
+        service = ServerService()
+        db = MagicMock()
+        private_server = MagicMock()
+        private_server.id = "s1"
+        private_server.visibility = "private"
+        private_server.owner_email = "other@example.com"
+        private_server.team_id = None
+        private_server.enabled = True
+        db.execute.return_value.scalar_one_or_none.return_value = private_server
+
+        with pytest.raises(ServerNotFoundError):
+            await service.get_server(db, "s1", user_email=None, token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_server_admin_bypass_allows_team(self):
+        """ServerService.get_server allows admin bypass for team servers (only private is denied)."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerService
+
+        service = ServerService()
+        service.convert_server_to_read = MagicMock(return_value="server_read")
+        service._structured_logger = MagicMock()
+        service._audit_trail = MagicMock()
+        db = MagicMock()
+        team_server = MagicMock()
+        team_server.id = "s2"
+        team_server.visibility = "team"
+        team_server.owner_email = "other@example.com"
+        team_server.team_id = "team-a"
+        team_server.enabled = True
+        team_server.tools = []
+        team_server.resources = []
+        team_server.prompts = []
+        db.execute.return_value.scalar_one_or_none.return_value = team_server
+
+        result = await service.get_server(db, "s2", user_email=None, token_teams=None)
+        assert result == "server_read"
+
+    @pytest.mark.asyncio
+    async def test_gateway_admin_bypass_denies_private(self):
+        """SECURITY: GatewayService.get_gateway must deny admin bypass access to private gateways."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayNotFoundError, GatewayService
+
+        service = GatewayService()
+        try:
+            db = MagicMock()
+            private_gateway = MagicMock()
+            private_gateway.id = "g1"
+            private_gateway.visibility = "private"
+            private_gateway.owner_email = "other@example.com"
+            private_gateway.team_id = None
+            private_gateway.enabled = True
+            db.execute.return_value.scalar_one_or_none.return_value = private_gateway
+
+            with pytest.raises(GatewayNotFoundError):
+                await service.get_gateway(db, "g1", user_email=None, token_teams=None)
+        finally:
+            await service._http_client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_agent_by_name_admin_bypass_denies_private(self):
+        """SECURITY: A2AAgentService.get_agent_by_name must deny admin bypass access to private agents."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError, A2AAgentService
+
+        service = A2AAgentService()
+        db = MagicMock()
+        private_agent = MagicMock()
+        private_agent.visibility = "private"
+        private_agent.owner_email = "other@example.com"
+        private_agent.team_id = None
+        db.execute.return_value.scalar_one_or_none.return_value = private_agent
+
+        with pytest.raises(A2AAgentNotFoundError):
+            await service.get_agent_by_name(db, "agent-x", user_email=None, token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_agent_card_admin_bypass_denies_private(self):
+        """SECURITY: A2AAgentService._check_agent_access denies private on anonymous admin bypass.
+
+        After PR #4341 cycle 2, ``get_agent_card`` itself awaits ``_check_agent_access``
+        internally and returns ``None`` on deny, so the in-service gate is the
+        canonical enforcement point. This test exercises that gate directly to
+        keep the regression coverage focused: a service-layer change that broke
+        the deny path would fail this assertion before any caller-side test.
+        """
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService
+
+        service = A2AAgentService()
+        db = MagicMock()
+        private_agent = MagicMock()
+        private_agent.name = "agent-x"
+        private_agent.visibility = "private"
+        private_agent.owner_email = "other@example.com"
+        private_agent.team_id = None
+
+        assert await service._check_agent_access(db, private_agent, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_prompt_details_admin_bypass_denies_private(self, prompt_service, mock_db):
+        """SECURITY: PromptService.get_prompt_details must deny admin bypass access to private prompts."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+
+        private_prompt = create_mock_prompt(visibility="private", owner_email="other@example.com")
+        mock_db.get.return_value = private_prompt
+
+        with pytest.raises(PromptNotFoundError):
+            await prompt_service.get_prompt_details(mock_db, "p1", user_email=None, token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_resource_by_id_admin_bypass_denies_private(self, resource_service, mock_db):
+        """SECURITY: ResourceService.get_resource_by_id must deny admin bypass access to private resources."""
+        private_resource = create_mock_resource(visibility="private", owner_email="other@example.com")
+        private_resource.enabled = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = private_resource
+
+        with pytest.raises(ResourceNotFoundError):
+            await resource_service.get_resource_by_id(mock_db, "r1", user_email=None, token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_tool_get_does_not_widen_scoped_token(self, tool_service, mock_db):
+        """SECURITY: get_tool must honor scoped token_teams rather than expanding to full DB team roles.
+
+        Regression for the B2 fix: previously get_tool fetched ``get_user_team_roles(db, email)``
+        which returned the user's FULL team membership, bypassing a token scoped to a subset.
+        After the fix, the endpoint passes JWT-scoped ``token_teams=[]`` through verbatim, so a
+        team-B tool remains hidden from a public-only token even if the user belongs to team B.
+        """
+        team_tool = create_mock_tool(visibility="team", owner_email="owner@example.com", team_id="team-b")
+        mock_db.get.return_value = team_tool
+
+        with pytest.raises(ToolNotFoundError):
+            await tool_service.get_tool(
+                mock_db,
+                "tool-123",
+                requesting_user_email="owner@example.com",
+                requesting_user_is_admin=False,
+                requesting_user_team_roles={"team-b": "viewer"},  # DB-resolved; must NOT be used for visibility
+                token_teams=[],  # JWT-scoped: public-only
+            )
+
+    @pytest.mark.asyncio
+    async def test_tool_get_admin_bypass_sees_team_tool(self, tool_service, mock_db):
+        """Admin bypass (token_teams=None) still grants access to team-visible tools via get_tool."""
+        team_tool = create_mock_tool(visibility="team", owner_email="other@example.com", team_id="team-b")
+        mock_db.get.return_value = team_tool
+        tool_service.convert_tool_to_read = MagicMock(return_value=MagicMock())
+
+        result = await tool_service.get_tool(
+            mock_db,
+            "tool-123",
+            requesting_user_email=None,
+            requesting_user_is_admin=True,
+            requesting_user_team_roles=None,
+            token_teams=None,
+        )
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_tool_access_denied_emits_structured_log_event(self, tool_service, mock_db):
+        """PR #4341 forensics: denial path emits ``tool_access_denied`` event with the documented shape.
+
+        The CHANGELOG promises that direct-ID denials emit ``*_access_denied`` events
+        suitable for forensic review. Without this assertion, the event shape
+        (event_type, resource_type, resource_id, team_id, user_email, custom_fields)
+        could drift silently.
+        """
+        # First-Party
+        import mcpgateway.services.tool_service as tool_service_mod
+
+        private_tool = create_mock_tool(visibility="private", owner_email="other@example.com", team_id="team-other")
+        mock_db.get.return_value = private_tool
+
+        with patch.object(tool_service_mod, "structured_logger") as mock_logger:
+            with pytest.raises(ToolNotFoundError):
+                await tool_service.get_tool(
+                    mock_db,
+                    "tool-123",
+                    requesting_user_email=None,
+                    requesting_user_is_admin=True,
+                    requesting_user_team_roles=None,
+                    token_teams=None,
+                )
+
+            mock_logger.log.assert_called_once()
+            call_kwargs = mock_logger.log.call_args.kwargs
+            assert call_kwargs["event_type"] == "tool_access_denied"
+            assert call_kwargs["resource_type"] == "tool"
+            assert call_kwargs["resource_id"] == "tool-123"
+            assert "visibility" in call_kwargs["custom_fields"]
+            assert call_kwargs["custom_fields"]["visibility"] == "private"
+            assert "admin_bypass" in call_kwargs["custom_fields"]
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_admin_bypass_excludes_private(self, resource_service, mock_db):
+        """SECURITY: list_resource_templates under admin bypass applies a private-exclusion WHERE clause."""
+        captured_queries = []
+
+        original_result = MagicMock()
+        original_result.scalars.return_value.all.return_value = []
+
+        def mock_execute(stmt):
+            captured_queries.append(stmt)
+            return original_result
+
+        mock_db.execute = mock_execute
+
+        await resource_service.list_resource_templates(
+            mock_db,
+            user_email=None,
+            token_teams=None,
+        )
+
+        assert captured_queries, "expected a query to be executed"
+        compiled = str(captured_queries[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "visibility" in compiled and "private" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_db_admin_includes_own_private_only(self, resource_service, mock_db):
+        """PR #4341 carve-out: DB-admin (email, None) shape sees own private but not others'.
+
+        Previously the bespoke admin-bypass branch in ``list_resource_templates``
+        only handled ``(None, None)`` and let the ``(email, None)`` DB-admin
+        shape fall through with no WHERE clause applied, leaking all private
+        templates.
+
+        Uses a non-platform-admin email and patches ``is_user_admin`` directly
+        so the DB-resolved admin code path is exercised — not the
+        ``settings.platform_admin_email`` shortcut, which would mask a regression
+        that broke the DB-resolved branch but kept the platform-admin fast path.
+        """
+        captured_queries = []
+
+        original_result = MagicMock()
+        original_result.scalars.return_value.all.return_value = []
+
+        def mock_execute(stmt):
+            captured_queries.append(stmt)
+            return original_result
+
+        mock_db.execute = mock_execute
+
+        with patch("mcpgateway.services.resource_service.is_user_admin", return_value=True):
+            await resource_service.list_resource_templates(
+                mock_db,
+                user_email="dba@test.com",
+                token_teams=None,
+            )
+
+        assert captured_queries, "expected a query to be executed"
+        compiled = str(captured_queries[0].compile(compile_kwargs={"literal_binds": True}))
+
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller email: {compiled}"
+        # The carve-out is exactly one OR — multiple ORs would indicate a wrong predicate
+        # (e.g. unconditional private allowance bolted on).
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
+
+    @pytest.mark.asyncio
+    async def test_completion_apply_visibility_scope_admin_bypass_excludes_private(self):
+        """SECURITY: completion_service._apply_visibility_scope under admin bypass compiles a visibility != 'private' WHERE clause.
+
+        Hardened regression for PR #4341 follow-up: asserts the actual compiled predicate,
+        not just that ``.where()`` was called, so a wrong predicate cannot slip through.
+        """
+        # Third-Party
+        from sqlalchemy import select
+
+        # First-Party
+        from mcpgateway.db import Prompt as DbPrompt
+        from mcpgateway.services.completion_service import CompletionService
+
+        service = CompletionService()
+        stmt = select(DbPrompt)
+
+        scoped = service._apply_visibility_scope(stmt, DbPrompt, user_email=None, token_teams=None, team_ids=[], db=MagicMock())
+        compiled = str(scoped.compile(compile_kwargs={"literal_binds": True}))
+
+        assert "visibility" in compiled
+        assert "private" in compiled
+        assert "!=" in compiled or "<>" in compiled
+
+    @pytest.mark.asyncio
+    async def test_tag_apply_visibility_scope_admin_bypass_excludes_private(self):
+        """SECURITY: tag_service._apply_visibility_scope under admin bypass compiles a visibility != 'private' WHERE clause.
+
+        Hardened regression for PR #4341 follow-up: same reasoning as the completion
+        test - a structurally wrong predicate must not pass as a true ``where`` call.
+        """
+        # Third-Party
+        from sqlalchemy import select
+
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.tag_service import TagService
+
+        service = TagService()
+        stmt = select(DbResource)
+
+        scoped = service._apply_visibility_scope(stmt, DbResource, user_email=None, token_teams=None, team_ids=[], db=MagicMock())
+        compiled = str(scoped.compile(compile_kwargs={"literal_binds": True}))
+
+        assert "visibility" in compiled
+        assert "private" in compiled
+        assert "!=" in compiled or "<>" in compiled
+
+
+class TestServerAccessCheckMatrix:
+    """Branch coverage for ServerService._check_server_access (server_service.py:1015-1044).
+
+    Mirrors the existing TestCheckToolAccess matrix in test_tool_service.py so that
+    every documented policy outcome (public allow, anonymous bypass deny private,
+    public-only token deny, own-private allow, team membership via JWT, team
+    membership via DB lookup, final deny) has at least one focused regression.
+    """
+
+    @pytest.fixture
+    def service(self):
+        from mcpgateway.services.server_service import ServerService
+
+        return ServerService()
+
+    @staticmethod
+    def _server(visibility: str, owner_email=None, team_id=None) -> MagicMock:
+        s = MagicMock()
+        s.visibility = visibility
+        s.owner_email = owner_email
+        s.team_id = team_id
+        return s
+
+    @pytest.mark.asyncio
+    async def test_public_always_allowed(self, service):
+        """Public visibility short-circuits before any other check."""
+        s = self._server("public")
+        assert await service._check_server_access(MagicMock(), s, user_email=None, token_teams=[]) is True
+        assert await service._check_server_access(MagicMock(), s, user_email="any@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_anonymous_admin_bypass_denies_private(self, service):
+        """(None, None) anonymous admin bypass: team allowed, private denied."""
+        assert await service._check_server_access(MagicMock(), self._server("private", owner_email="other@test.com"), user_email=None, token_teams=None) is False
+        assert await service._check_server_access(MagicMock(), self._server("team", team_id="team-x"), user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_no_user_email_with_token_teams_denied(self, service):
+        """(None, [team]) shape: server_service.py line 1022-1023 — without user_email, denied."""
+        assert await service._check_server_access(MagicMock(), self._server("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
+
+    @pytest.mark.asyncio
+    async def test_public_only_token_denies_non_public(self, service):
+        """(email, []) public-only token: covers server_service.py line 1025-1027."""
+        s_team = self._server("team", team_id="team-x")
+        s_private = self._server("private", owner_email="user@test.com")
+        assert await service._check_server_access(MagicMock(), s_team, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_server_access(MagicMock(), s_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_own_private_allowed(self, service):
+        """Owner of a private server can read it (covers line 1029-1031)."""
+        own = self._server("private", owner_email="user@test.com")
+        assert await service._check_server_access(MagicMock(), own, user_email="user@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_jwt_token_teams(self, service):
+        """token_teams from JWT carries team membership (covers line 1033-1036)."""
+        s = self._server("team", team_id="team-x")
+        assert await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=["team-x"]) is True
+        # Non-matching team in JWT → denied (covers line 1044 fall-through).
+        assert await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=["team-y"]) is False
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_db_lookup(self, service):
+        """token_teams=None with email + team server: falls back to TeamManagementService (covers line 1038-1042)."""
+        s = self._server("team", team_id="team-x")
+
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_tms_cls:
+            mock_tms_cls.return_value.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-x")])
+            allowed = await service._check_server_access(MagicMock(), s, user_email="user@test.com", token_teams=None)
+
+        assert allowed is True
+        mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@test.com")
+
+
+class TestGatewayAccessCheckMatrix:
+    """Branch coverage for GatewayService._check_gateway_access (gateway_service.py:2732-2761).
+
+    Same shape as TestServerAccessCheckMatrix above — both helpers were added by
+    PR #4341 and both implement the canonical hybrid visibility policy.
+    """
+
+    @pytest.fixture
+    def service(self):
+        from mcpgateway.services.gateway_service import GatewayService
+
+        return GatewayService()
+
+    @staticmethod
+    def _gw(visibility: str, owner_email=None, team_id=None) -> MagicMock:
+        g = MagicMock()
+        g.visibility = visibility
+        g.owner_email = owner_email
+        g.team_id = team_id
+        return g
+
+    @pytest.mark.asyncio
+    async def test_public_always_allowed(self, service):
+        """Covers gateway_service.py line 2734."""
+        g = self._gw("public")
+        assert await service._check_gateway_access(MagicMock(), g, user_email=None, token_teams=[]) is True
+
+    @pytest.mark.asyncio
+    async def test_anonymous_admin_bypass_denies_private(self, service):
+        """(None, None) anonymous admin bypass: team allowed, private denied."""
+        assert await service._check_gateway_access(MagicMock(), self._gw("private", owner_email="other@test.com"), user_email=None, token_teams=None) is False
+        assert await service._check_gateway_access(MagicMock(), self._gw("team", team_id="team-x"), user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_no_user_email_with_token_teams_denied(self, service):
+        """(None, [team]) shape: covers gateway_service.py line 2739-2740."""
+        assert await service._check_gateway_access(MagicMock(), self._gw("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
+
+    @pytest.mark.asyncio
+    async def test_public_only_token_denies_non_public(self, service):
+        """(email, []) public-only token: covers line 2742-2744."""
+        g_team = self._gw("team", team_id="team-x")
+        g_private = self._gw("private", owner_email="user@test.com")
+        assert await service._check_gateway_access(MagicMock(), g_team, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_gateway_access(MagicMock(), g_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_own_private_allowed(self, service):
+        """Owner of a private gateway can read it (covers line 2746-2748)."""
+        own = self._gw("private", owner_email="user@test.com")
+        assert await service._check_gateway_access(MagicMock(), own, user_email="user@test.com", token_teams=["team-x"]) is True
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_jwt_token_teams(self, service):
+        """token_teams from JWT carries team membership (covers line 2750-2753)."""
+        g = self._gw("team", team_id="team-x")
+        assert await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=["team-x"]) is True
+        # Non-matching team in JWT → denied (covers line 2761 fall-through).
+        assert await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=["team-y"]) is False
+
+    @pytest.mark.asyncio
+    async def test_team_member_via_db_lookup(self, service):
+        """token_teams=None with email + team gateway: falls back to TeamManagementService (covers line 2755-2759)."""
+        g = self._gw("team", team_id="team-x")
+
+        with patch("mcpgateway.services.gateway_service.TeamManagementService") as mock_tms_cls:
+            mock_tms_cls.return_value.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-x")])
+            allowed = await service._check_gateway_access(MagicMock(), g, user_email="user@test.com", token_teams=None)
+
+        assert allowed is True
+        mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@test.com")

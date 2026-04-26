@@ -991,18 +991,78 @@ class ServerService(BaseService):
                 # Continue with remaining servers instead of failing completely
         return result
 
-    async def get_server(self, db: Session, server_id: str) -> ServerRead:
-        """Retrieve server details by ID.
+    async def _check_server_access(
+        self,
+        db: Session,
+        server: DbServer,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check whether the caller is allowed to view *server* under Layer 1 visibility.
+
+        Args:
+            db: Database session (used to resolve team membership when token_teams is None).
+            server: The ORM ``DbServer`` instance (must expose ``visibility``, ``team_id``, ``owner_email``).
+            user_email: Requesting user email; ``None`` combined with ``token_teams=None`` is admin bypass.
+            token_teams: JWT-scoped team list; ``None``=admin bypass, ``[]``=public-only, ``[...]``=team-scoped.
+
+        Returns:
+            ``True`` when the caller can see the server, ``False`` otherwise.
+
+        Notes:
+            Admin bypass grants access to public and team servers, but NEVER to private servers.
+        """
+        visibility = getattr(server, "visibility", "public")
+        if visibility == "public":
+            return True
+
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+
+        if not user_email:
+            return False
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False
+
+        server_owner_email = getattr(server, "owner_email", None)
+        if visibility == "private" and server_owner_email and server_owner_email == user_email:
+            return True
+
+        server_team_id = getattr(server, "team_id", None)
+        if server_team_id and visibility in ("team", "public"):
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+            if server_team_id in team_ids:
+                return True
+
+        return False
+
+    async def get_server(
+        self,
+        db: Session,
+        server_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> ServerRead:
+        """Retrieve server details by ID with access control.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             The corresponding ServerRead object.
 
         Raises:
-            ServerNotFoundError: If no server with the given ID exists.
+            ServerNotFoundError: If no server with the given ID exists, or the caller lacks visibility.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -1032,6 +1092,23 @@ class ServerService(BaseService):
             .where(DbServer.id == server_id)
         ).scalar_one_or_none()
         if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if not await self._check_server_access(db, server, user_email, token_teams):
+            self._structured_logger.log(
+                level="INFO",
+                message="Server access denied",
+                event_type="server_access_denied",
+                component="server_service",
+                resource_type="server",
+                resource_id=str(server.id),
+                team_id=getattr(server, "team_id", None),
+                user_email=user_email,
+                custom_fields={
+                    "visibility": getattr(server, "visibility", None),
+                    "admin_bypass": user_email is None and token_teams is None,
+                },
+            )
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
             "id": server.id,

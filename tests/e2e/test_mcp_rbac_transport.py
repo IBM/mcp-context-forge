@@ -43,6 +43,7 @@ import uuid
 import pytest
 from fastmcp.client import Client
 from fastmcp.client.auth import BearerAuth
+
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
 
@@ -499,13 +500,26 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
 class TestServerVisibilityViaAPI:
     """Verify server visibility via REST API before MCP protocol tests."""
 
-    def test_admin_sees_all_servers(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
+    def test_admin_sees_public_and_team_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
+        """Admin via HTTP sees public + team servers but NOT private — even own-private (PR #4341).
+
+        ``admin_api`` carries a JWT with ``is_admin=true`` and ``teams=null``. After
+        PR #4341 cycle-2 S3-b, ``get_scoped_resource_access_context`` deliberately
+        collapses this shape to ``(None, None)`` so HTTP cannot be a stealthy
+        escalation surface; the service layer then applies the anonymous-bypass
+        rule (public + team only, never private). Admins who need to read their
+        own private rows directly should use a ``team``-scoped token or operate
+        via owner-match workflows. The pre-#4341 ``test_admin_sees_all_servers``
+        assertion encoded the old "admin sees everything" semantics and is
+        superseded by this test plus the explicit not-in assertion below.
+        """
         resp = admin_api.get("/servers")
         assert resp.status == 200
         server_ids = {s["id"] for s in resp.json()}
-        for vis, srv in visibility_servers.items():
-            assert srv["id"] in server_ids, f"Admin should see {vis} server"
-        print(f"    -> Admin sees all {len(visibility_servers)} test servers")
+        assert visibility_servers["public"]["id"] in server_ids, "Admin should see public server"
+        assert visibility_servers["team"]["id"] in server_ids, "Admin should see team server"
+        assert visibility_servers["private"]["id"] not in server_ids, "PR #4341: admin via HTTP must NOT see private server (own-private collapsed by get_scoped_resource_access_context)"
+        print("    -> Admin sees public + team servers; private denied via HTTP collapse")
 
     def test_team_member_sees_public_and_team(self, test_users: dict, playwright: Playwright, visibility_servers: dict) -> None:
         token = test_users["developer"]["access_token"]

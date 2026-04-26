@@ -62,7 +62,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1799,8 +1799,13 @@ class PromptService(BaseService):
         if visibility == "public":
             return True
 
-        if is_admin_bypass_granted(db, user_email, token_teams):
-            return True
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+        if token_teams is None and user_email and is_user_admin(db, user_email):
+            return visibility != "private" or prompt_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public prompts
         if not user_email:
@@ -2690,20 +2695,29 @@ class PromptService(BaseService):
 
     # Get prompt details for admin ui
 
-    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def get_prompt_details(
+        self,
+        db: Session,
+        prompt_id: Union[int, str],
+        include_inactive: bool = False,  # pylint: disable=unused-argument
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
-        Get prompt details by ID.
+        Get prompt details by ID with access control.
 
         Args:
             db: Database session
             prompt_id: ID of prompt
             include_inactive: Whether to include inactive prompts
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             Dictionary of prompt details
 
         Raises:
-            PromptNotFoundError: If the prompt is not found
+            PromptNotFoundError: If the prompt is not found or the caller lacks visibility.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -2721,7 +2735,23 @@ class PromptService(BaseService):
         prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
-        # Return the fully converted prompt including metrics
+
+        if not await self._check_prompt_access(db, prompt, user_email, token_teams):
+            structured_logger.log(
+                level="INFO",
+                message="Prompt access denied",
+                event_type="prompt_access_denied",
+                component="prompt_service",
+                resource_type="prompt",
+                resource_id=str(prompt.id),
+                team_id=getattr(prompt, "team_id", None),
+                user_email=user_email,
+                custom_fields={
+                    "visibility": getattr(prompt, "visibility", None),
+                    "admin_bypass": user_email is None and token_teams is None,
+                },
+            )
+            raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         prompt.team = self._get_team_name(db, prompt.team_id)
         prompt_data = self.convert_prompt_to_read(prompt)
 
