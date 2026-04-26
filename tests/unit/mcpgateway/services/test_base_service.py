@@ -202,16 +202,19 @@ class TestApplyAccessControl:
             result = await service._apply_access_control(
                 base_query,
                 mock_db,
-                user_email="admin@example.com",
+                user_email="dba@test.com",
                 token_teams=None,
             )
 
         compiled = _compile_where(result)
-        # Either the OR includes "visibility != private" OR (visibility == private AND owner_email == admin@example.com).
-        assert "visibility" in compiled
-        assert "private" in compiled
-        assert "owner_email" in compiled
-        assert "admin@example.com" in compiled
+
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller: {compiled}"
+        # Exactly one OR — multiple ORs would indicate a too-broad predicate
+        # (e.g. an extra unconditional private allowance bolted on).
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
 
     @pytest.mark.asyncio
     async def test_non_admin_with_email_but_null_token_teams_does_not_bypass(self, service, mock_db, query):

@@ -538,12 +538,18 @@ class TestInvokeToolAuthorization:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_private_denial_runs_before_pre_invoke_hook(self, tool_service, mock_db):
-        """PR #4341: visibility deny happens BEFORE tool_pre_invoke hooks execute.
+        """PR #4341: visibility deny happens BEFORE the plugin hook chain executes.
 
         The check order matters because plugin hooks may have side effects (logging,
         metrics, billing) that would leak existence/usage information about private
         tools that the caller cannot see. The fix gates the hook chain behind the
         access check at tool_service.py:4452-4455 / 4814-4830.
+
+        The production code resolves the manager via ``_get_plugin_manager(...)``
+        and then dispatches via ``plugin_manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, ...)``.
+        We patch both so a regression that calls the real hook chain is caught;
+        an earlier version of this test mocked an unused attribute and passed
+        vacuously regardless of hook ordering.
         """
         mock_tool = create_mock_tool(visibility="private", owner_email="secret@example.com", team_id="secret-team")
 
@@ -555,21 +561,19 @@ class TestInvokeToolAuthorization:
 
         mock_plugin_manager = MagicMock()
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
-        mock_plugin_manager.tool_pre_invoke = AsyncMock(return_value=(MagicMock(continue_processing=True, modified_payload=None), None))
-        tool_service._plugin_manager = mock_plugin_manager
+        mock_plugin_manager.invoke_hook = AsyncMock(return_value=(MagicMock(continue_processing=True, modified_payload=None), None))
 
-        with pytest.raises(ToolNotFoundError):
-            await tool_service.invoke_tool(
-                mock_db,
-                "secret_tool",
-                {},
-                user_email=None,
-                token_teams=None,
-            )
+        with patch.object(tool_service, "_get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            with pytest.raises(ToolNotFoundError):
+                await tool_service.invoke_tool(
+                    mock_db,
+                    "secret_tool",
+                    {},
+                    user_email=None,
+                    token_teams=None,
+                )
 
-        # The pre_invoke hook MUST NOT run for a denied tool — otherwise plugins
-        # leak existence/usage information for resources the caller cannot see.
-        mock_plugin_manager.tool_pre_invoke.assert_not_called()
+        mock_plugin_manager.invoke_hook.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invoke_tool_admin_bypass_works_for_team_tools(self, tool_service, mock_db):
@@ -1166,11 +1170,13 @@ class TestDirectGetAccessDenial:
 
     @pytest.mark.asyncio
     async def test_agent_card_admin_bypass_denies_private(self):
-        """SECURITY: callers of A2AAgentService.get_agent_card must gate via _check_agent_access; the gate denies private on admin bypass.
+        """SECURITY: A2AAgentService._check_agent_access denies private on anonymous admin bypass.
 
-        ``get_agent_card`` itself is the unscoped fetcher — visibility is the
-        caller's responsibility (see ``main.py`` ``handle_a2a_agent_card``).
-        This test asserts the gate that callers are required to use.
+        After PR #4341 cycle 2, ``get_agent_card`` itself awaits ``_check_agent_access``
+        internally and returns ``None`` on deny, so the in-service gate is the
+        canonical enforcement point. This test exercises that gate directly to
+        keep the regression coverage focused: a service-layer change that broke
+        the deny path would fail this assertion before any caller-side test.
         """
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService
@@ -1313,6 +1319,11 @@ class TestDirectGetAccessDenial:
         only handled ``(None, None)`` and let the ``(email, None)`` DB-admin
         shape fall through with no WHERE clause applied, leaking all private
         templates.
+
+        Uses a non-platform-admin email and patches ``is_user_admin`` directly
+        so the DB-resolved admin code path is exercised — not the
+        ``settings.platform_admin_email`` shortcut, which would mask a regression
+        that broke the DB-resolved branch but kept the platform-admin fast path.
         """
         captured_queries = []
 
@@ -1324,21 +1335,24 @@ class TestDirectGetAccessDenial:
             return original_result
 
         mock_db.execute = mock_execute
-        install_admin_user(mock_db, email="admin@example.com")
 
-        await resource_service.list_resource_templates(
-            mock_db,
-            user_email="admin@example.com",
-            token_teams=None,
-        )
+        with patch("mcpgateway.services.resource_service.is_user_admin", return_value=True):
+            await resource_service.list_resource_templates(
+                mock_db,
+                user_email="dba@test.com",
+                token_teams=None,
+            )
 
         assert captured_queries, "expected a query to be executed"
         compiled = str(captured_queries[0].compile(compile_kwargs={"literal_binds": True}))
-        # DB-admin sees their own private rows AND public/team rows.
-        assert "visibility" in compiled
-        assert "private" in compiled
-        assert "owner_email" in compiled
-        assert "admin@example.com" in compiled
+
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller email: {compiled}"
+        # The carve-out is exactly one OR — multiple ORs would indicate a wrong predicate
+        # (e.g. unconditional private allowance bolted on).
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
 
     @pytest.mark.asyncio
     async def test_completion_apply_visibility_scope_admin_bypass_excludes_private(self):

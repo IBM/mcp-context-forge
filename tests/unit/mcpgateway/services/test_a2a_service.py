@@ -4759,13 +4759,18 @@ class TestVisibleAgentIds:
         assert result == ["id-all"]
 
     def test_db_admin_with_email_runs_filtered_query(self, service, mock_db):
-        """PR #4341 regression: DB-admin (email, None) shape must NOT return unscoped None.
+        """PR #4341 regression: DB-admin (email, None) shape runs the filtered query.
 
         Previously _visible_agent_ids used ``is_admin_bypass_granted`` which matched
         the (email, None) DB-admin shape. That bypassed the per-agent visibility
         filter and let DB admins enumerate other users' private agents via
-        list_tasks / list_push_configs_for_dispatch. The fix restricts the
-        unscoped path to (None, None) literal only.
+        list_tasks / list_push_configs_for_dispatch.
+
+        The hardened assertion below compiles the second ``filter()`` argument and
+        confirms the SQL still scopes to public + team + own-private, and crucially
+        that ``owner_email`` is bound only to the caller (not bypassed or omitted).
+        Without this, a regression that re-introduced the unscoped path could pass
+        a test that only asserted ``result is not None``.
         """
         mock_db.info = {}
         install_admin_user(mock_db, email="admin@test.com")
@@ -4776,8 +4781,19 @@ class TestVisibleAgentIds:
 
         result = service._visible_agent_ids(mock_db, user_email="admin@test.com", token_teams=None)
 
-        assert result is not None, "DB-admin (email, None) must run filtered query, not return None"
         assert result == ["agent-public", "agent-own-private"]
+
+        # Production code calls .filter(enabled).filter(or_(visibility_filters)).
+        # Capture the visibility predicate (second filter call) and verify shape.
+        filter_calls = mock_query.filter.call_args_list
+        assert len(filter_calls) >= 2, "expected enabled + visibility filters"
+        visibility_clause = filter_calls[1].args[0]
+        compiled = str(visibility_clause.compile(compile_kwargs={"literal_binds": True}))
+
+        assert "visibility = 'public'" in compiled or "'public'" in compiled
+        assert "visibility = 'private'" in compiled or "'private'" in compiled
+        assert "owner_email" in compiled
+        assert "admin@test.com" in compiled, f"private branch must scope owner to caller, got: {compiled}"
 
 
 class TestGetTask:

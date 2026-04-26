@@ -870,6 +870,7 @@ class TestServerEndpoints:
         mock_get.side_effect = ServerNotFoundError("Server not found: secret_server")
         response = test_client.get("/servers/secret_server", headers=auth_headers)
         assert response.status_code == 404
+        mock_get.assert_called_once()
 
     @patch("mcpgateway.main.server_service.register_server")
     def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
@@ -1075,6 +1076,7 @@ class TestToolEndpoints:
         mock_get.side_effect = ToolNotFoundError("Tool not found: secret_tool")
         response = test_client.get("/tools/secret_tool", headers=auth_headers)
         assert response.status_code == 404
+        mock_get.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.update_tool")
     def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
@@ -2011,6 +2013,7 @@ class TestGatewayEndpoints:
         mock_get.side_effect = GatewayNotFoundError("Gateway not found: secret_gateway")
         response = test_client.get("/gateways/secret_gateway", headers=auth_headers)
         assert response.status_code == 404
+        mock_get.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):

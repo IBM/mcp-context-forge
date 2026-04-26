@@ -14,10 +14,13 @@ modules currently exist:
 - ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
   model layer** and the FastAPI auth dependency. Most helpers there are pure
   primitives over stored artifacts (JWT claims, API tokens, revocation
-  records, team membership rows) and do not need a ``Request``. The single
-  exception is ``get_current_user``, which is the FastAPI dependency that
-  bridges the two layers and necessarily sees ``Request`` (it stashes
-  payload metadata on ``request.state`` for downstream helpers here).
+  records, team membership rows) and do not need a ``Request``. The
+  request-coupled exceptions are ``get_current_user`` (the FastAPI
+  dependency that bridges the two layers) plus a small set of helpers it
+  calls into - ``_inject_userinfo_instate`` and ``_propagate_tenant_id`` -
+  which stash payload metadata on ``request.state`` for downstream helpers
+  here. New code added to ``auth.py`` should follow the pure-primitive
+  pattern unless it is part of the dependency chain.
 
 - ``mcpgateway.auth_context`` (this module) - the **per-request scope
   resolution layer** plus the **Rust-runtime trust-header helpers**. The
@@ -43,8 +46,9 @@ helper to pass ``(user_email, token_teams)`` into the service layer. Before
 this split, the helper lived in ``main.py`` and ``admin.py`` reached back
 through a lazy import, creating a static cyclic import
 (``admin -> main -> admin``) that ``pylint R0401`` flagged. Hoisting the
-helper (and its dependency chain) into a sibling module that depends only
-on ``mcpgateway.auth`` breaks the cycle at the architectural level rather
+helper (and its dependency chain) into a sibling module whose only
+non-stdlib first-party dependencies are ``mcpgateway.auth`` and
+``mcpgateway.config`` breaks the cycle at the architectural level rather
 than papering over it with ``# pylint: disable``.
 
 Public surface
