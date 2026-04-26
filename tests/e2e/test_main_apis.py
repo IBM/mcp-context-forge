@@ -590,8 +590,10 @@ class TestServerAPIs:
 
     async def test_get_server(self, client: AsyncClient, mock_auth):
         """Test GET /servers/{server_id}."""
-        # First create a server
-        server_data = {"server": {"name": "get_test_server", "description": "Server for GET test"}, "team_id": None, "visibility": "private"}
+        # First create a server. ``visibility="public"`` so the public-only test
+        # JWT (teams=[], is_admin=False) can read it back via GET — PR #4341
+        # denies private rows to public-only tokens, even own-private.
+        server_data = {"server": {"name": "get_test_server", "description": "Server for GET test"}, "team_id": None, "visibility": "public"}
 
         create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
@@ -649,8 +651,9 @@ class TestServerAPIs:
 
     async def test_delete_server(self, client: AsyncClient, mock_auth):
         """Test DELETE /servers/{server_id}."""
-        # Create a server
-        server_data = {"server": {"name": "delete_test_server"}, "team_id": None, "visibility": "private"}
+        # Create a server. ``visibility="public"`` so the public-only test JWT
+        # can DELETE it back — see ``test_get_server`` for the PR #4341 reasoning.
+        server_data = {"server": {"name": "delete_test_server"}, "team_id": None, "visibility": "public"}
 
         create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
@@ -1054,8 +1057,9 @@ class TestResourceAPIs:
 
     async def test_read_resource(self, client: AsyncClient, mock_auth):
         """Test GET /resources/{uri:path}."""
-        # Create a resource first
-        resource_data = {"resource": {"uri": "resource://test", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"}, "team_id": None, "visibility": "private"}
+        # Create a resource first. ``visibility="public"`` so the public-only
+        # test JWT can read it back — see ``test_get_server`` for PR #4341 reasoning.
+        resource_data = {"resource": {"uri": "resource://test", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"}, "team_id": None, "visibility": "public"}
 
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource = response.json()
@@ -1269,7 +1273,8 @@ class TestPromptAPIs:
 
     async def test_get_prompt_with_args(self, client: AsyncClient, mock_auth):
         """Test POST /prompts/{prompt_id} - execute prompt with arguments."""
-        # First create a prompt
+        # First create a prompt. ``visibility="public"`` so the public-only test
+        # JWT can render it — see ``test_get_server`` for PR #4341 reasoning.
         prompt_data = {
             "prompt": {
                 "name": "greeting_prompt",
@@ -1278,7 +1283,7 @@ class TestPromptAPIs:
                 "arguments": [{"name": "name", "description": "User name", "required": True}, {"name": "company", "description": "Company name", "required": True}],
             },
             "team_id": None,
-            "visibility": "private",
+            "visibility": "public",
         }
 
         create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
@@ -1294,8 +1299,9 @@ class TestPromptAPIs:
 
     async def test_get_prompt_no_args(self, client: AsyncClient, mock_auth):
         """Test GET /prompts/{prompt_id} - get prompt without executing."""
-        # Create a simple prompt
-        prompt_data = {"prompt": {"name": "simple_prompt", "template": "Simple message", "arguments": []}, "team_id": None, "visibility": "private"}
+        # Create a simple prompt. ``visibility="public"`` so the public-only test
+        # JWT can read it back — see ``test_get_server`` for PR #4341 reasoning.
+        prompt_data = {"prompt": {"name": "simple_prompt", "template": "Simple message", "arguments": []}, "team_id": None, "visibility": "public"}
 
         create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
@@ -1883,7 +1889,9 @@ class TestIntegrationScenarios:
 
     async def test_create_and_use_resource(self, client: AsyncClient, mock_auth):
         """Integration: create a resource and read it back."""
-        resource_data = {"resource": {"uri": "resource://test", "name": "integration_resource", "content": "test"}, "team_id": None, "visibility": "private"}
+        # ``visibility="public"`` so the public-only test JWT can read it back —
+        # see ``test_get_server`` for PR #4341 reasoning.
+        resource_data = {"resource": {"uri": "resource://test", "name": "integration_resource", "content": "test"}, "team_id": None, "visibility": "public"}
         create_resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_resp.status_code == 200
         resource_id = create_resp.json()["id"]
@@ -1947,11 +1955,13 @@ class TestIntegrationScenarios:
 
     async def test_complete_resource_lifecycle(self, client: AsyncClient, mock_auth):
         """Test complete resource lifecycle: create, read, update, delete."""
-        # Create - use URI without extension to avoid MIME type detection override
+        # Create - use URI without extension to avoid MIME type detection override.
+        # ``visibility="public"`` so the public-only test JWT can read it back —
+        # see ``test_get_server`` for PR #4341 reasoning.
         resource_data = {
             "resource": {"uri": "file:///home/user/documents/report", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
             "team_id": None,
-            "visibility": "private",
+            "visibility": "public",
         }
 
         create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)

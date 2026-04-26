@@ -39,6 +39,49 @@
 
 `CONTENT_PATTERN_DETECTION_ENABLED=true` and `CONTENT_VALIDATE_PROMPT_TEMPLATES=true` ship as defaults (in contrast to `CONTENT_STRICT_MIME_VALIDATION=false` which had a soft-launch default for US-2). Existing deployments containing any of the default blocked patterns in stored resources or prompts (e.g. Jinja2 `{{ config }}` access, shell metacharacters, `UNION SELECT`) will start returning 400s on subsequent update calls. Set either flag to `false` temporarily to audit and clean existing content before re-enabling.
 
+#### **🔒 Admin bypass no longer reveals other users' private resources** ([#4323](https://github.com/IBM/mcp-context-forge/issues/4323), [#4341](https://github.com/IBM/mcp-context-forge/pull/4341))
+
+**Action Required for integrators relying on admin-bypass reads of other users' private resources.**
+
+Admin bypass (`is_admin=true` with `teams: null` in the JWT, or dev-mode basic-auth admin) now grants access only to **public** and **team** resources via the public HTTP routes. Another user's private resources (visibility=`private`) are only accessible to their owner — admin bypass can no longer read, update, delete, list, or enumerate another user's private tools, prompts, resources, servers, gateways, or A2A agents.
+
+The service layer additionally implements an own-private carve-out for the DB-resolved admin shape `(email, None)`: a session that resolves to admin in the database AND has not been narrowed by a token scope can still access its own private rows. The verified path that exercises this carve-out today is the trusted internal A2A endpoint (`mcpgateway/main.py::_get_internal_a2a_scope_context`), which forwards the admin email through to the service layer. Other internal/in-process callers will hit the same carve-out *only* if they preserve the email on the `(email, None)` shape; OAuth token refresh, for example, performs its own owner check at `token_storage_service._refresh_access_token` and does not exercise the hybrid branch. The carve-out is **not** reachable from the public HTTP routes: `mcpgateway.auth_context.get_scoped_resource_access_context` collapses HTTP admin requests to `(None, None)`, so a normal browser-driven admin gets the same anonymous-bypass treatment as everyone else and is denied their own private rows on `GET /tools/{my_private_tool}`. Use `team`-scoped tokens or own-the-resource workflows if you need a HTTP admin to see their own private rows directly.
+
+**Enforcement applied at the service layer for:**
+
+- `ToolService.get_tool`, `list_tools`
+- `PromptService.get_prompt`, `get_prompt_details`, `list_prompts`
+- `ResourceService.get_resource_by_id`, `read_resource`, `list_resources`
+- `ServerService.get_server`, `list_servers`
+- `GatewayService.get_gateway`, `list_gateways`
+- `A2AAgentService.get_agent`, `get_agent_by_name`, `get_agent_card`, `cancel_task`, `get_task`
+- `BaseService._apply_access_control` and `BaseService._apply_visibility_scope` (list endpoints inheriting from `BaseService`, plus completion / tag enumeration)
+
+**Behavior for denied access:**
+
+- Direct-ID reads return `404 Not Found` (not 403) to avoid disclosing the existence of private resources.
+- A structured log event (`*_access_denied`, e.g. `tool_access_denied`) is emitted for forensics.
+
+**What's unchanged:**
+
+- Public-resource access for admin bypass — unchanged.
+- Team-resource access for admin bypass — unchanged.
+- Resource owners can still access their own private resources via owner-email matching at the service layer.
+- DB-resolved admin sessions can still see their own private rows via internal / non-HTTP call paths that preserve the admin email on a `(email, None)` shape — the trusted internal A2A endpoint is the verified example today. HTTP admin requests are intentionally collapsed to `(None, None)` and do not fire the own-private carve-out — by design, to avoid HTTP being a stealthy escalation surface.
+- Scoped tokens (`teams: [...]`) continue to use their scoped team list; admin-bypass detection still requires both `is_admin=true` **and** `teams: null`.
+
+**Migration guidance for integrators:**
+
+- Audit tokens/scripts that currently rely on an admin listing or reading another user's private data. Transfer resource ownership or switch them to `team`-scoped visibility if the cross-user access is intentional.
+- If an admin genuinely needs cross-user visibility for an operational scenario, prefer a properly scoped token (`teams: ["<target_team>"]`) over relying on bypass.
+- Callers of `server_service.get_server`, `gateway_service.get_gateway`, `prompt_service.get_prompt_details`, `resource_service.get_resource_by_id`, and `a2a_service.get_agent_by_name`/`get_agent_card` now accept new optional `user_email` / `token_teams` parameters. Omitting them evaluates as admin-bypass (public + team access, other-users' private denied). Call sites in `mcpgateway/main.py` and `mcpgateway/admin.py` have been updated to forward the caller's scope via `get_scoped_resource_access_context` (now in `mcpgateway/auth_context.py`).
+
+**Related security invariants (see `AGENTS.md`):**
+
+- `public` is platform-public scope, not internet-anonymous.
+- Token-team interpretation continues to flow through `normalize_token_teams()` / `resolve_session_teams()` in `mcpgateway/auth.py`.
+- Non-JWT admin (basic-auth / dev-mode) retains unrestricted access to public and team resources, but is now also denied direct reads of other users' private resources.
+
 ## [1.0.0-RC3] - 2026-04-14 - Auth Hardening, Plugin Multi-Tenancy, Rust Runtime & Multi-Arch
 
 ### Overview

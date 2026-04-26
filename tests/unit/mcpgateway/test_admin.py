@@ -465,23 +465,28 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "get_server")
     async def test_admin_get_server_edge_cases(self, mock_get_server, mock_db):
         """Test getting server with edge cases."""
-        # Test with non-string ID (should work)
         mock_server = MagicMock()
         mock_masked = MagicMock()
         mock_masked.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
         mock_server.masked.return_value = mock_masked
         mock_get_server.return_value = mock_server
 
-        result = await admin_get_server(123, mock_db, user={"email": "test-user", "db": mock_db})
+        mock_request = MagicMock(spec=Request)
+        mock_request.state = MagicMock(spec=["token_teams", "_jwt_verified_payload"])
+        mock_request.state.token_teams = None
+        mock_request.state._jwt_verified_payload = None
+        mock_request.headers = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+
+        result = await admin_get_server(123, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result["id"] == 123
         mock_server.masked.assert_called_once()
         mock_masked.model_dump.assert_called_once_with(by_alias=True)
 
-        # Test with generic exception
         mock_get_server.side_effect = RuntimeError("Database connection lost")
 
         with pytest.raises(RuntimeError) as excinfo:
-            await admin_get_server("error-id", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_server("error-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert "Database connection lost" in str(excinfo.value)
 
     def test_admin_add_server_form_submit_with_logging_enabled_does_not_stream_consume(self):
@@ -1284,29 +1289,27 @@ class TestAdminToolRoutes:
             await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(ToolService, "get_tool")
-    async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):
+    async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_request, mock_db):
         """Test getting tool with various exception types."""
-        # Test with ToolNotFoundError
         mock_get_tool.side_effect = ToolNotFoundError("Tool not found")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_tool("missing-tool", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_tool("missing-tool", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert excinfo.value.status_code == 404
 
-        # Test with generic exception
         mock_get_tool.side_effect = ValueError("Invalid tool ID format")
 
         with pytest.raises(ValueError):
-            await admin_get_tool("bad-id", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_tool("bad-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(ToolService, "get_tool")
-    async def test_admin_get_tool_success(self, mock_get_tool, mock_db):
+    async def test_admin_get_tool_success(self, mock_get_tool, mock_request, mock_db):
         """Cover the successful tool fetch path (model_dump by_alias=True)."""
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "tool-1"}
         mock_get_tool.return_value = tool
 
-        result = await admin_get_tool("tool-1", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result["id"] == "tool-1"
         tool.model_dump.assert_called_once_with(by_alias=True)
 
@@ -2436,7 +2439,7 @@ class TestAdminResourceRoutes:
 
     @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
-    async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
+    async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_request, mock_db):
         """Test: read_resource should not be called at all."""
 
         mock_resource = MagicMock()
@@ -2445,22 +2448,22 @@ class TestAdminResourceRoutes:
 
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        result = await admin_get_resource("1", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_resource("1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert result["resource"]["id"] == 1
         mock_read_resource.assert_not_called()
 
     @patch.object(ResourceService, "get_resource_by_id")
-    async def test_admin_get_resource_error_handlers(self, mock_get_resource, mock_db):
+    async def test_admin_get_resource_error_handlers(self, mock_get_resource, mock_request, mock_db):
         """Cover ResourceNotFoundError translation and generic exception path in admin_get_resource."""
         mock_get_resource.side_effect = ResourceNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_resource("missing-res", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_resource("missing-res", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         mock_get_resource.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_resource("res-1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -2765,7 +2768,7 @@ class TestAdminPromptRoutes:
         assert len(result["data"][0]["arguments"]) == 3
 
     @patch.object(PromptService, "get_prompt_details")
-    async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_db):
+    async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_request, mock_db):
         """Test getting prompt with detailed metrics."""
         mock_get_prompt_details.return_value = {
             "id": "ca627760127d409080fdefc309147e08",
@@ -2794,22 +2797,22 @@ class TestAdminPromptRoutes:
             },
         }
 
-        result = await admin_get_prompt("test-prompt", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_prompt("test-prompt", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert result["name"] == "test-prompt"
         assert "metrics" in result
 
     @patch.object(PromptService, "get_prompt_details")
-    async def test_admin_get_prompt_error_handlers(self, mock_get_prompt_details, mock_db):
+    async def test_admin_get_prompt_error_handlers(self, mock_get_prompt_details, mock_request, mock_db):
         """Cover PromptNotFoundError translation and generic exception path in admin_get_prompt."""
         mock_get_prompt_details.side_effect = PromptNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_prompt("missing-prompt", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_prompt("missing-prompt", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         mock_get_prompt_details.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_prompt("p1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_with_empty_arguments(self, mock_register_prompt, mock_request, mock_db):
@@ -3113,7 +3116,7 @@ class TestAdminGatewayRoutes:
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
 
     @patch.object(GatewayService, "get_gateway")
-    async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_db):
+    async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_request, mock_db):
         """Test getting gateway with different transport types."""
         transports = ["HTTP", "SSE", "WebSocket"]
 
@@ -3127,20 +3130,20 @@ class TestAdminGatewayRoutes:
             }
             mock_get_gateway.return_value = mock_gateway
 
-            result = await admin_get_gateway(f"gateway-{transport}", mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_gateway(f"gateway-{transport}", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert result["transport"] == transport
 
     @patch.object(GatewayService, "get_gateway")
-    async def test_admin_get_gateway_error_handlers(self, mock_get_gateway, mock_db):
+    async def test_admin_get_gateway_error_handlers(self, mock_get_gateway, mock_request, mock_db):
         """Cover not-found translation and generic exception logging in admin_get_gateway."""
         mock_get_gateway.side_effect = GatewayNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_gateway("missing-gw", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_gateway("missing-gw", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         mock_get_gateway.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_gateway("gw-1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_gateway("gw-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_valid_auth_types(self, mock_register_gateway, mock_request, mock_db):
@@ -19798,14 +19801,14 @@ class TestAdminGetToolPassesTeamRoles:
     """Tests that admin_get_tool and admin_list_tools pass requesting_user_team_roles."""
 
     @pytest.mark.asyncio
-    async def test_admin_get_tool_passes_team_roles(self, mock_db):
+    async def test_admin_get_tool_passes_team_roles(self, mock_request, mock_db):
         """admin_get_tool calls tool_service.get_tool with requesting_user_team_roles."""
         tool_read = MagicMock()
         with (
             patch.object(ToolService, "get_tool", new_callable=AsyncMock, return_value=tool_read) as mock_get,
             patch("mcpgateway.admin._get_user_team_roles", return_value={"team-1": "owner"}) as mock_roles,
         ):
-            await admin_get_tool("tool-1", mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_get_tool("tool-1", mock_request, mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_get.assert_called_once()

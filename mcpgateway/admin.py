@@ -66,6 +66,7 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -2796,12 +2797,13 @@ async def admin_servers_partial_html(
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
 @require_permission("servers.read", allow_admin_bypass=False)
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -2820,7 +2822,8 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     """
     try:
         LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
-        server = await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return server.masked().model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -11312,7 +11315,7 @@ async def admin_unified_search(
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
 @require_permission("tools.read", allow_admin_bypass=False)
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -11322,6 +11325,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -11339,11 +11343,19 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     _user_email = get_user_email(user)
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
+        tool = await tool_service.get_tool(
+            db,
+            tool_id,
+            requesting_user_email=auth_user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+            token_teams=auth_token_teams,
+        )
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -11945,11 +11957,12 @@ async def admin_set_tool_state(
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read", allow_admin_bypass=False)
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
     Args:
         gateway_id: Gateway ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -11968,7 +11981,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -12544,11 +12558,12 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 @admin_router.get("/resources/{resource_id}")
 @require_permission("resources.read", allow_admin_bypass=False)
-async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
         resource_id: Resource ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -12567,9 +12582,15 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_id(db, resource_id, include_inactive=True)
-        # content = await resource_service.read_resource(db, resource_id=resource_id)
-        return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        resource = await resource_service.get_resource_by_id(
+            db,
+            resource_id,
+            include_inactive=True,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
+        return {"resource": resource.model_dump(by_alias=True)}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -12942,11 +12963,12 @@ async def admin_set_resource_state(
 
 @admin_router.get("/prompts/{prompt_id}")
 @require_permission("prompts.read", allow_admin_bypass=False)
-async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
         prompt_id: Prompt ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -12965,7 +12987,13 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
     """
     LOGGER.info(f"User {get_user_email(user)} requested details for prompt ID {prompt_id}")
     try:
-        prompt_details = await prompt_service.get_prompt_details(db, prompt_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        prompt_details = await prompt_service.get_prompt_details(
+            db,
+            prompt_id,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
         prompt = PromptRead.model_validate(prompt_details)
         return prompt.model_dump(by_alias=True)
     except PromptNotFoundError as e:

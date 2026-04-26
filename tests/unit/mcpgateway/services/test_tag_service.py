@@ -199,8 +199,12 @@ async def test_get_all_tags_team_scoped_token_filters_other_teams(tag_service, t
 
 
 @pytest.mark.asyncio
-async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db):
-    """Explicit admin bypass context should return all tags across visibility levels."""
+async def test_get_all_tags_admin_bypass_sees_public_and_team_not_private(tag_service, tag_visibility_db):
+    """SECURITY: admin bypass sees tags from public and team entities but NEVER from other users' private.
+
+    Regression for PR #4341 follow-up — admin bypass must not enumerate tags that would
+    reveal the existence of another user's private resources.
+    """
     tags = await tag_service.get_all_tags(
         tag_visibility_db,
         entity_types=["resources"],
@@ -209,7 +213,11 @@ async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db
         token_teams=None,
     )
     tag_names = {tag.name for tag in tags}
-    assert {"public-tag", "team-tag", "other-team-tag", "private-tag", "shared-tag"} <= tag_names
+    assert "public-tag" in tag_names
+    assert "team-tag" in tag_names
+    assert "other-team-tag" in tag_names
+    assert "shared-tag" in tag_names
+    assert "private-tag" not in tag_names
 
 
 @pytest.mark.asyncio
@@ -451,12 +459,16 @@ async def test_get_entities_by_tag_team_token_sees_team_entity(tag_service, tag_
 
 
 @pytest.mark.asyncio
-async def test_get_entities_by_tag_admin_bypass_sees_all_tagged(tag_service, tag_visibility_db):
-    """Regression for #4106 Blocking #2: admin bypass must reach get_entities_by_tag.
+async def test_get_entities_by_tag_admin_bypass_excludes_private(tag_service, tag_visibility_db):
+    """Admin bypass reaches get_entities_by_tag (regression #4106) but PR #4341 still excludes private rows.
 
-    Prior to the fix, tag_service._apply_visibility_scope was called without
-    db=db here, silently skipping the admin check and hiding private-tagged
-    entities from DB admins.
+    Two layered guarantees:
+    - The admin-bypass branch in _apply_visibility_scope is invoked (db is passed
+      through). Prior to #4106 the missing db silently filtered admins out
+      entirely, hiding even public + team rows.
+    - With #4341, admin bypass deliberately filters out private rows so
+      tag enumeration cannot reveal another user's private entity metadata.
+      Public and team-tagged rows remain visible.
     """
     entities = await tag_service.get_entities_by_tag(
         tag_visibility_db,
@@ -466,7 +478,7 @@ async def test_get_entities_by_tag_admin_bypass_sees_all_tagged(tag_service, tag
         token_teams=None,
     )
     names = {e.name for e in entities}
-    assert "Private Resource" in names
+    assert "Private Resource" not in names
 
 
 @pytest.mark.asyncio

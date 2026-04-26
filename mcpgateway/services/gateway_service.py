@@ -2708,19 +2708,80 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
-        """Get a gateway by its ID.
+    async def _check_gateway_access(
+        self,
+        db: Session,
+        gateway: DbGateway,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check whether the caller can view *gateway* under Layer 1 visibility.
+
+        Args:
+            db: Database session (used to resolve team membership when token_teams is None).
+            gateway: The ORM ``DbGateway`` instance (must expose ``visibility``, ``team_id``, ``owner_email``).
+            user_email: Requesting user email; ``None`` combined with ``token_teams=None`` is admin bypass.
+            token_teams: JWT-scoped team list; ``None``=admin bypass, ``[]``=public-only, ``[...]``=team-scoped.
+
+        Returns:
+            ``True`` when the caller can see the gateway, ``False`` otherwise.
+
+        Notes:
+            Admin bypass grants access to public and team gateways, but NEVER to private gateways.
+        """
+        visibility = getattr(gateway, "visibility", "public")
+        if visibility == "public":
+            return True
+
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+
+        if not user_email:
+            return False
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False
+
+        gateway_owner_email = getattr(gateway, "owner_email", None)
+        if visibility == "private" and gateway_owner_email and gateway_owner_email == user_email:
+            return True
+
+        gateway_team_id = getattr(gateway, "team_id", None)
+        if gateway_team_id and visibility in ("team", "public"):
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+            if gateway_team_id in team_ids:
+                return True
+
+        return False
+
+    async def get_gateway(
+        self,
+        db: Session,
+        gateway_id: str,
+        include_inactive: bool = True,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> GatewayRead:
+        """Get a gateway by its ID with access control.
 
         Args:
             db: Database session
             gateway_id: Gateway ID
             include_inactive: Whether to include inactive gateways
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             GatewayRead object
 
         Raises:
-            GatewayNotFoundError: If the gateway is not found
+            GatewayNotFoundError: If the gateway is not found or the caller lacks visibility.
 
         Examples:
             >>> from unittest.mock import MagicMock
@@ -2779,8 +2840,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
+        if not await self._check_gateway_access(db, gateway, user_email, token_teams):
+            structured_logger.log(
+                level="INFO",
+                message="Gateway access denied",
+                event_type="gateway_access_denied",
+                component="gateway_service",
+                resource_type="gateway",
+                resource_id=str(gateway.id),
+                team_id=getattr(gateway, "team_id", None),
+                user_email=user_email,
+                custom_fields={
+                    "visibility": getattr(gateway, "visibility", None),
+                    "admin_bypass": user_email is None and token_teams is None,
+                },
+            )
+            raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
         if gateway.enabled or include_inactive:
-            # Structured logging: Log gateway view
             structured_logger.log(
                 level="INFO",
                 message="Gateway retrieved successfully",

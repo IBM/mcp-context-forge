@@ -242,6 +242,43 @@ async def test_refresh_no_oauth_config(service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_refresh_denied_for_private_gateway_with_other_owner(service, mock_db):
+    """PR #4341: refresh must be denied when gateway is private and owner != token owner.
+
+    Without this gate, a token whose ``gateway_id`` points to a private gateway
+    owned by a different user could trigger an OAuth refresh that decrypts and
+    forwards the gateway's stored ``client_secret``, leaking the secret to a
+    non-owner.
+    """
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
+    gw.visibility = "private"
+    gw.owner_email = "owner@example.com"
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+
+    record = _make_token_record(app_user_email="not-owner@example.com")
+    result = await service._refresh_access_token(record)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_allowed_for_private_gateway_owned_by_token_owner(service, mock_db):
+    """PR #4341 carve-out: refresh succeeds when token owner IS the gateway owner."""
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
+    gw.visibility = "private"
+    gw.owner_email = "owner@example.com"
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+    record = _make_token_record(app_user_email="owner@example.com")
+    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        result = await service._refresh_access_token(record)
+
+    assert result == "new_access"
+
+
+@pytest.mark.asyncio
 async def test_refresh_decrypt_refresh_token_fails(service, mock_db):
     gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw

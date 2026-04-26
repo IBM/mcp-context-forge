@@ -193,31 +193,49 @@ class TestCheckGatewayAccess:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_with_none_token_teams(self):
-        """Admin with token_teams=None should have unrestricted access."""
+    async def test_admin_bypass_denies_private(self):
+        """PR #4341: anonymous admin bypass (None, None) must NOT see another user's private gateway."""
         db = MagicMock()
         gateway = MagicMock()
         gateway.visibility = "private"
         gateway.team_id = "team1"
         gateway.owner_email = "owner@example.com"
 
-        # Admin bypass: token_teams=None AND user_email=None
+        result = await check_gateway_access(db, gateway, None, None)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_sees_team(self):
+        """Anonymous admin bypass (None, None) still sees team gateways (only private is denied)."""
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "team"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
         result = await check_gateway_access(db, gateway, None, None)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_database_admin_bypass(self):
-        """DB admin should get bypass ONLY with unrestricted token (token_teams=None)."""
+        """DB-admin (email, None) shape: own private allowed, other user's private denied (PR #4341)."""
         db = MagicMock()
-        gateway = MagicMock()
-        gateway.visibility = "private"
-        gateway.team_id = "team1"
-        gateway.owner_email = "owner@example.com"
+        own_private = MagicMock()
+        own_private.visibility = "private"
+        own_private.team_id = "team1"
+        own_private.owner_email = "admin@test.com"
+
+        others_private = MagicMock()
+        others_private.visibility = "private"
+        others_private.team_id = "team1"
+        others_private.owner_email = "owner@example.com"
 
         install_admin_user(db)
 
-        result = await check_gateway_access(db, gateway, "admin@test.com", None)
-        assert result is True
+        # PR #4341 carve-out: DB admin sees own private.
+        assert await check_gateway_access(db, own_private, "admin@test.com", None) is True
+        # PR #4341 invariant: DB admin still cannot see another user's private.
+        assert await check_gateway_access(db, others_private, "admin@test.com", None) is False
 
     @pytest.mark.asyncio
     async def test_database_admin_with_narrowed_token_still_narrowed(self):
@@ -249,20 +267,27 @@ class TestCheckGatewayAccess:
 
     @pytest.mark.asyncio
     async def test_platform_admin_bypass(self, monkeypatch):
-        """Platform admin email gets bypass ONLY with unrestricted token."""
+        """Platform admin (email, None) shape: own private allowed, other user's private denied (PR #4341)."""
         # First-Party
         from mcpgateway.config import settings
 
         db = MagicMock()
-        gateway = MagicMock()
-        gateway.visibility = "private"
-        gateway.team_id = "team1"
-        gateway.owner_email = "owner@example.com"
+        others_private = MagicMock()
+        others_private.visibility = "private"
+        others_private.team_id = "team1"
+        others_private.owner_email = "owner@example.com"
+
+        own_private = MagicMock()
+        own_private.visibility = "private"
+        own_private.team_id = "team1"
+        own_private.owner_email = "platform-admin@example.com"
 
         monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
 
-        result = await check_gateway_access(db, gateway, "platform-admin@example.com", None)
-        assert result is True
+        # PR #4341 invariant: platform admin still cannot read another user's private gateway.
+        assert await check_gateway_access(db, others_private, "platform-admin@example.com", None) is False
+        # PR #4341 carve-out: platform admin can read their own private gateway.
+        assert await check_gateway_access(db, own_private, "platform-admin@example.com", None) is True
 
     @pytest.mark.asyncio
     async def test_database_exception_handling(self):

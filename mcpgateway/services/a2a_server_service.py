@@ -34,13 +34,21 @@ logger = logging.getLogger(__name__)
 
 
 def _check_server_access(server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
-    """Apply the standard scoped visibility rules to a virtual server."""
+    """Apply the standard scoped visibility rules to a virtual server.
+
+    Admin bypass invariant (PR #4341): never reveal another user's private
+    servers via an admin-bypass shape. Anonymous bypass (token_teams=None
+    AND user_email=None) sees public + team but never private. DB-resolved
+    admin sessions ((email, None) shape) fall through to the natural flow
+    below, which already grants public + team + own-private and denies
+    other users' private. Mirrors a2a_service._check_agent_access.
+    """
     if server.visibility == "public":
         return True
 
     if token_teams is None and user_email is None:
-        logger.debug("admin bypass: granting access to %s server %s", server.visibility, getattr(server, "name", "?"))
-        return True
+        # Anonymous admin bypass: team allowed, private denied (PR #4341).
+        return server.visibility != "private"
 
     if not user_email:
         return False
