@@ -48,6 +48,7 @@ Examples:
 """
 
 # Standard
+from functools import lru_cache
 from html.parser import HTMLParser
 import ipaddress
 import json
@@ -57,7 +58,7 @@ import re
 import shlex
 import socket
 from typing import Any, Dict, Iterable, List, Optional, Pattern
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 import uuid
 
 # First-Party
@@ -214,6 +215,12 @@ _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
     re.compile(r"mailto:", re.IGNORECASE),
 ]
 
+# Escape-sequence patterns rejected by percent-encoding hardening in URL validation.
+# IIS-style `%uXXXX` is not decoded by urllib; JS `\uXXXX`/`\xXX` bypass regex blocklists
+# when a URL is later embedded in a JavaScript context.
+_PERCENT_U_ESCAPE_RE: Pattern[str] = re.compile(r"%u[0-9a-fA-F]{4}", re.IGNORECASE)
+_JS_ESCAPE_RE: Pattern[str] = re.compile(r"\\[ux][0-9a-fA-F]+")
+
 # SQL injection patterns (precompiled with IGNORECASE)
 _SQL_PATTERNS: List[Pattern[str]] = [
     re.compile(r"[';\"\\]", re.IGNORECASE),
@@ -221,6 +228,43 @@ _SQL_PATTERNS: List[Pattern[str]] = [
     re.compile(r"/\*.*?\*/", re.IGNORECASE),
     re.compile(r"\b(union|select|insert|update|delete|drop|exec|execute)\b", re.IGNORECASE),
 ]
+
+
+def _unquote_if_needed(text: str) -> str:
+    """Decode percent-encoding only when the input actually contains `%`.
+
+    Most incoming URLs and identifiers have no percent-encoding; skipping
+    unquote() in that case avoids a full-string scan + allocation on the hot path.
+
+    NOTE: Mirrored in mcpgateway/plugins/framework/validators.py pending
+    extraction into a shared stdlib-only module (tracked by issue #4434).
+    """
+    return unquote(text) if "%" in text else text
+
+
+def _decode_strict(value: str, field_name: str) -> str:
+    """Decode once; reject payloads that remain percent-encoded after one pass.
+
+    Blocks the double-encoding bypass class: `%253Cscript%253E` decodes to
+    `%3Cscript%3E` under a single unquote(), which slips past regex blocklists
+    targeting literal `<script>`. A downstream consumer that decodes a second
+    time would then see `<script>`.
+    """
+    decoded = _unquote_if_needed(value)
+    if decoded is not value and unquote(decoded) != decoded:
+        raise ValueError(f"{field_name} contains double-encoded characters which are not allowed")
+    return decoded
+
+
+@lru_cache(maxsize=256)
+def _parse_ip_network_cached(network_str: str) -> "ipaddress._BaseNetwork":
+    """Parse a CIDR string and reuse the ip_network object across calls.
+
+    NOTE: `lru_cache` does not cache exceptions, so invalid CIDRs re-raise
+    (and re-parse) on every call. The caller is expected to catch ValueError
+    and emit a single warning per-call rather than per-iteration.
+    """
+    return ipaddress.ip_network(network_str, strict=False)
 
 
 # ============================================================================
@@ -376,16 +420,18 @@ class SecurityValidator:
         if not value:
             return value
 
-        # Check for patterns that could cause display issues
-        if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+        # Decode + double-encoding rejection so `%253Cscript%253E`-style payloads
+        # cannot bypass these pattern blocklists after a downstream second decode.
+        decoded_value = _decode_strict(value, field_name)
+
+        if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains HTML tags that may cause display issues")
 
-        if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
+        if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains script patterns that may cause display issues")
 
-        # Check for polyglot patterns (uses precompiled regex list)
         for pattern in _POLYGLOT_PATTERNS:
-            if pattern.search(value):
+            if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
         cleaned = _strip_html_tags(value)
@@ -580,11 +626,17 @@ class SecurityValidator:
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
 
-        # Block HTML-like patterns
-        if re.search(cls.VALIDATION_UNSAFE_URI_PATTERN, value):
+        # Decode + double-encoding rejection: `%252E%252E` would otherwise decode
+        # to `%2E%2E` and pass the `..` check, then decode again downstream to `..`.
+        decoded_value = _decode_strict(value, field_name)
+
+        if any(ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
+            raise ValueError(f"{field_name} contains control characters which are not allowed")
+
+        if re.search(cls.VALIDATION_UNSAFE_URI_PATTERN, decoded_value):
             raise ValueError(f"{field_name} cannot contain HTML special characters")
 
-        if ".." in value:
+        if ".." in decoded_value:
             raise ValueError(f"{field_name} cannot contain directory traversal sequences ('..')")
 
         if not re.search(cls.VALIDATION_SAFE_URI_PATTERN, value):
@@ -946,17 +998,208 @@ class SecurityValidator:
 
     @classmethod
     def validate_url(cls, value: str, field_name: str = "URL") -> str:
-        """Validate URLs for allowed schemes and safe display
+        """Validate URLs for allowed schemes and safe display.
+
+        Validation is performed on a percent-decoded copy of the URL to block
+        encoded injection payloads (CRLF, XSS, credential-separator smuggling,
+        protocol tunnelling). Double-encoded payloads, IIS `%uXXXX` escapes,
+        JS `\\uXXXX`/`\\xXX` escapes, and invalid UTF-8 overlong sequences are
+        also rejected. The **original**, un-decoded URL is returned on success
+        so callers can pass it through to downstream HTTP clients unchanged.
 
         Args:
             value (str): Value to validate
             field_name (str): Name of field being validated
 
         Returns:
-            str: Value if acceptable
+            str: The ORIGINAL (percent-encoded) URL if acceptable. Downstream
+                callers that perform their own `unquote()` on the returned
+                value MUST re-validate the decoded form.
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            Valid URLs (including legitimate percent-encoding in path/query).
+            Skipped when SSRF DNS resolution is unavailable; covered by unit tests.
+
+            >>> SecurityValidator.validate_url('https://example.com')  # doctest: +SKIP
+            'https://example.com'
+            >>> SecurityValidator.validate_url('http://example.com')  # doctest: +SKIP
+            'http://example.com'
+            >>> SecurityValidator.validate_url('ws://example.com')  # doctest: +SKIP
+            'ws://example.com'
+            >>> SecurityValidator.validate_url('wss://example.com')  # doctest: +SKIP
+            'wss://example.com'
+            >>> SecurityValidator.validate_url('https://example.com:8080/path')  # doctest: +SKIP
+            'https://example.com:8080/path'
+            >>> SecurityValidator.validate_url('https://example.com/path?query=value')  # doctest: +SKIP
+            'https://example.com/path?query=value'
+            >>> SecurityValidator.validate_url('https://example.com/hello%20world')  # doctest: +SKIP
+            'https://example.com/hello%20world'
+
+            Percent-encoded attack vectors (blocked):
+
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%0d%0aX:1')
+            ... except ValueError as e:
+            ...     'control characters' in str(e)
+            True
+            >>> try:  # doctest: +SKIP
+            ...     SecurityValidator.validate_url('https://example.com/%3Cscript%3E')
+            ... except ValueError as e:
+            ...     'HTML tags' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%253Cscript%253E')
+            ... except ValueError as e:
+            ...     'double-encoded' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%u003c')
+            ... except ValueError as e:
+            ...     '%u-style' in str(e)
+            True
+
+            Empty URL handling:
+
+            >>> SecurityValidator.validate_url('')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL cannot be empty
+
+            Length validation:
+
+            >>> long_url = 'https://example.com/' + 'a' * 2100
+            >>> SecurityValidator.validate_url(long_url)
+            Traceback (most recent call last):
+                ...
+            ValueError: URL exceeds maximum length of 2048
+
+            Scheme validation:
+
+            >>> SecurityValidator.validate_url('ftp://example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('file:///etc/passwd')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('data:text/plain,hello')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('vbscript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('about:blank')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('chrome://settings')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('mailto:test@example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            IPv6 URL blocking:
+
+            >>> SecurityValidator.validate_url('https://[::1]:8080/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+            >>> SecurityValidator.validate_url('https://[2001:db8::1]/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+
+            Protocol-relative URL blocking:
+
+            >>> SecurityValidator.validate_url('//example.com/path')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Control character injection:
+
+            >>> SecurityValidator.validate_url('https://example.com\\rHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains control characters which are not allowed
+            >>> SecurityValidator.validate_url('https://example.com\\nHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains control characters which are not allowed
+
+            Space validation:
+
+            >>> SecurityValidator.validate_url('https://exam ple.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains spaces which are not allowed in URLs
+            >>> SecurityValidator.validate_url('https://example.com/path?query=hello world')  # doctest: +SKIP
+            'https://example.com/path?query=hello world'
+
+            Malformed URLs:
+
+            >>> SecurityValidator.validate_url('https://')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL is not a valid URL
+            >>> SecurityValidator.validate_url('not-a-url')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Restricted IP addresses:
+
+            >>> SecurityValidator.validate_url('https://0.0.0.0/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid IP address (0.0.0.0)
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IP address blocked by SSRF protection ...
+
+            Invalid port numbers (SSRF runs before port check; skipped offline):
+
+            >>> SecurityValidator.validate_url('https://example.com:0/')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid port number
+            >>> try:  # doctest: +SKIP
+            ...     SecurityValidator.validate_url('https://example.com:65536/')
+            ... except ValueError as e:
+            ...     'Port out of range' in str(e) or 'invalid port' in str(e)
+            True
+
+            Credentials in URL (SSRF runs before credentials check; skipped offline):
+
+            >>> SecurityValidator.validate_url('https://user@example.com/')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains credentials which are not allowed
+
+            XSS patterns in URLs:
+
+            >>> SecurityValidator.validate_url('https://example.com/<script>')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_url('https://example.com?param=javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains unsupported or potentially dangerous protocol
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -965,30 +1208,58 @@ class SecurityValidator:
         if len(value) > cls.MAX_URL_LENGTH:
             raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
 
-        # Check allowed schemes
+        # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
+        decoded_value = _decode_strict(value, field_name)
+
+        # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
+        # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
+        # to close the double-encoded `%25uXXXX` bypass.
+        if _PERCENT_U_ESCAPE_RE.search(value) or _PERCENT_U_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains non-standard %u-style escapes which are not allowed")
+
+        # Reject JS-style `\uXXXX`/`\xXX` escapes that bypass blocklists in JS contexts.
+        if _JS_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains JavaScript-style escape sequences which are not allowed")
+
+        # `unquote()` emits U+FFFD for invalid UTF-8 / overlong sequences (e.g. `%c0%bc`);
+        # legitimate percent-encoded UTF-8 never decodes to U+FFFD.
+        if "\ufffd" in decoded_value:
+            raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
+
+        # Check allowed schemes (lowercase value once, not per scheme).
         allowed_schemes = cls.ALLOWED_URL_SCHEMES
-        if not any(value.lower().startswith(scheme.lower()) for scheme in allowed_schemes):
+        value_lower = value.lower()
+        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
             raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
 
-        # Block dangerous URL patterns (uses precompiled regex list)
+        # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:
+        # downstream consumers may extract query/fragment and reuse as URLs elsewhere).
+        # Conservative by design; legitimate `mailto:`/`ftp:` in query strings should
+        # be sent as separate structured fields rather than embedded in a URL.
         for pattern in _DANGEROUS_URL_PATTERNS:
-            if pattern.search(value):
+            if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
-        # Block IPv6 URLs (URLs with square brackets)
-        if "[" in value or "]" in value:
+        # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
+        # suffices: unquote() never removes non-`%` chars, so any `[` in
+        # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
+        if "[" in decoded_value or "]" in decoded_value:
             raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
         # Block protocol-relative URLs
         if value.startswith("//"):
             raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
 
-        # Check for CRLF injection
-        if "\r" in value or "\n" in value:
-            raise ValueError(f"{field_name} contains line breaks which are not allowed")
+        # Reject C0 control characters (literal or decoded from %00–%1f) and DEL.
+        # Subsumes the prior CRLF-only check: NUL (%00), TAB (%09), VT (%0b),
+        # FF (%0c), and DEL (%7f) are equally illegitimate in URLs.
+        if any(ch != " " and ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
+            raise ValueError(f"{field_name} contains control characters which are not allowed")
 
-        # Check for spaces in domain
-        if " " in value.split("?", maxsplit=1)[0]:  # Check only in the URL part, not query string
+        # Literal space check uses `value` (NOT decoded): `%20` is the standard
+        # encoding for space in paths and must remain valid. Authority-level
+        # encoded-space bypass is handled separately after urlparse below.
+        if " " in value.split("?", maxsplit=1)[0]:
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
         # Basic URL structure validation
@@ -1001,31 +1272,38 @@ class SecurityValidator:
             if "[" in result.netloc or "]" in result.netloc:
                 raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
-            # SSRF Protection: Block dangerous IP addresses and hostnames
+            # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
+            # authority injection without breaking encoded-space in path/query.
+            decoded_netloc = _unquote_if_needed(result.netloc)
+            if any(ch.isspace() for ch in decoded_netloc):
+                raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
+            # SSRF hostname check: urlparse does NOT percent-decode `hostname`,
+            # so `%31%32%37%2E%30%2E%30%2E%31` (= 127.0.0.1) bypasses without this.
             hostname = result.hostname
             if hostname:
-                # Always block 0.0.0.0 (all interfaces) regardless of SSRF settings
-                if hostname == "0.0.0.0":  # nosec B104 - we're blocking this for security
+                decoded_hostname = _unquote_if_needed(hostname)
+                if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                # Apply SSRF protection if enabled
                 if settings.ssrf_protection_enabled:
-                    cls._validate_ssrf(hostname, field_name)
+                    cls._validate_ssrf(decoded_hostname, field_name)
 
             # Validate port number
             if result.port is not None:
                 if result.port < 1 or result.port > 65535:
                     raise ValueError(f"{field_name} contains invalid port number")
 
-            # Check for credentials in URL
-            if result.username or result.password:
+            # Credentials: `result.username`/`password` catches literal `user:pass@`;
+            # `@` in decoded_netloc catches percent-encoded userinfo (e.g. `user%3Apass@`).
+            if result.username or result.password or "@" in decoded_netloc:
                 raise ValueError(f"{field_name} contains credentials which are not allowed")
 
             # Check for XSS patterns in the entire URL
-            if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+            if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
 
-            if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
+            if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains script patterns that may cause security issues")
 
         except ValueError:
@@ -1094,6 +1372,11 @@ class SecurityValidator:
             >>> with patch('mcpgateway.common.validators.settings', mock_settings):
             ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
         """
+        # Defensive idempotent decode: percent-encoded hostnames (e.g.
+        # %31%32%37%2E%30%2E%30%2E%31 = 127.0.0.1) must be normalized for
+        # callers other than validate_url() which already decodes.
+        hostname = _unquote_if_needed(hostname)
+
         # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
         hostname_normalized = hostname.lower().rstrip(".")
 
@@ -1136,9 +1419,8 @@ class SecurityValidator:
             # Check against blocked networks (always blocked regardless of other settings)
             for network_str in settings.ssrf_blocked_networks:
                 try:
-                    network = ipaddress.ip_network(network_str, strict=False)
+                    network = _parse_ip_network_cached(network_str)
                 except ValueError:
-                    # Invalid network in config - log and skip
                     logger.warning(f"Invalid CIDR in ssrf_blocked_networks: {network_str}")
                     continue
 
@@ -1157,7 +1439,7 @@ class SecurityValidator:
                     allowed_networks = getattr(settings, "ssrf_allowed_networks", []) or []
                     for network_str in allowed_networks:
                         try:
-                            network = ipaddress.ip_network(network_str, strict=False)
+                            network = _parse_ip_network_cached(network_str)
                         except ValueError:
                             logger.warning(f"Invalid CIDR in ssrf_allowed_networks: {network_str}")
                             continue
@@ -1245,9 +1527,12 @@ class SecurityValidator:
         """
         if not value:
             return  # Empty values are considered safe
-        # Check for dangerous HTML tags
-        if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+        # Decode + double-encoding rejection so `%253Cscript%253E` cannot slip past.
+        decoded_value = _decode_strict(value, field_name)
+        if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+        if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains script patterns that may cause security issues")
 
     @classmethod
     def validate_json_depth(
@@ -1546,6 +1831,13 @@ class SecurityValidator:
         Raises:
             ValueError: If parameter contains SQL injection patterns in strict mode
 
+        .. note::
+            This method decodes percent-encoding before checking patterns.
+            Callers that pass already-decoded strings will work correctly,
+            but callers that pass percent-encoded strings (e.g. ``%27``)
+            will see the decoded form (``'``) matched against SQL patterns.
+            Pass raw, non-encoded values when possible.
+
         Examples:
             >>> SecurityValidator.validate_sql_parameter('safe_value')
             'safe_value'
@@ -1555,9 +1847,12 @@ class SecurityValidator:
         if not isinstance(value, str):
             return value
 
-        # Check for SQL injection patterns (uses precompiled regex list)
+        # Decode + double-encoding rejection so `%2527` / `%252D%252D`-style bypasses
+        # are caught even when a downstream consumer decodes again.
+        decoded_value = _decode_strict(value, "Parameter")
+
         for pattern in _SQL_PATTERNS:
-            if pattern.search(value):
+            if pattern.search(decoded_value):
                 if getattr(settings, "validation_strict", True):
                     raise ValueError("Parameter contains SQL injection patterns")
                 # Basic escaping
