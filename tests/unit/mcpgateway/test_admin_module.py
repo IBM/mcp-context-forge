@@ -1419,7 +1419,6 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
                 SimpleNamespace(id="team-4", name="Beta", slug="beta", is_active=False, visibility="private"),
             ]
 
-
     class _StubAuthService:
         def __init__(self, _db):
             self._user = None
@@ -1479,7 +1478,6 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
                 SimpleNamespace(id="t-3", name="Gamma", slug="gamma", description="desc", visibility="private", is_active=False),
             ]
 
-
     class _StubAuthService:
         def __init__(self, _db):
             self._user = None
@@ -1496,15 +1494,11 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
 
     auth_service._user = SimpleNamespace(is_admin=True)
     result = await admin.admin_search_teams(q="alp", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@example.com"})
-    assert result == [
-        {"id": "t-1", "name": "Alpha", "slug": "alpha", "description": "desc", "visibility": "public", "is_active": True}
-    ]
+    assert result == [{"id": "t-1", "name": "Alpha", "slug": "alpha", "description": "desc", "visibility": "public", "is_active": True}]
 
     auth_service._user = SimpleNamespace(is_admin=False)
     result = await admin.admin_search_teams(q="be", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@example.com"})
-    assert result == [
-        {"id": "t-2", "name": "Beta", "slug": "beta", "description": "desc", "visibility": "public", "is_active": True}
-    ]
+    assert result == [{"id": "t-2", "name": "Beta", "slug": "beta", "description": "desc", "visibility": "public", "is_active": True}]
 
 
 @pytest.mark.asyncio
@@ -1570,12 +1564,12 @@ async def test_admin_get_server_success(monkeypatch):
     mock_masked.model_dump.return_value = {"id": "server-1"}
     mock_server.masked.return_value = mock_masked
 
-    async def _fake_get_server(_db, _server_id):
+    async def _fake_get_server(_db, _server_id, **_kwargs):
         return mock_server
 
     monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
 
-    result = await admin.admin_get_server("server-1", db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_get_server("server-1", _make_request(), db=mock_db, user={"email": "user@example.com"})
     assert result == {"id": "server-1"}
     mock_server.masked.assert_called_once()
     mock_masked.model_dump.assert_called_once_with(by_alias=True)
@@ -1585,13 +1579,13 @@ async def test_admin_get_server_success(monkeypatch):
 async def test_admin_get_server_not_found(monkeypatch):
     mock_db = MagicMock()
 
-    async def _fake_get_server(_db, _server_id):
+    async def _fake_get_server(_db, _server_id, **_kwargs):
         raise ServerNotFoundError("missing")
 
     monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
 
     with pytest.raises(HTTPException) as exc:
-        await admin.admin_get_server("missing", db=mock_db, user={"email": "user@example.com"})
+        await admin.admin_get_server("missing", _make_request(), db=mock_db, user={"email": "user@example.com"})
 
     assert exc.value.status_code == 404
 
