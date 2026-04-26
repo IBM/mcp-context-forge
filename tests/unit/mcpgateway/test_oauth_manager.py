@@ -534,6 +534,50 @@ class TestOAuthManager:
                         mock_store_tokens.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_complete_authorization_code_flow_omitted_expires_in_passes_none(self):
+        """Provider responses without ``expires_in`` flow through as ``expires_in=None`` to store_tokens."""
+        # Standard
+        import base64
+        import hashlib
+        import hmac
+        import json
+        from unittest.mock import patch
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
+            mock_get_settings.return_value = mock_settings
+
+            mock_token_storage = Mock()
+            manager = OAuthManager(token_storage=mock_token_storage)
+
+            gateway_id = "gateway123"
+            code = "auth_code_123"
+            # Standard
+            from datetime import datetime, timezone
+
+            state_data = {"gateway_id": gateway_id, "app_user_email": "test@example.com", "nonce": "state-no-exp", "timestamp": datetime.now(timezone.utc).isoformat()}
+            state_bytes = json.dumps(state_data, separators=(",", ":")).encode()
+            secret_key = b"test-secret-key"
+            signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+            state = base64.urlsafe_b64encode(state_bytes + signature).decode()
+
+            credentials = {"client_id": "test_client"}
+            # Provider response intentionally omits expires_in (e.g. GitHub OAuth Apps).
+            token_response = {"access_token": "access123", "refresh_token": "refresh123"}
+
+            await manager._store_authorization_state(gateway_id, state, code_verifier="cv-no-exp", app_user_email="test@example.com")
+
+            with patch.object(manager, "_exchange_code_for_tokens", return_value=token_response):
+                with patch.object(manager, "_extract_user_id", return_value="user123"):
+                    with patch.object(mock_token_storage, "store_tokens", new_callable=AsyncMock) as mock_store_tokens:
+                        mock_store_tokens.return_value = Mock(expires_at=None)
+                        await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+
+            mock_store_tokens.assert_called_once()
+            assert mock_store_tokens.call_args.kwargs["expires_in"] is None
+
+    @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_invalid_state(self):
         """Test authorization code flow completion with invalid state."""
         # Standard

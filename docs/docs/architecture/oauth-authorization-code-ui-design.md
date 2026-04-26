@@ -233,7 +233,6 @@ For user authentication and RBAC configuration, see [RBAC Configuration](../mana
 | --- | --- | --- |
 | `OAUTH_REQUEST_TIMEOUT` | `30` | Timeout for OAuth HTTP requests |
 | `OAUTH_MAX_RETRIES` | `3` | Retry count for token exchanges |
-| `OAUTH_DEFAULT_TIMEOUT` | `3600` | Default `expires_in` when provider omits it |
 | `AUTH_ENCRYPTION_SECRET` | `my-test-salt` | Encrypts OAuth tokens and signs state |
 | `CACHE_TYPE` | `database` | `redis`, `database`, `memory`, or `none` |
 | `REDIS_URL` | `redis://localhost:6379` | Required when `CACHE_TYPE=redis` |

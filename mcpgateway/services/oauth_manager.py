@@ -779,18 +779,13 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
-            # Use provider's expires_in if present; None means the provider
-            # does not specify token expiration (e.g. GitHub OAuth Apps).
-            raw_expires = token_response.get("expires_in")
-            expires_in = int(raw_expires) if raw_expires is not None else None
-
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
                 app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
-                expires_in=expires_in,
+                expires_in=parse_expires_in(token_response),
                 scopes=token_response.get("scope", "").split(),
             )
 
@@ -1665,3 +1660,61 @@ class OAuthEnforcementUnavailableError(OAuthError):
         """
         super().__init__(message)
         self.server_id = server_id
+
+
+def parse_expires_in(token_response: Dict[str, Any]) -> Optional[int]:
+    """Parse and validate the ``expires_in`` field from an OAuth token response.
+
+    RFC 6749 §5.1 marks ``expires_in`` as RECOMMENDED (not REQUIRED). When the
+    field is absent or null, the gateway records ``expires_at`` as ``None`` and
+    the token is treated as having no known local expiry, subject to the
+    stale-token cleanup policy in
+    :meth:`mcpgateway.services.token_storage_service.TokenStorageService.cleanup_expired_tokens`.
+
+    Args:
+        token_response: Raw OAuth token response dict from the provider.
+
+    Returns:
+        ``int`` lifetime in seconds when the provider supplied a non-negative
+        integer (or numeric string convertible to one), or ``None`` when the
+        field is absent or explicitly null.
+
+    Raises:
+        OAuthError: If ``expires_in`` is present but malformed (negative,
+            non-numeric, or a non-scalar type).
+
+    Examples:
+        >>> parse_expires_in({"expires_in": 3600})
+        3600
+        >>> parse_expires_in({"expires_in": "3600"})
+        3600
+        >>> parse_expires_in({"expires_in": 0})
+        0
+        >>> parse_expires_in({}) is None
+        True
+        >>> parse_expires_in({"expires_in": None}) is None
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": -1})
+        ... except OAuthError as exc:
+        ...     "negative" in str(exc)
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": "garbage"})
+        ... except OAuthError as exc:
+        ...     "Invalid expires_in" in str(exc)
+        True
+    """
+    raw = token_response.get("expires_in")
+    if raw is None:
+        return None
+    # Reject bools (True/False are int subclasses in Python) and any non-scalar types.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}") from exc
+    if value < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {value}")
+    return value

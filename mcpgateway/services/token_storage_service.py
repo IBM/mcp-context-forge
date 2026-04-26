@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -104,9 +104,12 @@ class TokenStorageService:
 
             # Calculate expiration (None if provider does not specify expires_in)
             if expires_in is not None:
-                expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             else:
-                logger.info(f"No expires_in from OAuth provider for gateway {SecurityValidator.sanitize_log_message(gateway_id)} — token will not auto-expire")
+                logger.info(
+                    "No expires_in from OAuth provider for gateway %s; token will not auto-expire",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                )
                 expires_at = None
             # Create or update token record - now scoped by app_user_email
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
@@ -297,7 +300,7 @@ class TokenStorageService:
 
             # Use OAuthManager to refresh the token
             # First-Party
-            from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.oauth_manager import OAuthManager, parse_expires_in  # pylint: disable=import-outside-toplevel
 
             oauth_manager = OAuthManager()
 
@@ -313,7 +316,9 @@ class TokenStorageService:
             # Update stored tokens with new values
             new_access_token = token_response["access_token"]
             new_refresh_token = token_response.get("refresh_token", refresh_token)  # Some providers return new refresh token
-            expires_in = token_response.get("expires_in", 3600)
+            # Reuse the same parsing as the initial-auth path so refresh and
+            # callback flows agree on what "missing expires_in" means.
+            expires_in = parse_expires_in(token_response)
 
             # Encrypt new tokens if encryption is available
             encrypted_access = new_access_token
@@ -325,7 +330,14 @@ class TokenStorageService:
             # Update the token record
             token_record.access_token = encrypted_access
             token_record.refresh_token = encrypted_refresh
-            token_record.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+            if expires_in is not None:
+                token_record.expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            else:
+                logger.info(
+                    "No expires_in on refresh response for gateway %s; clearing local expiry",
+                    SecurityValidator.sanitize_log_message(token_record.gateway_id),
+                )
+                token_record.expires_at = None
             token_record.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
@@ -344,6 +356,14 @@ class TokenStorageService:
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
         """Check if token is expired or near expiration.
+
+        Tokens with ``expires_at IS NULL`` are returned as non-expired by
+        design: when the OAuth provider omits ``expires_in`` (RFC 6749 §5.1
+        marks it RECOMMENDED, not REQUIRED — see e.g. GitHub OAuth Apps),
+        the gateway has no local lifetime to check against. Stale-token
+        accumulation is bounded by
+        :meth:`cleanup_expired_tokens`, which ages out NULL-expiry rows
+        once ``created_at`` exceeds ``max_age_days``.
 
         Args:
             token_record: OAuth token record to check
@@ -370,6 +390,7 @@ class TokenStorageService:
             False
         """
         if not token_record.expires_at:
+            # No provider-supplied lifetime; treat as non-expired (see contract above).
             return False
         expires_at = token_record.expires_at
         if expires_at.tzinfo is None:
@@ -471,14 +492,22 @@ class TokenStorageService:
             return False
 
     async def cleanup_expired_tokens(self, max_age_days: int = 30) -> int:
-        """Clean up expired OAuth tokens older than specified days.
+        """Clean up stale OAuth tokens older than ``max_age_days``.
 
-        Uses a single SQL DELETE statement instead of loading tokens into memory
-        and deleting them one by one. This is more efficient and avoids memory
-        issues when many tokens expire at once.
+        Two cohorts are deleted in a single SQL ``DELETE`` so the table doesn't
+        accumulate dead rows:
+
+        1. Tokens whose ``expires_at`` is older than the cutoff (the original
+           "expired more than N days ago" behaviour).
+        2. Tokens with ``expires_at IS NULL`` (provider omitted ``expires_in``)
+           whose ``created_at`` is older than the cutoff. ``NULL < <cutoff>``
+           evaluates to ``NULL`` in SQL three-valued logic, so without this
+           branch those rows would never age out.
 
         Args:
-            max_age_days: Maximum age of tokens to keep
+            max_age_days: Maximum age of tokens to keep, measured from
+                ``expires_at`` for tokens with a known expiry and from
+                ``created_at`` for tokens with no provider-supplied expiry.
 
         Returns:
             Number of tokens cleaned up
@@ -495,17 +524,21 @@ class TokenStorageService:
         try:
             cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=max_age_days)
 
-            result = self.db.execute(delete(OAuthToken).where(OAuthToken.expires_at < cutoff_date))
+            stale_filter = or_(
+                OAuthToken.expires_at < cutoff_date,
+                and_(OAuthToken.expires_at.is_(None), OAuthToken.created_at < cutoff_date),
+            )
+            result = self.db.execute(delete(OAuthToken).where(stale_filter))
             count = result.rowcount
 
             self.db.commit()
 
             if count > 0:
-                logger.info(f"Cleaned up {count} expired OAuth tokens")
+                logger.info("Cleaned up %d stale OAuth tokens", count)
 
             return count
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to cleanup expired tokens: {str(e)}")
+            logger.error("Failed to cleanup expired tokens: %s", e)
             return 0
