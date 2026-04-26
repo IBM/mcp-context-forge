@@ -125,7 +125,7 @@ def test_get_ratelimiter_redis_connection_test():
 def test_get_ratelimiter_redis_url_sanitization(caplog):
     """Test credentials are stripped from logged URL."""
     with patch("mcpgateway.auth.settings") as mock_settings:
-        mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"
+        mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"  # pragma: allowlist secret
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5

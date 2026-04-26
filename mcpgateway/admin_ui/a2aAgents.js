@@ -478,6 +478,7 @@ export const editA2AAgent = async function (agentId) {
     );
     const oauthRedirectUriField = safeGetElement("oauth-redirect-uri-a2a-edit");
     const oauthIssuerField = safeGetElement("oauth-issuer-a2a-edit");
+    const oauthResourceField = safeGetElement("oauth-resource-a2a-edit");
     const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
     const oauthAuthCodeFields = safeGetElement(
       "oauth-auth-code-fields-a2a-edit"
@@ -584,6 +585,12 @@ export const editA2AAgent = async function (agentId) {
             oauthScopesField.value = Array.isArray(config.scopes)
               ? config.scopes.join(" ")
               : "";
+          }
+          if (oauthResourceField) {
+            // resource may be string or list (RFC 8707 allows both shapes)
+            oauthResourceField.value = Array.isArray(config.resource)
+              ? config.resource.join(", ")
+              : config.resource || "";
           }
         }
         break;
