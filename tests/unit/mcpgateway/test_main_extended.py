@@ -12118,7 +12118,7 @@ class TestRemainingCoverageGaps:
         import mcpgateway.main as main_mod
 
         request = _make_request("/v1/tags")
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _request, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _request, _user: ("u", [], False))
 
         monkeypatch.setattr(main_mod.tag_service, "get_all_tags", AsyncMock(return_value=[]))
         _ = await main_mod.list_tags.__wrapped__(request, "Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})

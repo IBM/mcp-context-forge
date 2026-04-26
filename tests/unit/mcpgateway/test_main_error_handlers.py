@@ -592,7 +592,7 @@ class TestPromptServiceErrorHandlers:
                 "team_id": None,
                 "visibility": "public",
             }
-            response = test_client.post("/prompts/", json=request_data, headers=auth_headers)
+            response = test_client.post("/v1/prompts/", json=request_data, headers=auth_headers)
 
             # Should get 400 from TemplateValidationError handler
             assert response.status_code == 400
@@ -617,7 +617,7 @@ class TestPromptServiceErrorHandlers:
                 "template": "Hello {{ name }}",
                 "description": "Test prompt",
             }
-            response = test_client.put("/prompts/test-id", json=update_data, headers=auth_headers)
+            response = test_client.put("/v1/prompts/test-id", json=update_data, headers=auth_headers)
 
             # Should get 400 from TemplateValidationError handler
             assert response.status_code == 400
@@ -786,7 +786,7 @@ class TestAdminTemplateValidationErrorHandlers:
                 "template": "Hello {{ name }}",
                 "description": "Test prompt",
             }
-            response = test_client.post("/admin/prompts", data=form_data, headers=auth_headers)
+            response = test_client.post("/v1/admin/prompts", data=form_data, headers=auth_headers)
 
             # Should get 400 from TemplateValidationError handler
             assert response.status_code == 400
@@ -811,7 +811,7 @@ class TestAdminTemplateValidationErrorHandlers:
                 "template": "Hello {{ name }}",  # Valid format, but service will raise error
                 "description": "Test prompt",
             }
-            response = test_client.post("/admin/prompts/test-id/edit", data=form_data, headers=auth_headers)
+            response = test_client.post("/v1/admin/prompts/test-id/edit", data=form_data, headers=auth_headers)
 
             # Should get 400 from TemplateValidationError handler
             assert response.status_code == 400

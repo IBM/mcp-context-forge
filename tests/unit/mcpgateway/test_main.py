@@ -679,8 +679,8 @@ class TestProtocolEndpoints:
         """Test ping endpoint with invalid method."""
         req = {"jsonrpc": "2.0", "method": "invalid", "id": "test-id"}
         response = test_client.post("/v1/protocol/ping", json=req, headers=auth_headers)
-        # Implementation raises 5xx for unsupported method
-        assert response.status_code == 500
+        # Implementation raises 400 for unsupported method
+        assert response.status_code == 400
 
     @patch("mcpgateway.main.logging_service.notify")
     def test_handle_notification_initialized(self, mock_notify, test_client, auth_headers):
@@ -807,7 +807,7 @@ class TestProtocolEndpoints:
         mock_completion.side_effect = CompletionError("invalid completion request")
 
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
-        response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
+        response = test_client.post("/v1/protocol/completion/complete", json=req, headers=auth_headers)
 
         assert response.status_code == 400
         assert "invalid completion request" in response.json()["detail"]
@@ -829,7 +829,7 @@ class TestProtocolEndpoints:
 
         mock_sampling.side_effect = SamplingError("invalid sampling payload")
         req = {"messages": [{"role": "user", "content": {"type": "text", "text": "Hello"}}]}
-        response = test_client.post("/protocol/sampling/createMessage", json=req, headers=auth_headers)
+        response = test_client.post("/v1/protocol/sampling/createMessage", json=req, headers=auth_headers)
 
         assert response.status_code == 400
         assert "invalid sampling payload" in response.json()["detail"]
@@ -913,7 +913,7 @@ class TestServerEndpoints:
         from mcpgateway.services.server_service import ServerNotFoundError
 
         mock_get.side_effect = ServerNotFoundError("Server not found: secret_server")
-        response = test_client.get("/servers/secret_server", headers=auth_headers)
+        response = test_client.get("/v1/servers/secret_server", headers=auth_headers)
         assert response.status_code == 404
         mock_get.assert_called_once()
 
@@ -1134,7 +1134,7 @@ class TestToolEndpoints:
         from mcpgateway.services.tool_service import ToolNotFoundError
 
         mock_get.side_effect = ToolNotFoundError("Tool not found: secret_tool")
-        response = test_client.get("/tools/secret_tool", headers=auth_headers)
+        response = test_client.get("/v1/tools/secret_tool", headers=auth_headers)
         assert response.status_code == 404
         mock_get.assert_called_once()
 
@@ -1278,33 +1278,7 @@ class TestResourceEndpoints:
         assert data["error"] == "Unsupported Media Type"
         assert data["mime_type"] == "application/x-executable"
 
-    @patch("mcpgateway.main.resource_service.update_resource")
-    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
-        """Test update_resource returns 415 for unsupported MIME type."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
-        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
-        req = {"mime_type": "text/plain", "content": "hello"}
-        response = test_client.put("/resources/1", json=req, headers=auth_headers)
-        assert response.status_code == 415
-        data = response.json()["detail"]
-        assert data["error"] == "Unsupported Media Type"
-        assert data["mime_type"] == "application/x-executable"
-
-    @patch("mcpgateway.main.resource_service.update_resource")
-    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
-        """Test update_resource returns 415 for unsupported MIME type."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
-
-        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
-        req = {"mime_type": "text/plain", "content": "hello"}
-        response = test_client.put("/resources/1", json=req, headers=auth_headers)
-        assert response.status_code == 415
-        data = response.json()["detail"]
-        assert data["error"] == "Unsupported Media Type"
-        assert data["mime_type"] == "application/x-executable"
 
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
@@ -1454,7 +1428,7 @@ class TestResourceEndpoints:
         WHERE clause and leak other users' private templates.
         """
         mock_list.return_value = []
-        response = test_client.get("/resources/templates/list", headers=auth_headers)
+        response = test_client.get("/v1/resources/templates/list", headers=auth_headers)
         assert response.status_code == 200
         mock_list.assert_called_once()
         call_kwargs = mock_list.call_args.kwargs
@@ -1695,72 +1669,9 @@ class TestPromptEndpoints:
     def test_update_prompt_validation_and_integrity_errors(self, mock_update, exc, status_code, test_client, auth_headers):
         """Test update_prompt error branches for validation/integrity errors."""
         mock_update.side_effect = exc
-<<<<<<< HEAD
-
-    @patch("mcpgateway.main.prompt_service.register_prompt")
-    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
-        """Test create_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/prompts/", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-
-    @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
-        """Test update_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"template": "x" * 15000}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-
-    @patch("mcpgateway.main.prompt_service.register_prompt")
-    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
-        """Test create_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/prompts/", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-
-    @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
-        """Test update_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
-        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"template": "x" * 15000}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-=======
         req = {"description": "Updated description"}
         response = test_client.put("/v1/prompts/test_prompt", json=req, headers=auth_headers)
         assert response.status_code == status_code
->>>>>>> c30329b33 (Refactor API paths to include versioning in tests)
 
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
@@ -1786,46 +1697,8 @@ class TestPromptEndpoints:
         assert data["actual_size"] == 15000
         assert data["max_size"] == 10240
 
-    @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_content_pattern_error(self, mock_update, test_client, auth_headers):
-        """Test update_prompt returns 400 for template validation error with dangerous pattern."""
-        # First-Party
-        from mcpgateway.services.content_security import TemplateValidationError
 
-        mock_update.side_effect = TemplateValidationError(template_name="test_prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__")
-        req = {"template": "Hello {{name}}"}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == 400
-        data = response.json()["detail"]
-        assert data["error"] == "Template validation failed"
-        assert data["template_name"] == "test_prompt"
-        assert "dangerous pattern" in data["reason"].lower()
-        assert data["pattern"] == "__import__"
-        assert "message" in data
 
-    @patch("mcpgateway.main.prompt_service.register_prompt")
-    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
-        """Test create_prompt returns 413 for content size limit exceeded."""
-        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/prompts/", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
-
-    @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
-        """Test update_prompt returns 413 for content size limit exceeded."""
-        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
-        req = {"template": "x" * 15000}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-        assert response.status_code == 413
-        data = response.json()["detail"]
-        assert data["error"] == "Prompt size limit exceeded"
-        assert data["actual_size"] == 15000
-        assert data["max_size"] == 10240
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_content_pattern_error(self, mock_update, test_client, auth_headers):
@@ -1835,7 +1708,7 @@ class TestPromptEndpoints:
 
         mock_update.side_effect = TemplateValidationError(template_name="test_prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__")
         req = {"template": "Hello {{name}}"}
-        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        response = test_client.put("/v1/prompts/test_prompt", json=req, headers=auth_headers)
         assert response.status_code == 400
         data = response.json()["detail"]
         assert data["error"] == "Template validation failed"
@@ -1923,8 +1796,6 @@ class TestPromptEndpoints:
         mock_get.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
-<<<<<<< HEAD
-=======
     def test_get_prompt_no_args(self, mock_get, test_client, auth_headers):
         """Test getting a prompt without arguments."""
         mock_get.return_value = {"name": "test", "template": "Hello"}
@@ -1933,7 +1804,6 @@ class TestPromptEndpoints:
         mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
->>>>>>> c30329b33 (Refactor API paths to include versioning in tests)
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
         """GET /prompts/{id} returns 422 when prompt name is ambiguous across scopes."""
         # First-Party
@@ -1957,7 +1827,7 @@ class TestPromptEndpoints:
         from mcpgateway.services.prompt_service import PromptNotFoundError
 
         mock_get.side_effect = PromptNotFoundError("Prompt not found: secret_prompt")
-        response = test_client.post("/prompts/secret_prompt", json={"name": "value"}, headers=auth_headers)
+        response = test_client.post("/v1/prompts/secret_prompt", json={"name": "value"}, headers=auth_headers)
         assert response.status_code == 404
         assert "not found" in response.json()["message"].lower()
 
@@ -2144,7 +2014,7 @@ class TestGatewayEndpoints:
         from mcpgateway.services.gateway_service import GatewayNotFoundError
 
         mock_get.side_effect = GatewayNotFoundError("Gateway not found: secret_gateway")
-        response = test_client.get("/gateways/secret_gateway", headers=auth_headers)
+        response = test_client.get("/v1/gateways/secret_gateway", headers=auth_headers)
         assert response.status_code == 404
         mock_get.assert_called_once()
 
