@@ -63,7 +63,7 @@ wrapper or whether the helper genuinely deserves promotion to the public API.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
@@ -1594,6 +1594,62 @@ async def get_current_user(
                         detail="Token has been revoked",
                         headers={"WWW-Authenticate": "Bearer"},
                     )
+
+                # Idle timeout enforcement.
+                #
+                # Activity source-of-truth precedence (most-recent first):
+                #   1. Redis key `token:activity:{jti}` written by `update_activity()`.
+                #   2. Optional `last_activity` JWT claim (issuer can set this for first-request bootstrap).
+                #   3. Standard `iat` JWT claim (always present on tokens issued by this gateway).
+                # If none of the three are available we skip the idle check rather than fail-open silently —
+                # the periodic revocation check above already handles tokens that should be denied outright.
+                if settings.token_idle_timeout > 0:
+                    # First-Party
+                    from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
+
+                    blocklist_service = get_token_blocklist_service()
+
+                    last_activity: Optional[datetime] = None
+                    try:
+                        last_activity = blocklist_service.get_last_activity(jti)
+                    except Exception as activity_lookup_error:
+                        logger.debug(f"Failed to read last activity from cache: {activity_lookup_error}")
+
+                    if last_activity is None:
+                        last_activity_ts = payload.get("last_activity") or payload.get("iat")
+                        if last_activity_ts:
+                            last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
+
+                    if last_activity is not None:
+                        current_time = datetime.now(timezone.utc)
+                        idle_duration = current_time - last_activity
+                        max_idle = timedelta(minutes=settings.token_idle_timeout)
+
+                        if idle_duration > max_idle:
+                            # Revoke token due to idle timeout
+                            try:
+                                exp_ts = payload.get("exp")
+                                token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc) if exp_ts else None
+
+                                blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity)
+                            except Exception as revoke_error:
+                                logger.warning(f"Failed to revoke idle token: {revoke_error}")
+
+                            logger.warning(
+                                f"Token exceeded idle timeout: jti={jti}, idle_minutes={idle_duration.total_seconds() / 60:.1f}",
+                                extra={"security_event": "idle_timeout", "security_severity": "medium", "jti": jti, "user_id": email},
+                            )
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail=f"Token exceeded idle timeout ({settings.token_idle_timeout} minutes)",
+                                headers={"WWW-Authenticate": "Bearer"},
+                            )
+
+                        try:
+                            blocklist_service.update_activity(jti)
+                        except Exception as activity_error:
+                            logger.debug(f"Failed to update token activity: {activity_error}")
+
             except HTTPException:
                 raise
             except Exception as revoke_check_error:
