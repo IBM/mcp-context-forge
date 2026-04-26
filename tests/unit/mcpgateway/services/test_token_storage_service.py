@@ -156,6 +156,45 @@ async def test_store_tokens_exception(service, mock_db):
     mock_db.rollback.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_store_tokens_no_expires_in_persists_null(service, mock_db, caplog):
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="user-1",
+            app_user_email="user@test.com",
+            access_token="access123",
+            refresh_token="refresh123",
+            expires_in=None,
+            scopes=["read"],
+        )
+    mock_db.add.assert_called_once()
+    new_record = mock_db.add.call_args.args[0]
+    assert new_record.expires_at is None
+    assert any("token will not auto-expire" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_store_tokens_update_existing_clears_expires_at_when_no_expires_in(service, mock_db):
+    existing = _make_token_record()
+    assert existing.expires_at is not None
+    mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+    await service.store_tokens(
+        gateway_id="gw-1",
+        user_id="user-1",
+        app_user_email="user@test.com",
+        access_token="new_access",
+        refresh_token="new_refresh",
+        expires_in=None,
+        scopes=["read"],
+    )
+    assert existing.expires_at is None
+
+
 # ---------- get_user_token ----------
 
 
@@ -297,6 +336,49 @@ async def test_refresh_success(service, mock_db):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
     mock_db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_expires_in_preserves_prior_ttl(service, mock_db):
+    """Refresh response missing expires_in: preserve the prior TTL so proactive refresh keeps working."""
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "refresh_token": "new_refresh"})
+
+    # Token issued 100 seconds ago with a 1-hour TTL.
+    record = _make_token_record()
+    issued = datetime.now(tz=timezone.utc) - timedelta(seconds=100)
+    record.updated_at = issued
+    record.expires_at = issued + timedelta(seconds=3600)
+
+    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        result = await service._refresh_access_token(record)
+
+    assert result == "new_access"
+    # Prior TTL preserved: new expires_at should be ~3600s after the refresh moment (now).
+    assert record.expires_at is not None
+    delta = (record.expires_at - record.updated_at).total_seconds()
+    assert 3599 <= delta <= 3601
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_expires_in_no_prior_ttl_stays_none(service, mock_db):
+    """Refresh response missing expires_in AND no prior TTL: expires_at stays None."""
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "refresh_token": "new_refresh"})
+
+    # Token had no prior expiry (e.g. GitHub OAuth Apps).
+    record = _make_token_record()
+    record.expires_at = None
+
+    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        result = await service._refresh_access_token(record)
+
+    assert result == "new_access"
+    assert record.expires_at is None
 
 
 @pytest.mark.asyncio
@@ -505,6 +587,20 @@ async def test_cleanup_expired_tokens_exception(service, mock_db):
     result = await service.cleanup_expired_tokens(max_age_days=30)
     assert result == 0
     mock_db.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_tokens_targets_null_expires_at(service, mock_db):
+    mock_db.execute.return_value.rowcount = 3
+    await service.cleanup_expired_tokens(max_age_days=30)
+
+    delete_stmt = mock_db.execute.call_args.args[0]
+    rendered = str(delete_stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "expires_at is null" in rendered
+    # NULL-expires_at rows must be aged out by updated_at (re-auth advances it),
+    # not created_at (which would delete recently re-authorized tokens).
+    assert "updated_at" in rendered
+    assert "created_at" not in rendered
 
 
 # ---------- token_type validation in get_user_token ----------

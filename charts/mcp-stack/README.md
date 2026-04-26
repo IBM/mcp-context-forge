@@ -814,7 +814,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.PROXY_USER_HEADER | string | `"X-Authenticated-User"` |  |
 | mcpContextForge.secret.OAUTH_REQUEST_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.secret.OAUTH_MAX_RETRIES | string | `"3"` |  |
-| mcpContextForge.secret.OAUTH_DEFAULT_TIMEOUT | string | `"3600"` |  |
 | mcpContextForge.secret.DCR_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |

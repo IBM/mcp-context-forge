@@ -2004,9 +2004,6 @@
             "MIN_SECRET_LENGTH": {
               "type": "string"
             },
-            "OAUTH_DEFAULT_TIMEOUT": {
-              "type": "string"
-            },
             "OAUTH_DISCOVERY_ENABLED": {
               "type": "string"
             },
