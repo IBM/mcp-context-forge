@@ -339,7 +339,14 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
     )
-    token_expiry: int = 10080  # minutes
+    # Session token configuration (short-lived for security)
+    token_expiry: int = Field(default=20, ge=5, le=1440, description="Session token expiry in minutes (5-1440). Recommended: 5-20 minutes for security.")  # 20 minutes (was 10080 = 70 days)
+
+    # Idle timeout configuration
+    token_idle_timeout: int = Field(default=60, ge=5, le=1440, description="Maximum idle time in minutes before token requires refresh (5-1440).")  # 60 minutes
+
+    # Token blocklist cleanup
+    token_blocklist_cleanup_hours: int = Field(default=24, ge=1, le=168, description="Hours to retain expired tokens in blocklist before cleanup (1-168).")
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")

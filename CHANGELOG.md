@@ -9,8 +9,22 @@
 - **🛡️ Content Security – Malicious Pattern Detection (US-3)** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072), [#538](https://github.com/IBM/mcp-context-forge/issues/538)) – Regex-based scanning for XSS, SQL injection, command injection, and template-injection patterns. Applied on the single **and** bulk create/update paths for resources, prompts, and tools (tool `name`, `description`, and JSON-serialized `inputSchema`). New config: `CONTENT_PATTERN_DETECTION_ENABLED`, `CONTENT_BLOCKED_PATTERNS`, `CONTENT_PATTERN_VALIDATION_MODE` (`strict` | `moderate` | `lenient`). Lenient mode logs every matched pattern in a payload (was: only the first).
 - **🔒 Content Security – Prompt Template Validation (US-4)** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072), [#538](https://github.com/IBM/mcp-context-forge/issues/538)) – Pre-render validation of prompt templates: balanced-brace check, Jinja2 syntax check, and dangerous-pattern scan (`__import__`, `eval(`, dunders, etc.). New config: `CONTENT_VALIDATE_PROMPT_TEMPLATES`, `CONTENT_BLOCKED_TEMPLATE_PATTERNS`.
 - **⚡ ReDoS Defense for Pattern Scanning** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072)) – `CONTENT_PATTERN_MAX_SCAN_SIZE` (default 200 KB) caps scan input length deterministically; `CONTENT_PATTERN_REGEX_TIMEOUT` (default 1.0 s) per-pattern. Patterns are pre-compiled once at service init instead of re-compiled per request.
+- **🔐 JWT Token Security – Server-Side Revocation, Idle Timeout, Logout** ([#4371](https://github.com/IBM/mcp-context-forge/pull/4371), [#4317](https://github.com/IBM/mcp-context-forge/issues/4317)) – New `TokenBlocklistService` (Redis-cached, DB-persisted) for immediate JWT invalidation. Idle-timeout enforcement on every authenticated request, with activity tracking in Redis (falls back to JWT `iat` when Redis is unavailable). New `POST /auth/logout` (Bearer auth) and enhanced `POST /admin/logout` (cookie auth) revoke the caller's token in the blocklist before clearing session state. Comprehensive audit-log fields (`security_event`, `security_severity`, `jti`, `reason`) for every revocation/idle-timeout event. New config: `TOKEN_IDLE_TIMEOUT`, `TOKEN_BLOCKLIST_CLEANUP_HOURS`. Addresses X-Force Red audit findings on session-token management.
 
 ### ⚠️ Behavior Changes
+
+#### **⏱️ `TOKEN_EXPIRY` default reduced from 10080 minutes (~7 days) to 20 minutes** ([#4371](https://github.com/IBM/mcp-context-forge/pull/4371), [#4317](https://github.com/IBM/mcp-context-forge/issues/4317))
+
+**Impact**: Any deployment that does not set `TOKEN_EXPIRY` explicitly will now issue session tokens that expire after **20 minutes** instead of ~7 days. Existing tokens already in circulation are unaffected (they retain the `exp` claim baked in at issuance), but every newly-issued token after upgrade has the shorter lifetime. Automation that re-uses a single login token for hours or days will start receiving HTTP 401 mid-flight.
+
+**Why**: Short-lived tokens are the primary mitigation for stolen-token replay, per the X-Force Red security audit (#4317). 7-day session tokens were previously called out as a finding. The new default brings the gateway in line with industry guidance (5–20 minutes for session tokens).
+
+**Migration**:
+- **Interactive sessions** — no action needed; the new `/auth/logout` endpoint and idle-timeout enforcement (60 min default) work transparently.
+- **CI/automation that needs longer-lived tokens** — set `TOKEN_EXPIRY` explicitly in `.env` (range: 5–1440 minutes), e.g. `TOKEN_EXPIRY=480` for an 8-hour shift, and pair it with `TOKEN_IDLE_TIMEOUT=0` if the workload bursts after long quiet periods.
+- **Long-running scripts using `mcpgateway.utils.create_jwt_token --exp <minutes>`** — the `--exp` flag is unaffected (it overrides the default).
+
+**Rollback**: Set `TOKEN_EXPIRY=10080` to restore the previous 7-day default.
 
 #### **🧪 Prompt templates are now rendered in a Jinja2 sandbox** ([#4072](https://github.com/IBM/mcp-context-forge/pull/4072))
 

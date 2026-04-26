@@ -4633,6 +4633,40 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
+    # Revoke JWT token in blocklist for immediate invalidation
+    cookies = getattr(request, "cookies", None)
+    if cookies and hasattr(cookies, "get"):
+        token = cookies.get("jwt_token")
+        if isinstance(token, str) and token:
+            try:
+                # First-Party
+                from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
+
+                payload = await verify_jwt_token_cached(token, request)
+                jti = payload.get("jti")
+                email = payload.get("email", "admin")
+
+                if jti:
+                    blocklist_service = get_token_blocklist_service()
+
+                    # Get token expiry from payload
+                    exp_ts = payload.get("exp")
+                    token_expiry = None
+                    if exp_ts:
+                        token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+
+                    # Get last activity if present
+                    last_activity = None
+                    last_activity_ts = payload.get("last_activity")
+                    if last_activity_ts:
+                        last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
+
+                    blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
+                    LOGGER.info(f"Token revoked during admin logout: jti={jti}", extra={"security_event": "admin_logout_token_revoked", "security_severity": "low", "jti": jti, "user_id": email})
+            except Exception as revoke_error:
+                # Log but don't fail logout if token revocation fails
+                LOGGER.warning(f"Failed to revoke token during admin logout: {revoke_error}")
+
     # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
         # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
