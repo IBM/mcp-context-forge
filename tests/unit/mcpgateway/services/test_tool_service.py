@@ -9522,7 +9522,13 @@ class TestRustMcpExecutionPlan:
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_requires_prior_authorization(self, tool_service):
-        """Authorization-code OAuth plans should fail when no stored token exists for the user."""
+        """Authorization-code OAuth plans must raise an actionable error when neither a DB token nor a plugin provides auth.
+
+        Deny-path regression: with no stored OAuth token AND no plugin manager
+        registered (so no plugin can inject Authorization), the post-pre-invoke
+        check must raise locally rather than silently letting the request reach
+        upstream with empty Authorization.
+        """
         cache = self._cache_mock(
             self._cache_payload(
                 gateway={
@@ -9548,8 +9554,108 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+            with pytest.raises(ToolInvocationError, match="Please authorize"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_plugin_injects_auth(self, tool_service):
+        """Authorization-code OAuth plans must succeed when a plugin injects Authorization in tool_pre_invoke.
+
+        Positive plugin path: with no DB-stored OAuth token, a Vault-style plugin
+        (mocked here) sets the Authorization header during tool_pre_invoke. The
+        post-hook check sees Authorization is present and lets the plan through.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "authorization_code"},
+                }
+            )
+        )
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=None)
+        fresh_session = MagicMock()
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(
+                name=payload.name,
+                args=payload.args,
+                headers=HttpHeaderPayload({"Authorization": "Bearer plugin-injected-token"}),
+            )
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"foo": "bar"},
+                app_user_email="user@example.com",
+            )
+
+        assert plan["eligible"] is True
+        assert plan["headers"].get("authorization") == "Bearer plugin-injected-token"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_strips_x_vault_tokens(self, tool_service):
+        """X-Vault-Tokens (case-insensitive) must be stripped from outbound headers regardless of plugin state.
+
+        Defense-in-depth: even if X-Vault-Tokens ends up in passthrough_allowed
+        by misconfiguration, or the Vault plugin is disabled, the gateway must
+        not forward the raw vault header to upstream.
+        """
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "bearer",
+                    "auth_value": None,
+                }
+            )
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch(
+                "mcpgateway.services.tool_service.compute_passthrough_headers_cached",
+                return_value={"Authorization": "Bearer real-token", "X-Vault-Tokens": '{"github.com": "ghp_xxx"}', "x-vault-tokens": "lower-case-leak"},
+            ),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"X-Tenant-Id": "acme"},
+            )
+
+        assert plan["eligible"] is True
+        outbound_keys_lower = {k.lower() for k in plan["headers"]}
+        assert "x-vault-tokens" not in outbound_keys_lower
+        assert plan["headers"].get("Authorization") == "Bearer real-token"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_client_credentials_success(self, tool_service):
