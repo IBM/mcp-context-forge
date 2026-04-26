@@ -26,6 +26,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
+from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture
@@ -1233,6 +1234,41 @@ class TestDirectGetAccessDenial:
         assert captured_queries, "expected a query to be executed"
         compiled = str(captured_queries[0].compile(compile_kwargs={"literal_binds": True}))
         assert "visibility" in compiled and "private" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_db_admin_includes_own_private_only(self, resource_service, mock_db):
+        """PR #4341 carve-out: DB-admin (email, None) shape sees own private but not others'.
+
+        Previously the bespoke admin-bypass branch in ``list_resource_templates``
+        only handled ``(None, None)`` and let the ``(email, None)`` DB-admin
+        shape fall through with no WHERE clause applied, leaking all private
+        templates.
+        """
+        captured_queries = []
+
+        original_result = MagicMock()
+        original_result.scalars.return_value.all.return_value = []
+
+        def mock_execute(stmt):
+            captured_queries.append(stmt)
+            return original_result
+
+        mock_db.execute = mock_execute
+        install_admin_user(mock_db, email="admin@example.com")
+
+        await resource_service.list_resource_templates(
+            mock_db,
+            user_email="admin@example.com",
+            token_teams=None,
+        )
+
+        assert captured_queries, "expected a query to be executed"
+        compiled = str(captured_queries[0].compile(compile_kwargs={"literal_binds": True}))
+        # DB-admin sees their own private rows AND public/team rows.
+        assert "visibility" in compiled
+        assert "private" in compiled
+        assert "owner_email" in compiled
+        assert "admin@example.com" in compiled
 
     @pytest.mark.asyncio
     async def test_completion_apply_visibility_scope_admin_bypass_excludes_private(self):

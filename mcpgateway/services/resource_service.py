@@ -4048,11 +4048,20 @@ class ResourceService(BaseService):
             if not include_inactive:
                 query = query.where(DbResource.enabled)
 
-            # SECURITY (Layer 1): admin bypass (user_email=None AND token_teams=None)
-            # still filters out private templates so admin cannot enumerate other
-            # users' private templates via this endpoint.
+            # Admin bypass (PR #4341 invariant): never reveal another user's private
+            # templates. Anonymous bypass sees public + team only; a DB-resolved admin
+            # session additionally sees their own private templates. Without the
+            # second branch the (email, None) DB-admin shape fell through with no
+            # visibility filter applied, leaking all private templates.
             if user_email is None and token_teams is None:
                 query = query.where(DbResource.visibility != "private")
+            elif token_teams is None and user_email and is_admin_bypass_granted(db, user_email, token_teams):
+                query = query.where(
+                    or_(
+                        DbResource.visibility != "private",
+                        and_(DbResource.visibility == "private", DbResource.owner_email == user_email),
+                    )
+                )
             elif token_teams is not None:
                 is_public_only_token = len(token_teams) == 0
                 conditions = [DbResource.visibility == "public"]

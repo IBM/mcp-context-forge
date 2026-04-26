@@ -168,13 +168,17 @@ class TestInternalA2AAuthzTrusted:
 
 
 class TestInternalA2AScopeContext:
+    # Patch ``mcpgateway.main.get_rpc_filter_context`` (the binding inside
+    # main's namespace), not ``mcpgateway.auth_context.get_rpc_filter_context``,
+    # because ``_get_internal_a2a_scope_context`` is defined in main.py and
+    # resolves the name against main's own namespace.
     @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "admin@test.com"})
-    @patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@test.com", None, True))
+    @patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@test.com", None, True))
     def test_admin_with_null_teams_keeps_bypass(self, _mock_scope, _mock_user):
         assert _get_internal_a2a_scope_context(MagicMock()) == ("admin@test.com", None)
 
     @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "user@test.com"})
-    @patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@test.com", None, False))
+    @patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@test.com", None, False))
     def test_non_admin_with_null_teams_becomes_public_only(self, _mock_scope, _mock_user):
         assert _get_internal_a2a_scope_context(MagicMock()) == ("user@test.com", [])
 
@@ -1115,7 +1119,7 @@ class TestInternalA2ADenyPaths:
             "x-contextforge-mcp-runtime": "rust",
             "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
         }
-        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
@@ -1126,7 +1130,7 @@ class TestInternalA2ADenyPaths:
             "x-contextforge-mcp-runtime": "rust",
             "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
         }
-        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
@@ -1163,11 +1167,11 @@ class TestInternalA2ADenyPaths:
         # First-Party
         from mcpgateway.main import _is_trusted_internal_mcp_runtime_request
 
-        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             assert _is_trusted_internal_mcp_runtime_request(request) is True
 
         # And the equivalent /_internal/a2a/ path with the same headers
         # MUST still be rejected (the feature flag narrows correctly).
         a2a_scope = {**scope, "path": "/_internal/a2a/authenticate", "raw_path": b"/_internal/a2a/authenticate"}
-        with patch("mcpgateway.main._has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             assert _is_trusted_internal_mcp_runtime_request(Request(a2a_scope)) is False

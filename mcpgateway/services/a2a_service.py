@@ -384,8 +384,16 @@ class A2AAgentService(BaseService):
         team-scoped agents — this is intentionally more restrictive than
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
+
+        PR #4341: only the unscoped admin shape (user_email=None AND
+        token_teams=None) returns ``None``. DB-resolved admin sessions
+        ((email, None) shape) fall through to the SQL filter below, which
+        already enforces public + team + own-private. Using
+        ``is_admin_bypass_granted`` here would let DB admins bypass the
+        per-agent visibility filter and enumerate other users' private
+        agents via list_tasks / list_push_configs_for_dispatch.
         """
-        if is_admin_bypass_granted(db, user_email, token_teams):
+        if user_email is None and token_teams is None:
             return None
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))

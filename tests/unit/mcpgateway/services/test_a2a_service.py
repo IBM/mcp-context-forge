@@ -4758,6 +4758,27 @@ class TestVisibleAgentIds:
         # token_teams=None but user_email set → NOT admin bypass, runs query
         assert result == ["id-all"]
 
+    def test_db_admin_with_email_runs_filtered_query(self, service, mock_db):
+        """PR #4341 regression: DB-admin (email, None) shape must NOT return unscoped None.
+
+        Previously _visible_agent_ids used ``is_admin_bypass_granted`` which matched
+        the (email, None) DB-admin shape. That bypassed the per-agent visibility
+        filter and let DB admins enumerate other users' private agents via
+        list_tasks / list_push_configs_for_dispatch. The fix restricts the
+        unscoped path to (None, None) literal only.
+        """
+        mock_db.info = {}
+        install_admin_user(mock_db, email="admin@test.com")
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("agent-public",), ("agent-own-private",)]
+
+        result = service._visible_agent_ids(mock_db, user_email="admin@test.com", token_teams=None)
+
+        assert result is not None, "DB-admin (email, None) must run filtered query, not return None"
+        assert result == ["agent-public", "agent-own-private"]
+
 
 class TestGetTask:
     """Unit tests for get_task visibility enforcement."""
