@@ -277,6 +277,24 @@ class TestValidateOauthTokenClaims:
 
         assert result.audience_match is False
 
+    def test_audience_match_with_opaque_learned_resource_string(self):
+        """Round-trip: opaque aud (e.g. ServiceNow/Authentik client_id) matches opaque persisted resource."""
+        token = _make_jwt({"aud": "my-servicenow-client-id"})
+        oauth_config = {"resource": "my-servicenow-client-id"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_match_with_opaque_learned_resource_list(self):
+        """Round-trip: opaque aud list matches a learned-resource list with overlap."""
+        token = _make_jwt({"aud": ["my-client-id"]})
+        oauth_config = {"resource": ["my-client-id", "another-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
     # -- Scope mismatch --
 
     def test_scope_mismatch(self):

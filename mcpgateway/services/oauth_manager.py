@@ -19,7 +19,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
@@ -900,9 +900,12 @@ class OAuthManager:
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
 
-        # Extract audience from token (best-effort) for caller to persist as resource.
-        # This enables audience learning for IdPs that map resource to a different aud.
-        token_aud = self._extract_token_audience(token_response.get("access_token", ""))
+        # Extract aud and iss from the token (best-effort, no signature verification)
+        # so the callback path can learn the IdP's audience mapping and pin it to the
+        # token's issuer.  See _decode_token_claims_unverified for the trust model.
+        access_token_for_claims = token_response.get("access_token", "")
+        token_aud = self._extract_token_audience(access_token_for_claims)
+        token_iss = self._extract_token_issuer(access_token_for_claims)
 
         # Store tokens if storage service is available
         if self.token_storage:
@@ -925,8 +928,14 @@ class OAuthManager:
                 scopes=scopes_list,
             )
 
-            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
-        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud}
+            return {
+                "success": True,
+                "user_id": user_id,
+                "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
+                "token_aud": token_aud,
+                "token_iss": token_iss,
+            }
+        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud, "token_iss": token_iss}
 
     async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
@@ -1779,20 +1788,36 @@ class OAuthManager:
         return "unknown_user"
 
     @staticmethod
-    def _extract_token_audience(access_token: str) -> Any:
-        """Extract the ``aud`` claim from a JWT access token (best-effort).
+    def _decode_token_claims_unverified(access_token: str) -> Dict[str, Any]:
+        """Best-effort decode of JWT claims **without** signature verification.
 
-        Returns the raw ``aud`` value (string or list) or ``None`` for opaque
-        tokens or decode failures.  No signature verification is performed.
+        Trust model (do not relax without re-evaluating):
+
+        * Signatures, expiration, issuer, and audience are NOT validated here.
+          The decoded claims are used only for *non-authoritative* metadata
+          extraction (audience learning, issuer pinning) at the moment the
+          token is received from the AS during the authorization-code
+          callback.
+        * The immediate trust boundary is the TLS connection to the
+          admin-configured token endpoint as a response to a callback we
+          initiated.  That makes the token's contents reliable enough for
+          metadata, but not for authorization decisions.
+        * Authorization-relevant validation happens upstream when the token
+          is presented to the protected resource server.  This codebase's
+          local ``_validate_audience`` / ``validate_oauth_token_claims``
+          path also runs without signature verification (see
+          ``mcpgateway/services/token_validation_service.py``); it is
+          informational only, not a security boundary.
 
         Args:
             access_token: The raw access token string.
 
         Returns:
-            The ``aud`` claim value, or None.
+            Decoded claims as a dict, or an empty dict for opaque tokens or
+            decode failures.
         """
         if not access_token:
-            return None
+            return {}
         try:
             # Third-Party
             import jwt as pyjwt  # pylint: disable=import-outside-toplevel
@@ -1802,9 +1827,52 @@ class OAuthManager:
                 options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
                 algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
             )
-            return claims.get("aud")
         except Exception:  # noqa: BLE001
-            return None
+            return {}
+        return claims if isinstance(claims, dict) else {}
+
+    @staticmethod
+    def _extract_token_audience(access_token: str) -> Optional[Union[str, List[str]]]:
+        """Extract the ``aud`` claim from a JWT access token (best-effort).
+
+        Returns the ``aud`` value when it is a string or a list of strings.
+        Anything else (including missing claim, opaque token, decode failure,
+        or unexpected types) yields ``None``.  No signature verification is
+        performed; see ``_decode_token_claims_unverified`` for the trust model.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            The ``aud`` claim as ``str`` or ``list[str]``, otherwise ``None``.
+        """
+        aud = OAuthManager._decode_token_claims_unverified(access_token).get("aud")
+        if isinstance(aud, str):
+            return aud
+        if isinstance(aud, list) and all(isinstance(item, str) for item in aud):
+            return aud
+        return None
+
+    @staticmethod
+    def _extract_token_issuer(access_token: str) -> Optional[str]:
+        """Extract the ``iss`` claim from a JWT access token (best-effort).
+
+        Used by the callback path to pin a learned ``resource`` to a specific
+        issuer so a future config edit (or accidental re-pointing) can't carry
+        a stale audience across IdPs.  Returns ``None`` for opaque tokens,
+        decode failures, missing claim, or unexpected types.  No signature
+        verification is performed; see ``_decode_token_claims_unverified``.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            The ``iss`` claim as a non-empty string, otherwise ``None``.
+        """
+        iss = OAuthManager._decode_token_claims_unverified(access_token).get("iss")
+        if isinstance(iss, str) and iss:
+            return iss
+        return None
 
 
 class OAuthError(Exception):
