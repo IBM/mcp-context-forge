@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_mcp_rbac_transport.py
+"""Location: ./tests/live_gateway/mcp/test_mcp_rbac_transport.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -51,7 +51,7 @@ from playwright.sync_api import APIRequestContext, Playwright
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
-from .helpers.mcp_test_helpers import (
+from ..helpers.mcp_test_helpers import (
     BASE_URL,
     skip_no_gateway,
     TEST_PASSWORD,

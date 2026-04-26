@@ -27,16 +27,16 @@ import httpx
 import pytest
 
 # Local
-from .helpers.mcp_test_helpers import ADMIN_EMAIL
-from .helpers.mcp_test_helpers import build_initialize as _build_initialize
-from .helpers.mcp_test_helpers import build_wrapper_env as _build_wrapper_env
-from .helpers.mcp_test_helpers import JWT_SECRET
-from .helpers.mcp_test_helpers import TOKEN_EXPIRY
-from .helpers.mcp_test_helpers import WRAPPER_PYTHON
-from .helpers.mcp_test_helpers import get_response_by_id as _get_response_by_id
-from .helpers.mcp_test_helpers import run_mcp_cli as _run_mcp_cli
-from .helpers.mcp_test_helpers import send_jsonrpc_via_wrapper as _send_jsonrpc_via_wrapper
-from .helpers.mcp_test_helpers import skip_no_mcp_cli
+from ..helpers.mcp_test_helpers import ADMIN_EMAIL
+from ..helpers.mcp_test_helpers import build_initialize as _build_initialize
+from ..helpers.mcp_test_helpers import build_wrapper_env as _build_wrapper_env
+from ..helpers.mcp_test_helpers import JWT_SECRET
+from ..helpers.mcp_test_helpers import TOKEN_EXPIRY
+from ..helpers.mcp_test_helpers import WRAPPER_PYTHON
+from ..helpers.mcp_test_helpers import get_response_by_id as _get_response_by_id
+from ..helpers.mcp_test_helpers import run_mcp_cli as _run_mcp_cli
+from ..helpers.mcp_test_helpers import send_jsonrpc_via_wrapper as _send_jsonrpc_via_wrapper
+from ..helpers.mcp_test_helpers import skip_no_mcp_cli
 
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
 LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://localhost:3100").rstrip("/")

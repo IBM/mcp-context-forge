@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e_rust/test_mcp_access_matrix.py
+"""Location: ./tests/live_gateway/e2e_rust/test_mcp_access_matrix.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -29,7 +29,7 @@ import pytest
 
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
-from tests.e2e.helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway
+from tests.live_gateway.helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway]
 

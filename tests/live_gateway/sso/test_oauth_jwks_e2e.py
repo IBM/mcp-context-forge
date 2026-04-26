@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_oauth_jwks_e2e.py
+"""Location: ./tests/live_gateway/sso/test_oauth_jwks_e2e.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Contributors
@@ -17,7 +17,9 @@ Requirements:
 
 Usage:
     docker compose --profile sso up -d
-    pytest tests/e2e/test_oauth_jwks_e2e.py -v -s --tb=short
+    make test-e2e-sso
+    # or directly:
+    pytest tests/e2e/sso/test_oauth_jwks_e2e.py -v -s --tb=short
 """
 
 # Future
@@ -41,7 +43,7 @@ from playwright.sync_api import APIRequestContext, Playwright  # noqa: E402
 from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: E402
 
 # Local
-from .helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, skip_no_gateway, TEST_PASSWORD  # noqa: E402
+from ..helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, skip_no_gateway, TEST_PASSWORD  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

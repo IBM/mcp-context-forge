@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_mcp_plugin_parity.py
+"""Location: ./tests/live_gateway/mcp/test_mcp_plugin_parity.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -24,7 +24,7 @@ import pytest
 
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
-from tests.e2e.helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
+from tests.live_gateway.helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 PLUGIN_PARITY_PREFIX = "mcp-plugin-parity"
