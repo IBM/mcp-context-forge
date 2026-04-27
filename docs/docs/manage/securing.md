@@ -550,9 +550,9 @@ content = "Data: {{ config.secret_key }}"  # Potential server-side template inje
 
 **Performance Optimization:**
 
-- **Pattern Caching**: Compiled regex patterns are cached for 10x performance improvement
-- **Cache Size**: Default 1000 patterns, configurable via `CONTENT_PATTERN_MAX_CACHE_SIZE`
-- **Lazy Compilation**: Patterns compiled on first use
+- **Pattern Caching**: Compiled regex patterns are reused and successful clean validation results are cached for repeated content
+- **Cache Size**: Default 1000 clean validation results, configurable via `CONTENT_PATTERN_MAX_CACHE_SIZE`
+- **Startup Compilation**: Patterns compile once when the content security service initializes
 - **Thread-Safe**: Cache uses threading locks for concurrent access
 
 **Security Checklist:**

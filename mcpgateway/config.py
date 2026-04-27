@@ -2288,7 +2288,13 @@ class Settings(BaseSettings):
     )
     content_pattern_cache_enabled: bool = Field(
         default=True,
-        description="Enable caching of pattern validation results (US-3). Improves performance by caching validation outcomes.",
+        description="Enable caching of successful clean pattern validation results (US-3). Improves performance for repeated clean content without caching malicious detections.",
+    )
+    content_pattern_max_cache_size: int = Field(
+        default=1000,
+        ge=0,
+        le=100000,
+        description="Maximum number of successful clean pattern validation results to cache in memory. Set 0 to disable clean-result caching.",
     )
     content_pattern_max_scan_size: int = Field(
         default=200_000,
@@ -2298,7 +2304,7 @@ class Settings(BaseSettings):
     content_pattern_regex_timeout: float = Field(
         default=1.0,
         gt=0.0,
-        description="Per-pattern regex execution timeout in seconds (US-3). Used natively on Python 3.13+ via re.search(..., timeout=) and as a soft thread-join timeout on older Pythons. Primary ReDoS defense is content_pattern_max_scan_size; this is defense-in-depth.",
+        description="Per-pattern regex execution timeout in seconds (US-3) for custom configured patterns via a soft thread-join timeout. Default built-in patterns use direct search; primary ReDoS defense is content_pattern_max_scan_size.",
     )
 
     # Timeout for SSE task group cleanup (seconds).
