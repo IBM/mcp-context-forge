@@ -5,6 +5,16 @@ import { App } from "./App";
 import { renderWithProviders } from "./test/test-utils";
 
 describe("App", () => {
+  it("renders the loading page without authentication", async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.pushState({}, "", "/app/loading");
+
+    renderWithProviders(<App />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/loading/i);
+  });
+
   it("logs in and navigates to Gateways page via sidebar", async () => {
     const user = userEvent.setup();
 
