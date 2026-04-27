@@ -636,3 +636,131 @@ class TestPubSubInstantPropagation:
                 results.append(resp.json().get("plugins_globally_enabled"))
 
         assert all(r is True for r in results), f"Replicas didn't converge within {PUBSUB_PROPAGATION_WAIT}s: {results}"
+
+
+# ---------------------------------------------------------------------------
+# Content Moderation plugin — dynamic discoverability & management
+# ---------------------------------------------------------------------------
+
+CONTENT_MODERATION_PLUGIN_NAME = "ContentModeration"
+CONTENT_MODERATION_KIND = "cpex_content_moderation.ContentModerationPlugin"
+
+
+class TestContentModerationPluginDiscoverability:
+    """Verify that the cpex-content-moderation package is visible and manageable
+    through the runtime plugin management API without any static YAML edits.
+
+    These tests validate the acceptance criteria from issue #4218:
+    - The plugin appears in GET /admin/plugins after make install-dev.
+    - GET /admin/plugins/{name} returns correct kind and metadata.
+    - Per-plugin mode can be toggled via PUT /admin/plugins/{name}.
+    """
+
+    def test_content_moderation_appears_in_plugin_list(self, auth_headers):
+        """GET /admin/plugins includes the ContentModeration entry."""
+        resp = requests.get(
+            f"{GATEWAY_URL}/admin/plugins",
+            headers=_fresh_headers(),
+            timeout=10,
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+        data = resp.json()
+        plugin_names = [p["name"] for p in data.get("plugins", [])]
+        assert CONTENT_MODERATION_PLUGIN_NAME in plugin_names, (
+            f"'{CONTENT_MODERATION_PLUGIN_NAME}' not found in plugin list: {plugin_names}"
+        )
+
+    def test_content_moderation_detail_returns_correct_kind(self, auth_headers):
+        """GET /admin/plugins/ContentModeration returns the cpex package kind path."""
+        resp = requests.get(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            headers=_fresh_headers(),
+            timeout=10,
+        )
+        assert resp.status_code == 200, (
+            f"Expected 200 for '{CONTENT_MODERATION_PLUGIN_NAME}', got {resp.status_code}: {resp.text}"
+        )
+        data = resp.json()
+        assert data.get("kind") == CONTENT_MODERATION_KIND, (
+            f"Expected kind '{CONTENT_MODERATION_KIND}', got '{data.get('kind')}'"
+        )
+        assert data.get("name") == CONTENT_MODERATION_PLUGIN_NAME
+
+    def test_content_moderation_detail_has_expected_hooks(self, auth_headers):
+        """ContentModeration detail includes prompt_pre_fetch, tool_pre_invoke, tool_post_invoke hooks."""
+        resp = requests.get(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            headers=_fresh_headers(),
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        hooks = resp.json().get("hooks", [])
+        for expected_hook in ("prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"):
+            assert expected_hook in hooks, (
+                f"Expected hook '{expected_hook}' not in hooks: {hooks}"
+            )
+
+    def test_content_moderation_mode_toggle_enforce(self, auth_headers):
+        """PUT /admin/plugins/ContentModeration can change mode to enforce."""
+        resp = requests.put(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            json={"mode": "enforce"},
+            headers=auth_headers,
+            timeout=10,
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert data["plugin"] == CONTENT_MODERATION_PLUGIN_NAME
+        assert data["mode"] == "enforce"
+        assert "redis_persisted" in data
+
+    def test_content_moderation_mode_toggle_permissive(self, auth_headers):
+        """PUT /admin/plugins/ContentModeration can change mode to permissive."""
+        resp = requests.put(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            json={"mode": "permissive"},
+            headers=auth_headers,
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["mode"] == "permissive"
+
+    def test_content_moderation_mode_toggle_disabled(self, auth_headers):
+        """PUT /admin/plugins/ContentModeration can change mode to disabled."""
+        resp = requests.put(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            json={"mode": "disabled"},
+            headers=auth_headers,
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["mode"] == "disabled"
+        # Restore to permissive so subsequent tests see the plugin in an operable state
+        requests.put(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            json={"mode": "permissive"},
+            headers=auth_headers,
+            timeout=10,
+        )
+
+    def test_content_moderation_invalid_mode_returns_4xx(self, auth_headers):
+        """PUT with an invalid mode returns 422."""
+        resp = requests.put(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            json={"mode": "turbo"},
+            headers=auth_headers,
+            timeout=10,
+        )
+        assert resp.status_code in (400, 422), (
+            f"Expected 4xx for invalid mode; got {resp.status_code}"
+        )
+
+    def test_content_moderation_unauthenticated_detail_returns_401_or_403(self):
+        """GET /admin/plugins/ContentModeration without auth is rejected."""
+        resp = requests.get(
+            f"{GATEWAY_URL}/admin/plugins/{CONTENT_MODERATION_PLUGIN_NAME}",
+            timeout=10,
+        )
+        assert resp.status_code in (401, 403), (
+            f"Expected 401/403 for unauthenticated request, got {resp.status_code}"
+        )

@@ -1001,7 +1001,7 @@ plugins:
 
   # Content Moderation Plugin - AI-powered content safety using IBM, OpenAI, Azure, AWS
   - name: ContentModeration
-    kind: plugins.content_moderation.content_moderation.ContentModerationPlugin
+    kind: cpex_content_moderation.ContentModerationPlugin
     description: Advanced content moderation using AI services (IBM Watson, IBM Granite
       Guardian, OpenAI, Azure, AWS)
     version: 1.0.0

@@ -157,6 +157,7 @@ class AuditTrailService:
 
             if auth_method is None or acting_as is None or delegation_chain is None:
                 try:
+                    # First-Party
                     from mcpgateway.transports.context import user_identity_var  # pylint: disable=import-outside-toplevel
 
                     identity = user_identity_var.get()
