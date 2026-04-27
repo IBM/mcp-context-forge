@@ -57,8 +57,8 @@ def _release_aggregate_pg_lock(db: Session) -> None:
         return
     try:
         db.execute(text(f"SELECT pg_advisory_unlock({_AGGREGATE_LOCK_ID})"))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Advisory lock release failed (ignored): %s", exc)
 
 
 class LogAggregator:
