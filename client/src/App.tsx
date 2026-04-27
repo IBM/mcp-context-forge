@@ -4,6 +4,7 @@ import { RouterProvider, Route, Redirect, AuthGuard, useRouter } from "./router"
 import { AppShell } from "./components/layout/AppShell";
 
 import { Login } from "./pages/Login";
+import { Loading } from "./pages/Loading";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import { ResetPassword } from "./pages/ResetPassword";
 import { ChangePassword } from "./pages/ChangePassword";
@@ -34,6 +35,7 @@ import { NotFound } from "./pages/NotFound";
 function PublicRoutes() {
   return (
     <>
+      <Route path="/app/loading" component={Loading} />
       <Route path="/app/login" component={Login} />
       <Route path="/app/forgot-password" component={ForgotPassword} />
       <Route path="/app/reset-password/:token" component={ResetPassword} />
