@@ -331,7 +331,8 @@ make diff-cover
 For Rust coverage:
 
 ```bash
-make -C crates/mcp_runtime coverage
+make rust-coverage
+make rust-diff-cover
 ```
 
 Coverage guidance:
@@ -340,8 +341,12 @@ Coverage guidance:
 - use `make coverage` when you need to regenerate the full Python coverage set
 - use `make diff-cover` when you need changed-line coverage against the main
   branch
-- use runtime-local `coverage` when you are explicitly improving Rust crate
-  coverage
+- use `make rust-coverage` when you need workspace Rust coverage with terminal,
+  HTML, and Cobertura XML reports
+- use `make rust-diff-cover` when you need Rust changed-line coverage against
+  the main branch
+- use runtime-local `make -C crates/mcp_runtime coverage` only when you are
+  explicitly improving that crate in isolation
 
 ## Benchmarking
 

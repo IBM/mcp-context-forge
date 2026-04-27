@@ -8539,7 +8539,8 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-doc                              - Build Rust documentation
 # help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
 # help: rust-licenses                         - Run cargo-deny license check
-# help: rust-coverage                         - Run coverage (cargo-llvm-cov)
+# help: rust-coverage                         - Run coverage (terminal, HTML, Cobertura XML)
+# help: rust-diff-cover                       - Run changed-line coverage for Rust
 # help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
 # help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
 # help:
@@ -8559,7 +8560,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 # help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-bench-check
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
@@ -8688,8 +8689,20 @@ rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
 	@echo "🦀 Running coverage (workspace)..."
 	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
 	@mkdir -p coverage
-	@cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml
-	@echo "✅ Coverage written to coverage/cobertura.xml"
+	@cargo llvm-cov --workspace --html --output-dir coverage/rust
+	@cargo llvm-cov report --cobertura --output-path coverage/cobertura.xml
+	@cargo llvm-cov report
+	@echo "✅ Coverage artefacts: HTML in coverage/rust/html/index.html & XML in coverage/cobertura.xml ✔"
+
+rust-diff-cover:                       ## Run changed-line coverage for Rust
+	@echo "📊  Running Rust diff-cover against main branch..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@if [ ! -f coverage/cobertura.xml ]; then \
+		echo "ℹ️  No coverage/cobertura.xml found - running rust-coverage first..."; \
+		$(MAKE) --no-print-directory rust-coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		diff-cover coverage/cobertura.xml --compare-branch=main --fail-under=90"
 
 rust-bench-check: rust-ensure-deps      ## Verify benchmarks build (no run; for CI)
 	@echo "🦀 Verifying Rust benchmarks build (no run)..."
