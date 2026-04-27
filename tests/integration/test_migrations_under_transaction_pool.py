@@ -420,6 +420,145 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
     assert _count_advisory_locks_held(42_424_242_424_242) == 0, "Fast-path must not leave any advisory locks held after bootstrap_db " "completes."
 
 
+@pytest.mark.integration
+@pytest.mark.timeout(120)
+def test_concurrent_default_role_seeders_do_not_create_duplicate_active_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N concurrent ``bootstrap_default_roles`` runs must converge on a single
+    ACTIVE row per ``(name, scope)``.
+
+    Mechanism this guards against:
+
+    Once ``bootstrap_db.main()`` takes the L1 fast-path, the post-migration
+    bootstrap (which seeds default RBAC roles + the platform_admin user-role
+    assignment) runs **outside** the migration advisory lock on every replica.
+    The seed loop is SELECT-then-INSERT and ``Role.id`` is a client-generated
+    UUID, so without a DB-level constraint two racing replicas can both miss
+    the same row and both insert — producing duplicate active rows that break
+    ``get_role_by_name``'s ``scalar_one_or_none()`` downstream.
+
+    Pin: spawn N concurrent seeders against the same DB; assert exactly one
+    active row per ``(name, scope)`` for each of the 5 system role names. The
+    partial unique index ``uq_roles_name_scope_active`` enforces the invariant
+    at the DB tier, and the savepoint-and-refetch logic in
+    ``RoleService.create_role`` keeps losing replicas from logging spurious
+    failures.
+    """
+    # Standard
+    import asyncio
+
+    # First-Party
+    from mcpgateway import config as mcp_config  # pylint: disable=import-outside-toplevel
+    from mcpgateway.bootstrap_db import bootstrap_default_roles  # pylint: disable=import-outside-toplevel
+    from mcpgateway.bootstrap_db import main as bootstrap_db_main  # pylint: disable=import-outside-toplevel
+
+    _drop_public_schema()
+
+    monkeypatch.setattr(
+        mcp_config.settings,
+        "database_url",
+        _as_sqlalchemy_url(POSTGRES_URL),
+    )
+    # The seeder is a no-op when email_auth is disabled (admin user is the
+    # entry point for role assignment), so we have to flip it on for this
+    # test. The bootstrap creates the admin user idempotently.
+    monkeypatch.setattr(mcp_config.settings, "email_auth_enabled", True)
+
+    # First call: schema + admin user + first pass of default roles.
+    asyncio.run(bootstrap_db_main())
+
+    # Wipe the role tables (but leave the schema and admin user intact) so the
+    # next bootstrap actually exercises the insert path. ``user_roles`` first
+    # because it FKs into ``roles``.
+    with psycopg.connect(POSTGRES_URL, autocommit=True) as conn:
+        conn.execute("DELETE FROM user_roles")
+        conn.execute("DELETE FROM roles")
+
+    # Spawn N concurrent seeders against the same DB through fresh engines —
+    # this matches the production race shape (separate gateway-pod processes
+    # each with their own engine).
+    # Third-Party
+    from sqlalchemy import create_engine, text  # pylint: disable=import-outside-toplevel
+
+    n_workers = 6
+
+    def _run_one_seeder() -> None:
+        # Standard
+        import asyncio as _asyncio  # pylint: disable=import-outside-toplevel,reimported
+
+        engine = create_engine(_as_sqlalchemy_url(POSTGRES_URL))
+        try:
+            with engine.connect() as conn:
+                _asyncio.run(bootstrap_default_roles(conn))
+                conn.commit()
+        finally:
+            engine.dispose()
+
+    # Standard
+    from concurrent.futures import ThreadPoolExecutor  # pylint: disable=import-outside-toplevel
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        list(pool.map(lambda _: _run_one_seeder(), range(n_workers)))
+
+    # --- Invariants ------------------------------------------------------
+    # Exactly one ACTIVE row per (name, scope) for each system role.
+    expected_system_roles = {"platform_admin", "team_admin", "developer", "viewer", "platform_viewer"}
+
+    engine = create_engine(_as_sqlalchemy_url(POSTGRES_URL))
+    try:
+        with engine.connect() as conn:
+            rows = list(
+                conn.execute(
+                    text(
+                        "SELECT name, scope, COUNT(*) AS active_count "
+                        "FROM roles WHERE is_active = true "
+                        "GROUP BY name, scope"
+                    )
+                )
+            )
+    finally:
+        engine.dispose()
+
+    counts_by_name: dict[str, int] = {row[0]: row[2] for row in rows}
+
+    # Every system role must be present exactly once.
+    for role_name in expected_system_roles:
+        assert role_name in counts_by_name, f"System role {role_name!r} missing after concurrent bootstrap; got: {counts_by_name}"
+        assert counts_by_name[role_name] == 1, (
+            f"Concurrent bootstrap produced {counts_by_name[role_name]} active rows for role "
+            f"{role_name!r} (expected 1). Race regression — the partial unique index on "
+            f"(name, scope) where is_active=true is the DB-tier invariant that should make "
+            f"this impossible. Full counts: {counts_by_name}"
+        )
+
+    # Also confirm the platform_admin assignment didn't dupe (finding ❸ shape).
+    engine = create_engine(_as_sqlalchemy_url(POSTGRES_URL))
+    try:
+        with engine.connect() as conn:
+            assignment_count = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM user_roles ur "
+                    "JOIN roles r ON r.id = ur.role_id "
+                    "WHERE ur.is_active = true "
+                    "  AND r.is_active = true "
+                    "  AND r.name = 'platform_admin' "
+                    "  AND r.scope = 'global' "
+                    "  AND ur.scope = 'global' "
+                    "  AND ur.scope_id IS NULL"
+                )
+            ).scalar()
+    finally:
+        engine.dispose()
+
+    assert assignment_count == 1, (
+        f"Concurrent bootstrap produced {assignment_count} active platform_admin user-role "
+        f"assignments (expected 1). The partial unique indexes on user_roles "
+        f"(uq_user_roles_assignment_active_no_scope_id / _with_scope_id) should make this "
+        f"impossible. Race regression."
+    )
+
+
 # ---------------------------------------------------------------------------
 # End-to-end compose smoke — the closest re-runnable proxy for an OpenShift
 # cluster smoke (3 gateway replicas through CrunchyData PGO + transaction-
