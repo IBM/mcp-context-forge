@@ -106,3 +106,33 @@ def reset_app_root_path(monkeypatch):
     by setting the monkeypatch value explicitly in the test.
     """
     monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def enable_admin_api_for_tests():
+    """Enable admin API for all unit tests by patching ADMIN_API_ENABLED.
+
+    This fixture runs once per test session and ensures the admin router
+    is mounted when main.py is imported by test modules.
+    """
+    # Import and patch before any test module imports main.py
+    import mcpgateway.main as main_mod  # pylint: disable=import-outside-toplevel
+
+    # Patch the module-level constant that controls router mounting
+    original_value = main_mod.ADMIN_API_ENABLED
+    main_mod.ADMIN_API_ENABLED = True
+
+    # Re-mount admin router if it wasn't mounted
+    if not original_value:
+        from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.logging_service import LoggingService  # pylint: disable=import-outside-toplevel
+
+        logging_service = LoggingService()
+        set_logging_service(logging_service)
+        main_mod.app.include_router(admin_router)
+        validate_section_permissions(admin_router)
+
+    yield
+
+    # Restore original value after all tests
+    main_mod.ADMIN_API_ENABLED = original_value

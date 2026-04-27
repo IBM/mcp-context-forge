@@ -389,7 +389,7 @@ class TestMiddlewareIntegration:
 
         # Custom headers should be preserved
         assert response.headers["Custom-Header"] == "custom-value"
-        
+
         # Security middleware ENFORCES strict cache control for protected paths
         # This overrides weaker settings like "no-cache" with "no-store, private"
         assert response.headers["Cache-Control"] == "no-store, private"
