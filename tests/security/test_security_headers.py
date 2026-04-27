@@ -305,8 +305,8 @@ def client(app_with_temp_db):
 class TestCacheControlHardening:
     """
     Test suite for hardened cache control policies on authenticated endpoints.
-    
-    Verifies that protected API endpoints implement proper cache control headers 
+
+    Verifies that protected API endpoints implement proper cache control headers
     for defense-in-depth security.
     """
 
@@ -315,11 +315,11 @@ class TestCacheControlHardening:
         with patch.object(settings, "auth_required", False):
             # Test various protected endpoints
             protected_paths = ["/tools", "/servers", "/resources", "/gateways", "/prompts", "/tags"]
-            
+
             for path in protected_paths:
                 response = client.get(path)
                 cache_control = response.headers.get("Cache-Control", "")
-                
+
                 assert "no-store" in cache_control, f"{path} missing 'no-store' in Cache-Control: {cache_control}"
                 assert "private" in cache_control, f"{path} missing 'private' in Cache-Control: {cache_control}"
 
@@ -328,14 +328,14 @@ class TestCacheControlHardening:
         with patch.object(settings, "auth_required", False):
             response = client.get("/tools")
             vary_header = response.headers.get("Vary", "")
-            
+
             assert "Authorization" in vary_header, f"Missing 'Authorization' in Vary header: {vary_header}"
 
     def test_protected_endpoints_have_legacy_cache_headers(self, client: TestClient):
         """Test that protected endpoints include legacy HTTP/1.0 cache headers."""
         with patch.object(settings, "auth_required", False):
             response = client.get("/tools")
-            
+
             assert response.headers.get("Pragma") == "no-cache", "Missing or incorrect Pragma header"
             assert response.headers.get("Expires") == "0", "Missing or incorrect Expires header"
 
@@ -344,7 +344,7 @@ class TestCacheControlHardening:
         # Health endpoint should not have no-store (it's exempted)
         response = client.get("/health")
         cache_control = response.headers.get("Cache-Control", "")
-        
+
         # Health endpoint should not have the strict no-store, private from cache deception fix
         # (it may have other cache control, but not our specific fix)
         assert not (("no-store" in cache_control) and ("private" in cache_control))
@@ -354,7 +354,7 @@ class TestCacheControlHardening:
         with patch.object(settings, "auth_required", False):
             response = client.get("/tools?page=1&limit=10")
             cache_control = response.headers.get("Cache-Control", "")
-            
+
             assert "no-store" in cache_control
             assert "private" in cache_control
 
@@ -364,7 +364,7 @@ class TestCacheControlHardening:
             # Test nested endpoint pattern
             response = client.get("/servers/test-id/tools")
             cache_control = response.headers.get("Cache-Control", "")
-            
+
             # Should have cache control even on nested paths
             assert "no-store" in cache_control or "private" in cache_control
 
@@ -373,11 +373,11 @@ class TestCacheControlHardening:
         with patch.object(settings, "auth_required", False):
             with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
                 response = client.get("/tools", headers={"Origin": "http://localhost:3000"})
-                
+
                 # Should have both cache control and CORS headers
                 cache_control = response.headers.get("Cache-Control", "")
                 vary = response.headers.get("Vary", "")
-                
+
                 assert "no-store" in cache_control
                 assert "Authorization" in vary
                 # Vary should include both Origin (from CORS) and Authorization (from cache fix)
@@ -388,7 +388,7 @@ class TestCacheControlHardening:
         with patch.object(settings, "auth_required", False):
             # Request a non-existent resource (should return 404)
             response = client.get("/tools/non-existent-id-12345")
-            
+
             # Even on error, cache headers should be present
             cache_control = response.headers.get("Cache-Control", "")
 
@@ -400,7 +400,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test that when security headers are disabled, they are not added."""
         with patch.object(settings, "security_headers_enabled", False):
             response = client.get("/health")
-            
+
             # When disabled, security headers should not be present
             # (or may be present from other middleware, but not from SecurityHeadersMiddleware)
             assert response.status_code == 200
@@ -409,7 +409,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test X-Frame-Options with SAMEORIGIN value."""
         with patch.object(settings, "x_frame_options", "SAMEORIGIN"):
             response = client.get("/health")
-            
+
             assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
             # CSP should have frame-ancestors 'self'
             csp = response.headers.get("Content-Security-Policy", "")
@@ -419,7 +419,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test X-Frame-Options with ALLOW-FROM value."""
         with patch.object(settings, "x_frame_options", "ALLOW-FROM https://example.com"):
             response = client.get("/health")
-            
+
             assert response.headers["X-Frame-Options"] == "ALLOW-FROM https://example.com"
             # CSP should have the allowed URI
             csp = response.headers.get("Content-Security-Policy", "")
@@ -429,7 +429,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test X-Frame-Options with ALLOW-ALL value."""
         with patch.object(settings, "x_frame_options", "ALLOW-ALL"):
             response = client.get("/health")
-            
+
             assert response.headers["X-Frame-Options"] == "ALLOW-ALL"
             # CSP should allow all origins
             csp = response.headers.get("Content-Security-Policy", "")
@@ -439,7 +439,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test X-Frame-Options with unknown value defaults to DENY behavior."""
         with patch.object(settings, "x_frame_options", "UNKNOWN-VALUE"):
             response = client.get("/health")
-            
+
             assert response.headers["X-Frame-Options"] == "UNKNOWN-VALUE"
             # CSP should default to 'none' for unknown values
             csp = response.headers.get("Content-Security-Policy", "")
@@ -449,7 +449,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test X-Frame-Options with empty string (should not set header)."""
         with patch.object(settings, "x_frame_options", ""):
             response = client.get("/health")
-            
+
             # Empty string should result in no X-Frame-Options header
             assert "X-Frame-Options" not in response.headers or response.headers.get("X-Frame-Options") == ""
 
@@ -457,7 +457,7 @@ class TestSecurityHeadersAdditionalCoverage:
         """Test that Server and X-Powered-By headers are removed when configured."""
         with patch.object(settings, "remove_server_headers", True):
             response = client.get("/health")
-            
+
             # These headers should not be present
             assert "X-Powered-By" not in response.headers
             assert "Server" not in response.headers
@@ -469,7 +469,7 @@ class TestSecurityHeadersAdditionalCoverage:
                 # Allowed origin
                 response = client.get("/health", headers={"Origin": "https://example.com"})
                 assert response.headers.get("Access-Control-Allow-Origin") == "https://example.com"
-                
+
                 # Disallowed origin
                 response = client.get("/health", headers={"Origin": "https://evil.com"})
                 assert response.headers.get("Access-Control-Allow-Origin") != "https://evil.com"

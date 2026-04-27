@@ -127,6 +127,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         r"^/health$",
         r"^/ready$",
         r"^/\.well-known/.*$",
+        r"^/servers/.*/\.well-known/.*$",  # Virtual server well-known files
     }
 
     def __init__(self, app: Any) -> None:
