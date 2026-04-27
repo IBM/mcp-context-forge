@@ -306,9 +306,7 @@ async def test_run_initial_db_bootstrap_skips_when_flag_on(monkeypatch, caplog):
         await main_mod._run_initial_db_bootstrap()  # pylint: disable=protected-access
 
     spy.assert_not_awaited()
-    assert any(
-        "MCPGATEWAY_SKIP_MIGRATIONS" in record.message for record in caplog.records
-    ), "Expected an INFO log line announcing the skip; helps operators audit the choice"
+    assert any("MCPGATEWAY_SKIP_MIGRATIONS" in record.message for record in caplog.records), "Expected an INFO log line announcing the skip; helps operators audit the choice"
 
 
 def test_main_registers_otel_request_middleware_when_tracing_is_enabled():

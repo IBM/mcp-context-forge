@@ -189,9 +189,7 @@ def test_orphaned_lock_blocks_a_fresh_postgres_session():
 
     # Fresh direct-to-postgres connection = guaranteed distinct session.
     with psycopg.connect(POSTGRES_URL, autocommit=True) as conn:
-        row = conn.execute(
-            "SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)
-        ).fetchone()
+        row = conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)).fetchone()
         assert row is not None
         acquired = bool(row[0])
 
@@ -222,9 +220,7 @@ def test_reentrant_acquire_through_same_pgbouncer_is_not_a_counter_example():
     _acquire_lock_via_pgbouncer_and_disconnect(LOCK_ID)
 
     with psycopg.connect(PGBOUNCER_URL, autocommit=True) as conn:
-        row = conn.execute(
-            "SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)
-        ).fetchone()
+        row = conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)).fetchone()
         assert row is not None
         acquired_via_bouncer = bool(row[0])
 
@@ -232,9 +228,7 @@ def test_reentrant_acquire_through_same_pgbouncer_is_not_a_counter_example():
         # direct session's view (blocked) — that divergence is what makes
         # the bug hard to debug.
         with psycopg.connect(POSTGRES_URL, autocommit=True) as direct:
-            row = direct.execute(
-                "SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)
-            ).fetchone()
+            row = direct.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,)).fetchone()
             assert row is not None
             acquired_direct = bool(row[0])
 
@@ -244,10 +238,7 @@ def test_reentrant_acquire_through_same_pgbouncer_is_not_a_counter_example():
         "sequential client — check DEFAULT_POOL_SIZE in "
         "tests/integration/fixtures/transaction_pool/docker-compose.yml."
     )
-    assert not acquired_direct, (
-        "A fresh direct session must still be blocked — otherwise the "
-        "orphaning invariant from the previous test no longer holds."
-    )
+    assert not acquired_direct, "A fresh direct session must still be blocked — otherwise the " "orphaning invariant from the previous test no longer holds."
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +330,7 @@ def test_bootstrap_db_skips_lock_when_schema_already_at_head(
     BOOTSTRAP_LOCK_ID = 42_424_242_424_242
     holder = _hold_advisory_lock_in_separate_session(BOOTSTRAP_LOCK_ID)
     try:
-        assert _count_advisory_locks_held(BOOTSTRAP_LOCK_ID) == 1, (
-            "Test setup failed: expected the advisory lock to be held by the "
-            "holder session before running the second bootstrap."
-        )
+        assert _count_advisory_locks_held(BOOTSTRAP_LOCK_ID) == 1, "Test setup failed: expected the advisory lock to be held by the " "holder session before running the second bootstrap."
 
         # --- The invariant -----------------------------------------------
         # Post-fix: fast-path skips the lock entirely; completes in ms.
@@ -429,10 +417,7 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
         f"has acquired hidden cost — investigate before relaxing this threshold."
     )
 
-    assert _count_advisory_locks_held(42_424_242_424_242) == 0, (
-        "Fast-path must not leave any advisory locks held after bootstrap_db "
-        "completes."
-    )
+    assert _count_advisory_locks_held(42_424_242_424_242) == 0, "Fast-path must not leave any advisory locks held after bootstrap_db " "completes."
 
 
 # ---------------------------------------------------------------------------
@@ -448,9 +433,7 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
 # ---------------------------------------------------------------------------
 
 
-_FIXTURE_COMPOSE = (
-    "tests/integration/fixtures/transaction_pool/docker-compose.yml"
-)
+_FIXTURE_COMPOSE = "tests/integration/fixtures/transaction_pool/docker-compose.yml"
 _GATEWAY_IMAGE = "mcpgateway/mcpgateway:latest"
 
 
@@ -496,11 +479,7 @@ def test_compose_three_replicas_complete_bootstrap_e2e():
     # --- Skip-checks -----------------------------------------------------
 
     if os.environ.get("MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E") != "1":
-        pytest.skip(
-            "End-to-end compose test is destructive — it drops the fixture "
-            "stack's `public` schema. Set "
-            "MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1 to opt in."
-        )
+        pytest.skip("End-to-end compose test is destructive — it drops the fixture " "stack's `public` schema. Set " "MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1 to opt in.")
 
     if shutil.which("docker") is None:
         pytest.skip("docker not on PATH; cannot run compose-driven e2e test")
@@ -511,10 +490,7 @@ def test_compose_three_replicas_complete_bootstrap_e2e():
         check=False,
     )
     if image_check.returncode != 0:
-        pytest.skip(
-            f"Local gateway image {_GATEWAY_IMAGE!r} not present — run "
-            "`make docker` first to enable this test."
-        )
+        pytest.skip(f"Local gateway image {_GATEWAY_IMAGE!r} not present — run " "`make docker` first to enable this test.")
 
     compose = _docker_compose_args()
 
@@ -529,20 +505,14 @@ def test_compose_three_replicas_complete_bootstrap_e2e():
     )
     running_services = set(pgcheck.stdout.split())
     if not {"postgres", "pgbouncer"}.issubset(running_services):
-        pytest.skip(
-            "Fixture stack not running. Bring it up first with:\n"
-            "  docker compose -f tests/integration/fixtures/transaction_pool/"
-            "docker-compose.yml up -d postgres pgbouncer"
-        )
+        pytest.skip("Fixture stack not running. Bring it up first with:\n" "  docker compose -f tests/integration/fixtures/transaction_pool/" "docker-compose.yml up -d postgres pgbouncer")
 
     # --- Paranoia check: confirm we're talking to the FIXTURE's postgres,
     # not someone's prod DB that happens to be on the same port. ----------
     with psycopg.connect(POSTGRES_URL, autocommit=True) as conn:
         row = conn.execute("SELECT current_database()").fetchone()
         assert row is not None and row[0] == "mcp", (
-            f"Refusing to run destructive e2e test: connected database is "
-            f"{row[0]!r}, expected 'mcp' (the fixture's database name). "
-            f"POSTGRES_URL appears to be pointing at the wrong server."
+            f"Refusing to run destructive e2e test: connected database is " f"{row[0]!r}, expected 'mcp' (the fixture's database name). " f"POSTGRES_URL appears to be pointing at the wrong server."
         )
 
     # --- Reset state -----------------------------------------------------
@@ -577,10 +547,7 @@ def test_compose_three_replicas_complete_bootstrap_e2e():
         #   · "Schema already at Alembic head"       (L1 fast-path skip)
         # Either way, count UNIQUE container hostnames so we measure
         # pod-level coverage, not per-worker noise.
-        completion_pattern = re.compile(
-            r'"name":\s*"mcpgateway\.bootstrap_db".*'
-            r'"message":\s*"(?:Database ready|Schema already at Alembic head)'
-        )
+        completion_pattern = re.compile(r'"name":\s*"mcpgateway\.bootstrap_db".*' r'"message":\s*"(?:Database ready|Schema already at Alembic head)')
         hostname_pattern = re.compile(r'"hostname":\s*"([^"]+)"')
 
         deadline = time.monotonic() + 60.0

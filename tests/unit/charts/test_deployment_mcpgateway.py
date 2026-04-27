@@ -63,23 +63,16 @@ def _helm_template(*set_overrides: str) -> list[dict[str, Any]]:
 
 def _gateway_deployment(manifests: list[dict[str, Any]]) -> dict[str, Any]:
     for m in manifests:
-        if (
-            m.get("kind") == "Deployment"
-            and m.get("metadata", {}).get("name", "").endswith(GATEWAY_DEPLOYMENT_NAME_SUFFIX)
-        ):
+        if m.get("kind") == "Deployment" and m.get("metadata", {}).get("name", "").endswith(GATEWAY_DEPLOYMENT_NAME_SUFFIX):
             return m
-    raise AssertionError(
-        "gateway Deployment not found in rendered chart — selector may have drifted"
-    )
+    raise AssertionError("gateway Deployment not found in rendered chart — selector may have drifted")
 
 
 def _gateway_env(manifests: list[dict[str, Any]]) -> dict[str, str]:
     """Return the gateway container's ``env`` list as a dict for easy assertions."""
     deploy = _gateway_deployment(manifests)
     containers = deploy["spec"]["template"]["spec"]["containers"]
-    gateway_container = next(
-        c for c in containers if c["name"] in ("mcp-context-forge", "mcpgateway", "gateway")
-    )
+    gateway_container = next(c for c in containers if c["name"] in ("mcp-context-forge", "mcpgateway", "gateway"))
     out: dict[str, str] = {}
     for entry in gateway_container.get("env", []) or []:
         # Plain string values only — env entries with valueFrom are skipped.
@@ -111,9 +104,7 @@ def test_skip_migrations_off_when_migration_job_disabled():
     env = _gateway_env(_helm_template("migration.enabled=false"))
     value = env.get("MCPGATEWAY_SKIP_MIGRATIONS", "false")
     assert value == "false", (
-        "Expected MCPGATEWAY_SKIP_MIGRATIONS to be absent or false when "
-        "migration.enabled=false (the gateway is the only bootstrap path "
-        f"in this configuration). Got: {value!r}"
+        "Expected MCPGATEWAY_SKIP_MIGRATIONS to be absent or false when " "migration.enabled=false (the gateway is the only bootstrap path " f"in this configuration). Got: {value!r}"
     )
 
 
@@ -122,7 +113,5 @@ def test_skip_migrations_default_matches_migration_enabled_default():
     Default render therefore must set SKIP=true."""
     env = _gateway_env(_helm_template())
     assert env.get("MCPGATEWAY_SKIP_MIGRATIONS") == "true", (
-        "Default chart values render to migration.enabled=true, so "
-        "MCPGATEWAY_SKIP_MIGRATIONS must default to 'true'. Got: "
-        f"{env.get('MCPGATEWAY_SKIP_MIGRATIONS')!r}"
+        "Default chart values render to migration.enabled=true, so " "MCPGATEWAY_SKIP_MIGRATIONS must default to 'true'. Got: " f"{env.get('MCPGATEWAY_SKIP_MIGRATIONS')!r}"
     )

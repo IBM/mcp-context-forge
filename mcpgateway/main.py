@@ -1597,10 +1597,7 @@ async def _run_initial_db_bootstrap() -> None:
     gateway Deployment with a dedicated migration runner.
     """
     if settings.mcpgateway_skip_migrations:
-        logger.info(
-            "Skipping in-pod migration bootstrap (MCPGATEWAY_SKIP_MIGRATIONS=true). "
-            "A dedicated migration runner is expected to have populated the schema."
-        )
+        logger.info("Skipping in-pod migration bootstrap (MCPGATEWAY_SKIP_MIGRATIONS=true). " "A dedicated migration runner is expected to have populated the schema.")
         return
     # First-Party (deferred to keep import-time light for tests that don't
     # need to pay the migration cost just by importing mcpgateway.main).
