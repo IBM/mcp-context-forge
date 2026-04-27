@@ -1420,9 +1420,9 @@ catalog_servers:
     provider: "Strale"
     transport: "STREAMABLEHTTP"
     secure: true
-    description: "Trust and quality infrastructure for AI agents. 250+ quality-scored capabilities for IBAN validation, company registry lookups, sanctions screening, web scraping, lead enrichment, and Web3 risk analysis. Free tier available."
+    description: "Catalog of data capabilities for AI agents: IBAN/VAT/LEI validation, company registry lookups across 27 countries, sanctions and PEP screening, web extraction, document parsing, and Web3 wallet/token intelligence. Free tier available."
     requires_api_key: true
-    tags: ["compliance", "validation", "company-data", "sanctions", "kyb", "web3", "enrichment", "trust"]
+    tags: ["compliance", "validation", "company-data", "sanctions", "kyb", "web3"]
 
 # Categories for filtering
 categories:

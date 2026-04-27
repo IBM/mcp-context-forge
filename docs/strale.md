@@ -1,6 +1,6 @@
 # Strale Integration
 
-[Strale](https://strale.dev) is trust and quality infrastructure for AI agents. It provides 250+ quality-scored data capabilities — IBAN validation, company registry lookups across 27 countries, sanctions and PEP screening, web scraping, lead enrichment, Web3 risk analysis — each continuously tested and assigned a dual-profile quality score. Every execution returns structured JSON with data provenance and an audit trail.
+[Strale](https://strale.dev) exposes a catalog of data capabilities for AI agents — IBAN/VAT/LEI validation, company registry lookups across 27 countries, sanctions and PEP screening, web extraction, document parsing, and Web3 wallet/token intelligence. Every execution returns structured JSON with provenance.
 
 ## Register Strale as a Remote MCP Server
 
@@ -21,7 +21,7 @@ curl -X POST http://localhost:4444/gateways \
     "name": "strale",
     "url": "https://api.strale.io/mcp",
     "transport": "STREAMABLEHTTP",
-    "description": "Trust and quality infrastructure for AI agents — 250+ quality-scored capabilities",
+    "description": "Catalog of data capabilities for AI agents (KYB, compliance, financial validation, web intelligence)",
     "auth_config": {
       "type": "bearer",
       "token": "'"${STRALE_API_KEY}"'"
@@ -38,7 +38,7 @@ After registration, these tools become available through the gateway:
 
 | Tool | Auth Required | Description |
 |------|:---:|---|
-| `strale_search` | No | Search 250+ capabilities by keyword or category |
+| `strale_search` | No | Browse the capability catalog by keyword or category |
 | `strale_execute` | Yes | Run any capability by slug |
 | `strale_trust_profile` | No | Check quality score before calling a capability |
 | `strale_balance` | Yes | Check wallet balance |
