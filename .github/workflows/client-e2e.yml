@@ -34,11 +34,8 @@ jobs:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Playwright smoke + auth
     runs-on: ubuntu-latest
+    container: node:22-bookworm-slim
     timeout-minutes: 20
-
-    defaults:
-      run:
-        working-directory: ./client
 
     env:
       CI: "true"
@@ -51,14 +48,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
-      - name: 🟢 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: client/package-lock.json
-
       - name: 📥 Install client dependencies
+        working-directory: ./client
         run: npm ci
 
       - name: 🎭 Cache Playwright browsers
@@ -79,6 +70,7 @@ jobs:
         run: npx playwright install-deps chromium
 
       - name: 🧪 Run Playwright tests
+        working-directory: ./client
         run: npm run e2e
 
       - name: 📦 Upload Playwright HTML report
