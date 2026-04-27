@@ -17,6 +17,8 @@ regressions are caught.
 # Standard
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+import importlib
+import os
 import uuid
 
 # Third-Party
@@ -28,6 +30,49 @@ from fastapi.testclient import TestClient
 from mcpgateway.admin import enforce_admin_csrf
 from mcpgateway.config import settings
 from mcpgateway.main import app
+
+
+@pytest.fixture(scope="module", autouse=True)
+def enable_admin_api():
+    """Enable admin API for logout tests.
+
+    The admin router is only registered when MCPGATEWAY_ADMIN_API_ENABLED=True.
+    This fixture sets the environment variable before the app is initialized,
+    clears the settings cache, and forces a reload of the main module to pick
+    up the setting.
+    """
+    # Store original value
+    original_value = os.environ.get("MCPGATEWAY_ADMIN_API_ENABLED")
+
+    # Set environment variable
+    os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
+
+    # Clear the settings cache so get_settings() will create a new instance
+    from mcpgateway.config import get_settings
+
+    get_settings.cache_clear()
+
+    # Force reload of config and main modules to pick up the setting
+    import mcpgateway.config
+    import mcpgateway.main
+
+    importlib.reload(mcpgateway.config)
+    importlib.reload(mcpgateway.main)
+
+    # Update the app reference in this module to use the reloaded app
+    global app
+    app = mcpgateway.main.app
+
+    yield
+
+    # Cleanup
+    if original_value is None:
+        os.environ.pop("MCPGATEWAY_ADMIN_API_ENABLED", None)
+    else:
+        os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = original_value
+
+    # Clear cache again for other tests
+    get_settings.cache_clear()
 
 
 def _jwt_secret() -> str:
