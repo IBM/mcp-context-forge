@@ -58,7 +58,7 @@ class TestTokenValidationResult:
     def test_blocking_errors_audience_mismatch(self):
         r = TokenValidationResult(is_jwt=True)
         r.audience_match = False
-        r.warnings.append("Token audience mismatch: token aud=[api://wrong], expected 'api://correct'")
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
         errors = r.blocking_errors
         assert len(errors) == 1
         assert "audience" in errors[0].lower()
@@ -85,7 +85,7 @@ class TestTokenValidationResult:
         r.scopes_sufficient = False
         r.issuer_match = False
         r.warnings = [
-            "Token audience mismatch: token aud=[wrong], expected 'right'",
+            "Token audience mismatch: token aud does not match expected resource or gateway URL",
             "Token may be missing required scopes: [write]",
             "Token issuer mismatch: token iss='wrong', expected 'right'",
         ]
@@ -96,7 +96,7 @@ class TestTokenValidationResult:
         r = TokenValidationResult(is_jwt=True)
         r.audience_match = False
         r.scopes_sufficient = None  # absent claim — must not block
-        r.warnings.append("Token audience mismatch: token aud=[wrong], expected 'right'")
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
         errors = r.blocking_errors
         assert len(errors) == 1
         assert "audience" in errors[0].lower()
@@ -214,6 +214,22 @@ class TestValidateOauthTokenClaims:
 
         assert result.audience_match is None
         assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_resource_list_matches(self):
+        """When resource is a list (learned from IdP aud array), any overlap is a match."""
+        token = _make_jwt({"aud": "my-client-id"})
+        oauth_config = {"resource": ["https://api.example.com", "my-client-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_resource_takes_precedence_over_gateway_url(self):
+        """When resource is set, gateway_url is not used as fallback."""
+        token = _make_jwt({"aud": "https://gw.example.com"})
+        oauth_config = {"resource": "some-other-value"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
 
     # -- Scope mismatch --
 

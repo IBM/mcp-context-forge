@@ -777,6 +777,10 @@ class OAuthManager:
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
 
+        # Extract audience from token (best-effort) for caller to persist as resource.
+        # This enables audience learning for IdPs that map resource to a different aud.
+        token_aud = self._extract_token_audience(token_response.get("access_token", ""))
+
         # Store tokens if storage service is available
         if self.token_storage:
             token_record = await self.token_storage.store_tokens(
@@ -789,8 +793,8 @@ class OAuthManager:
                 scopes=token_response.get("scope", "").split(),
             )
 
-            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None}
-        return {"success": True, "user_id": user_id, "expires_at": None}
+            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
+        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud}
 
     async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
@@ -1590,6 +1594,34 @@ class OAuthManager:
 
         # Final fallback
         return "unknown_user"
+
+    @staticmethod
+    def _extract_token_audience(access_token: str) -> Any:
+        """Extract the ``aud`` claim from a JWT access token (best-effort).
+
+        Returns the raw ``aud`` value (string or list) or ``None`` for opaque
+        tokens or decode failures.  No signature verification is performed.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            The ``aud`` claim value, or None.
+        """
+        if not access_token:
+            return None
+        try:
+            # Third-Party
+            import jwt as pyjwt  # pylint: disable=import-outside-toplevel
+
+            claims = pyjwt.decode(
+                access_token,
+                options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
+                algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
+            )
+            return claims.get("aud")
+        except Exception:  # noqa: BLE001
+            return None
 
 
 class OAuthError(Exception):
