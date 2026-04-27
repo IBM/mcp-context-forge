@@ -1805,8 +1805,13 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
   }
 
   try {
+    const params = new URLSearchParams({
+      include_resources: "true",
+      include_prompts: "true",
+    });
+
     const response = await fetch(
-      `${window.ROOT_PATH}/gateways/${gatewayId}/tools/refresh`,
+      `${window.ROOT_PATH}/gateways/${gatewayId}/tools/refresh?${params.toString()}`,
       {
         method: "POST",
         credentials: "include", // pragma: allowlist secret
@@ -1893,8 +1898,13 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
   await Promise.allSettled(
     realGwIds.map(async (gid) => {
       try {
+        const params = new URLSearchParams({
+          include_resources: "true",
+          include_prompts: "true",
+        });
+
         const res = await fetch(
-          `${window.ROOT_PATH}/gateways/${gid}/tools/refresh`,
+          `${window.ROOT_PATH}/gateways/${gid}/tools/refresh?${params.toString()}`,
           {
             method: "POST",
             credentials: "include", // pragma: allowlist secret
