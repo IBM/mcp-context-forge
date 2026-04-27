@@ -32,8 +32,17 @@ Requirements:
     - ``PGBOUNCER_URL`` / ``POSTGRES_URL`` point at that stack (defaults match
       the ports exposed in the fixture compose file).
 
+    - **For the end-to-end compose test only**: a built local gateway image
+      (``mcpgateway/mcpgateway:latest`` — produced by ``make docker``) AND
+      ``MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1`` to opt into the destructive
+      path. Without the env var the e2e test skips with a clear message.
+
 Usage:
     uv run pytest tests/integration/test_migrations_under_transaction_pool.py -v --with-integration
+
+    # Including the destructive end-to-end test:
+    MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1 uv run pytest \\
+        tests/integration/test_migrations_under_transaction_pool.py -v --with-integration
 """
 
 # Standard
@@ -154,9 +163,8 @@ assert callable(_clean_orphaned_lock)
 def test_session_advisory_lock_persists_across_pgbouncer_client_disconnect():
     """A client disconnect through PgBouncer does NOT release its advisory lock.
 
-    Mirrors step 1 → step 2 of ``demonstrate_orphan.sh``. The pgbouncer
-    client is gone by the time we check, but Postgres still shows the lock
-    as held by the (now orphaned) server-side session.
+    The pgbouncer client is gone by the time we check, but Postgres still
+    shows the lock as held by the (now orphaned) server-side session.
     """
     _acquire_lock_via_pgbouncer_and_disconnect(LOCK_ID)
 
@@ -425,3 +433,195 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
         "Fast-path must not leave any advisory locks held after bootstrap_db "
         "completes."
     )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end compose smoke — the closest re-runnable proxy for the OCP cluster
+# verification documented in todo/issue-4051-ocp-reproduction.md. Drives the
+# fixture compose stack at the container level (3 gateway replicas through
+# transaction-pool PgBouncer) rather than calling bootstrap_db.main() in-
+# process.
+#
+# Destructive: drops the fixture's `public` schema. Gated behind an explicit
+# env-var opt-in (MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1) so a contributor
+# who happens to have an unrelated Postgres on localhost cannot trip it
+# accidentally.
+# ---------------------------------------------------------------------------
+
+
+_FIXTURE_COMPOSE = (
+    "tests/integration/fixtures/transaction_pool/docker-compose.yml"
+)
+_GATEWAY_IMAGE = "mcpgateway/mcpgateway:latest"
+
+
+def _docker_compose_args() -> list[str]:
+    """Absolute-path compose invocation that works regardless of cwd."""
+    # Standard
+    from pathlib import Path  # pylint: disable=import-outside-toplevel
+
+    repo_root = Path(__file__).resolve().parents[2]
+    return ["docker", "compose", "-f", str(repo_root / _FIXTURE_COMPOSE)]
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(240)
+def test_compose_three_replicas_complete_bootstrap_e2e():
+    """End-to-end: scale fixture's gateway service to 3 replicas; assert all
+    reach bootstrap completion within 60s.
+
+    This drives the FULL pod-startup path (gunicorn + lifespan +
+    bootstrap_db.main() inside real containers) against the same
+    transaction-pool PgBouncer the rest of this module uses. It is the
+    closest re-runnable analog of the manual OCP smoke captured in
+    ``todo/issue-4051-ocp-reproduction.md``.
+
+    Pre-fix (no L1 fast-path): replica gunicorn workers race for the
+    advisory lock, get orphaned by PgBouncer's backend handoffs, and
+    spin in their retry loop. ``pytest.mark.timeout(240)`` fires before
+    the 60s polling deadline can complete.
+
+    Post-fix: one worker wins the seed race (slow path), the rest see
+    ``alembic_version`` at head and fast-path past the lock. All 3
+    replicas emit a bootstrap-completion log line within ~15-30s.
+
+    Destructive — drops the fixture's ``public`` schema. Skipped unless
+    ``MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1`` is set.
+    """
+    # Standard
+    import re  # pylint: disable=import-outside-toplevel
+    import shutil  # pylint: disable=import-outside-toplevel
+    import subprocess  # pylint: disable=import-outside-toplevel
+    import time  # pylint: disable=import-outside-toplevel
+
+    # --- Skip-checks -----------------------------------------------------
+
+    if os.environ.get("MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E") != "1":
+        pytest.skip(
+            "End-to-end compose test is destructive — it drops the fixture "
+            "stack's `public` schema. Set "
+            "MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1 to opt in."
+        )
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker not on PATH; cannot run compose-driven e2e test")
+
+    image_check = subprocess.run(
+        ["docker", "image", "inspect", _GATEWAY_IMAGE],
+        capture_output=True,
+        check=False,
+    )
+    if image_check.returncode != 0:
+        pytest.skip(
+            f"Local gateway image {_GATEWAY_IMAGE!r} not present — run "
+            "`make docker` first to enable this test."
+        )
+
+    compose = _docker_compose_args()
+
+    # Probe the fixture's postgres+pgbouncer health. If the user hasn't
+    # brought the stack up yet, fail soft with the exact command to fix it.
+    pgcheck = subprocess.run(
+        compose + ["ps", "--services", "--filter", "status=running"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    running_services = set(pgcheck.stdout.split())
+    if not {"postgres", "pgbouncer"}.issubset(running_services):
+        pytest.skip(
+            "Fixture stack not running. Bring it up first with:\n"
+            "  docker compose -f tests/integration/fixtures/transaction_pool/"
+            "docker-compose.yml up -d postgres pgbouncer"
+        )
+
+    # --- Paranoia check: confirm we're talking to the FIXTURE's postgres,
+    # not someone's prod DB that happens to be on the same port. ----------
+    with psycopg.connect(POSTGRES_URL, autocommit=True) as conn:
+        row = conn.execute("SELECT current_database()").fetchone()
+        assert row is not None and row[0] == "mcp", (
+            f"Refusing to run destructive e2e test: connected database is "
+            f"{row[0]!r}, expected 'mcp' (the fixture's database name). "
+            f"POSTGRES_URL appears to be pointing at the wrong server."
+        )
+
+    # --- Reset state -----------------------------------------------------
+
+    _drop_public_schema()
+
+    # Scale the gateway service to 0 first so we get clean container names
+    # and timing. --no-recreate keeps postgres/pgbouncer running for any
+    # subsequent tests.
+    subprocess.run(
+        compose + ["up", "-d", "--scale", "gateway=0", "--no-recreate", "gateway"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    try:
+        # --- Trigger the race ------------------------------------------------
+
+        subprocess.run(
+            compose + ["up", "-d", "--scale", "gateway=3", "--no-recreate", "gateway"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        # --- Poll for completion --------------------------------------------
+        # Match either log line that signals a worker finished bootstrap:
+        #   · "Database ready"                       (slow-path winner)
+        #   · "Schema already at Alembic head"       (L1 fast-path skip)
+        # Either way, count UNIQUE container hostnames so we measure
+        # pod-level coverage, not per-worker noise.
+        completion_pattern = re.compile(
+            r'"name":\s*"mcpgateway\.bootstrap_db".*'
+            r'"message":\s*"(?:Database ready|Schema already at Alembic head)'
+        )
+        hostname_pattern = re.compile(r'"hostname":\s*"([^"]+)"')
+
+        deadline = time.monotonic() + 60.0
+        successful_hostnames: set[str] = set()
+        while time.monotonic() < deadline:
+            logs = subprocess.run(
+                compose + ["logs", "--no-log-prefix", "gateway"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            for line in logs.stdout.splitlines():
+                if completion_pattern.search(line):
+                    match = hostname_pattern.search(line)
+                    if match:
+                        successful_hostnames.add(match.group(1))
+            if len(successful_hostnames) >= 3:
+                break
+            time.sleep(2.0)
+
+        if len(successful_hostnames) < 3:
+            tail = subprocess.run(
+                compose + ["logs", "--tail=80", "gateway"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            ).stdout
+            pytest.fail(
+                f"Only {len(successful_hostnames)}/3 gateway replicas reached "
+                f"bootstrap completion within 60s. Distinct hostnames seen: "
+                f"{sorted(successful_hostnames)!r}.\n\nRecent logs:\n{tail}"
+            )
+    finally:
+        # --- Always: scale gateway back to 0 (leave pg+pgbouncer up) ----
+        subprocess.run(
+            compose + ["up", "-d", "--scale", "gateway=0", "--no-recreate", "gateway"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
