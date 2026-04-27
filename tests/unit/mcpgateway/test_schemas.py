@@ -709,35 +709,43 @@ class TestServerSchemas:
 
     def test_server_create(self):
         """Test ServerCreate model."""
+        # Use valid UUIDs for associations
+        tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        tool_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        tool_id3 = "550e8400-e29b-41d4-a716-446655440003"
+        resource_id1 = "550e8400-e29b-41d4-a716-446655440004"
+        resource_id2 = "550e8400-e29b-41d4-a716-446655440005"
+        prompt_id1 = "550e8400-e29b-41d4-a716-446655440006"
+
         server = ServerCreate(
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
-            associated_tools=["1", "2", "3"],
-            associated_resources=["4", "5"],
-            associated_prompts=["6"],
+            associated_tools=[tool_id1, tool_id2, tool_id3],
+            associated_resources=[resource_id1, resource_id2],
+            associated_prompts=[prompt_id1],
         )
 
         assert server.name == "Test Server"
         assert server.description == "Test server instance"
         assert server.icon == "http://example.com/server.png"
-        assert server.associated_tools == ["1", "2", "3"]
-        assert server.associated_resources == ["4", "5"]
-        assert server.associated_prompts == ["6"]
+        assert server.associated_tools == [tool_id1, tool_id2, tool_id3]
+        assert server.associated_resources == [resource_id1, resource_id2]
+        assert server.associated_prompts == [prompt_id1]
 
         # Test with comma-separated strings for associations
         csv_server = ServerCreate(
             name="CSV Server",
             description="Server with comma-separated values",
-            associated_tools="1,2,3",
-            associated_resources="4,5",
-            associated_prompts="6",
+            associated_tools=f"{tool_id1},{tool_id2},{tool_id3}",
+            associated_resources=f"{resource_id1},{resource_id2}",
+            associated_prompts=prompt_id1,
         )
 
         assert csv_server.name == "CSV Server"
-        assert csv_server.associated_tools == ["1", "2", "3"]
-        assert csv_server.associated_resources == ["4", "5"]
-        assert csv_server.associated_prompts == ["6"]
+        assert csv_server.associated_tools == [tool_id1, tool_id2, tool_id3]
+        assert csv_server.associated_resources == [resource_id1, resource_id2]
+        assert csv_server.associated_prompts == [prompt_id1]
 
         # Minimal server
         minimal = ServerCreate(
@@ -753,35 +761,42 @@ class TestServerSchemas:
 
     def test_server_update(self):
         """Test ServerUpdate model."""
+        # Use valid UUIDs for associations
+        tool_id1 = "550e8400-e29b-41d4-a716-446655440010"
+        tool_id2 = "550e8400-e29b-41d4-a716-446655440011"
+        resource_id1 = "550e8400-e29b-41d4-a716-446655440012"
+        resource_id2 = "550e8400-e29b-41d4-a716-446655440013"
+        prompt_id1 = "550e8400-e29b-41d4-a716-446655440014"
+
         update = ServerUpdate(
             name="Updated Server",
             description="Updated description",
             icon="http://example.com/updated.png",
-            associated_tools=["10", "11"],
-            associated_resources=["12", "13"],
-            associated_prompts=["14"],
+            associated_tools=[tool_id1, tool_id2],
+            associated_resources=[resource_id1, resource_id2],
+            associated_prompts=[prompt_id1],
         )
 
         assert update.name == "Updated Server"
         assert update.description == "Updated description"
         assert update.icon == "http://example.com/updated.png"
-        assert update.associated_tools == ["10", "11"]
-        assert update.associated_resources == ["12", "13"]
-        assert update.associated_prompts == ["14"]
+        assert update.associated_tools == [tool_id1, tool_id2]
+        assert update.associated_resources == [resource_id1, resource_id2]
+        assert update.associated_prompts == [prompt_id1]
 
         # Test with comma-separated strings
         csv_update = ServerUpdate(
-            associated_tools="10,11",
-            associated_resources="12,13",
-            associated_prompts="14",
+            associated_tools=f"{tool_id1},{tool_id2}",
+            associated_resources=f"{resource_id1},{resource_id2}",
+            associated_prompts=prompt_id1,
         )
 
         assert csv_update.name is None
         assert csv_update.description is None
         assert csv_update.icon is None
-        assert csv_update.associated_tools == ["10", "11"]
-        assert csv_update.associated_resources == ["12", "13"]
-        assert csv_update.associated_prompts == ["14"]
+        assert csv_update.associated_tools == [tool_id1, tool_id2]
+        assert csv_update.associated_resources == [resource_id1, resource_id2]
+        assert csv_update.associated_prompts == [prompt_id1]
 
     def test_server_read(self):
         """Test ServerRead model."""

@@ -42,7 +42,7 @@ def server_service() -> ServerService:
 @pytest.fixture
 def mock_tool():
     tool = MagicMock(spec=DbTool)
-    tool.id = "101"
+    tool.id = "550e8400-e29b-41d4-a716-446655440101"
     tool.name = "test_tool"
     tool.created_by = "test_user"
     tool.modified_by = "test_user"
@@ -53,7 +53,7 @@ def mock_tool():
 @pytest.fixture
 def mock_resource():
     res = MagicMock(spec=DbResource)
-    res.id = "201"
+    res.id = "550e8400-e29b-41d4-a716-446655440201"
     res.name = "test_resource"
     res.created_by = "test_user"
     res.modified_by = "test_user"
@@ -64,7 +64,7 @@ def mock_resource():
 @pytest.fixture
 def mock_prompt():
     pr = MagicMock(spec=DbPrompt)
-    pr.id = "301"
+    pr.id = "550e8400-e29b-41d4-a716-446655440301"
     pr.name = "test_prompt"
     pr.created_by = "test_user"
     pr.modified_by = "test_user"
@@ -76,7 +76,7 @@ def mock_prompt():
 def mock_server(mock_tool, mock_resource, mock_prompt):
     """Return a mocked DbServer object with minimal required attributes."""
     server = MagicMock(spec=DbServer)
-    server.id = "1"
+    server.id = "550e8400-e29b-41d4-a716-446655440001"
     server.name = "test_server"
     server.description = "A test server"
     server.icon = "server-icon"
@@ -279,7 +279,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="updated_server",
                 description="An updated server",
                 icon="http://example.com/image.jpg",
@@ -324,7 +324,7 @@ class TestServerService:
 
         # Mock the created server instance
         mock_db_server = MagicMock(spec=DbServer)
-        mock_db_server.id = "1"
+        mock_db_server.id = "550e8400-e29b-41d4-a716-446655440001"
         mock_db_server.name = "test_server"
         mock_db_server.description = "A test server"
         mock_db_server.icon = "http://example.com/image.jpg"
@@ -368,7 +368,7 @@ class TestServerService:
             from datetime import datetime, timezone
 
             # Set up the mock server to be returned later
-            server.id = "1"  # Must be string, not int
+            server.id = "550e8400-e29b-41d4-a716-446655440001"  # Must be string, not int
             server.created_at = datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
             server.updated_at = datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
             server.tools = mock_tools
@@ -383,9 +383,9 @@ class TestServerService:
         # Resolve associated objects
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
-                (DbTool, "101"): mock_tool,
-                (DbResource, "201"): mock_resource,
-                (DbPrompt, "301"): mock_prompt,
+                (DbTool, "550e8400-e29b-41d4-a716-446655440101"): mock_tool,
+                (DbResource, "550e8400-e29b-41d4-a716-446655440201"): mock_resource,
+                (DbPrompt, "550e8400-e29b-41d4-a716-446655440301"): mock_prompt,
             }.get((cls, _id))
         )
 
@@ -396,16 +396,16 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 enabled=True,
-                associated_tools=["101"],
-                associated_resources=["201"],
-                associated_prompts=["301"],
+                associated_tools=["550e8400-e29b-41d4-a716-446655440101"],
+                associated_resources=["550e8400-e29b-41d4-a716-446655440201"],
+                associated_prompts=["550e8400-e29b-41d4-a716-446655440301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -423,9 +423,9 @@ class TestServerService:
             name="test_server",
             description="A test server",
             icon="http://example.com/image.jpg",
-            associated_tools=["101"],
-            associated_resources=["201"],
-            associated_prompts=["301"],
+            associated_tools=["550e8400-e29b-41d4-a716-446655440101"],
+            associated_resources=["550e8400-e29b-41d4-a716-446655440201"],
+            associated_prompts=["550e8400-e29b-41d4-a716-446655440301"],
         )
 
         # Run
@@ -438,9 +438,9 @@ class TestServerService:
         server_service._notify_server_added.assert_called_once()
 
         assert result.name == "test_server"
-        assert "101" in result.associated_tools
-        assert "201" in result.associated_resources
-        assert "301" in result.associated_prompts
+        assert "550e8400-e29b-41d4-a716-446655440101" in result.associated_tools
+        assert "550e8400-e29b-41d4-a716-446655440201" in result.associated_resources
+        assert "550e8400-e29b-41d4-a716-446655440301" in result.associated_prompts
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -483,13 +483,13 @@ class TestServerService:
         server_create = ServerCreate(
             name="test_server",
             description="A test server",
-            associated_tools=["999"],
+            associated_tools=["550e8400-e29b-41d4-a716-446655440999"],
         )
 
         with pytest.raises(ServerError) as exc:
             await server_service.register_server(test_db, server_create)
 
-        assert "Tool with id 999 does not exist" in str(exc.value)
+        assert "Tool with id 550e8400-e29b-41d4-a716-446655440999 does not exist" in str(exc.value)
         test_db.rollback.assert_called_once()
 
     # --------------------------- list & get ----------------------------- #
@@ -502,16 +502,16 @@ class TestServerService:
         test_db.execute = MagicMock(return_value=exec_result)
 
         server_read = ServerRead(
-            id="1",
+            id="550e8400-e29b-41d4-a716-446655440001",
             name="test_server",
             description="A test server",
             icon="http://example.com/image.jgp",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
-            associated_tools=["101"],
-            associated_resources=["201"],
-            associated_prompts=["301"],
+            associated_tools=["550e8400-e29b-41d4-a716-446655440101"],
+            associated_resources=["550e8400-e29b-41d4-a716-446655440201"],
+            associated_prompts=["550e8400-e29b-41d4-a716-446655440301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -594,16 +594,16 @@ class TestServerService:
         test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         server_read = ServerRead(
-            id="1",
+            id="550e8400-e29b-41d4-a716-446655440001",
             name="test_server",
             description="A test server",
             icon="http://example.com/image.jpg",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
-            associated_tools=["101"],
-            associated_resources=["201"],
-            associated_prompts=["301"],
+            associated_tools=["550e8400-e29b-41d4-a716-446655440101"],
+            associated_resources=["550e8400-e29b-41d4-a716-446655440201"],
+            associated_prompts=["550e8400-e29b-41d4-a716-446655440301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -647,7 +647,7 @@ class TestServerService:
         new_resource._sa_instance_state = MagicMock()
 
         new_prompt = MagicMock(spec=DbPrompt)
-        new_prompt.id = 302
+        new_prompt.id = "550e8400-e29b-41d4-a716-446655440302"
         new_prompt.name = "new_prompt"
         new_prompt._sa_instance_state = MagicMock()
 
@@ -705,16 +705,16 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="updated_server",
                 description="An updated server",
                 icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 enabled=True,
-                associated_tools=["102"],
-                associated_resources=["202"],
-                associated_prompts=["302"],
+                associated_tools=["550e8400-e29b-41d4-a716-446655440102"],
+                associated_resources=["550e8400-e29b-41d4-a716-446655440202"],
+                associated_prompts=["550e8400-e29b-41d4-a716-446655440302"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -732,9 +732,9 @@ class TestServerService:
             name="updated_server",
             description="An updated server",
             icon="http://example.com/image.jpg",
-            associated_tools=["102"],
-            associated_resources=["202"],
-            associated_prompts=["302"],
+            associated_tools=["550e8400-e29b-41d4-a716-446655440102"],
+            associated_resources=["550e8400-e29b-41d4-a716-446655440202"],
+            associated_prompts=["550e8400-e29b-41d4-a716-446655440302"],
         )
 
         test_user_email = "user@example.com"
@@ -771,7 +771,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="updated",
                 icon="server-icon",
@@ -797,7 +797,7 @@ class TestServerService:
         original_owner = mock_server.owner_email
         update = ServerUpdate(description="updated", owner_email="attacker@example.com")
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            await server_service.update_server(db, "1", update, "user@example.com")
+            await server_service.update_server(db, "550e8400-e29b-41d4-a716-446655440001", update, "user@example.com")
 
         assert mock_server.owner_email == original_owner
 
@@ -816,7 +816,7 @@ class TestServerService:
 
             # --- PRIVATE: allow same name across users/teams (should NOT raise ServerNameConflictError) --- #
             server_private = mock_server
-            server_private.id = "1"
+            server_private.id = "550e8400-e29b-41d4-a716-446655440001"
             server_private.name = "other_server"
             server_private.visibility = "private"
             server_private.team_id = "teamA"
@@ -843,19 +843,19 @@ class TestServerService:
             with pytest.raises(IntegrityError):
                 await server_service.update_server(
                     test_db,
-                    "1",
+                    "550e8400-e29b-41d4-a716-446655440001",
                     ServerUpdate(name="existing_server", visibility="private"),
                     test_user_email,
                 )
 
             # --- TEAM: restrict within team only (should raise ServerNameConflictError) --- #
             server_team = mock_server
-            server_team.id = "2"
+            server_team.id = "550e8400-e29b-41d4-a716-446655440002"
             server_team.name = "other_server"
             server_team.visibility = "team"
             server_team.team_id = "teamA"
 
-            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", enabled=True, visibility="team", team_id="teamA")
+            conflict_team_server = types.SimpleNamespace(id="550e8400-e29b-41d4-a716-446655440003", name="existing_server", enabled=True, visibility="team", team_id="teamA")
 
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
@@ -871,7 +871,7 @@ class TestServerService:
             with pytest.raises(ServerNameConflictError) as exc:
                 await server_service.update_server(
                     test_db,
-                    "2",
+                    "550e8400-e29b-41d4-a716-446655440002",
                     ServerUpdate(name="existing_server", visibility="team", team_id="teamA"),
                     test_user_email,
                 )
@@ -922,16 +922,16 @@ class TestServerService:
         server_service._notify_server_deactivated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 enabled=False,
-                associated_tools=["101"],
-                associated_resources=["201"],
-                associated_prompts=["301"],
+                associated_tools=["550e8400-e29b-41d4-a716-446655440101"],
+                associated_resources=["550e8400-e29b-41d4-a716-446655440201"],
+                associated_prompts=["550e8400-e29b-41d4-a716-446655440301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -967,7 +967,7 @@ class TestServerService:
         server_service._notify_server_activated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -990,7 +990,7 @@ class TestServerService:
             )
         )
 
-        result = await server_service.set_server_state(test_db, "1", activate=True)
+        result = await server_service.set_server_state(test_db, "550e8400-e29b-41d4-a716-446655440001", activate=True)
 
         assert test_db.execute.called
         assert test_db.commit.call_count == 1
@@ -1017,7 +1017,7 @@ class TestServerService:
         server_service._notify_server_deactivated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -1040,7 +1040,7 @@ class TestServerService:
             )
         )
 
-        result = await server_service.set_server_state(test_db, "1", activate=False)
+        result = await server_service.set_server_state(test_db, "550e8400-e29b-41d4-a716-446655440001", activate=False)
 
         # Verify the server was retrieved with proper options (selectinload for email_team)
         assert test_db.execute.called
@@ -1499,7 +1499,7 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="OAuth Server",
                 description="Server with OAuth enabled",
                 icon=None,
@@ -1573,7 +1573,7 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="Non-OAuth Server",
                 description="Server without OAuth",
                 icon=None,
@@ -1639,7 +1639,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -1671,7 +1671,7 @@ class TestServerService:
 
         test_user_email = "user@example.com"
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+            result = await server_service.update_server(test_db, "550e8400-e29b-41d4-a716-446655440001", server_update, test_user_email)
 
         # Verify OAuth config was updated
         assert mock_server.oauth_enabled is True
@@ -1702,7 +1702,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -1734,7 +1734,7 @@ class TestServerService:
 
         test_user_email = "user@example.com"
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+            result = await server_service.update_server(test_db, "550e8400-e29b-41d4-a716-446655440001", server_update, test_user_email)
 
         # Verify OAuth was disabled
         assert mock_server.oauth_enabled is False
@@ -1758,7 +1758,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -1789,7 +1789,7 @@ class TestServerService:
         )
 
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            await server_service.update_server(test_db, "1", server_update, "user@example.com")
+            await server_service.update_server(test_db, "550e8400-e29b-41d4-a716-446655440001", server_update, "user@example.com")
 
         assert mock_server.oauth_config["client_secret"] == existing_secret
 
@@ -1807,7 +1807,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -1851,7 +1851,7 @@ class TestServerService:
             patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
             patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
         ):
-            await server_service.update_server(test_db, "1", LegacyServerUpdate(), "user@example.com")
+            await server_service.update_server(test_db, "550e8400-e29b-41d4-a716-446655440001", LegacyServerUpdate(), "user@example.com")
 
         encryption = get_encryption_service(settings.auth_encryption_secret)
         assert encryption.is_encrypted(mock_server.oauth_config["client_secret"])
@@ -1989,9 +1989,9 @@ class TestServerService:
         await server_service._notify_server_added(mock_server)
         event = server_service._event_subscribers[0].get_nowait()
         assert event["type"] == "server_added"
-        assert event["data"]["id"] == "1"
+        assert event["data"]["id"] == "550e8400-e29b-41d4-a716-446655440001"
         assert event["data"]["name"] == "test_server"
-        assert "101" in event["data"]["associated_tools"]
+        assert "550e8400-e29b-41d4-a716-446655440101" in event["data"]["associated_tools"]
 
     @pytest.mark.asyncio
     async def test_notify_server_updated(self, server_service, mock_server):
@@ -2000,7 +2000,7 @@ class TestServerService:
         await server_service._notify_server_updated(mock_server)
         event = server_service._event_subscribers[0].get_nowait()
         assert event["type"] == "server_updated"
-        assert event["data"]["id"] == "1"
+        assert event["data"]["id"] == "550e8400-e29b-41d4-a716-446655440001"
 
     @pytest.mark.asyncio
     async def test_notify_server_activated(self, server_service, mock_server):
@@ -2024,11 +2024,11 @@ class TestServerService:
     async def test_notify_server_deleted(self, server_service):
         """_notify_server_deleted publishes server_deleted event."""
         server_service._event_subscribers = [asyncio.Queue()]
-        info = {"id": "1", "name": "deleted_server"}
+        info = {"id": "550e8400-e29b-41d4-a716-446655440001", "name": "deleted_server"}
         await server_service._notify_server_deleted(info)
         event = server_service._event_subscribers[0].get_nowait()
         assert event["type"] == "server_deleted"
-        assert event["data"]["id"] == "1"
+        assert event["data"]["id"] == "550e8400-e29b-41d4-a716-446655440001"
 
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self, server_service):
@@ -2078,7 +2078,7 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerNotFoundError):
-            server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+            server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
 
     def test_get_oauth_metadata_non_public(self, server_service, mock_server):
         """Raises ServerNotFoundError for non-public server."""
@@ -2086,7 +2086,7 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerNotFoundError):
-            server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+            server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
 
     def test_get_oauth_metadata_oauth_not_enabled(self, server_service, mock_server):
         """Raises ServerError when OAuth not enabled."""
@@ -2095,7 +2095,7 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerError):
-            server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+            server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
 
     def test_get_oauth_metadata_no_config(self, server_service, mock_server):
         """Raises ServerError when no OAuth config."""
@@ -2105,7 +2105,7 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerError):
-            server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+            server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
 
     def test_get_oauth_metadata_no_auth_server(self, server_service, mock_server):
         """Raises ServerError when no authorization_servers in config."""
@@ -2115,7 +2115,7 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerError, match="authorization_server not configured"):
-            server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+            server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
 
     def test_get_oauth_metadata_success_single_server(self, server_service, mock_server):
         """Returns RFC 9728 metadata with singular authorization_server config (wrapped in array)."""
@@ -2127,7 +2127,7 @@ class TestServerService:
         }
         db = MagicMock()
         db.get.return_value = mock_server
-        result = server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+        result = server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
         assert result["resource"] == "https://gw.com/1"
         # RFC 9728 Section 2: authorization_servers is a JSON array
         assert result["authorization_servers"] == ["https://idp.example.com"]
@@ -2144,7 +2144,7 @@ class TestServerService:
         }
         db = MagicMock()
         db.get.return_value = mock_server
-        result = server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+        result = server_service.get_oauth_protected_resource_metadata(db, "550e8400-e29b-41d4-a716-446655440001", "https://gw.com/1")
         # RFC 9728 Section 2: authorization_servers preserves all servers
         assert result["authorization_servers"] == ["https://idp1.com", "https://idp2.com"]
         assert isinstance(result["authorization_servers"], list)
@@ -2248,7 +2248,7 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id="1",
+                id="550e8400-e29b-41d4-a716-446655440001",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
@@ -2285,7 +2285,7 @@ class TestServerService:
 
         test_user_email = "user@example.com"
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+            result = await server_service.update_server(test_db, "550e8400-e29b-41d4-a716-446655440001", server_update, test_user_email)
 
         # Verify OAuth was disabled AND config was cleared (not replaced)
         assert mock_server.oauth_enabled is False
@@ -2463,11 +2463,13 @@ class TestRegisterServerBulkAssociations:
     async def test_bulk_tools_association(self, server_service, test_db):
         """Multiple tool IDs triggers bulk query path."""
         tool1, tool2 = MagicMock(spec=DbTool), MagicMock(spec=DbTool)
-        tool1.id = "t1"
-        tool2.id = "t2"
+        tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        tool_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        tool1.id = tool_id1
+        tool2.id = tool_id2
         self._add_sa_state(tool1, tool2)
 
-        sc = ServerCreate(name="bulk-srv", description="desc", associated_tools=["t1", "t2"])
+        sc = ServerCreate(name="bulk-srv", description="desc", associated_tools=[tool_id1, tool_id2])
 
         bulk_result = MagicMock()
         bulk_result.scalars.return_value.all.return_value = [tool1, tool2]
@@ -2488,10 +2490,12 @@ class TestRegisterServerBulkAssociations:
     async def test_bulk_tools_missing_raises(self, server_service, test_db):
         """Missing tools in bulk query raises ServerError."""
         tool1 = MagicMock(spec=DbTool)
-        tool1.id = "t1"
+        tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        tool_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        tool1.id = tool_id1
         self._add_sa_state(tool1)
 
-        sc = ServerCreate(name="srv", description="desc", associated_tools=["t1", "t2"])
+        sc = ServerCreate(name="srv", description="desc", associated_tools=[tool_id1, tool_id2])
 
         bulk_result = MagicMock()
         bulk_result.scalars.return_value.all.return_value = [tool1]  # t2 missing
@@ -2507,11 +2511,13 @@ class TestRegisterServerBulkAssociations:
     async def test_bulk_resources_association(self, server_service, test_db):
         """Multiple resource IDs triggers bulk query path."""
         r1, r2 = MagicMock(spec=DbResource), MagicMock(spec=DbResource)
-        r1.id = "r1"
-        r2.id = "r2"
+        res_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        res_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        r1.id = res_id1
+        r2.id = res_id2
         self._add_sa_state(r1, r2)
 
-        sc = ServerCreate(name="srv-res", description="desc", associated_resources=["r1", "r2"])
+        sc = ServerCreate(name="srv-res", description="desc", associated_resources=[res_id1, res_id2])
 
         bulk_result = MagicMock()
         bulk_result.scalars.return_value.all.return_value = [r1, r2]
@@ -2531,7 +2537,9 @@ class TestRegisterServerBulkAssociations:
     @pytest.mark.asyncio
     async def test_bulk_prompts_missing_raises(self, server_service, test_db):
         """Missing prompts in bulk query raises ServerError."""
-        sc = ServerCreate(name="srv", description="desc", associated_prompts=["p1", "p2"])
+        prompt_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        prompt_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        sc = ServerCreate(name="srv", description="desc", associated_prompts=[prompt_id1, prompt_id2])
 
         bulk_result = MagicMock()
         bulk_result.scalars.return_value.all.return_value = []  # none found
@@ -2550,13 +2558,15 @@ class TestRegisterServerBulkAssociations:
         from mcpgateway.db import A2AAgent as DbA2AAgent
 
         a1, a2 = MagicMock(spec=DbA2AAgent), MagicMock(spec=DbA2AAgent)
-        a1.id = "a1"
+        agent_id1 = "550e8400-e29b-41d4-a716-446655440001"
+        agent_id2 = "550e8400-e29b-41d4-a716-446655440002"
+        a1.id = agent_id1
         a1.name = "agent1"
-        a2.id = "a2"
+        a2.id = agent_id2
         a2.name = "agent2"
         self._add_sa_state(a1, a2)
 
-        sc = ServerCreate(name="srv-agents", description="desc", associated_a2a_agents=["a1", "a2"])
+        sc = ServerCreate(name="srv-agents", description="desc", associated_a2a_agents=[agent_id1, agent_id2])
 
         bulk_result = MagicMock()
         bulk_result.scalars.return_value.all.return_value = [a1, a2]
@@ -3123,7 +3133,7 @@ class TestServerServiceCoverageMissingBranches:
         db = MagicMock()
         mock_cache = AsyncMock()
         mock_cache.hash_filters.return_value = "h"
-        mock_cache.get = AsyncMock(return_value={"servers": [{"id": "1"}], "next_cursor": "n"})
+        mock_cache.get = AsyncMock(return_value={"servers": [{"id": "550e8400-e29b-41d4-a716-446655440001"}], "next_cursor": "n"})
 
         class CachedServerRead:
             def __init__(self):
@@ -3202,7 +3212,7 @@ class TestServerServiceCoverageMissingBranches:
         mock_cache.set = AsyncMock()
 
         server_read = MagicMock()
-        server_read.model_dump = MagicMock(return_value={"id": "1"})
+        server_read.model_dump = MagicMock(return_value={"id": "550e8400-e29b-41d4-a716-446655440001"})
 
         with (
             patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache),

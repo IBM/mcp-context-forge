@@ -4143,15 +4143,41 @@ class ServerCreate(BaseModel):
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
+        Also validates that list items are valid UUIDs (not names).
 
         Args:
-            v: Input string
+            v: Input string or list of IDs
 
         Returns:
-            list: Comma separated array of input string
+            list: List of validated UUID strings
+
+        Raises:
+            ValueError: If list contains non-UUID values (e.g., tool names instead of IDs)
         """
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
+        if isinstance(v, list):
+            # Validate that list items are UUIDs, not names
+            validated = []
+            for item in v:
+                if not item:
+                    continue
+                item_str = str(item).strip()
+                if not item_str:
+                    continue
+                # Validate UUID format using SecurityValidator
+                try:
+                    # This will raise ValueError if not a valid UUID
+                    SecurityValidator.validate_uuid(item_str, "ID")
+                    validated.append(item_str)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid ID format: '{item_str}'. "
+                        "Use 'associated_tool_ids', 'associated_resource_ids', 'associated_prompt_ids', or 'associated_a2a_agent_ids' "
+                        "instead of 'associatedTools', 'associatedResources', 'associatedPrompts', or 'associatedA2AAgents'. "
+                        "IDs must be UUIDs, not names."
+                    )
+            return validated
         return v
 
     @field_validator("team_id")
@@ -4304,15 +4330,41 @@ class ServerUpdate(BaseModelWithConfigDict):
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
+        Also validates that list items are valid UUIDs (not names).
 
         Args:
-            v: Input string
+            v: Input string or list of IDs
 
         Returns:
-            list: Comma separated array of input string
+            list: List of validated UUID strings
+
+        Raises:
+            ValueError: If list contains non-UUID values (e.g., tool names instead of IDs)
         """
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
+        if isinstance(v, list):
+            # Validate that list items are UUIDs, not names
+            validated = []
+            for item in v:
+                if not item:
+                    continue
+                item_str = str(item).strip()
+                if not item_str:
+                    continue
+                # Validate UUID format using SecurityValidator
+                try:
+                    # This will raise ValueError if not a valid UUID
+                    SecurityValidator.validate_uuid(item_str, "ID")
+                    validated.append(item_str)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid ID format: '{item_str}'. "
+                        "Use 'associated_tool_ids', 'associated_resource_ids', 'associated_prompt_ids', or 'associated_a2a_agent_ids' "
+                        "instead of 'associatedTools', 'associatedResources', 'associatedPrompts', or 'associatedA2AAgents'. "
+                        "IDs must be UUIDs, not names."
+                    )
+            return validated
         return v
 
 
