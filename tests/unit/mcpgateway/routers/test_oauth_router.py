@@ -101,6 +101,98 @@ class TestNormalizeResourceUrl:
         assert result == "https://example.com/path?x=1"
 
 
+class TestPersistLearnedAudience:
+    """Tests for _persist_learned_audience helper."""
+
+    @pytest.mark.asyncio
+    async def test_persists_string_aud_from_jwt(self):
+        """Persists the aud claim as resource when token_aud is a string."""
+        oauth_result = {"token_aud": "my-client-id", "user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "my-client-id", "grant_type": "authorization_code"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        assert gateway.oauth_config["resource"] == "my-client-id"
+        db.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persists_list_aud_from_jwt(self):
+        """Persists the full aud list when token_aud is an array."""
+        aud_list = ["https://api.example.com", "my-client-id"]
+        oauth_result = {"token_aud": aud_list, "user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "my-client-id"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        assert gateway.oauth_config["resource"] == aud_list
+        db.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_resource_already_matches(self):
+        """Does not flush if the persisted resource already matches aud."""
+        oauth_result = {"token_aud": "my-client-id", "user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "my-client-id", "resource": "my-client-id"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_opaque_token(self):
+        """Gracefully skips when token_aud is None (opaque token)."""
+        oauth_result = {"token_aud": None, "user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_token_aud(self):
+        """Gracefully skips when token_aud is missing from result."""
+        oauth_result = {"user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+
+
 class TestOAuthRouter:
     """Test cases for OAuth router endpoints."""
 
@@ -279,8 +371,8 @@ class TestOAuthRouter:
             assert "incomplete" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_normalizes_resource_list(self, mock_db, mock_request, mock_current_user):
-        """Test that resource list is normalized and invalid entries removed."""
+    async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):
+        """Test that a persisted resource (learned from IdP aud) is used as-is."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
@@ -294,7 +386,7 @@ class TestOAuthRouter:
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
-            "resource": ["https://api.example.com/path?x=1#frag", "invalid-resource"],
+            "resource": "my-client-id-from-idp",
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -311,11 +403,11 @@ class TestOAuthRouter:
                 await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
 
         oauth_config_passed = mock_oauth_manager.initiate_authorization_code_flow.call_args[0][1]
-        assert oauth_config_passed["resource"] == ["https://api.example.com/path?x=1"]
+        assert oauth_config_passed["resource"] == "my-client-id-from-idp"
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_resource_string_normalized(self, mock_db, mock_request, mock_current_user):
-        """Test that resource string is normalized preserving query."""
+    async def test_initiate_oauth_flow_resource_list_persisted_as_is(self, mock_db, mock_request, mock_current_user):
+        """Test that a persisted resource list (learned from IdP aud array) is used as-is."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
@@ -329,7 +421,7 @@ class TestOAuthRouter:
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
-            "resource": "https://api.example.com/path?x=1#frag",
+            "resource": ["https://api.example.com", "my-client-id"],
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -346,7 +438,7 @@ class TestOAuthRouter:
                 await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
 
         oauth_config_passed = mock_oauth_manager.initiate_authorization_code_flow.call_args[0][1]
-        assert oauth_config_passed["resource"] == "https://api.example.com/path?x=1"
+        assert oauth_config_passed["resource"] == ["https://api.example.com", "my-client-id"]
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_missing_client_id(self, mock_db, mock_request, mock_current_user):
@@ -447,7 +539,7 @@ class TestOAuthRouter:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -473,8 +565,8 @@ class TestOAuthRouter:
                 assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
 
     @pytest.mark.asyncio
-    async def test_oauth_callback_resource_string_normalized(self, mock_db, mock_request):
-        """Test OAuth callback normalizes string resource value."""
+    async def test_oauth_callback_resource_string_persisted_as_is(self, mock_db, mock_request):
+        """Test OAuth callback uses persisted resource as-is (learned from IdP aud)."""
         import base64
         import json
 
@@ -494,11 +586,11 @@ class TestOAuthRouter:
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
-            "resource": "https://api.example.com/path?x=1#frag",
+            "resource": "my-client-id-from-idp",
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -513,7 +605,7 @@ class TestOAuthRouter:
 
         assert isinstance(result, HTMLResponse)
         oauth_config_passed = mock_oauth_manager.complete_authorization_code_flow.call_args[0][3]
-        assert oauth_config_passed["resource"] == "https://api.example.com/path?x=1"
+        assert oauth_config_passed["resource"] == "my-client-id-from-idp"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_legacy_state_format(self, mock_db, mock_request, mock_gateway):
@@ -1407,7 +1499,8 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_invalid_resource_list(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_resource_list_used_as_is(self, mock_db, mock_request, mock_current_user):
+        """Resource lists (learned from IdP aud arrays) are passed through unchanged."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
@@ -1433,11 +1526,11 @@ class TestOAuthRouterAdditionalCoverage:
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
-                with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                    result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+                result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
 
         assert isinstance(result, RedirectResponse)
-        mock_logger.warning.assert_called()
+        oauth_config_passed = mock_mgr.initiate_authorization_code_flow.call_args[0][1]
+        assert oauth_config_passed["resource"] == ["not-a-url"]
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_decrypts_secret(self, mock_db, mock_request, mock_current_user):
@@ -1531,7 +1624,8 @@ class TestOAuthRouterAdditionalCoverage:
         assert response.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_oauth_callback_invalid_resource_list(self, mock_db, mock_request):
+    async def test_oauth_callback_resource_list_used_as_is(self, mock_db, mock_request):
+        """Resource lists (learned from IdP aud arrays) are passed through unchanged in callback."""
         import base64
         import orjson
 
@@ -1561,11 +1655,11 @@ class TestOAuthRouterAdditionalCoverage:
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                 from mcpgateway.routers.oauth_router import oauth_callback
 
-                with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                    response = await oauth_callback(code="code", state=state, request=mock_request, db=mock_db)
+                response = await oauth_callback(code="code", state=state, request=mock_request, db=mock_db)
 
         assert response.status_code == 200
-        mock_logger.warning.assert_called()
+        oauth_config_passed = mock_mgr.complete_authorization_code_flow.call_args[0][3]
+        assert oauth_config_passed["resource"] == ["not-a-url"]
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user):
