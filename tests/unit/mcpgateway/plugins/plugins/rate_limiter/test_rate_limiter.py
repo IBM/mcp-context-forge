@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 # Third-Party
 import pytest
 
-pytest.importorskip("cpex_rate_limiter", reason="cpex-rate-limiter plugin not installed")
+pytest.importorskip("cpex_rate_limiter.rate_limiter")
 
 # First-Party
 from cpex_rate_limiter.rate_limiter import RateLimiterConfig, RateLimiterPlugin, _parse_rate
