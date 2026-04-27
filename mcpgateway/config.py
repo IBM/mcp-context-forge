@@ -410,9 +410,6 @@ class Settings(BaseSettings):
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
-    meta_max_keys: int = Field(default=16, description="Maximum number of keys in user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
-    meta_max_depth: int = Field(default=2, description="Maximum nesting depth for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
-    meta_max_bytes: int = Field(default=4096, description="Maximum JSON-encoded byte size for user-supplied meta_data forwarded to upstream MCP servers (CWE-400)")
     dangerous_patterns: List[str] = Field(
         default_factory=lambda: [
             r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
@@ -442,6 +439,7 @@ class Settings(BaseSettings):
     sso_entra_graph_api_enabled: bool = Field(default=True, description="Enable Microsoft Graph fallback for EntraID groups overage claims")
     sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
     sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
+    sso_entra_team_mapping: Dict[str, Any] = Field(default_factory=dict, description="Map EntraID groups to ContextForge teams (JSON: {group_id: {team_id: ..., role: member|owner}})")
 
     sso_adfs_enabled: bool = Field(default=False, description="Enable ADFS OIDC authentication")
     sso_adfs_client_id: Optional[str] = Field(default=None, description="ADFS OAuth client ID")
@@ -776,7 +774,8 @@ class Settings(BaseSettings):
     default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
     default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")
     default_team_owner_role: str = Field(default="team_admin", description="Team-scoped role assigned to team owners (e.g. personal team creator)")
-    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
+    default_team_developer_role: str = Field(default="developer", description="Team-scoped role assigned to team developers")
+    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members (viewer)")
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False

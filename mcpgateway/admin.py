@@ -146,6 +146,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.role_service import RoleService
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -2939,7 +2940,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         team_id = str(team_id_raw) if team_id_raw is not None else None
 
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
         # Extract metadata for server creation
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -3026,22 +3030,16 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
         user_email = get_user_email(user)
+
+        # Extract team_id from form and verify user membership
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        # Preserve existing server's team_id when no explicit team_id is provided.
-        # Without this guard, verify_team_for_user() falls back to the user's
-        # personal team, silently reassigning the server on every edit.
-        if not team_id:
-            existing_server = db.get(DbServer, server_id)
-            existing_team = getattr(existing_server, "team_id", None) if existing_server else None
-            if isinstance(existing_team, str) and existing_team:
-                team_id = existing_team
-
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
@@ -5645,6 +5643,21 @@ async def admin_create_team(
         visibility = form.get("visibility", "private")
         max_members = _parse_form_max_members(form.get("max_members"))
 
+        # OIDC sync fields
+        oidc_sync_enabled = form.get("oidc_sync_enabled") == "true"
+        oidc_group_ids_json = str(form.get("oidc_group_ids", "")).strip()
+        oidc_group_ids = None
+        if oidc_group_ids_json:
+            try:
+                parsed = orjson.loads(oidc_group_ids_json)
+                if isinstance(parsed, list):
+                    oidc_group_ids = [entry for entry in parsed if isinstance(entry, dict) and entry.get("id", "").strip()] or None
+            except (orjson.JSONDecodeError, ValueError):
+                oidc_group_ids = None
+        oidc_sync_role = form.get("oidc_sync_role", "member")
+        if oidc_sync_role not in ("owner", "developer", "member"):
+            oidc_sync_role = "member"
+
         if not name:
             response = HTMLResponse(
                 content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team name is required</div>',
@@ -5665,7 +5678,8 @@ async def admin_create_team(
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
         await team_service.create_team(
-            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin)
+            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin),
+            oidc_sync_enabled=oidc_sync_enabled, oidc_group_ids=oidc_group_ids, oidc_sync_role=oidc_sync_role,
         )
 
         response = HTMLResponse(content="", status_code=201)
@@ -6068,11 +6082,31 @@ async def admin_get_team_edit(
         else:
             max_members_value = team.max_members
             max_members_hint = f"Max {max_members_limit}."
+
+        # Pre-build OIDC group rows HTML for the edit form
+        _oidc_rows_html = ""
+        _existing_oidc_groups = getattr(team, "oidc_group_ids", None) or []
+        for _entry in _existing_oidc_groups:
+            if isinstance(_entry, dict):
+                _g_name = html.escape(_entry.get("name", ""))
+                _g_id = html.escape(_entry.get("id", ""))
+            else:
+                _g_name = ""
+                _g_id = html.escape(str(_entry))
+            _oidc_rows_html += (
+                '<tr>'
+                f'<td class="pr-2 py-1"><input type="text" data-field="name" value="{_g_name}" placeholder="e.g. IT Department" class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white" onchange="Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')"></td>'
+                f'<td class="pr-2 py-1"><input type="text" data-field="id" value="{_g_id}" placeholder="5993f5bb-566d-..." class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-white" onchange="Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')"></td>'
+                f'<td class="py-1"><button type="button" onclick="this.closest(\'tr\').remove(); Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')" class="text-red-500 hover:text-red-700 text-lg" title="Remove">&times;</button></td>'
+                '</tr>'
+            )
+        _oidc_group_ids_json = html.escape(orjson.dumps(_existing_oidc_groups).decode())
+
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
+            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true" onsubmit="Admin.syncOidcGroupIds('edit-oidc-groups-table-{team_id}', 'edit-oidc-group-ids-{team_id}')">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -6109,6 +6143,48 @@ async def admin_get_team_edit(
                     <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}" {max_members_disabled}
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
+                </div>
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                    <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">OIDC Group Sync</h4>
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="oidc_sync_enabled" id="edit-oidc-sync-{team_id}" value="true"
+                               {"checked" if getattr(team, "oidc_sync_enabled", False) else ""}
+                               onchange="document.getElementById('edit-oidc-fields-{team_id}').style.display = this.checked ? 'block' : 'none'"
+                               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-600 rounded">
+                        <label for="edit-oidc-sync-{team_id}" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                            Sync members from an OIDC group
+                        </label>
+                    </div>
+                    <div id="edit-oidc-fields-{team_id}" style="display: {"block" if getattr(team, "oidc_sync_enabled", False) else "none"}">
+                        <div class="mb-3">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OIDC Groups</label>
+                            <input type="hidden" name="oidc_group_ids" id="edit-oidc-group-ids-{team_id}" value='{_oidc_group_ids_json}'>
+                            <table class="w-full text-sm" id="edit-oidc-groups-table-{team_id}">
+                                <thead>
+                                    <tr class="text-left text-xs text-gray-500 dark:text-gray-400">
+                                        <th class="pb-1 pr-2 font-medium">Display Name</th>
+                                        <th class="pb-1 pr-2 font-medium">Group ID</th>
+                                        <th class="pb-1 w-8"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>{_oidc_rows_html}</tbody>
+                            </table>
+                            <button type="button" onclick="Admin.addOidcGroupRow('edit-oidc-groups-table-{team_id}', 'edit-oidc-group-ids-{team_id}')"
+                                    class="mt-2 inline-flex items-center px-2 py-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20">
+                                + Add Group
+                            </button>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Add OIDC groups from your identity provider. Display name is optional — for admin reference only.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Default Role for Synced Members</label>
+                            <select name="oidc_sync_role"
+                                    class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                                <option value="member" {"selected" if getattr(team, "oidc_sync_role", "member") == "member" else ""}>Viewer</option>
+                                <option value="developer" {"selected" if getattr(team, "oidc_sync_role", "member") == "developer" else ""}>Developer</option>
+                                <option value="owner" {"selected" if getattr(team, "oidc_sync_role", "member") == "owner" else ""}>Owner</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="Admin.hideTeamEditModal()"
@@ -6168,6 +6244,22 @@ async def admin_update_team(
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
         max_members = _parse_form_max_members(form.get("max_members"))
+
+        # OIDC sync fields
+        oidc_sync_enabled = form.get("oidc_sync_enabled") == "true"
+        oidc_group_ids_json = form.get("oidc_group_ids")
+        oidc_group_ids_json = oidc_group_ids_json.strip() if isinstance(oidc_group_ids_json, str) else ""
+        oidc_group_ids = None
+        if oidc_group_ids_json:
+            try:
+                parsed = orjson.loads(oidc_group_ids_json)
+                if isinstance(parsed, list):
+                    oidc_group_ids = [entry for entry in parsed if isinstance(entry, dict) and entry.get("id", "").strip()] or None
+            except (orjson.JSONDecodeError, ValueError):
+                oidc_group_ids = None
+        oidc_sync_role = form.get("oidc_sync_role", "member")
+        if oidc_sync_role not in ("owner", "developer", "member"):
+            oidc_sync_role = "member"
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -6231,7 +6323,7 @@ async def admin_update_team(
         else:
             max_members_kwarg = UNSET
         updated = await team_service.update_team(
-            team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members_kwarg, updated_by=user_email, skip_limits=bool(is_admin)
+            team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members_kwarg, updated_by=user_email, skip_limits=bool(is_admin), oidc_sync_enabled=oidc_sync_enabled, oidc_group_ids=oidc_group_ids, oidc_sync_role=oidc_sync_role
         )
 
         if not updated:
@@ -7839,6 +7931,20 @@ async def admin_get_user_edit(
         current_user_email = get_user_email(_user)
         is_editing_self = current_user_email.lower() == decoded_email.lower()
 
+        # Fetch global roles and user's current global role for the role dropdown
+        role_service = RoleService(db)
+        permission_service = PermissionService(db)
+        global_roles = await role_service.list_roles(scope="global")
+        user_global_roles = await permission_service.get_user_roles(decoded_email, scope="global")
+        current_global_role_name = user_global_roles[0].role.name if user_global_roles else ""
+
+        # Build role dropdown options
+        role_options_html = ""
+        for role in sorted(global_roles, key=lambda r: r.name):
+            selected = "selected" if role.name == current_global_role_name else ""
+            display_name = role.name.replace("_", " ").title()
+            role_options_html += f'<option value="{html.escape(role.name)}" {selected}>{html.escape(display_name)}</option>'
+
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
@@ -7901,10 +8007,11 @@ async def admin_get_user_edit(
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
                 {"" if is_editing_self else f'''<div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                        <input type="checkbox" name="is_admin" {"checked" if user_obj.is_admin else ""}
-                               class="mr-2"> Administrator
-                    </label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Global Role</label>
+                    <select name="global_role"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                        {role_options_html}
+                    </select>
                 </div>'''}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -7987,7 +8094,7 @@ async def admin_update_user(
 
         form = await request.form()
         full_name = form.get("full_name")
-        is_admin = form.get("is_admin") == "on"
+        global_role_name = form.get("global_role")
         email_verified = form.get("email_verified") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
@@ -8001,10 +8108,15 @@ async def admin_update_user(
 
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
+        is_editing_self = user_obj and current_user_email.lower() == decoded_email.lower()
 
-        # When editing self, preserve current admin status (checkbox is hidden in UI)
-        if user_obj and current_user_email.lower() == decoded_email.lower():
+        # Derive is_admin from selected global role
+        # When editing self, role dropdown is hidden — preserve current admin status
+        if is_editing_self:
             is_admin = user_obj.is_admin
+            global_role_name = None  # Skip role change for self-edit
+        else:
+            is_admin = global_role_name == "platform_admin" if global_role_name else user_obj.is_admin if user_obj else False
 
         if user_obj and user_obj.is_admin and not is_admin:
             # This user is currently an admin and we're trying to remove admin privileges
@@ -8026,6 +8138,25 @@ async def admin_update_user(
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
         await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui")
+
+        # Explicitly assign the selected global role (handles 3-way: admin/user/viewer)
+        if global_role_name:
+            role_service = RoleService(db)
+            permission_service = PermissionService(db)
+
+            # Find the target role
+            target_role = await role_service.get_role_by_name(global_role_name, "global")
+            if target_role:
+                # Revoke all current global roles that don't match the target
+                current_global_roles = await permission_service.get_user_roles(decoded_email, scope="global")
+                for ur in current_global_roles:
+                    if ur.role_id != target_role.id:
+                        await role_service.revoke_role_from_user(user_email=decoded_email, role_id=ur.role_id, scope="global", scope_id=None)
+
+                # Assign the target role if not already assigned
+                existing = await role_service.get_user_role_assignment(user_email=decoded_email, role_id=target_role.id, scope="global", scope_id=None)
+                if not existing or not existing.is_active:
+                    await role_service.assign_role_to_user(user_email=decoded_email, role_id=target_role.id, scope="global", scope_id=None, granted_by=current_user_email)
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -11513,7 +11644,10 @@ async def admin_add_tool(
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -11672,14 +11806,17 @@ async def admin_edit_tool(
     auth_obj = _build_auth_obj_from_form(form)
 
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
-    LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
+
+    # Extract team_id from form and verify user membership
+    team_id_raw = form.get("team_id", None)
+    team_id = str(team_id_raw) if team_id_raw is not None else None
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     headers_raw2 = form.get("headers")
     input_schema_raw2 = form.get("input_schema")
@@ -11692,6 +11829,11 @@ async def admin_edit_tool(
         input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
         output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
         annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
+        query_mapping = orjson.loads(form.get("query_mapping") or "{}")
+        header_mapping = orjson.loads(form.get("header_mapping") or "{}")
+        allowlist = orjson.loads(form.get("allowlist") or "[]")
+        plugin_chain_pre = orjson.loads(form.get("plugin_chain_pre") or "[]")
+        plugin_chain_post = orjson.loads(form.get("plugin_chain_post") or "[]")
     except orjson.JSONDecodeError as ex:
         LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
         return ORJSONResponse(
@@ -11715,6 +11857,13 @@ async def admin_edit_tool(
         "visibility": visibility,
         "owner_email": user_email,
         "team_id": team_id,
+        "query_mapping": query_mapping,
+        "header_mapping": header_mapping,
+        "timeout_ms": int(form.get("timeout_ms")) if form.get("timeout_ms") and form.get("timeout_ms").strip() else None,
+        "expose_passthrough": form.get("expose_passthrough", "true"),
+        "allowlist": allowlist,
+        "plugin_chain_pre": plugin_chain_pre,
+        "plugin_chain_post": plugin_chain_post,
     }
     # Only include integration_type if it's provided (not disabled in form)
     if "integrationType" in form:
@@ -12075,9 +12224,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
-        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
-
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
@@ -12136,28 +12282,26 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
+                LOGGER.info(f"Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}")
 
         # Handle passthrough_headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
+        passthrough_headers_raw = form.get("passthrough_headers")
+        passthrough_headers_str = str(passthrough_headers_raw) if passthrough_headers_raw else ""
+        if passthrough_headers_str.strip():
             try:
-                passthrough_headers = orjson.loads(passthrough_headers)
+                passthrough_headers = orjson.loads(passthrough_headers_str)
             except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+                passthrough_headers = [h.strip() for h in passthrough_headers_str.split(",") if h.strip()]
         else:
             passthrough_headers = None
 
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        # Read auth_type from form — always present in HTML form submissions
         auth_type_from_form = str(form.get("auth_type", ""))
-        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
-        elif oauth_config and auth_type_from_form:
-            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
+        # When auth_type is not "oauth", discard any oauth_config assembled from
+        # stale hidden form fields that retain values from previously loaded data
+        if auth_type_from_form != "oauth":
+            oauth_config = None
 
         ca_certificate: Optional[str] = None
         sig: Optional[str] = None
@@ -12223,7 +12367,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     team_id = form.get("team_id", None)
 
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     try:
         # Extract creation metadata
@@ -12324,7 +12471,6 @@ async def admin_edit_gateway(
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Parse auth_headers JSON if present
         auth_headers_json = form.get("auth_headers") or ""
@@ -12336,13 +12482,14 @@ async def admin_edit_gateway(
                 auth_headers = []
 
         # Handle passthrough_headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
+        passthrough_headers_raw = form.get("passthrough_headers")
+        passthrough_headers_str = str(passthrough_headers_raw) if passthrough_headers_raw else ""
+        if passthrough_headers_str.strip():
             try:
-                passthrough_headers = orjson.loads(passthrough_headers)
+                passthrough_headers = orjson.loads(passthrough_headers_str)
             except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+                passthrough_headers = [h.strip() for h in passthrough_headers_str.split(",") if h.strip()]
         else:
             passthrough_headers = None
 
@@ -12411,27 +12558,22 @@ async def admin_edit_gateway(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
-        # Determine personal team for default assignment
+
+        # Extract team_id from form and verify user membership
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        # Preserve existing gateway's team_id when no explicit team_id is provided.
-        # Without this guard, verify_team_for_user() falls back to the user's
-        # personal team, silently reassigning the gateway on every edit.
-        if not team_id:
-            existing_gateway = db.get(DbGateway, gateway_id)
-            existing_team = getattr(existing_gateway, "team_id", None) if existing_gateway else None
-            if isinstance(existing_team, str) and existing_team:
-                team_id = existing_team
-
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        # Read auth_type from form — always present in HTML form submissions
         auth_type_from_form = str(form.get("auth_type", ""))
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
+        # When auth_type is not "oauth", discard any oauth_config assembled from
+        # stale hidden form fields that retain values from previously loaded data
+        if auth_type_from_form != "oauth":
+            oauth_config = None
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=str(form.get("name")),
@@ -12674,7 +12816,10 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     try:
         # Handle template field: convert empty string to None for optional field
@@ -12799,23 +12944,17 @@ async def admin_edit_resource(
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     user_email = get_user_email(user)
+
+    # Extract team_id from form and verify user membership
     team_id_raw = form.get("team_id", None)
     team_id = str(team_id_raw) if team_id_raw is not None else None
-
-    # Preserve existing resource's team_id when no explicit team_id is provided.
-    # Without this guard, verify_team_for_user() falls back to the user's
-    # personal team, silently reassigning the resource on every edit.
-    if not team_id:
-        existing_resource = db.get(DbResource, resource_id)
-        existing_team = getattr(existing_resource, "team_id", None) if existing_resource else None
-        if isinstance(existing_team, str) and existing_team:
-            team_id = existing_team
-
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -12823,13 +12962,24 @@ async def admin_edit_resource(
 
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+
+        # Only include content if the form field is actually present (the textarea
+        # is currently commented-out in the HTML).  Passing "" would silently wipe
+        # the existing resource content.
+        content_raw = form.get("content")
+        content = str(content_raw) if content_raw is not None else None
+
+        # The JS handler sends "uri_template", not "template"
+        uri_template_raw = form.get("uri_template")
+        uri_template = str(uri_template_raw) if uri_template_raw else None
+
         resource = ResourceUpdate(
             uri=str(form.get("uri", "")),
             name=str(form.get("name", "")),
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
-            content=str(form.get("content", "")),
-            template=str(form.get("template")),
+            content=content,
+            uri_template=uri_template,
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -13073,7 +13223,10 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -13192,23 +13345,16 @@ async def admin_edit_prompt(
     form = await request.form()
 
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
+
+    # Extract team_id from form and verify user membership
     team_id_raw = form.get("team_id", None)
     team_id = str(team_id_raw) if team_id_raw is not None else None
-
-    # Preserve existing prompt's team_id when no explicit team_id is provided.
-    # Without this guard, verify_team_for_user() falls back to the user's
-    # personal team, silently reassigning the prompt on every edit.
-    if not team_id:
-        existing_prompt = db.get(DbPrompt, prompt_id)
-        existing_team = getattr(existing_prompt, "team_id", None) if existing_prompt else None
-        if isinstance(existing_team, str) and existing_team:
-            team_id = existing_team
-
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -15440,7 +15586,10 @@ async def admin_add_a2a_agent(
         # Determine personal team for default assignment
         team_id = form.get("team_id", None)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
         # Process tags
         ts_val = form.get("tags", "")
@@ -15459,9 +15608,6 @@ async def admin_add_a2a_agent(
         # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
-
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
-        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
 
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
@@ -15521,27 +15667,25 @@ async def admin_add_a2a_agent(
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
+                LOGGER.info(f"Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}")
 
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
+        passthrough_headers_raw = form.get("passthrough_headers")
+        passthrough_headers_str = str(passthrough_headers_raw) if passthrough_headers_raw else ""
+        if passthrough_headers_str.strip():
             try:
-                passthrough_headers = orjson.loads(passthrough_headers)
+                passthrough_headers = orjson.loads(passthrough_headers_str)
             except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+                passthrough_headers = [h.strip() for h in passthrough_headers_str.split(",") if h.strip()]
         else:
             passthrough_headers = None
 
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        # Read auth_type from form — always present in HTML form submissions
         auth_type_from_form = str(form.get("auth_type", ""))
-        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
-        elif oauth_config and auth_type_from_form:
-            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
+        # When auth_type is not "oauth", discard any oauth_config assembled from
+        # stale hidden form fields that retain values from previously loaded data
+        if auth_type_from_form != "oauth":
+            oauth_config = None
 
         # Extract UAID fields from form
         generate_uaid = form.get("generate_uaid") == "true"  # Checkbox sends "true" string
@@ -15677,7 +15821,6 @@ async def admin_edit_a2a_agent(
 
         # Visibility
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Agent Type
         agent_type = str(form.get("agent_type", "generic"))
@@ -15710,13 +15853,14 @@ async def admin_edit_a2a_agent(
                 auth_headers = []
 
         # Passthrough headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
+        passthrough_headers_raw = form.get("passthrough_headers")
+        passthrough_headers_str = str(passthrough_headers_raw) if passthrough_headers_raw else ""
+        if passthrough_headers_str.strip():
             try:
-                passthrough_headers = orjson.loads(passthrough_headers)
+                passthrough_headers = orjson.loads(passthrough_headers_str)
             except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+                passthrough_headers = [h.strip() for h in passthrough_headers_str.split(",") if h.strip()]
         else:
             passthrough_headers = None
 
@@ -15785,20 +15929,15 @@ async def admin_edit_a2a_agent(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
+
+        # Extract team_id from form and verify user membership
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        # Preserve existing agent's team_id when no explicit team_id is provided.
-        # Without this guard, verify_team_for_user() falls back to the user's
-        # personal team, silently reassigning the agent on every edit.
-        if not team_id:
-            existing_agent = db.get(DbA2AAgent, agent_id)
-            existing_team = getattr(existing_agent, "team_id", None) if existing_agent else None
-            if isinstance(existing_team, str) and existing_team:
-                team_id = existing_team
-
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
 
         # Extract UAID generation fields - allow adding UAID to agents that don't have one
         # UAID is immutable: once generated, it cannot be changed
@@ -15808,9 +15947,10 @@ async def admin_edit_a2a_agent(
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
+        # When auth_type is not "oauth", discard any oauth_config assembled from
+        # stale hidden form fields that retain values from previously loaded data
+        if auth_type_from_form != "oauth":
+            oauth_config = None
 
         agent_update = A2AAgentUpdate(
             name=form.get("name"),
@@ -16240,7 +16380,6 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)

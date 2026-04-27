@@ -108,9 +108,6 @@ export const handleGatewayFormSubmit = async function (e) {
 
     formData.set("visibility", formData.get("visibility"));
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
-
     const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
       method: "POST",
       body: formData,
@@ -190,8 +187,6 @@ export const handleResourceFormSubmit = async function (e) {
     const isInactiveCheckedBool = isInactiveChecked("resources");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.set("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
     const response = await fetch(`${window.ROOT_PATH}/admin/resources`, {
       method: "POST",
       body: formData,
@@ -257,8 +252,6 @@ export const handlePromptFormSubmit = async function (e) {
     const isInactiveCheckedBool = isInactiveChecked("prompts");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.set("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
     const response = await fetch(`${window.ROOT_PATH}/admin/prompts`, {
       method: "POST",
       body: formData,
@@ -300,11 +293,6 @@ export const handleEditPromptFormSubmit = async function (e) {
   const form = e.target;
 
   const formData = new FormData(form);
-  // Add team_id from URL if present (like handleEditToolFormSubmit)
-  const teamId = new URL(window.location.href).searchParams.get("team_id");
-  if (teamId) {
-    formData.set("team_id", teamId);
-  }
 
   try {
     // Validate inputs
@@ -389,8 +377,6 @@ export const handleServerFormSubmit = async function (e) {
     formData.append("is_inactive_checked", isInactiveCheckedBool);
 
     formData.set("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
 
     // Build tools selection from Map (includes selections across pagination + search)
     const toolsContainer = document.getElementById("associatedTools");
@@ -553,8 +539,6 @@ export const handleA2AFormSubmit = async function (e) {
     // ✅ Ensure visibility is captured from checked radio button
     // formData.set("visibility", visibility);
     formData.set("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
 
     // Submit to backend
     // specifically log agentType only
@@ -653,9 +637,6 @@ export const handleToolFormSubmit = async function (event) {
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.set("visibility", formData.get("visibility"));
-
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
 
     const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
       method: "POST",
