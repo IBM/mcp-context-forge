@@ -366,6 +366,10 @@ Phoenix stores traces in memory by default. For production:
 
 ## Next Steps
 
+- [OpenTelemetry Overview](opentelemetry.md) - All supported backends
+- [Langfuse Integration](langfuse.md) - Alternative LLM observability platform
+- [Internal Observability](internal.md) - Built-in database-backed observability
+- [Prometheus Metrics](prometheus.md) - Time-series monitoring
 - [Configure Phoenix Evaluations](https://docs.arize.com/phoenix/evaluation)
 - [Set up Phoenix Datasets](https://docs.arize.com/phoenix/datasets)
 - [Integrate with Arize Platform](https://docs.arize.com/arize)

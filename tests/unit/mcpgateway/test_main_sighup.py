@@ -14,27 +14,35 @@ from mcpgateway.handlers.signal_handlers import sighup_handler, sighup_reload
 
 
 @pytest.mark.asyncio
-async def test_sighup_reload_clears_ssl_cache_and_session_pool():
-    """sighup_reload() clears SSL context cache and closes MCP session pool."""
+async def test_sighup_reload_clears_ssl_cache_and_drains_upstream_registry_and_affinity():
+    """sighup_reload() clears SSL cache + drains upstream registry + drains affinity mapping (#4205)."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
-        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock) as mock_pool_close,
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock) as mock_drain_affinity,
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
     mock_clear.assert_called_once()
-    mock_pool_close.assert_awaited_once()
+    mock_registry.close_all.assert_awaited_once()
+    mock_drain_affinity.assert_awaited_once()
     info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
     assert any("SSL context cache cleared" in m for m in info_messages)
-    assert any("session pool drained" in m for m in info_messages)
+    assert any("upstream session registry drained" in m for m in info_messages)
+    assert any("session-affinity mapping drained" in m for m in info_messages)
 
 
 @pytest.mark.asyncio
 async def test_sighup_reload_logs_error_on_ssl_cache_exception():
     """sighup_reload() catches and logs exceptions from clear_ssl_context_cache."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache", side_effect=RuntimeError("boom")),
-        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
@@ -43,19 +51,63 @@ async def test_sighup_reload_logs_error_on_ssl_cache_exception():
 
 
 @pytest.mark.asyncio
-async def test_sighup_reload_handles_session_pool_error():
-    """sighup_reload() continues if session pool close fails."""
+async def test_sighup_reload_handles_affinity_drain_error():
+    """sighup_reload() continues if the affinity drain fails."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
-        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock, side_effect=RuntimeError("pool error")),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch(
+            "mcpgateway.services.session_affinity.drain_session_affinity",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("affinity error"),
+        ),
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
-    # SSL cache should still be cleared
     mock_clear.assert_called_once()
-    # Pool error should be logged at debug level
+    mock_registry.close_all.assert_awaited_once()
     debug_messages = [call.args[0] for call in mock_logger.debug.call_args_list]
-    assert any("pool error" in m for m in debug_messages)
+    assert any("affinity error" in m for m in debug_messages)
+
+
+@pytest.mark.asyncio
+async def test_sighup_reload_logs_warning_on_registry_drain_failure():
+    """A generic exception from close_all() surfaces as WARNING so TLS rotation issues aren't silent."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock(side_effect=RuntimeError("redis down during drain"))
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache"),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    mock_registry.close_all.assert_awaited_once()
+    warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+    assert any("upstream session registry drain failed" in m and "redis down during drain" in m for m in warning_messages)
+
+
+@pytest.mark.asyncio
+async def test_sighup_reload_handles_uninitialised_upstream_registry():
+    """sighup_reload() logs at debug and keeps going when the upstream registry isn't initialised."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
+        patch(
+            "mcpgateway.services.upstream_session_registry.get_upstream_session_registry",
+            side_effect=RegistryNotInitializedError("not init"),
+        ),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    mock_clear.assert_called_once()
+    debug_messages = [call.args[0] for call in mock_logger.debug.call_args_list]
+    assert any("upstream session registry not initialised" in m for m in debug_messages)
 
 
 @pytest.mark.asyncio
@@ -70,10 +122,13 @@ async def test_sighup_handler_schedules_task():
         task_created = True
         return original_create_task(coro, **kwargs)
 
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
     with (
         patch.object(loop, "create_task", side_effect=tracking_create_task),
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache"),
-        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
     ):
         sighup_handler(signal.SIGHUP, None)
         await asyncio.sleep(0.05)

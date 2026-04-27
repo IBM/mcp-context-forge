@@ -7,13 +7,17 @@ Authors: Teryl Taylor, Fred Araujo
 Unit tests for plugin manager.
 """
 
+# Standard
+from pathlib import Path
+
 # Third-Party
 import pytest
+import yaml
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework import PromptHookType, ToolHookType,  HttpHeaderPayload,  PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import PromptHookType, ResourceHookType, ToolHookType, HttpHeaderPayload, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
@@ -380,6 +384,7 @@ async def test_plugin_manager_thread_safety():
 
     # Track config loads by wrapping ConfigLoader
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
+
     original_load = ConfigLoader.load_config
     load_count = {"value": 0}
 
@@ -509,3 +514,73 @@ async def test_plugin_manager_async_concurrency():
 
     # Clean up
     PluginManager.reset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_config", "expected_names"),
+    [
+        (
+            "plugins/config.yaml",
+            {
+                "PIIFilterPlugin",
+                "RateLimiterPlugin",
+                "URLReputationPlugin",
+                "RetryWithBackoffPlugin",
+                "SecretsDetection",
+                "EncodedExfilDetector",
+            },
+        ),
+        (
+            "plugins/config-pii-guardian-policy.yaml",
+            {
+                "PIIFilterPlugin",
+                "RateLimiterPlugin",
+                "URLReputationPlugin",
+                "RetryWithBackoffPlugin",
+                "SecretsDetection",
+                "EncodedExfilDetector",
+            },
+        ),
+    ],
+)
+async def test_manager_initializes_packaged_plugins_from_shipped_configs(tmp_path: Path, source_config: str, expected_names: set[str]):
+    """Shipped packaged-plugin entries should import through the real PluginManager."""
+    PluginManager.reset()
+    source_path = Path(source_config)
+    config = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+    selected_plugins = []
+    for plugin in config["plugins"]:
+        if plugin["name"] not in expected_names:
+            continue
+        selected_plugin = dict(plugin)
+        if selected_plugin.get("mode") == "disabled":
+            selected_plugin["mode"] = "permissive"
+        selected_plugins.append(selected_plugin)
+    assert {plugin["name"] for plugin in selected_plugins} == expected_names
+
+    smoke_config = {
+        "plugin_dirs": config.get("plugin_dirs", []),
+        "plugin_settings": {**config.get("plugin_settings", {}), "fail_on_plugin_error": True},
+        "plugins": selected_plugins,
+    }
+    config_path = tmp_path / f"{source_path.stem}-packaged-smoke.yaml"
+    config_path.write_text(yaml.safe_dump(smoke_config, sort_keys=False), encoding="utf-8")
+
+    manager = PluginManager(str(config_path))
+    try:
+        await manager.initialize()
+        assert manager.initialized
+        assert manager.plugin_count == len(expected_names)
+        assert {plugin.name for plugin in manager.config.plugins} == expected_names
+        prompt_pre_refs = manager._registry.get_hook_refs_for_hook(PromptHookType.PROMPT_PRE_FETCH)  # pylint: disable=protected-access
+        tool_post_refs = manager._registry.get_hook_refs_for_hook(ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
+        resource_pre_refs = manager._registry.get_hook_refs_for_hook(ResourceHookType.RESOURCE_PRE_FETCH)  # pylint: disable=protected-access
+
+        assert "PIIFilterPlugin" in {ref.plugin_ref.name for ref in prompt_pre_refs}
+        assert "RetryWithBackoffPlugin" in {ref.plugin_ref.name for ref in tool_post_refs}
+        assert "EncodedExfilDetector" in {ref.plugin_ref.name for ref in tool_post_refs}
+        assert "URLReputationPlugin" in {ref.plugin_ref.name for ref in resource_pre_refs}
+    finally:
+        await manager.shutdown()
+        PluginManager.reset()

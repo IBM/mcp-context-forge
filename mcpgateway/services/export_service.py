@@ -23,10 +23,11 @@ from typing import Any, cast, Dict, List, Optional, TypedDict
 
 # Third-Party
 from sqlalchemy import or_, select
-from sqlalchemy.orm import selectinload, Session
+from sqlalchemy.orm import selectinload, Session, with_loader_criteria
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -981,7 +982,25 @@ class ExportService:
                 return []
 
         # Batch query for selected servers with eager loading to avoid N+1 queries
-        db_servers = db.execute(select(DbServer).options(selectinload(DbServer.tools)).where(DbServer.id.in_(server_ids))).scalars().all()
+        # Filter out deactivated tools, resources, prompts, and agents at query level
+        db_servers = (
+            db.execute(
+                select(DbServer)
+                .options(
+                    selectinload(DbServer.tools),
+                    with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
+                    selectinload(DbServer.resources),
+                    with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
+                    selectinload(DbServer.prompts),
+                    with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
+                    selectinload(DbServer.a2a_agents),
+                    with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+                )
+                .where(DbServer.id.in_(server_ids))
+            )
+            .scalars()
+            .all()
+        )
         if visible_server_ids is not None:
             db_servers = [db_server for db_server in db_servers if str(db_server.id) in visible_server_ids]
 

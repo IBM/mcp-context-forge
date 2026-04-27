@@ -65,15 +65,18 @@ async def test_check_streamable_permission_session_token_passes_check_any_team_t
     assert result is True
     mock_ps.check_permission.assert_called_once()
     call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Expected check_any_team=True to be threaded through to PermissionService"
-    )
+    assert call_kwargs.get("check_any_team") is True, "Expected check_any_team=True to be threaded through to PermissionService"
 
 
 @pytest.mark.asyncio
-async def test_check_streamable_permission_api_token_check_any_team_false():
-    """API tokens (not session) must use check_any_team=False."""
-    user_ctx = _make_user_ctx(token_use="access")
+async def test_check_streamable_permission_api_token_check_any_team_true():
+    """API tokens in MCP transport must use check_any_team=True (no team_id available).
+
+    The MCP transport has no route-level team_id, so callers must pass
+    check_any_team=True for all token types (both session and API).
+    Layer 1 (token scope cap) already restricts what the token can do.
+    """
+    user_ctx = _make_user_ctx(token_use="api")
     mock_ps = MagicMock()
     mock_ps.check_permission = AsyncMock(return_value=True)
 
@@ -87,11 +90,11 @@ async def test_check_streamable_permission_api_token_check_any_team_false():
             await _check_streamable_permission(
                 user_context=user_ctx,
                 permission="tools.execute",
-                check_any_team=False,  # non-session: False
+                check_any_team=True,  # MCP transport: always True (no team_id)
             )
 
     call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team", False) is False
+    assert call_kwargs.get("check_any_team") is True
 
 
 @pytest.mark.asyncio
@@ -190,9 +193,7 @@ async def test_servers_use_check_passes_check_any_team_for_session_token():
                     # Verify _check_streamable_permission was called with check_any_team=True
                     mock_perm.assert_called_once()
                     call_kwargs = mock_perm.call_args.kwargs
-                    assert call_kwargs.get("check_any_team") is True, (
-                        f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
-                    )
+                    assert call_kwargs.get("check_any_team") is True, f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
                     assert call_kwargs.get("permission") == "servers.use"
             finally:
                 user_context_var.reset(token)
@@ -207,7 +208,7 @@ async def test_call_tool_raises_permission_error_when_session_token_denied():
     if PermissionService denies the request, call_tool must raise PermissionError
     and not proceed to tool execution.
     """
-    # Standard
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool
 
     session_user_ctx = {

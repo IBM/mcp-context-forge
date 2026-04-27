@@ -55,7 +55,7 @@
       "secret": "keycloak-dev-secret",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": false,
+      "serviceAccountsEnabled": true,
       "redirectUris": [
         "http://localhost:8080/auth/sso/callback/keycloak"
       ],

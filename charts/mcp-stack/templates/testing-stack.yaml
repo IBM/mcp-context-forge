@@ -164,8 +164,13 @@ metadata:
     app: {{ $fullName }}-locust
     app.kubernetes.io/component: loadtest
 data:
+  {{- if .Values.testing.locust.script.file }}
+  {{ .Values.testing.locust.script.key }}: |
+{{ .Files.Get .Values.testing.locust.script.file | nindent 4 }}
+  {{- else }}
   {{ .Values.testing.locust.script.key }}: |
 {{ .Values.testing.locust.script.inline | nindent 4 }}
+  {{- end }}
 {{- end }}
 
 {{- if .Values.testing.locust.enabled }}
@@ -234,6 +239,10 @@ spec:
               value: {{ .Values.testing.locust.runTime | quote }}
             - name: LOCUST_EXPECT_WORKERS
               value: {{ .Values.testing.locust.expectWorkers | quote }}
+            {{- if .Values.testing.locust.mcpServerID }}
+            - name: MCP_SERVER_ID
+              value: {{ .Values.testing.locust.mcpServerID | quote }}
+            {{- end }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -286,6 +295,14 @@ spec:
     - name: web
       port: {{ .Values.testing.locust.service.port }}
       targetPort: {{ .Values.testing.locust.service.port }}
+      protocol: TCP
+    - name: zmq-comm
+      port: 5557
+      targetPort: 5557
+      protocol: TCP
+    - name: zmq-data
+      port: 5558
+      targetPort: 5558
       protocol: TCP
 {{- if and .Values.testing.locust.worker.enabled (gt (.Values.testing.locust.worker.replicaCount | int) 0) }}
 ---
@@ -340,6 +357,10 @@ spec:
           env:
             - name: HOME
               value: /tmp
+            {{- if .Values.testing.locust.mcpServerID }}
+            - name: MCP_SERVER_ID
+              value: {{ .Values.testing.locust.mcpServerID | quote }}
+            {{- end }}
           command: ["/bin/sh", "-c"]
           args:
             - |

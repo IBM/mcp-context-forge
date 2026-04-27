@@ -143,18 +143,20 @@ class TestPermissionFallback:
             assert result == False, "Non-platform admin should not get virtual admin privileges"
 
     @pytest.mark.asyncio
-    async def test_platform_admin_edge_case_empty_setting(self, permission_service):
+    async def test_platform_admin_edge_case_empty_setting(self, permission_service, monkeypatch):
         """Test behavior when platform_admin_email setting is empty."""
-        # Mock database query to return None
+        # First-Party
+        from mcpgateway.config import settings
+
+        # admin_check now reads settings from mcpgateway.config (shared helper).
+        monkeypatch.setattr(settings, "platform_admin_email", "")
         with patch.object(permission_service.db, "execute") as mock_execute:
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = None
             mock_execute.return_value = mock_result
 
-            # Mock empty platform admin email setting
-            with patch("mcpgateway.services.permission_service.getattr", return_value=""):
-                result = await permission_service._is_user_admin("admin@example.com")
-                assert result == False, "Should not grant admin privileges when platform_admin_email is empty"
+            result = await permission_service._is_user_admin("admin@example.com")
+            assert result is False, "Should not grant admin privileges when platform_admin_email is empty"
 
 
 class TestTokenPermissionFallback:

@@ -4,6 +4,56 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ---
 
+## ⚠️ New in 1.0.0-RC3
+
+**Breaking Changes:** Several security defaults have been strengthened in RC3. Review these changes before upgrading:
+
+### Changed Defaults
+
+| Variable | 0.9.x Default | 1.0.0-RC3 Default | Impact |
+|----------|---------------|-------------------|--------|
+| `SSRF_ALLOW_LOCALHOST` | `true` | `false` | Blocks connections to localhost/127.0.0.1 |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | `false` | Blocks RFC1918 private networks (10.x, 172.16.x, 192.168.x) |
+| `SSRF_DNS_FAIL_CLOSED` | `false` | `true` | Rejects requests when DNS resolution fails |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | `true` (implicit) | `false` | WebSocket relay disabled by default |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | `true` (implicit) | `false` | Reverse proxy disabled by default |
+| `PROTECT_ALL_ADMINS` | N/A | `true` | Prevents admin demotion/deactivation via API/UI |
+
+### New Variables
+
+**SSRF Protection:**
+- `SSRF_ALLOWED_NETWORKS` - Explicit CIDR allowlist when private networks are blocked
+
+**Transport Feature Flags:**
+- `MCPGATEWAY_WS_RELAY_ENABLED` - Must be explicitly enabled for WebSocket relay
+- `MCPGATEWAY_REVERSE_PROXY_ENABLED` - Must be explicitly enabled for reverse proxy
+
+**SSO/OAuth:**
+- `SSO_GENERIC_JWKS_URI` - JWKS endpoint for ID token signature verification
+- `SSO_KEYCLOAK_PUBLIC_BASE_URL` - Public-facing Keycloak URL for issuer mismatch fix
+
+**Team Governance:**
+- `ALLOW_TEAM_CREATION` - Control user ability to create organizational teams
+- `ALLOW_TEAM_JOIN_REQUESTS` - Control join request functionality
+- `ALLOW_TEAM_INVITATIONS` - Control team invitation functionality
+- `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` - Require email verification for invites
+- `PERSONAL_TEAM_PREFIX` - Customize personal team naming
+- `AUTO_CREATE_PERSONAL_TEAMS` - Control automatic personal team creation
+
+**Database Connection Pool:**
+- `DB_POOL_SIZE` - Connection pool size (default: 200)
+- `DB_MAX_OVERFLOW` - Extra connections beyond pool (default: 10)
+
+**Observability:**
+- `LANGFUSE_OTEL_ENDPOINT` - Langfuse OTLP/HTTP endpoint override
+- `LANGFUSE_PUBLIC_KEY` - Langfuse project public key
+- `LANGFUSE_SECRET_KEY` - Langfuse project secret key
+- `LANGFUSE_OTEL_AUTH` - Base64-encoded OTLP auth override
+
+**See Also:** [Upgrade Guide to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md) for detailed migration instructions.
+
+---
+
 ## 🔐 Required: Change Before Use
 
 These variables have insecure defaults and **must be changed** before production deployment:
@@ -132,7 +182,6 @@ ContextForge supports multiple database backends with full feature parity across
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
-| `OAUTH_DEFAULT_TIMEOUT`     | Default OAuth token timeout in seconds                                       | `3600`              | int > 0     |
 | `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
 | `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth               | `[]`                | JSON array  |
 
@@ -578,6 +627,31 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
+### Identity Propagation
+
+MCP Gateway can **propagate end-user identity** to upstream MCP servers when proxying requests. This enables upstream services to make authorization decisions based on the original caller's identity, and supports audit trails that track the full delegation chain.
+
+| Setting                              | Description                                              | Default              | Options                    |
+| ------------------------------------ | -------------------------------------------------------- | -------------------- | -------------------------- |
+| `IDENTITY_PROPAGATION_ENABLED`       | Enable end-user identity propagation to upstream servers  | `false`              | bool                       |
+| `IDENTITY_PROPAGATION_MODE`          | How to propagate identity                                | `both`               | `headers`, `meta`, `both`  |
+| `IDENTITY_PROPAGATION_HEADERS_PREFIX`| Prefix for identity HTTP headers                         | `X-Forwarded-User`   | string                     |
+| `IDENTITY_SENSITIVE_ATTRIBUTES`      | User attributes to strip before propagating              | `["password_hash","internal_id","ssn"]` | JSON array |
+| `IDENTITY_SIGN_CLAIMS`               | Sign propagated user claims with HMAC                    | `false`              | bool                       |
+| `IDENTITY_CLAIMS_SECRET`             | Secret key for signing identity claims                   | (none)               | string                     |
+
+**Propagation modes:**
+
+- **`headers`**: Sends identity as HTTP headers (`X-Forwarded-User-Id`, `X-Forwarded-User-Email`, `X-Forwarded-User-Groups`, etc.) to upstream servers.
+- **`meta`**: Injects identity into the MCP `_meta` field for MCP protocol-level propagation.
+- **`both`** (default): Uses both headers and `_meta` propagation.
+
+!!! info "Per-Gateway Override"
+    Identity propagation can be configured per-gateway by setting the `identity_propagation` JSON field on individual gateway registrations. Per-gateway settings override the global defaults. See the [Identity Propagation guide](identity-propagation.md) for details.
+
+!!! warning "Claim Signing"
+    When `IDENTITY_SIGN_CLAIMS=true`, an HMAC-SHA256 signature is appended to propagated headers/meta so upstream servers can verify the claims were issued by the gateway. Uses `IDENTITY_CLAIMS_SECRET` if set, otherwise falls back to `JWT_SECRET_KEY`.
+
 ### SSRF Protection
 
 ContextForge includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
@@ -754,7 +828,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-3`               | string                                     |
 | `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag (dev/staging/prod)           | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |

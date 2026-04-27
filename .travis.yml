@@ -15,7 +15,7 @@
 #
 # Stage ❷  docker :
 #   - Uses the same repo checkout (depth-1 clone)
-#   - Builds Containerfile → mcpgateway/mcpgateway:latest
+#   - Builds Containerfile.lite → mcpgateway/mcpgateway:latest
 #   - Starts the container and makes a quick health curl
 #
 # Requirements
@@ -68,7 +68,7 @@ jobs:
       script: |
         set -e
         echo "🏗️  Building container..."
-        docker build -f Containerfile -t mcpgateway/mcpgateway:latest .
+        docker build -f Containerfile.lite -t mcpgateway/mcpgateway:latest .
 
         echo "🚀  Launching container..."
         docker run -d --name mcpgateway -p 4444:4444 \

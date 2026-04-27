@@ -23,20 +23,15 @@ make container-build-multi REGISTRY=ghcr.io/your-org
 make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest
 ```
 
-## Containerfiles
+## Containerfile
+
+`Containerfile.lite` is the canonical multi-stage build for the gateway:
 
 | File | Base Image | Platforms | Size | Use Case |
 |------|------------|-----------|------|----------|
-| `Containerfile.lite` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | Multiplatform builds, CI/CD |
-| `Containerfile.scratch` | scratch | amd64 only* | ~100MB | Smallest possible image |
+| `Containerfile.lite` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | All builds (local, CI/CD, multiplatform) |
 
-*`Containerfile.scratch` uses `dnf --installroot` which fails under QEMU emulation, so it only works for native builds.
-
-### Using the scratch-based image
-
-```bash
-make container-build CONTAINER_FILE=Containerfile.scratch
-```
+Optional build args: `ENABLE_RUST=true` (Rust MCP + A2A runtimes), `ENABLE_RUST_MCP_RMCP=true` (rmcp-upstream-client feature), `ENABLE_PROFILING=true` (memray + gdb).
 
 ## How It Works
 
@@ -105,7 +100,7 @@ The `.github/workflows/docker-multiplatform.yml` workflow:
 
 ### s390x and ppc64le Specific
 
-The s390x and ppc64le architectures require OpenSSL instead of BoringSSL for grpcio. This is handled automatically in the Containerfile:
+The s390x and ppc64le architectures require OpenSSL instead of BoringSSL for grpcio. This is handled automatically in `Containerfile.lite`:
 
 ```dockerfile
 RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
@@ -115,18 +110,12 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 
 ### Why ubi10-minimal?
 
-The original `Containerfile.scratch` used `dnf --installroot` to create a minimal rootfs from scratch. This approach:
+`Containerfile.lite` uses `ubi10-minimal` as the runtime base because it:
 
-- Produces the smallest possible image (~100MB)
-- Keeps the RPM database for security scanning
-- **Fails under QEMU emulation** (dnf spawns subprocesses that QEMU can't handle)
-
-The `Containerfile.lite` uses `ubi10-minimal` as the runtime base:
-
-- Slightly larger (~150MB) but still minimal
-- Works with QEMU emulation for cross-platform builds
-- Uses `microdnf` which is more QEMU-friendly
-- Maintains RPM database for security scanning
+- Stays small (~150MB) while retaining a usable package manager (`microdnf`) for runtime deps
+- Works under QEMU emulation, enabling cross-platform CI builds for s390x and ppc64le
+- Maintains the RPM database for post-build vulnerability scanning
+- Avoids the maintenance cost of curating a custom rootfs across UBI patch cycles
 
 ## Inspecting Manifests
 

@@ -97,13 +97,13 @@ git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
 # Optional local build for testing
-podman build -t mcp-context-forge:dev -f Containerfile .
+podman build -t mcp-context-forge:dev -f Containerfile.lite .
 ```
 
 !!! note "Production deployments"
     Production deployments can pull the signed image directly:
     ```
-    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
     ```
 
 ---

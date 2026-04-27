@@ -39,6 +39,7 @@ Run the full test suite or specific categories:
 
 ```bash
 make test                      # full suite
+pytest -k "<name>" tests/unit/ # only tests matching <name>
 pytest tests/unit/             # unit tests only
 pytest tests/integration/      # integration tests
 pytest tests/e2e/              # end-to-end scenarios
@@ -99,12 +100,12 @@ For the Rust MCP runtime path, the most important stack-backed checks are:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-cli
+make test-mcp-protocol-e2e
 make test-mcp-rbac
 make test-mcp-access-matrix
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
-cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml
 ```
 
 For live plugin parity, use the test-specific plugin config and run the same

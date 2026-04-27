@@ -855,6 +855,68 @@ SSO_KEYCLOAK_MAP_CLIENT_ROLES=true
    - Go to **Users** → Select user → **Role mapping**
    - Assign appropriate roles
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure JWKS endpoint is accessible and properly configured
+
+The gateway cryptographically verifies ID token signatures using Keycloak's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://keycloak.yourcompany.com/realms/master/protocol/openid-connect/certs
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Issuer Mismatch (Split-URL Deployments)**
+
+When Keycloak is accessed via different URLs (internal vs. public), the ID token issuer may not match:
+
+```bash
+# Gateway uses internal URL, but ID token has public issuer
+SSO_KEYCLOAK_BASE_URL=http://keycloak:8080          # Internal
+SSO_KEYCLOAK_PUBLIC_BASE_URL=http://localhost:8180   # Public (browser-facing)
+```
+
+The gateway automatically rewrites the issuer to match the public URL for verification.
+
+**3. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and Keycloak servers have synchronized clocks:
+
+```bash
+# Check time on both servers
+date -u  # Should be within 5 minutes of each other
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**4. Manual JWKS URI Configuration**
+
+If auto-discovery fails, manually specify the JWKS endpoint:
+
+```bash
+# For generic OIDC provider configuration
+SSO_GENERIC_JWKS_URI=https://keycloak.yourcompany.com/realms/master/protocol/openid-connect/certs
+```
+
+**5. Certificate/TLS Issues**
+
+If Keycloak uses self-signed certificates:
+
+```bash
+# Development only - skip TLS verification
+SKIP_SSL_VERIFY=true
+
+# Production - add CA certificate to system trust store
+# Or configure custom CA bundle
+```
+
 ### Groups Not Appearing in JWT
 
 **Problem**: User groups not included in JWT token

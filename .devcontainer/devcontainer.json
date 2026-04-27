@@ -4,7 +4,11 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  "features": {},
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
   "postCreateCommand": ".devcontainer/postCreateCommand.sh",
   "customizations": {
     "vscode": {

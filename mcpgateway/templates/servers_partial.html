@@ -42,28 +42,87 @@
   {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}
   <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
-        <!-- Row 1: View | Edit -->
-        <button onclick="Admin.viewServer({{ server.id|tojson_attr }})" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
-        {% if can_modify %}
-        <button onclick="Admin.editServer({{ server.id|tojson_attr }})" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
-        {% endif %}
-
-        <!-- Row 2: Export Config -->
-        <button onclick="Admin.showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
-
-        {% if can_modify %}
-        <!-- Row 3: Activate/Deactivate | Delete -->
-        <div class="col-span-2 flex flex-col space-y-1">
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'servers')">
+      <div class="relative"
+           x-data="Admin.overflowMenu('servers-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
+        <button
+          type="button"
+          x-ref="trigger"
+          @click="menuOpen ? (menuOpen = false) : openMenu()"
+          class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
+          :aria-expanded="menuOpen"
+          aria-haspopup="menu"
+          aria-label="Actions"
+          x-tooltip="'Actions'"
+        >
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/>
+          </svg>
+        </button>
+        <!-- Dropdown menu (fixed-positioned to escape overflow/scroll containers) -->
+        <div
+          x-ref="menu"
+          x-cloak
+          x-show="menuOpen"
+          x-transition:enter="transition ease-out duration-100"
+          x-transition:enter-start="opacity-0 scale-95"
+          x-transition:enter-end="opacity-100 scale-100"
+          x-transition:leave="transition ease-in duration-75"
+          x-transition:leave-start="opacity-100 scale-100"
+          x-transition:leave-end="opacity-0 scale-95"
+          class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+          :style="`top: ${menuTop}px; left: ${menuLeft}px; display: ${menuOpen ? 'block' : 'none'}`"
+          role="menu"
+          aria-orientation="vertical"
+          @keydown.arrow-down.prevent="navigate(1)"
+          @keydown.arrow-up.prevent="navigate(-1)"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            tabindex="0"
+            @click="menuOpen = false; Admin.viewServer({{ server.id|tojson_attr }})"
+            class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+          >View</button>
+          {% if can_modify %}
+          <button
+            type="button"
+            role="menuitem"
+            tabindex="0"
+            @click="menuOpen = false; Admin.editServer({{ server.id|tojson_attr }})"
+            class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+          >Edit</button>
+          {% endif %}
+          <button
+            type="button"
+            role="menuitem"
+            tabindex="0"
+            @click="menuOpen = false; Admin.showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
+            class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+            x-tooltip="'💡Generate client configuration files for this server'"
+          >Export Config</button>
+          {% if can_modify %}
+          <hr class="border-gray-200 dark:border-gray-600 my-1">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'servers')">
             <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if server.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+            <button
+              type="submit"
+              role="menuitem"
+              tabindex="0"
+              class="w-full flex items-center px-4 py-2 text-sm {% if server.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
+            >{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
           </form>
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server_label|tojson_attr }}, 'servers')">
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server_label|tojson_attr }}, 'servers')">
+            <button
+              type="submit"
+              role="menuitem"
+              tabindex="0"
+              class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+            >Delete</button>
           </form>
+          {% endif %}
         </div>
-        {% endif %}
       </div>
     </td>
     <td class="px-6 py-4 whitespace-nowrap">

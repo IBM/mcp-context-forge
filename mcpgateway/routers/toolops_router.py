@@ -67,10 +67,14 @@ class ToolNLTestInput(BaseModel):
 @toolops_router.post("/validation/generate_testcases")
 @require_permission("admin.system_config")
 async def generate_testcases_for_tool(
-    tool_id: str = Query(None, description="Tool ID"),
+    tool_id: str = Query(None, max_length=300, pattern=r"^[a-zA-Z0-9_.-]+$", description="Tool ID"),
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
-    mode: str = Query("generate", description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),
+    mode: str = Query(
+        "generate",
+        pattern=r"^(generate|query|status)$",
+        description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status",
+    ),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> List[Dict]:
@@ -144,7 +148,9 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 
 @toolops_router.post("/enrichment/enrich_tool")
 @require_permission("admin.system_config")
-async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)) -> dict[str, Any]:
+async def enrich_a_tool(
+    tool_id: str = Query(None, max_length=300, pattern=r"^[a-zA-Z0-9_.-]+$", description="Tool ID"), db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)
+) -> dict[str, Any]:
     """
     Enriches an input tool
 

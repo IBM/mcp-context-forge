@@ -4,8 +4,7 @@
 HANDBOOK_NAME := mcpgateway-docs
 
 # Do not change anything below this line
-VENVS_DIR := $(HOME)/.venv
-VENV_DIR := $(VENVS_DIR)/$(HANDBOOK_NAME)
+VENV_DIR := $(CURDIR)/.venv
 
 # Setup to support M1 Macs - Linux will be empty; x86 Macs essentially NO-OP
 BREW_SHELLENV := $(shell brew shellenv 2>/dev/null)
@@ -18,7 +17,7 @@ help:
 # help: venv                           - create a clean virtual environment for development
 .PHONY: venv
 venv:
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@mkdir -p "$(VENV_DIR)"
 	@rm -Rf "$(VENV_DIR)"
 	@eval '$(BREW_SHELLENV)' && python3 -m venv "$(VENV_DIR)"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install markdown-blockdiag && pip install -r requirements.txt"
@@ -80,10 +79,35 @@ package:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mkdocs build && mkdir -p release && tar cvvf release/$(HANDBOOK_NAME)-Package-$$(date --iso).tar.gz --exclude='release' . "
 
 
-# help: deploy                         - deploy project to github pages
+# help: deploy                         - deploy project to github pages (legacy)
 .PHONY: deploy
 deploy:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mkdocs gh-deploy"
+
+# help: mike-deploy                    - deploy versioned docs with mike
+.PHONY: mike-deploy
+mike-deploy:
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mike deploy --push --update-aliases $(VERSION) latest"
+
+# help: mike-serve                     - serve versioned docs locally
+.PHONY: mike-serve
+mike-serve:
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mike serve"
+
+# help: mike-list                      - list deployed versions
+.PHONY: mike-list
+mike-list:
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mike list"
+
+# help: mike-delete                    - delete a version
+.PHONY: mike-delete
+mike-delete:
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mike delete $(VERSION)"
+
+# help: mike-set-default               - set default version
+.PHONY: mike-set-default
+mike-set-default:
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mike set-default latest"
 
 # help: combine                        - combine
 .PHONY: combine

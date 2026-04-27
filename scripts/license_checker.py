@@ -9,24 +9,28 @@ This script validates:
 - Rust crate licenses via `cargo-license`
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
+from collections import defaultdict
 import csv
+from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
+    # Standard
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - fallback for older runtimes
+    # Third-Party
     import tomli as tomllib  # type: ignore
 
 
@@ -107,8 +111,6 @@ def _classify_pyproject_scope(source: str, root: Path) -> str:
         return "plugins"
     if rel_parts[0] == "a2a-agents" and len(rel_parts) >= 2:
         return f"a2a-agents/{rel_parts[1]}"
-    if rel_parts[0] == "plugins_rust":
-        return "plugins_rust"
     if rel_parts[0] == "docs":
         return "docs"
     return f"other/{rel_parts[0]}"

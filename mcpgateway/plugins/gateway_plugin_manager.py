@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.plugins.framework.manager import TenantPluginManagerFactory
 from mcpgateway.plugins.framework.models import PluginConfigOverride, PluginMode
-from mcpgateway.schemas import PLUGIN_ID_TO_NAME
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 
 logger = logging.getLogger(__name__)
@@ -42,8 +41,9 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
     * Wildcard bindings (``tool_name == "*"``) provide team-wide defaults.
     * Exact ``tool_name`` bindings override wildcards for the same plugin_id
       (last-write-wins by ``updated_at``).
-    * Bindings whose ``plugin_id`` is not in :data:`~mcpgateway.schemas.PLUGIN_ID_TO_NAME`
-      are silently skipped (forward-compatibility guard).
+    * The ``plugin_id`` column stores the plugin class name directly
+      (e.g. ``"OutputLengthGuardPlugin"``); unknown names are passed through
+      to the framework, which is responsible for ignoring unrecognised plugins.
     * Returns ``None`` (not an empty list) when no bindings are found so the
       framework falls back to the unmodified base YAML config.
     """
@@ -78,26 +78,32 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
         team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
-        db: Session = self._db_factory()
         try:
-            bindings = get_bindings_for_tool(db, team_id, tool_name)
-        finally:
-            db.close()
+            db: Session = self._db_factory()
+            try:
+                bindings = get_bindings_for_tool(db, team_id, tool_name)
+            finally:
+                db.close()
+        except Exception:
+            # Previously this swallowed the error and returned None, which made
+            # the factory rebuild the manager with base YAML config — silently
+            # dropping any per-team/per-tool overrides (including enforce-mode
+            # security plugins). Fail loudly so the rebuild bubbles up; the
+            # caller retries on the next request or cache TTL expiry.
+            logger.error(
+                "get_config_from_db: DB error for context_id=%s — failing rebuild to avoid dropping bindings",
+                context_id,
+                exc_info=True,
+            )
+            raise
 
         if not bindings:
+            logger.debug("get_config_from_db: no bindings found for context_id=%s", context_id)
             return None
 
         overrides: list[PluginConfigOverride] = []
         for binding in bindings:
-            plugin_name = PLUGIN_ID_TO_NAME.get(binding.plugin_id)
-            if plugin_name is None:
-                logger.warning(
-                    "get_config_from_db: unknown plugin_id %r for binding %s, skipping",
-                    binding.plugin_id,
-                    binding.id,
-                )
-                continue
-
+            plugin_name = binding.plugin_id
             mode: Optional[PluginMode] = PluginMode(binding.mode) if binding.mode else None
             overrides.append(
                 PluginConfigOverride(

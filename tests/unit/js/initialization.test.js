@@ -186,6 +186,12 @@ vi.mock("../../../mcpgateway/admin_ui/search.js", () => ({
   navigateToGlobalSearchResult: vi.fn(),
   openGlobalSearchModal: vi.fn(),
   queueSearchablePanelReload: vi.fn(),
+  renderGlobalSearchMessage: vi.fn((message) => {
+    const container = document.getElementById("global-search-results");
+    if (container) {
+      container.textContent = message;
+    }
+  }),
   runGlobalSearch: vi.fn(),
   serverSideEditPromptsSearch: vi.fn(),
   serverSideEditResourcesSearch: vi.fn(),
@@ -717,6 +723,7 @@ describe("initializeGlobalSearch", () => {
   test("Enter keydown with first result calls navigateToGlobalSearchResult", () => {
     const input = document.createElement("input");
     input.id = "global-search-input";
+    input.value = "query";
     document.body.appendChild(input);
 
     const resultsContainer = document.createElement("div");
@@ -738,6 +745,7 @@ describe("initializeGlobalSearch", () => {
   test("Enter keydown with no result does nothing", () => {
     const input = document.createElement("input");
     input.id = "global-search-input";
+    input.value = "query";
     document.body.appendChild(input);
 
     initializeGlobalSearch();
@@ -746,6 +754,38 @@ describe("initializeGlobalSearch", () => {
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
     );
 
+    expect(navigateToGlobalSearchResult).not.toHaveBeenCalled();
+  });
+
+  test("Enter keydown with empty/whitespace query prompts for a term and prevents default", async () => {
+    const { renderGlobalSearchMessage } = await import(
+      "../../../mcpgateway/admin_ui/search.js"
+    );
+    const input = document.createElement("input");
+    input.id = "global-search-input";
+    input.value = "   ";
+    document.body.appendChild(input);
+
+    const resultsContainer = document.createElement("div");
+    resultsContainer.id = "global-search-results";
+    const resultItem = document.createElement("div");
+    resultItem.className = "global-search-result-item";
+    resultsContainer.appendChild(resultItem);
+    document.body.appendChild(resultsContainer);
+
+    initializeGlobalSearch();
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(renderGlobalSearchMessage).toHaveBeenCalledWith(
+      "Please enter a search term.",
+    );
     expect(navigateToGlobalSearchResult).not.toHaveBeenCalled();
   });
 

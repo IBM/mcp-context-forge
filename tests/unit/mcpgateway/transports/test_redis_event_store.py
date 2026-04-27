@@ -608,3 +608,480 @@ class TestRedisEventStore:
         callback = AsyncMock()
         assert await store.replay_events_after("event-id", callback) == stream_id
         callback.assert_awaited_once()
+
+    async def test_replay_after_with_ids_drops_cross_stream_index_entry(self, monkeypatch: pytest.MonkeyPatch):
+        """Tenancy guard: a stale Last-Event-Id whose index points at another session must NOT replay.
+
+        Without this gate, a forged or collision-recycled Last-Event-Id could be used
+        to read another session's buffered events.
+        """
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:cross")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                # Index says event "ev-victim" lives on stream "victim", but the caller
+                # asks to replay it on stream "attacker".
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": "victim", "seq_num": 5}))
+                self.hget = AsyncMock(side_effect=AssertionError("must NOT touch any data after the cross-stream check"))
+                self.zrangebyscore = AsyncMock(side_effect=AssertionError("must NOT enumerate the buffer"))
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids("attacker", "ev-victim")]
+        assert results == [], "cross-stream index entry must yield no events"
+
+    async def test_replay_after_with_ids_returns_empty_when_cursor_evicted(self, monkeypatch: pytest.MonkeyPatch):
+        """Codex P2 regression: stale Last-Event-Id below start_seq must NOT replay only the surviving tail.
+
+        Without the start_seq check, a reconnect with an evicted cursor would
+        silently miss the gap between the cursor and the buffer head.
+        """
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:evict")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.hget = AsyncMock(side_effect=self._hget)
+                self.zrangebyscore = AsyncMock(side_effect=AssertionError("must NOT enumerate the buffer when cursor evicted"))
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"10"  # cursor seq=1 < start_seq=10 → evicted
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids(stream_id, "ev-stale")]
+        assert results == [], "evicted cursor must yield no events (caller treats as 'too old')"
+
+    async def test_replay_after_with_ids_replays_entire_buffer_when_cursor_is_none(self, monkeypatch: pytest.MonkeyPatch):
+        """Codex P1 regression: ``last_event_id=None`` must yield every buffered event.
+
+        Reconnect-without-cursor path: a client whose connection dropped
+        before any event ids reached it has no Last-Event-Id, but the
+        ring buffer holds events (most importantly server-initiated
+        requests) that we MUST deliver — otherwise the gateway-side
+        ``RequestResponder`` TTLs out and the request silently disappears.
+        """
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:nocursor")
+        stream_id = "s"
+        events_key = store._get_stream_events_key(stream_id)
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                # No index lookup — None cursor skips that path entirely.
+                self.get = AsyncMock(side_effect=AssertionError("must NOT touch the event-id index when cursor is None"))
+                self.zrangebyscore = AsyncMock(return_value=[b"ev-1", b"ev-2"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if key == messages_key and field == "ev-1":
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/before"})
+                if key == messages_key and field == "ev-2":
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/after"})
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        dummy = DummyRedis()
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=dummy),
+        )
+
+        results = [item async for item in store.replay_after_with_ids(stream_id, None)]
+        assert len(results) == 2
+        assert [eid for eid, _ in results] == ["ev-1", "ev-2"]
+        # Used the -inf score range, not the cursor index.
+        dummy.zrangebyscore.assert_awaited_once_with(events_key, "-inf", "+inf")
+
+    async def test_replay_after_with_ids_replays_when_start_seq_missing(self, monkeypatch: pytest.MonkeyPatch):
+        """Missing start_seq (no metadata yet) is treated as 'no eviction recorded' — replay proceeds."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:nostart")
+        stream_id = "s"
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.zrangebyscore = AsyncMock(return_value=[b"ev-2"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if field == "start_seq":
+                    return None
+                if key == messages_key and field == "ev-2":
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/test"})
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids(stream_id, "ev-stale")]
+        assert len(results) == 1
+        assert results[0][0] == "ev-2"
+
+    # ----------------------------------------------------------------------
+    # store_event_with_notify
+    # ----------------------------------------------------------------------
+
+    async def test_store_event_with_notify_raises_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        """RuntimeError when Redis client is unavailable on the notify path."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:notify-nored")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+
+        with pytest.raises(RuntimeError, match="Redis client not available"):
+            await store.store_event_with_notify(
+                "stream",
+                {"jsonrpc": "2.0", "method": "notifications/test"},
+                channel="chan",
+                payload=b"evid",
+            )
+
+    async def test_store_event_with_notify_happy_path_generates_event_id(self, monkeypatch: pytest.MonkeyPatch):
+        """Happy path: EVAL is invoked with the 12-arg store-and-notify signature and a UUID event id."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:notify-gen")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.eval = AsyncMock(return_value=1)
+
+        dummy = DummyRedis()
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=dummy),
+        )
+
+        stream_id = "stream-notify"
+        msg = {"jsonrpc": "2.0", "method": "notifications/test"}
+        event_id = await store.store_event_with_notify(stream_id, msg, channel="ch", payload=b"pl")
+
+        # Generated event ids are uuid4 hex-with-dashes; just validate shape.
+        uuid.UUID(event_id)
+
+        # Inspect EVAL call: 3 keys + 8 argv = 11 positional args after the script.
+        dummy.eval.assert_awaited_once()
+        call_args = dummy.eval.call_args
+        script = call_args.args[0]
+        assert "PUBLISH" in script, "must use the store-and-notify Lua variant"
+        num_keys = call_args.args[1]
+        assert num_keys == 3
+        meta_key = call_args.args[2]
+        events_key = call_args.args[3]
+        messages_key = call_args.args[4]
+        assert meta_key == store._get_stream_meta_key(stream_id)
+        assert events_key == store._get_stream_events_key(stream_id)
+        assert messages_key == store._get_stream_messages_key(stream_id)
+        argv_event_id = call_args.args[5]
+        assert argv_event_id == event_id
+        argv_message_json = call_args.args[6]
+        assert orjson.loads(argv_message_json) == msg
+        assert call_args.args[7] == 60  # ttl
+        assert call_args.args[8] == 10  # max_events
+        assert call_args.args[9] == store._event_index_prefix()
+        assert call_args.args[10] == stream_id
+        assert call_args.args[11] == "ch"
+        assert call_args.args[12] == b"pl"
+
+    async def test_store_event_with_notify_uses_event_id_override(self, monkeypatch: pytest.MonkeyPatch):
+        """event_id_override is passed through to the EVAL ARGV."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:notify-override")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.eval = AsyncMock(return_value=1)
+
+        dummy = DummyRedis()
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=dummy),
+        )
+
+        forced = "00000000-0000-0000-0000-0000000000aa"
+        returned = await store.store_event_with_notify(
+            "stream-x",
+            {"jsonrpc": "2.0", "method": "notifications/test"},
+            channel="chan",
+            payload=b"pl",
+            event_id_override=forced,
+        )
+        assert returned == forced
+        # ARGV[1] must be the override
+        assert dummy.eval.call_args.args[5] == forced
+
+    async def test_store_event_with_notify_handles_dict_like_message_without_model_dump(self, monkeypatch: pytest.MonkeyPatch):
+        """Messages that don't expose model_dump fall back to dict(message)."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:notify-dict")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.eval = AsyncMock(return_value=1)
+
+        dummy = DummyRedis()
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=dummy),
+        )
+
+        # Plain dict has no model_dump; dict() of a dict returns a copy.
+        msg = {"jsonrpc": "2.0", "method": "notifications/plain"}
+        await store.store_event_with_notify("s", msg, channel="c", payload=b"p")
+
+        assert orjson.loads(dummy.eval.call_args.args[6]) == msg
+
+    # ----------------------------------------------------------------------
+    # replay_after_with_ids: remaining edge cases
+    # ----------------------------------------------------------------------
+
+    async def test_replay_after_with_ids_returns_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 430: redis=None yields nothing."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:ri-nored")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+        results = [item async for item in store.replay_after_with_ids("s", "evid")]
+        assert results == []
+
+        # None cursor path also short-circuits cleanly with no Redis.
+        results = [item async for item in store.replay_after_with_ids("s", None)]
+        assert results == []
+
+    async def test_replay_after_with_ids_none_cursor_skips_missing_and_malformed_entries(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 441 (hget returns None → continue) and 444-446 (malformed JSON → log + continue)."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:ri-none-edge")
+        stream_id = "s"
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.zrangebyscore = AsyncMock(return_value=[b"gone", b"bad", b"ok"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                assert key == messages_key
+                if field == "gone":
+                    return None  # 441 continue
+                if field == "bad":
+                    return b"{"  # malformed JSON -> 444-446
+                if field == "ok":
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/ok"})
+                raise AssertionError("unexpected field")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids(stream_id, None)]
+        assert len(results) == 1
+        assert results[0][0] == "ok"
+
+    async def test_replay_after_with_ids_returns_when_index_missing(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 451: index lookup returns nothing → yield nothing."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:ri-idx-missing")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=None)
+                self.hget = AsyncMock(side_effect=AssertionError("must not read meta/messages"))
+                self.zrangebyscore = AsyncMock(side_effect=AssertionError("must not enumerate"))
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids("s", "evid")]
+        assert results == []
+
+    async def test_replay_after_with_ids_returns_when_index_malformed(self, monkeypatch: pytest.MonkeyPatch):
+        """Lines 456-463: malformed index JSON is logged and yields nothing."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:ri-idx-bad")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                # Non-JSON bytes triggers orjson.loads failure -> warning path
+                self.get = AsyncMock(return_value=b"{not json")
+                self.hget = AsyncMock(side_effect=AssertionError("must not read meta/messages"))
+                self.zrangebyscore = AsyncMock(side_effect=AssertionError("must not enumerate"))
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids("s", "evid")]
+        assert results == []
+
+    async def test_replay_after_with_ids_handles_bad_start_seq_and_edge_messages(self, monkeypatch: pytest.MonkeyPatch):
+        """Lines 489-490 (start_seq parse error), 504 (hget None), 507-509 (malformed JSON)."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:ri-badstart")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.zrangebyscore = AsyncMock(return_value=[b"gone", b"bad", b"ok"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"not-an-int"  # 489-490: except TypeError/ValueError
+                if key == messages_key and field == "gone":
+                    return None  # 504 continue
+                if key == messages_key and field == "bad":
+                    return b"{"  # 507-509 warning path
+                if key == messages_key and field == "ok":
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/ok"})
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        results = [item async for item in store.replay_after_with_ids(stream_id, "ev-cursor")]
+        assert len(results) == 1
+        assert results[0][0] == "ok"
+
+    # ----------------------------------------------------------------------
+    # evict_event
+    # ----------------------------------------------------------------------
+
+    async def test_evict_event_raises_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 538-540: missing Redis client raises RuntimeError so callers can log the orphan."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:evict-nored")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+        with pytest.raises(RuntimeError, match="Redis client not available"):
+            await store.evict_event("s", "evid")
+
+    async def test_evict_event_returns_true_when_event_removed(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 544-553 happy path: EVAL returns 1 → True."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:evict-hit")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.eval = AsyncMock(return_value=1)
+
+        dummy = DummyRedis()
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=dummy),
+        )
+
+        stream_id = "s"
+        event_id = "evid"
+        result = await store.evict_event(stream_id, event_id)
+        assert result is True
+
+        dummy.eval.assert_awaited_once()
+        call_args = dummy.eval.call_args
+        # 3 keys + 2 argv
+        assert call_args.args[1] == 3
+        assert call_args.args[2] == store._get_stream_meta_key(stream_id)
+        assert call_args.args[3] == store._get_stream_events_key(stream_id)
+        assert call_args.args[4] == store._get_stream_messages_key(stream_id)
+        assert call_args.args[5] == event_id
+        assert call_args.args[6] == store._event_index_prefix()
+
+    async def test_evict_event_returns_false_when_event_absent(self, monkeypatch: pytest.MonkeyPatch):
+        """EVAL returns 0 → False (idempotent no-op)."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:evict-miss")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.eval = AsyncMock(return_value=0)
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        assert await store.evict_event("s", "evid") is False
+
+    # ----------------------------------------------------------------------
+    # fetch_event
+    # ----------------------------------------------------------------------
+
+    async def test_fetch_event_returns_none_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 568-570: redis=None returns None, no exception."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:fetch-nored")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+        assert await store.fetch_event("s", "evid") is None
+
+    async def test_fetch_event_returns_none_when_hash_entry_missing(self, monkeypatch: pytest.MonkeyPatch):
+        """Line 573-574: hget returns None → returns None."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:fetch-miss")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.hget = AsyncMock(return_value=None)
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+        assert await store.fetch_event("s", "evid") is None
+
+    async def test_fetch_event_returns_none_when_payload_is_malformed(self, monkeypatch: pytest.MonkeyPatch):
+        """Lines 575-579: orjson/model_validate failure returns None and logs a warning."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:fetch-bad")
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.hget = AsyncMock(return_value=b"{")  # invalid JSON
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+        assert await store.fetch_event("s", "evid") is None
+
+    async def test_fetch_event_returns_validated_message(self, monkeypatch: pytest.MonkeyPatch):
+        """Happy path: valid JSON-RPC payload validates into a JSONRPCMessage."""
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:fetch-ok")
+        stream_id = "s"
+        event_id = "evid"
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                assert key == messages_key
+                assert field == event_id
+                return orjson.dumps({"jsonrpc": "2.0", "method": "notifications/ok"})
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        result = await store.fetch_event(stream_id, event_id)
+        assert result is not None
+        # JSONRPCMessage wraps the underlying model; confirm it round-trips.
+        dumped = result.model_dump(by_alias=True, exclude_none=True)
+        assert dumped["jsonrpc"] == "2.0"
+        assert dumped["method"] == "notifications/ok"

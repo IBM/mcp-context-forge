@@ -563,7 +563,8 @@ class ServersPage(BasePage):
         """
         server_row = self.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
         expect(server_row).to_be_visible(timeout=10000)
-        edit_btn = server_row.locator('button:has-text("Edit")')
+        self._open_action_dropdown(server_row)
+        edit_btn = server_row.locator('button[role="menuitem"]:has-text("Edit")')
         edit_btn.click()
         expect(self.edit_server_modal).to_be_visible(timeout=10000)
 

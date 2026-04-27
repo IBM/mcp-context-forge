@@ -1031,6 +1031,54 @@ def test_start_span_with_commit_true(mock_session_factory):
         assert span_id is not None
 
 
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_with_plugin_context_custom_attributes(mock_session_factory):
+    """Test start_span merges custom attributes from plugin context."""
+    mock_factory, mock_session = mock_session_factory
+
+    # Create mock context with custom attributes
+    mock_context = MagicMock()
+    mock_context.global_context.state = {
+        "custom_span_attributes": {"custom_key": "custom_value", "another_key": 123}
+    }
+
+    service = ObservabilityService()
+    span_id = service.start_span(
+        trace_id="trace123",
+        name="test_span",
+        attributes={"original_key": "original_value"},
+        context=mock_context
+    )
+
+    assert span_id is not None
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_with_plugin_context_remove_attributes(mock_session_factory):
+    """Test start_span removes attributes specified by plugin context."""
+    mock_factory, mock_session = mock_session_factory
+
+    # Create mock context with attributes to remove
+    mock_context = MagicMock()
+    mock_context.global_context.state = {
+        "remove_span_attributes": ["sensitive_key", "another_key"]
+    }
+
+    service = ObservabilityService()
+    span_id = service.start_span(
+        trace_id="trace123",
+        name="test_span",
+        attributes={"sensitive_key": "secret", "keep_key": "value"},
+        context=mock_context
+    )
+
+    assert span_id is not None
+    mock_session.close.assert_called_once()
+
+
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
 def test_end_span_session_close_failure(mock_session_factory):
     """Test that end_span handles session close failures gracefully."""

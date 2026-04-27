@@ -195,11 +195,11 @@ class MCPStackDagger(CICDModule):
             # Mount current directory
             source = dag.host().directory(".")
             try:
-                # Use Alpine with openssl
+                # Use Debian slim with openssl
                 container = (
                     dag.container()
-                    .from_("alpine:latest")
-                    .with_exec(["apk", "add", "--no-cache", "openssl", "python3", "py3-pip", "make", "bash"])
+                    .from_("debian:bookworm-slim")
+                    .with_exec(["bash", "-lc", "apt-get update && apt-get install -y --no-install-recommends openssl python3 python3-pip make bash && rm -rf /var/lib/apt/lists/*"])
                     .with_mounted_directory("/workspace", source)
                     .with_workdir("/workspace")
                     # .with_exec(["python3", "-m", "venv", ".venv"])

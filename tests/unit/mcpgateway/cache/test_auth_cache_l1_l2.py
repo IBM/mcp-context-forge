@@ -85,15 +85,19 @@ class TestGetAuthContextL1L2:
         cache_key = f"{email}:{jti}"
 
         # Mock Redis to return data
+        # Third-Party
         import orjson
-        redis_data = orjson.dumps({
-            "user": {"email": email, "is_admin": True},
-            "personal_team_id": "team-2",
-            "is_token_revoked": False,
-        })
+
+        redis_data = orjson.dumps(
+            {
+                "user": {"email": email, "is_admin": True},
+                "personal_team_id": "team-2",
+                "is_token_revoked": False,
+            }
+        )
         mock_redis.get = AsyncMock(return_value=redis_data)
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_auth_context(email, jti)
 
             # Verify Redis hit
@@ -121,7 +125,7 @@ class TestGetAuthContextL1L2:
 
         initial_miss_count = auth_cache._miss_count
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_auth_context(email, jti)
 
             # Both caches miss
@@ -140,15 +144,19 @@ class TestGetAuthContextL1L2:
         jti = "test-jti"
 
         # First request: L1 miss, L2 hit
+        # Third-Party
         import orjson
-        redis_data = orjson.dumps({
-            "user": {"email": email},
-            "personal_team_id": "team-1",
-            "is_token_revoked": False,
-        })
+
+        redis_data = orjson.dumps(
+            {
+                "user": {"email": email},
+                "personal_team_id": "team-1",
+                "is_token_revoked": False,
+            }
+        )
         mock_redis.get = AsyncMock(return_value=redis_data)
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result1 = await auth_cache.get_auth_context(email, jti)
             assert result1 is not None
             assert mock_redis.get.call_count == 1
@@ -194,7 +202,7 @@ class TestGetUserRoleL1L2:
         # Mock Redis to return role
         mock_redis.get = AsyncMock(return_value=b"member")
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_user_role(email, team_id)
 
             assert result == "member"
@@ -212,10 +220,12 @@ class TestGetUserRoleL1L2:
         cache_key = f"{email}:{team_id}"
 
         # Mock Redis to return sentinel
+        # First-Party
         from mcpgateway.cache.auth_cache import _NOT_A_MEMBER_SENTINEL
+
         mock_redis.get = AsyncMock(return_value=_NOT_A_MEMBER_SENTINEL.encode())
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_user_role(email, team_id)
 
             # Should return empty string (not a member)
@@ -254,12 +264,14 @@ class TestGetUserTeamsL1L2:
         teams = ["team-1", "team-2", "team-3"]
 
         # Mock Redis to return teams
+        # Third-Party
         import orjson
+
         mock_redis.get = AsyncMock(return_value=orjson.dumps(teams))
 
         auth_cache._teams_list_enabled = True
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_user_teams(cache_key)
 
             assert result == teams
@@ -279,7 +291,7 @@ class TestIsTokenRevokedL1L2:
         jti = "revoked-jti"
         auth_cache._revoked_jtis.add(jti)
 
-        with patch.object(auth_cache, '_get_redis_client', new_callable=AsyncMock) as mock_get_redis:
+        with patch.object(auth_cache, "_get_redis_client", new_callable=AsyncMock) as mock_get_redis:
             result = await auth_cache.is_token_revoked(jti)
 
             assert result is True
@@ -310,7 +322,7 @@ class TestIsTokenRevokedL1L2:
         # Mock Redis to indicate token is revoked
         mock_redis.sismember = AsyncMock(return_value=True)
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.is_token_revoked(jti)
 
             assert result is True
@@ -370,7 +382,7 @@ class TestGetTeamMembershipValidL1L2:
         # Mock Redis to return True (stored as "1")
         mock_redis.get = AsyncMock(return_value=b"1")
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_team_membership_valid(user_email, team_ids)
 
             assert result is True
@@ -391,7 +403,7 @@ class TestGetTeamMembershipValidL1L2:
         # Mock Redis to return False (stored as "0")
         mock_redis.get = AsyncMock(return_value=b"0")
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_team_membership_valid(user_email, team_ids)
 
             assert result is False
@@ -409,7 +421,7 @@ class TestGetTeamMembershipValidL1L2:
         # First request: L1 miss, L2 hit
         mock_redis.get = AsyncMock(return_value=b"1")
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result1 = await auth_cache.get_team_membership_valid(user_email, team_ids)
             assert result1 is True
             assert mock_redis.get.call_count == 1
@@ -447,17 +459,21 @@ class TestPerformanceMetrics:
     @pytest.mark.asyncio
     async def test_redis_hit_count_l2(self, auth_cache, mock_redis):
         """Test Redis hit count increments on L2 cache hit."""
+        # Third-Party
         import orjson
-        redis_data = orjson.dumps({
-            "user": {"email": "test@example.com"},
-            "personal_team_id": None,
-            "is_token_revoked": False,
-        })
+
+        redis_data = orjson.dumps(
+            {
+                "user": {"email": "test@example.com"},
+                "personal_team_id": None,
+                "is_token_revoked": False,
+            }
+        )
         mock_redis.get = AsyncMock(return_value=redis_data)
 
         initial_redis_hit = auth_cache._redis_hit_count
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_auth_context("test@example.com", "jti")
 
             assert result is not None
@@ -470,7 +486,7 @@ class TestPerformanceMetrics:
 
         initial_miss_count = auth_cache._miss_count
 
-        with patch.object(auth_cache, '_get_redis_client', return_value=mock_redis):
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
             result = await auth_cache.get_auth_context("test@example.com", "jti")
 
             assert result is None
@@ -938,7 +954,9 @@ class TestGetAuthCacheSingleton:
 
     def test_get_auth_cache_returns_same_instance(self):
         """get_auth_cache returns existing singleton."""
+        # First-Party
         from mcpgateway.cache.auth_cache import get_auth_cache
+
         c1 = get_auth_cache()
         c2 = get_auth_cache()
         assert c1 is c2
@@ -950,9 +968,11 @@ class TestGetAuthContextNoRedis:
     @pytest.mark.asyncio
     async def test_l1_miss_no_redis_returns_none(self, auth_cache):
         """get_auth_context returns None when L1 misses and Redis is unavailable."""
-        result = await auth_cache.get_auth_context("u@test.com", "jti")
-        assert result is None
-        assert auth_cache._miss_count > 0
+        # Mock _get_redis_client to return None (Redis unavailable)
+        with patch.object(auth_cache, "_get_redis_client", return_value=None):
+            result = await auth_cache.get_auth_context("u@test.com", "jti")
+            assert result is None
+            assert auth_cache._miss_count > 0
 
 
 class TestInvalidateUserNoRedis:
@@ -962,9 +982,7 @@ class TestInvalidateUserNoRedis:
     async def test_invalidate_user_no_redis(self, auth_cache):
         """invalidate_user clears L1 when Redis is unavailable."""
         auth_cache._user_cache["u@test.com"] = CacheEntry(value={"email": "u@test.com"}, expiry=time.time() + 10)
-        auth_cache._context_cache["u@test.com:jti"] = CacheEntry(
-            value=CachedAuthContext(user={"email": "u@test.com"}), expiry=time.time() + 10
-        )
+        auth_cache._context_cache["u@test.com:jti"] = CacheEntry(value=CachedAuthContext(user={"email": "u@test.com"}), expiry=time.time() + 10)
         await auth_cache.invalidate_user("u@test.com")
         assert "u@test.com" not in auth_cache._user_cache
 
@@ -1002,8 +1020,9 @@ class TestSyncRevokedTokensLoadJtis:
     @pytest.mark.asyncio
     async def test_load_jtis_from_db(self, monkeypatch):
         """Actually exercise _load_revoked_jtis via asyncio.to_thread → DB mock."""
-        from unittest.mock import MagicMock as _MM
+        # Standard
         from contextlib import contextmanager
+        from unittest.mock import MagicMock as _MM
 
         cache = AuthCache(enabled=True)
         cache._redis_checked = True

@@ -175,7 +175,7 @@ Optimization:
 - `response_cache_by_prompt` - Response caching
 - `circuit_breaker` - Circuit breaker pattern
 - `retry_with_backoff` - Retry logic with backoff
-- `rate_limiter` - Rate limiting
+- `cpex-rate-limiter` - Rate limiting (external package: `cpex_rate_limiter.RateLimiterPlugin`)
 - `output_length_guard` - Output length limits
 
 Utilities:
@@ -201,7 +201,7 @@ Examples:
   - Normalizes Unicode (NFC/NFD/NFKC/NFKD), trims/collapses whitespace, optional casing, numeric date strings to ISO `YYYY-MM-DD`, and numbers to canonical form (dot decimal, no thousands). Per-field overrides via regex.
   - Config: `enable_unicode`, `unicode_form`, `remove_control_chars`, `enable_whitespace`, `trim`, `collapse_internal`, `normalize_newlines`, `collapse_blank_lines`, `enable_casing`, `case_strategy`, `enable_dates`, `day_first`, `year_first`, `enable_numbers`, `decimal_detection`, `field_overrides`.
   - Ordering: place before PII filter (lower priority value) so PII patterns see stabilized inputs. Recommended mode: `permissive`.
-- `PIIFilterPlugin` (`plugins/pii_filter/pii_filter.py`)
+- `PIIFilterPlugin` (PyPI package: `cpex-pii-filter`)
   - Hooks: prompt pre/post, tool pre/post
   - Detects and masks PII (SSN, credit card, email, phone, IP, keys, etc.) via regex; supports strategies: redact/partial/hash/tokenize/remove
   - Config: detection toggles, `default_mask_strategy`, `redaction_text`, `block_on_detection`, `log_detections`, `whitelist_patterns`, `custom_patterns`
@@ -382,7 +382,7 @@ async function toolPreInvoke({ payload, context }: any) {
           """
           plugins:
             - name: "PIIFilterPlugin"
-              kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+              kind: "cpex_pii_filter.PIIFilterPlugin"
               hooks: ["prompt_pre_fetch"]
               mode: "permissive"
               priority: 1

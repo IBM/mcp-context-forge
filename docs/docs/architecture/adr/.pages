@@ -50,3 +50,4 @@ nav:
   - 45 Auth Remains in Core: 045-auth-remains-in-core.md
   - 46 Shared-Nothing Between Modules: 046-shared-nothing-between-modules.md
   - 47 Incremental Migration Over Rewrite: 047-incremental-migration-over-rewrite.md
+  - 48 End-User Identity Propagation: 041-identity-propagation.md

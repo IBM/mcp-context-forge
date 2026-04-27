@@ -34,12 +34,16 @@ from mcpgateway.plugins.framework.hooks.tools import ToolHookType
 from mcpgateway.plugins.framework.models import PluginResult
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    _build_retry_policy_config,
     _decrypt_tool_header_value,
     _decrypt_tool_headers_for_runtime,
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    _validate_header_mapping_targets,
+    _validate_mapping_contents,
+    apply_mapping_into_target,
     extract_using_jq,
     TextContent,
     ToolError,
@@ -53,6 +57,9 @@ from mcpgateway.services.tool_service import (
 )
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
+
+# Local
+from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture(autouse=True)
@@ -296,7 +303,7 @@ class TestToolServiceHelpersExtended:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(service, "_record_tool_metric_by_id") as mock_record:
             service._record_tool_metric_sync("tool-1", 1.23, True, None)
@@ -357,11 +364,47 @@ def mock_gateway():
     gw.passthrough_headers = []
     gw.ca_certificate = None
     gw.ca_certificate_sig = None
+    gw.client_cert = None
+    gw.client_key = None
     gw.signing_algorithm = None
 
     gw.enabled = True
     gw.reachable = True
     return gw
+
+
+class TestToolServiceA2A:
+    """Focused tests for A2A helper paths inside tool_service."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_call_a2a_agent_uses_v1_send_message_payload(self, mock_get_client, tool_service):
+        """A2A tool calls should default to A2A v1 payloads for v1 agents."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            name="a2a-agent",
+            endpoint_url="https://example.com/",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+        )
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"ok": True}
+        outbound_json = mock_client.post.call_args.kwargs["json"]
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_json["method"] == "SendMessage"
+        assert outbound_json["params"]["message"]["role"] == "ROLE_USER"
+        assert outbound_json["params"]["message"]["parts"] == [{"text": "hello"}]
+        assert outbound_headers["A2A-Version"] == "1.0"
 
 
 @pytest.fixture
@@ -411,6 +454,8 @@ def mock_tool(mock_gateway):
     tool.display_name = None
     tool.tags = []
     tool.team = None
+    tool.query_mapping = None
+    tool.header_mapping = None
 
     # Set up metrics
     tool.metrics = []
@@ -1147,7 +1192,8 @@ class TestToolService:
         assert result == []
         assert next_cursor is None
         # Query IS executed but returns empty due to WHERE FALSE condition
-        test_db.execute.assert_called_once()
+        # Note: execute is called twice - once for admin check, once for actual query
+        assert test_db.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
@@ -1484,8 +1530,8 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        # Verify execute was called for DELETE ... RETURNING
-        test_db.execute.assert_called_once()
+        # Verify execute was called for server_tool_association cleanup + DELETE
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
         # Verify notification
@@ -1498,19 +1544,22 @@ class TestToolService:
         test_db.commit = Mock()
         test_db.rollback = Mock()
 
-        # Mock execute results: batch deletes return rowcount=0 to stop loop, final DELETE returns rowcount=1
+        # Mock execute results: batch deletes return rowcount=0 to stop loop,
+        # association cleanup returns a result, final DELETE returns rowcount=1
         batch_result = Mock()
         batch_result.rowcount = 0  # No rows to delete (stops the batch loop)
+        assoc_result = Mock()
+        assoc_result.rowcount = 0  # No server_tool_association rows
         delete_result = Mock()
         delete_result.rowcount = 1  # Final DELETE succeeded
-        test_db.execute = Mock(side_effect=[batch_result, batch_result, delete_result])
+        test_db.execute = Mock(side_effect=[batch_result, batch_result, assoc_result, delete_result])
 
         tool_service._notify_tool_deleted = AsyncMock()
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for DELETE = 3
-        assert test_db.execute.call_count == 3
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for association cleanup + 1 for DELETE = 4
+        assert test_db.execute.call_count == 4
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2210,6 +2259,123 @@ class TestToolService:
         )
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_post_with_path_query_and_body_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test POST request with path parameters, query parameters (with templates), and body parameters.
+
+        This test demonstrates the complete parameter handling (no mappings = signed URL mode):
+        - Path parameters (e.g., {user_id}) are substituted into the URL path
+        - Query parameters can also use templates (e.g., ?api_key={api_key})
+        - Static query parameters (e.g., ?version=v2) are preserved as-is
+        - Query parameters are preserved in URL for POST (signed URL support)
+        - Remaining payload goes to the JSON body (without query params)
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        # URL with path parameters AND templated query parameters
+        mock_tool.url = "http://example.com/api/users/{user_id}/posts?api_key={api_key}&version=v2"
+
+        # Payload contains: path param (user_id), query param (api_key), and body params (title, content)
+        payload = {
+            "user_id": 456,  # Will be substituted into URL path
+            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param
+            "title": "New Post",  # Will go to JSON body
+            "content": "Hello World",  # Will go to JSON body
+        }
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"id": 789, "status": "created"})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
+
+        # Verify parameter handling for POST (no mappings = signed URL support):
+        # 1. Path parameter substituted: /users/456/posts
+        # 2. Query param template substituted: api_key=secret123
+        # 3. Static query param preserved: version=v2
+        # 4. Query params STAY in URL (not merged into body) for signed URL support
+        # 5. Body params: title and content (user_id and api_key removed after path/query substitution)
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "http://example.com/api/users/456/posts?api_key=secret123&version=v2",  # Path param substituted, query params preserved
+            json={"title": "New Post", "content": "Hello World"},  # Only body params
+            headers=mock_tool.headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_get_with_static_query_params_no_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test GET request with static URL query params and no query_mapping.
+
+        Verifies that query params extracted from the URL are merged into the
+        payload and sent together via params= on the GET request.
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/api/search?version=v2&format=json"
+
+        payload = {"q": "hello"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"results": []})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
+
+        # URL query params (version, format) are merged into payload alongside the user-provided "q"
+        tool_service._http_client.get.assert_called_once_with(
+            "http://example.com/api/search",
+            params={"q": "hello", "version": "v2", "format": "json"},
+            headers=mock_tool.headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_put_with_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test PUT request with URL query params merges them into the JSON body.
+
+        Verifies that non-GET methods other than POST (e.g. PUT) also merge
+        URL query params into the JSON body for backward compatibility.
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "PUT"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/api/items/1?version=v2"
+
+        payload = {"name": "updated"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"status": "ok"})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
+
+        # Query params preserved in URL for signed URL support (no mappings)
+        tool_service._http_client.request.assert_called_once_with(
+            "PUT",
+            "http://example.com/api/items/1?version=v2",
+            json={"name": "updated"},
+            headers=mock_tool.headers,
+        )
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_jq_filter_error_returns_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test REST tool invocation marks result as error when jq filter returns TextContent error."""
         mock_tool.integration_type = "REST"
@@ -2364,6 +2530,168 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call streamablehttp client.
+
+        Covers tool_service.py:5241-5242 — the `except RegistryNotInitializedError: use_registry = False`
+        branch on the StreamableHTTP code path.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Pin a downstream session id so use_registry=True and the RegistryNotInitializedError
+        # branch actually fires. Without this, the registry-init try/except is skipped.
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-abc"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        # The per-call streamablehttp client path still reached call_tool successfully.
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "fallback ok"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_sse_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
+        """Registry-not-initialised path must fall through to per-call sse_client (#4205 SSE branch).
+
+        Covers tool_service.py:5063-5065 — mirror of the StreamableHTTP test above.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/sse",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="SSE",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="sse fallback ok")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_sse_client(*_args, **_kwargs):
+            yield ("read", "write")
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.sse_client", mock_sse_client),
+                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        assert result.content[0].text == "sse fallback ok"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp_creates_client_lifecycle_spans(self, tool_service, mock_tool, test_db):
         """Non-pooled MCP calls should emit client call, initialize, and request spans in order."""
         # Standard
@@ -2460,8 +2788,15 @@ class TestToolService:
         assert "mcp.client.response" in span_names
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_mcp_pooled_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
-        """Pooled MCP sessions must NOT receive traceparent/tracestate to prevent context pollution."""
+    async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
+        """Registry-reused MCP sessions must NOT receive traceparent/tracestate (#4205).
+
+        The registry reuses one upstream ClientSession across multiple tool calls
+        in a downstream session. Per-request trace headers would be pinned to the
+        first call and replayed on unrelated later ones, corrupting distributed
+        traces. The tool_service therefore skips per-request header injection
+        on the registry path.
+        """
         mock_gateway = SimpleNamespace(
             id="42",
             name="test_gateway",
@@ -2499,46 +2834,161 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(content=[TextContent(type="text", text="pooled ok")])
-        pooled_session_mock = AsyncMock()
-        pooled_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
 
-        captured_pool_headers = {}
+        captured_registry_headers = {}
 
         @asynccontextmanager
-        async def mock_pool_session(**kwargs):
-            captured_pool_headers.update(kwargs.get("headers") or {})
-            pooled = SimpleNamespace(session=pooled_session_mock)
-            yield pooled
+        async def mock_registry_acquire(**kwargs):
+            captured_registry_headers.update(kwargs.get("headers") or {})
+            upstream = SimpleNamespace(session=upstream_session_mock)
+            yield upstream
 
-        mock_pool = MagicMock()
-        mock_pool.session = mock_pool_session
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_registry_acquire
 
         @contextmanager
         def noop_span(name, _attributes=None):
             yield MagicMock()
 
+        # Pin a downstream session id in the ContextVar so the registry path is taken.
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sess-xyz"})
+
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.settings") as mock_settings,
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
+                patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+            ):
+                mock_settings.default_passthrough_headers = []
+                mock_settings.tool_timeout = 60
+
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result.content[0].text == "registry ok"
+        # Core assertion (#4205 trace-pinning trade-off): the registry path must not
+        # receive per-request trace headers, since the reused transport will carry
+        # the first call's headers on every subsequent call.
+        assert "traceparent" not in captured_registry_headers, "traceparent must not be injected into registry-reused sessions"
+        assert "tracestate" not in captured_registry_headers, "tracestate must not be injected into registry-reused sessions"
+        assert "X-Correlation-ID" not in captured_registry_headers, "X-Correlation-ID must not be injected into registry-reused sessions"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_two_downstream_sessions_hit_registry_with_distinct_ids(self, tool_service, mock_tool, test_db):
+        """Two downstream MCP sessions must key the registry separately — the #4205 invariant.
+
+        Today's regression: the old pool keyed upstream sessions by user identity,
+        so two browser tabs held by the same user shared an upstream session and
+        leaked counter state between each other. This test pins the fix in
+        tool_service: each downstream Mcp-Session-Id makes the service ask the
+        registry for a DIFFERENT upstream session.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        mock_gateway = SimpleNamespace(
+            id="gw-42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        def make_returns():
+            return [mock_tool, mock_gateway, mock_gateway]
+
+        returns = []
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected = ToolResult(content=[TextContent(type="text", text="ok")])
+        upstream_session_mock = AsyncMock()
+        upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+
+        observed_keys: list[tuple[str, str]] = []
+
+        @asynccontextmanager
+        async def mock_acquire(**kwargs):
+            observed_keys.append((kwargs["downstream_session_id"], kwargs["gateway_id"]))
+            yield SimpleNamespace(session=upstream_session_mock)
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_acquire
+
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
-            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
-            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
         ):
-            mock_settings.mcp_session_pool_enabled = True
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            # Downstream session A
+            returns[:] = make_returns()
+            token_a = request_headers_var.set({"mcp-session-id": "downstream-A"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_a)
 
-        assert result.content[0].text == "pooled ok"
-        # The critical assertion: pooled path must NOT have traceparent/tracestate
-        assert "traceparent" not in captured_pool_headers, "traceparent must not be injected into pooled sessions"
-        assert "tracestate" not in captured_pool_headers, "tracestate must not be injected into pooled sessions"
-        # Correlation ID must also be absent from pooled headers (pinned transport)
-        assert "X-Correlation-ID" not in captured_pool_headers, "X-Correlation-ID must not be injected into pooled sessions"
+            # Downstream session B (same user, same gateway)
+            returns[:] = make_returns()
+            token_b = request_headers_var.set({"mcp-session-id": "downstream-B"})
+            try:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+            finally:
+                request_headers_var.reset(token_b)
+
+        # The registry was asked for two distinct keys, one per downstream session
+        # — and both pointed at the same gateway. This is exactly the isolation
+        # #4205's reproducer needs.
+        assert len(observed_keys) == 2
+        session_ids = [k[0] for k in observed_keys]
+        gateway_ids = [k[1] for k in observed_keys]
+        assert session_ids == ["downstream-A", "downstream-B"]
+        assert gateway_ids[0] == gateway_ids[1]
+        assert gateway_ids[0]  # non-empty
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
@@ -2950,7 +3400,6 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-            patch("mcpgateway.services.tool_service.settings.mcp_session_pool_enabled", False),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
             # ------------------------------------------------------------------
@@ -3317,7 +3766,7 @@ class TestToolService:
 
         # Start subscription in background
         subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        subscription_task = asyncio.create_task(anext(subscriber))
 
         # Give a moment for subscription to be registered
         await asyncio.sleep(0.01)
@@ -3477,8 +3926,14 @@ class TestToolService:
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify OAuth token was obtained
-        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_tool.oauth_config)
+        # Verify OAuth token was obtained (with gateway CA cert parameters)
+        tool_service.oauth_manager.get_access_token.assert_called_once()
+        call_args = tool_service.oauth_manager.get_access_token.call_args
+        assert call_args[0][0] == mock_tool.oauth_config
+        # Gateway is None for tool-level OAuth, so CA cert params should be None
+        assert call_args[1]["ca_certificate"] is None
+        assert call_args[1]["client_cert"] is None
+        assert call_args[1]["client_key"] is None
 
         # Verify HTTP request included Bearer token
         tool_service._http_client.request.assert_called_once()
@@ -3556,8 +4011,14 @@ class TestToolService:
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify OAuth was called
-        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_gateway.oauth_config)
+        # Verify OAuth was called (with gateway CA cert parameters)
+        tool_service.oauth_manager.get_access_token.assert_called_once()
+        call_args = tool_service.oauth_manager.get_access_token.call_args
+        assert call_args[0][0] == mock_gateway.oauth_config
+        # Check that CA cert parameters were passed (from gateway_payload dict)
+        assert call_args[1]["ca_certificate"] is None
+        assert call_args[1]["client_cert"] is None
+        assert call_args[1]["client_key"] is None
 
         # Verify MCP session was initialized and tool called
         session_mock.initialize.assert_awaited_once()
@@ -4202,6 +4663,167 @@ class TestToolService:
             # Should not raise
             await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_query_mapping", "tool_header_mapping", "expected_json", "expected_headers"),
+        [
+            (
+                {"query": "mapped_query"},
+                {"query": "X-Mapped-Query"},
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json", "X-Mapped-Query": "test"},
+            ),
+            # When both mappings are None or empty, query params are preserved in URL (signed URL support)
+            # Only input args go in the body.
+            (
+                None,
+                None,
+                {"query": "test"},  # Only input args, URL query params stay in URL
+                {"Content-Type": "application/json"},
+            ),
+            (
+                {"query": "mapped_query"},
+                None,
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json"},
+            ),
+            (
+                None,
+                {"query": "X-Query"},
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json", "X-Query": "test"},
+            ),
+            # Empty dict mappings also preserve query params in URL (same as None)
+            (
+                {},
+                {},
+                {"query": "test"},  # Only input args, URL query params stay in URL
+                {"Content-Type": "application/json"},
+            ),
+        ],
+    )
+    async def test_invoke_tool_rest_headers_and_query_maps_applied(
+        self,
+        tool_service,
+        mock_tool,
+        mock_global_config_obj,
+        test_db,
+        tool_query_mapping,
+        tool_header_mapping,
+        expected_json,
+        expected_headers,
+    ):
+        """invoke_tool should apply query_mapping and header_mapping through apply_mapping_into_target."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test?existing=1"
+        mock_tool.query_mapping = tool_query_mapping
+        mock_tool.header_mapping = tool_header_mapping
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
+
+        # When both mappings are None or empty dict, query params stay in URL (signed URL support)
+        # When mappings have actual values, query params are extracted and merged into body
+        has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
+        has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
+
+        if not has_query_mapping and not has_header_mapping:
+            # No mappings (None or empty) - query params preserved in URL
+            tool_service._http_client.request.assert_called_once_with(
+                "POST",
+                "http://example.com/tools/test?existing=1",  # Query params preserved in URL
+                json=expected_json,
+                headers=expected_headers,
+            )
+        else:
+            # Mappings present - query params extracted and merged into body
+            tool_service._http_client.request.assert_called_once_with(
+                "POST",
+                "http://example.com/tools/test",
+                json=expected_json,
+                headers=expected_headers,
+            )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_get_with_query_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """GET requests send mapped payload as query params via params= instead of json=."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test?existing=1"
+        mock_tool.query_mapping = {"query": "q"}
+        mock_tool.header_mapping = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.get.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
+
+        tool_service._http_client.get.assert_called_once_with(
+            "http://example.com/tools/test",
+            params={"existing": "1", "q": "test"},
+            headers={"Content-Type": "application/json"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_header_mapping_uses_original_arguments(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Header mapping sources from original arguments, so URL-template-consumed params are still available for headers."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/{id}/detail?existing=1"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"id": "X-Resource-Id"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"id": "42", "other": "val"}, request_headers=None)
+
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "http://example.com/tools/42/detail",
+            json={"other": "val", "existing": "1"},
+            headers={"Content-Type": "application/json", "X-Resource-Id": "42"},
+        )
+
 
 # --------------------------------------------------------------------------- #
 #                               extract_using_jq                              #
@@ -4241,6 +4863,320 @@ def test_extract_using_jq_short_circuits_and_errors():
 
 
 # --------------------------------------------------------------------------- #
+#                         apply_mapping_into_target                            #
+# --------------------------------------------------------------------------- #
+
+
+class TestApplyMappingIntoTarget:
+    """Unit tests for the apply_mapping_into_target utility function."""
+
+    def test_maps_matching_keys_and_renames(self):
+        data = {"query": "test", "page": 1}
+        mapping = {"query": "q", "page": "p"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"q": "test", "p": 1}
+
+    def test_merges_into_existing_target(self):
+        data = {"query": "test"}
+        mapping = {"query": "q"}
+        target = {"existing": "1"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"existing": "1", "q": "test"}
+
+    def test_mapped_keys_overwrite_target(self):
+        data = {"key": "new_value"}
+        mapping = {"key": "shared"}
+        target = {"shared": "old_value"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"shared": "new_value"}
+
+    def test_none_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, None, target)
+        assert result == {"a": 1}
+
+    def test_empty_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, {}, target)
+        assert result == {"a": 1}
+
+    def test_none_mapping_none_target_returns_empty_dict(self):
+        result = apply_mapping_into_target({"x": 10}, None)
+        assert result == {}
+
+    def test_unmapped_keys_excluded_from_result(self):
+        data = {"mapped": "yes", "unmapped": "dropped"}
+        mapping = {"mapped": "m"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"m": "yes"}
+        assert "unmapped" not in result
+        assert "dropped" not in result
+
+    def test_empty_data_with_mapping_returns_target_only(self):
+        result = apply_mapping_into_target({}, {"k": "v"}, {"existing": "1"})
+        assert result == {"existing": "1"}
+
+    def test_does_not_mutate_inputs(self):
+        data = {"a": 1}
+        mapping = {"a": "b"}
+        target = {"c": 2}
+        apply_mapping_into_target(data, mapping, target)
+        assert data == {"a": 1}
+        assert target == {"c": 2}
+
+    def test_unmapped_keys_logged_at_debug(self):
+        """When DEBUG is enabled, unmapped keys are logged."""
+
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            mock_logger.isEnabledFor.return_value = True
+            with patch("mcpgateway.services.tool_service.structured_logger") as mock_slog:
+                apply_mapping_into_target({"mapped": "v", "extra": "dropped"}, {"mapped": "m"})
+                mock_slog.log.assert_called_once()
+                assert "unmapped keys excluded" in mock_slog.log.call_args[1]["message"]
+
+
+# --------------------------------------------------------------------------- #
+#              Schema-level Mapping Validation Tests                          #
+# --------------------------------------------------------------------------- #
+
+
+class TestMappingSizeValidation:
+    """Tests for _validate_mapping_size via ToolCreate/ToolUpdate schema validators."""
+
+    def test_none_mapping_accepted(self):
+        """None mapping should pass validation."""
+        tool = ToolCreate(name="test_tool", query_mapping=None, header_mapping=None)
+        assert tool.query_mapping is None
+
+    def test_valid_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", integration_type="REST", query_mapping={"a": "b"})
+        assert tool.query_mapping == {"a": "b"}
+
+    def test_too_many_entries_rejected(self):
+        big_mapping = {f"k{i}": f"v{i}" for i in range(51)}
+        with pytest.raises(Exception, match="50 entries"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping=big_mapping)
+
+    def test_long_key_rejected(self):
+        with pytest.raises(Exception, match="key exceeds"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping={"x" * 129: "v"})
+
+    def test_long_value_rejected(self):
+        with pytest.raises(Exception, match="value exceeds"):
+            ToolCreate(name="test_tool", integration_type="REST", query_mapping={"k": "x" * 129})
+
+    def test_tool_update_too_many_entries_rejected(self):
+        big_mapping = {f"k{i}": f"v{i}" for i in range(51)}
+        with pytest.raises(Exception, match="50 entries"):
+            ToolUpdate(query_mapping=big_mapping)
+
+
+class TestSchemaHeaderMappingTargetValidation:
+    """Tests for _validate_header_mapping_targets via ToolCreate/ToolUpdate schema validators."""
+
+    def test_none_header_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", header_mapping=None)
+        assert tool.header_mapping is None
+
+    def test_safe_header_mapping_accepted(self):
+        tool = ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "X-Custom"})
+        assert tool.header_mapping == {"field": "X-Custom"}
+
+    def test_blocked_header_rejected_at_create(self):
+        with pytest.raises(Exception, match="blocked header"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "Cookie"})
+
+    def test_sensitive_pattern_rejected_at_create(self):
+        with pytest.raises(Exception, match="sensitive header"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "X-API-Key"})
+
+    def test_invalid_name_rejected_at_create(self):
+        with pytest.raises(Exception, match="invalid header name"):
+            ToolCreate(name="test_tool", integration_type="REST", header_mapping={"field": "Bad Header"})
+
+    def test_blocked_header_rejected_at_update(self):
+        with pytest.raises(Exception, match="blocked header"):
+            ToolUpdate(header_mapping={"field": "Host"})
+
+    def test_sensitive_pattern_rejected_at_update(self):
+        with pytest.raises(Exception, match="sensitive header"):
+            ToolUpdate(header_mapping={"field": "X-Auth-Token"})
+
+
+# --------------------------------------------------------------------------- #
+#                  Mapping Security Validation Tests                          #
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMappingContents:
+    """Tests for _validate_mapping_contents runtime guard."""
+
+    def test_valid_string_mapping_passes(self):
+        result = _validate_mapping_contents({"a": "b", "c": "d"}, "test_mapping", "test_tool")
+        assert result == {"a": "b", "c": "d"}
+
+    def test_non_string_value_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({"a": 42}, "test_mapping", "test_tool")
+
+    def test_non_string_key_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({1: "b"}, "test_mapping", "test_tool")
+
+    def test_nested_dict_value_raises(self):
+        with pytest.raises(ToolInvocationError, match="non-string keys or values"):
+            _validate_mapping_contents({"a": {"nested": "obj"}}, "test_mapping", "test_tool")
+
+    def test_empty_dict_passes(self):
+        result = _validate_mapping_contents({}, "test_mapping", "test_tool")
+        assert result == {}
+
+    def test_error_includes_tool_name(self):
+        with pytest.raises(ToolInvocationError, match="my_tool"):
+            _validate_mapping_contents({"a": 42}, "query_mapping", "my_tool")
+
+
+class TestValidateHeaderMappingTargets:
+    """Tests for _validate_header_mapping_targets security checks."""
+
+    def test_safe_header_name_passes(self):
+        _validate_header_mapping_targets({"field": "X-Custom-Header"}, "test_tool")
+
+    def test_authorization_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Authorization"}, "test_tool")
+
+    def test_authorization_case_insensitive(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "AUTHORIZATION"}, "test_tool")
+
+    def test_proxy_authorization_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Proxy-Authorization"}, "test_tool")
+
+    def test_x_api_key_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "X-API-Key"}, "test_tool")
+
+    def test_crlf_injection_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": "X-Header\r\nEvil: injected"}, "test_tool")
+
+    def test_space_in_header_name_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": "X Header"}, "test_tool")
+
+    def test_empty_header_name_rejected(self):
+        with pytest.raises(ToolInvocationError, match="invalid header name"):
+            _validate_header_mapping_targets({"field": ""}, "test_tool")
+
+    def test_multiple_headers_all_validated(self):
+        """All targets must be validated — a valid header before a sensitive one does not skip checks."""
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"a": "X-Safe", "b": "Authorization"}, "test_tool")
+
+    def test_cookie_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Cookie"}, "test_tool")
+
+    def test_host_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Host"}, "test_tool")
+
+    def test_transfer_encoding_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Transfer-Encoding"}, "test_tool")
+
+    def test_connection_header_rejected(self):
+        with pytest.raises(ToolInvocationError, match="sensitive header"):
+            _validate_header_mapping_targets({"field": "Connection"}, "test_tool")
+
+
+class TestMappingIntegrationSecurity:
+    """Integration tests verifying mapping security at the invoke_tool level."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_sensitive_header_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header_mapping that targets Authorization."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"token": "Authorization"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="sensitive header"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"token": "evil-value"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_crlf_header_mapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header_mapping with CRLF injection in target name."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"field": "X-Header\r\nEvil: injected"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="invalid header name"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"field": "value"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_crlf_in_header_value(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject header values containing CRLF (header injection via runtime arguments)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = {"field": "X-Custom"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="illegal characters"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"field": "good\r\nEvil: injected"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_non_scalar_query_mapped_value(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """invoke_tool must reject non-scalar values produced by query_mapping."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.query_mapping = {"nested": "q"}
+        mock_tool.header_mapping = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            pytest.raises(ToolInvocationError, match="non-scalar value"),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"nested": {"a": "b"}}, request_headers=None)
+
+
+# --------------------------------------------------------------------------- #
 #                         Cache Behavior Tests                                #
 # --------------------------------------------------------------------------- #
 
@@ -4269,6 +5205,521 @@ class TestJqFilterCaching:
         data = {"x": "y"}
         result = extract_using_jq(data, "")
         assert result is data
+
+
+# --------------------------------------------------------------------------- #
+#          Tests for REST Tool Improvements (non-JSON, query params)          #
+# --------------------------------------------------------------------------- #
+
+
+class TestJqFilterEmailValidation:
+    """Tests for JQ filter email address validation (#3855)."""
+
+    def test_extract_using_jq_rejects_email_addresses(self):
+        """Simple email addresses are detected and ignored as jq filters."""
+        data = {"key": "value", "user": "test"}
+
+        result = extract_using_jq(data, "user@example.com")
+        assert result == data, "Simple email addresses should be ignored as jq filters"
+
+        result = extract_using_jq(data, "admin@test.org")
+        assert result == data
+
+        result = extract_using_jq(data, "testuser@domain.net")
+        assert result == data
+
+    def test_extract_using_jq_accepts_valid_filters(self):
+        """Valid jq filters still work after email validation."""
+        data = {"key": "value", "nested": {"field": 123}}
+
+        result = extract_using_jq(data, ".key")
+        assert result == ["value"]
+
+        result = extract_using_jq(data, ".nested.field")
+        assert result == [123]
+
+    def test_extract_using_jq_empty_whitespace_filters(self):
+        """Empty/whitespace filters are handled."""
+        data = {"key": "value"}
+
+        result = extract_using_jq(data, "")
+        assert result == data
+
+        result = extract_using_jq(data, "   ")
+        assert result == data
+
+        result = extract_using_jq(data, "\t\n")
+        assert result == data
+
+
+class TestRestToolQueryParamHandling:
+    """Tests for query parameter handling in REST tools (#3857)."""
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_get_merges_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """GET requests merge URL query params with input arguments."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "https://api.example.com/search?api_key=secret123"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"results": []})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"q": "test query", "limit": 10}, request_headers=None)
+
+            call_args = tool_service._http_client.get.call_args
+            assert call_args[0][0] == "https://api.example.com/search"
+            params = call_args[1]["params"]
+            assert params["api_key"] == "secret123"
+            assert params["q"] == "test query"
+            assert params["limit"] == 10
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_post_preserves_query_params_in_url(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """POST requests preserve query params in URL (signed URL support)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.url = "https://storage.example.com/upload?signature=xyz&expires=123"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"success": True})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"filename": "test.txt", "content": "data"}, request_headers=None)
+
+            call_args = tool_service._http_client.request.call_args
+            url = call_args[0][1]
+            assert "signature=xyz" in url
+            assert "expires=123" in url
+
+            body = call_args[1]["json"]
+            assert body == {"filename": "test.txt", "content": "data"}
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_put_preserves_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """PUT requests preserve query params in URL."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "PUT"
+        mock_tool.url = "https://api.example.com/resource?token=abc123"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"updated": True})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"data": "updated"}, request_headers=None)
+
+            call_args = tool_service._http_client.request.call_args
+            url = call_args[0][1]
+            assert "token=abc123" in url
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_patch_preserves_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """PATCH requests preserve query params in URL."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "PATCH"
+        mock_tool.url = "https://api.example.com/resource?version=v2"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"patched": True})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"field": "value"}, request_headers=None)
+
+            call_args = tool_service._http_client.request.call_args
+            url = call_args[0][1]
+            assert "version=v2" in url
+            body = call_args[1]["json"]
+            assert body == {"field": "value"}
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_delete_preserves_query_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """DELETE requests preserve query params in URL."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "DELETE"
+        mock_tool.url = "https://api.example.com/resource?cascade=true"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 204
+        mock_response.text = ""
+        mock_response.json = Mock(return_value={})
+
+        tool_service._http_client.request = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"confirm": "yes"}, request_headers=None)
+
+            call_args = tool_service._http_client.request.call_args
+            url = call_args[0][1]
+            assert "cascade=true" in url
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_get_param_conflict_logs_warning(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """GET request logs warning when input args conflict with URL query params."""
+        # Standard
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "https://api.example.com/search?api_key=url_value&safe=true"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"results": []})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"api_key": "input_value", "q": "search"}, request_headers=None)  # pragma: allowlist secret
+
+            assert "conflicting parameters" in caplog.text.lower()
+            assert "api_key" in caplog.text
+
+            call_args = tool_service._http_client.get.call_args
+            params = call_args[1]["params"]
+            assert params["api_key"] == "url_value"  # URL value wins
+            assert params["safe"] == "true"
+            assert params["q"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_get_empty_url_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """GET request with no URL query params works correctly."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "https://api.example.com/search"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"results": []})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            await tool_service.invoke_tool(test_db, "test_tool", {"q": "test"}, request_headers=None)
+
+            call_args = tool_service._http_client.get.call_args
+            params = call_args[1]["params"]
+            assert params == {"q": "test"}
+
+
+class TestRestToolNonJsonResponses:
+    """Tests for handling non-JSON responses from REST tools (#3855)."""
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_html_error_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool handles HTML error pages gracefully without crashing."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        # raise_for_status must actually raise for 500 to exercise the real code path
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = "<html><body>Internal Server Error</body></html>"
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            # Status code must be preserved in structured_content for retry plugin
+            assert result.structured_content == {"status_code": 500}
+            # Error message must include the HTTP status code
+            assert "500" in result.content[0].text
+            assert "Failed to parse JSON error response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_plain_text_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool handles plain text responses without crashing."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "Plain text response"
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.content[0].text is not None
+            assert "Failed to parse JSON response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_xml_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool handles XML responses without crashing."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = '<?xml version="1.0"?><data>value</data>'
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.content[0].text is not None
+            assert "Failed to parse JSON response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_unicode_decode_error(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool handles invalid UTF-8 encoding without crashing."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "Invalid encoding content"
+        mock_response.json = Mock(side_effect=UnicodeDecodeError("utf-8", b"", 0, 1, "invalid"))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.content[0].text is not None
+            assert "Failed to parse JSON response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_empty_response_body(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool handles empty response body with JSON parse error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.content[0].text is not None
+            result_text = result.content[0].text
+            assert "Empty response body" in result_text
+            assert "Response body was empty" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_truncates_large_response_text(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool truncates response text exceeding REST_RESPONSE_TEXT_MAX_LENGTH."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        large_text = "X" * 10000
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = large_text
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.content[0].text is not None
+            result_data = orjson.loads(result.content[0].text)
+            assert "response_text" in result_data
+            assert len(result_data["response_text"]) == settings.rest_response_text_max_length
+            assert f"Response truncated from {len(large_text)} to {settings.rest_response_text_max_length} characters" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_does_not_truncate_small_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool does not truncate response text below the limit."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        small_text = "Small response text"
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = small_text
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            result_data = orjson.loads(result.content[0].text)
+            assert result_data["response_text"] == small_text
+            assert "Response truncated" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_truncation_respects_config_value(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """REST tool truncation uses the configured REST_RESPONSE_TEXT_MAX_LENGTH value."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        large_text = "Y" * 6000
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = large_text
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch.object(settings, "rest_response_text_max_length", 2000),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            result_data = orjson.loads(result.content[0].text)
+            assert len(result_data["response_text"]) == 2000
+            assert "Response truncated from 6000 to 2000 characters" in caplog.text
 
 
 class TestSchemaValidatorCaching:
@@ -4465,7 +5916,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()
@@ -4518,12 +5969,52 @@ class TestToolAccessAuthorization:
         assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
-    async def test_check_tool_access_admin_bypass(self, tool_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
+    async def test_check_tool_access_admin_bypass_denied_for_private(self, tool_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
 
-        # Admin bypass: both None = unrestricted access
-        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is True
+        # Admin bypass: both None, but private resources are NEVER accessible via admin bypass
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_bypass_grants_team_access(self, tool_service, mock_db):
+        """Admin bypass grants access to team resources."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Admin bypass: both None = access to team resources
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_database_admin_bypass(self, tool_service, mock_db):
+        """DB admin bypass: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+        own_private = {"id": "2", "visibility": "private", "owner_email": "admin@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        # token_teams=None + DB admin viewing OWN private → allowed (#4341 carve-out for self-access)
+        assert await tool_service._check_tool_access(mock_db, own_private, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OTHER user's private → denied (#4341 invariant)
+        assert await tool_service._check_tool_access(mock_db, other_users_private, user_email="admin@test.com", token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_with_narrowed_token_still_narrowed(self, tool_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass; narrowing is authoritative (#4106 guard)."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        # Admin with team-scoped token → cannot see resources outside token's teams
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_with_public_only_token_stays_public_only(self, tool_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public — matches normalize_token_teams contract."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        install_admin_user(mock_db)
+
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_tool_access_private_denied_to_unauthenticated(self, tool_service, mock_db):
@@ -4564,6 +6055,24 @@ class TestToolAccessAuthorization:
 
         # Even owner with public-only token is denied
         assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_get_tool_access_denied_raises_not_found(self, tool_service, mock_db):
+        """Test get_tool raises ToolNotFoundError when access is denied (line 3061)."""
+        # Create a private tool that exists but user doesn't have access
+        private_tool = MagicMock(spec=DbTool)
+        private_tool.id = "private-tool-1"
+        private_tool.visibility = "private"
+        private_tool.owner_email = "owner@test.com"
+        private_tool.team_id = "team-1"
+
+        mock_db.get.return_value = private_tool
+
+        # User without access tries to get the tool
+        with pytest.raises(ToolNotFoundError, match="Tool not found: private-tool-1"):
+            await tool_service.get_tool(
+                mock_db, "private-tool-1", requesting_user_email="other@test.com", requesting_user_is_admin=False, requesting_user_team_roles={"team-2": ["viewer"]}  # Different team
+            )
 
 
 class TestToolListingGracefulErrorHandling:
@@ -5625,8 +7134,13 @@ class TestToolServiceHelpers:
         public_payload = {"visibility": "public"}
         assert await service._check_tool_access(MagicMock(), public_payload, None, []) is True
 
+        # Admin bypass does NOT grant access to private resources (security requirement)
         private_payload = {"visibility": "private"}
-        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is True
+        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is False
+
+        # Admin bypass DOES grant access to team resources
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, None, None) is True
 
     @pytest.mark.asyncio
     async def test_check_tool_access_denies_without_user_or_public_only_token(self):
@@ -5695,6 +7209,8 @@ class TestToolServiceHelpers:
             team_id="team-1",
             owner_email="owner@example.com",
             visibility="team",
+            query_mapping={},
+            header_mapping={},
         )
         gateway = SimpleNamespace(
             id="gw-1",
@@ -5724,6 +7240,8 @@ class TestToolServiceHelpers:
         assert payload["status"] == "active"
         assert payload["tool"]["headers"] == {}
         assert payload["tool"]["input_schema"]["type"] == "object"
+        assert payload["tool"]["query_mapping"] == {}
+        assert payload["tool"]["header_mapping"] == {}
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
@@ -7140,6 +8658,143 @@ class TestRustMcpExecutionPlan:
 
         assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
+    def test_build_rust_native_tool_post_invoke_retry_policy_from_cpex_package(self, tool_service):
+        """RetryWithBackoffPlugin should produce a native retry policy when the package is installed."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {
+            "max_retries": settings.max_tool_retries + 5,
+            "backoff_base_ms": 250,
+            "max_backoff_ms": 5000,
+            "retry_on_status": [429, 503],
+            "jitter": False,
+            "tool_overrides": {"tool-one": {"max_retries": 1, "backoff_base_ms": 75}},
+        }
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
+
+        assert requires_python_fallback is False
+        assert policy == {
+            "kind": "retry_with_backoff",
+            "maxRetries": 1,
+            "backoffBaseMs": 75,
+            "maxBackoffMs": 5000,
+            "retryOnStatus": [429, 503],
+            "jitter": False,
+        }
+
+    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_for_invalid_override(self, tool_service):
+        """Invalid retry config should force Python fallback."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {"max_retries": 3, "tool_overrides": {"tool-one": "invalid"}}
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
+
+        assert policy is None
+        assert requires_python_fallback is True
+
+    def test_build_retry_policy_config_parses_bool_like_values_and_clamps_override(self):
+        """Gateway-owned retry parser should keep bool-like semantics and override clamping."""
+        cfg = _build_retry_policy_config(
+            {
+                "jitter": "false",
+                "check_text_content": "0",
+                "tool_overrides": {
+                    "tool-one": {
+                        "max_retries": settings.max_tool_retries + 4,
+                        "check_text_content": "true",
+                    }
+                },
+            },
+            "tool-one",
+        )
+
+        assert cfg["jitter"] is False
+        assert cfg["check_text_content"] is True
+        assert cfg["max_retries"] == settings.max_tool_retries
+
+    def test_build_retry_policy_config_rejects_scalar_retry_status_string(self):
+        """Scalar retry_on_status strings should fail instead of being split into digits."""
+        with pytest.raises(ValueError, match="retry_on_status"):
+            _build_retry_policy_config({"retry_on_status": "429"}, "tool-one")
+
+    def test_build_retry_policy_config_accepts_numeric_bool_inputs(self):
+        """Numeric bool-like inputs should preserve 0/1 semantics."""
+        cfg = _build_retry_policy_config({"jitter": 0, "check_text_content": 1}, "tool-one")
+        assert cfg["jitter"] is False
+        assert cfg["check_text_content"] is True
+
+    def test_build_retry_policy_config_rejects_negative_retry_values(self):
+        """Negative integer-like retry settings should be rejected."""
+        with pytest.raises(ValueError, match=">= 0"):
+            _build_retry_policy_config({"max_retries": -1}, "tool-one")
+
+    def test_build_retry_policy_config_rejects_invalid_bool_values(self):
+        """Unknown bool-like strings should be rejected."""
+        with pytest.raises(ValueError, match="bool-like"):
+            _build_retry_policy_config({"jitter": "maybe"}, "tool-one")
+
+    def test_build_retry_policy_config_rejects_non_mapping_config(self):
+        """Top-level retry config must stay mapping-shaped."""
+        with pytest.raises(ValueError, match="must be a mapping"):
+            _build_retry_policy_config(["not", "a", "mapping"], "tool-one")
+
+    def test_build_retry_policy_config_rejects_non_mapping_tool_overrides(self):
+        """tool_overrides must be a mapping."""
+        with pytest.raises(ValueError, match="tool_overrides must be a mapping"):
+            _build_retry_policy_config({"tool_overrides": ["bad"]}, "tool-one")
+
+    def test_build_rust_native_tool_post_invoke_retry_policy_falls_back_for_text_check_override(self, tool_service):
+        """Text-content inspection in an override should force Python fallback."""
+        mock_hook_ref = MagicMock()
+        mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
+        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.conditions = None
+        mock_hook_ref.plugin_ref.plugin.config.config = {"tool_overrides": {"tool-one": {"check_text_content": "true"}}}
+
+        mock_registry = MagicMock()
+        mock_registry.get_hook_refs_for_hook.return_value = [mock_hook_ref]
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm._registry = mock_registry
+
+        policy, requires_python_fallback = tool_service._build_rust_native_tool_post_invoke_retry_policy(
+            mock_pm,
+            "tool-one",
+            None,
+        )
+
+        assert policy is None
+        assert requires_python_fallback is True
+
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_trace_id_forces_fallback(self, tool_service):
         """Active observability trace should bypass Rust direct execution."""
@@ -7530,6 +9185,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (
@@ -7602,6 +9259,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (
@@ -7866,7 +9525,13 @@ class TestRustMcpExecutionPlan:
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_requires_prior_authorization(self, tool_service):
-        """Authorization-code OAuth plans should fail when no stored token exists for the user."""
+        """Authorization-code OAuth plans must raise an actionable error when neither a DB token nor a plugin provides auth.
+
+        Deny-path regression: with no stored OAuth token AND no plugin manager
+        registered (so no plugin can inject Authorization), the post-pre-invoke
+        check must raise locally rather than silently letting the request reach
+        upstream with empty Authorization.
+        """
         cache = self._cache_mock(
             self._cache_payload(
                 gateway={
@@ -7892,8 +9557,108 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+            with pytest.raises(ToolInvocationError, match="Please authorize"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_plugin_injects_auth(self, tool_service):
+        """Authorization-code OAuth plans must succeed when a plugin injects Authorization in tool_pre_invoke.
+
+        Positive plugin path: with no DB-stored OAuth token, a Vault-style plugin
+        (mocked here) sets the Authorization header during tool_pre_invoke. The
+        post-hook check sees Authorization is present and lets the plan through.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "authorization_code"},
+                }
+            )
+        )
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=None)
+        fresh_session = MagicMock()
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(
+                name=payload.name,
+                args=payload.args,
+                headers=HttpHeaderPayload({"Authorization": "Bearer plugin-injected-token"}),
+            )
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"foo": "bar"},
+                app_user_email="user@example.com",
+            )
+
+        assert plan["eligible"] is True
+        assert plan["headers"].get("authorization") == "Bearer plugin-injected-token"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_strips_x_vault_tokens(self, tool_service):
+        """X-Vault-Tokens (case-insensitive) must be stripped from outbound headers regardless of plugin state.
+
+        Defense-in-depth: even if X-Vault-Tokens ends up in passthrough_allowed
+        by misconfiguration, or the Vault plugin is disabled, the gateway must
+        not forward the raw vault header to upstream.
+        """
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "bearer",
+                    "auth_value": None,
+                }
+            )
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch(
+                "mcpgateway.services.tool_service.compute_passthrough_headers_cached",
+                return_value={"Authorization": "Bearer real-token", "X-Vault-Tokens": '{"github.com": "ghp_xxx"}', "x-vault-tokens": "lower-case-leak"},
+            ),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"X-Tenant-Id": "acme"},
+            )
+
+        assert plan["eligible"] is True
+        outbound_keys_lower = {k.lower() for k in plan["headers"]}
+        assert "x-vault-tokens" not in outbound_keys_lower
+        assert plan["headers"].get("Authorization") == "Bearer real-token"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_oauth_client_credentials_success(self, tool_service):

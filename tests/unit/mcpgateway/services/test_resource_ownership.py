@@ -285,8 +285,8 @@ class TestToolServiceOwnership:
 
             await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
 
-            # Verify execute was called for DELETE ... RETURNING
-            mock_db_session.execute.assert_called_once()
+            # Verify execute was called for association cleanup + tool DELETE
+            assert mock_db_session.execute.call_count == 2
             mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio

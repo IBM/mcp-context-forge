@@ -34,20 +34,20 @@ RUN touch src/main.rs && cargo build --release
 # =============================================================================
 FROM docker.io/library/debian:trixie-slim
 
-# Install only ca-certificates and curl for health checks
+# Install runtime deps (ca-certificates + curl for health checks) and create
+# the non-root mcpuser in a single layer.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
+        ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && useradd -r -s /bin/false mcpuser
 
 WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/fast-test-server /app/fast-test-server
 
-# Non-root user for security
-RUN useradd -r -s /bin/false mcpuser
 USER mcpuser
 
 # Expose default port

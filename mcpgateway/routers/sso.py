@@ -25,6 +25,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import SSOService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.paths import resolve_root_path
 
 # Initialize logging
 logging_service = LoggingService()
@@ -218,8 +219,12 @@ async def initiate_sso_login(
     provider_id: str,
     request: Request,
     response: Response,
-    redirect_uri: str = Query(..., description="Callback URI after authentication"),
-    scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
+    redirect_uri: str = Query(..., max_length=2048, description="Callback URI after authentication"),
+    # scopes is space-separated per RFC 6749 Section 3.3 and its character set is
+    # provider-specific (Google scopes are URLs, Microsoft Graph allows many special
+    # chars). Server-side resolution in _resolve_login_scopes enforces the provider
+    # allowlist; the Query layer only bounds length.
+    scopes: Optional[str] = Query(None, max_length=500, description="Space-separated OAuth scopes"),
     db: Session = Depends(get_db),
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
@@ -296,10 +301,17 @@ async def initiate_sso_login(
 @sso_router.get("/callback/{provider_id}")
 async def handle_sso_callback(
     provider_id: str,
-    code: Optional[str] = Query(None, description="Authorization code from SSO provider"),
-    state: Optional[str] = Query(None, description="CSRF state parameter"),
-    error: Optional[str] = Query(None, description="OAuth error code"),
-    error_description: Optional[str] = Query(None, description="OAuth error description"),
+    # code/state are opaque VSCHAR per RFC 6749 Appendix A.11/A.5 (%x20-7E). Real
+    # providers emit chars outside [A-Za-z0-9_-]: Google uses '/', Microsoft uses
+    # '!*%', and our own session-bound state uses '.' as a separator
+    # (sso_service._STATE_BINDING_SEPARATOR). Bound length only; downstream token
+    # exchange and HMAC verification validate integrity.
+    code: Optional[str] = Query(None, max_length=512, description="Authorization code from SSO provider"),
+    state: Optional[str] = Query(None, max_length=128, description="CSRF state parameter"),
+    # error values are RFC 6749 Section 4.1.2.1 / 5.2 enum-like snake_case tokens
+    # (invalid_request, unauthorized_client, access_denied, ...).
+    error: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_]+$", description="OAuth error code"),
+    error_description: Optional[str] = Query(None, max_length=500, description="OAuth error description"),
     request: Request = None,
     response: Response = None,
     db: Session = Depends(get_db),
@@ -334,7 +346,7 @@ async def handle_sso_callback(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = resolve_root_path(request) if request else ""
 
     # Handle OAuth error responses from provider (RFC 6749 Section 4.1.2.1)
     if error:

@@ -90,7 +90,7 @@ Create a `docker-compose.yaml` file with the following content:
 ```yaml
 services:
     hyprmcp-dex:
-        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        image: ghcr.io/dexidp/dex:v2.43.1
         command: ["dex", "serve", "/config.yaml"]
         ports:
 
@@ -185,7 +185,7 @@ Add ContextForge service to your compose file (put it in the `services` section)
 
 ```yaml
 context-forge:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
     ports:
 
         - 4444:4444
@@ -305,7 +305,7 @@ Choose a tool from the list and run it via the right side panel.
 ```yaml
 services:
     hyprmcp-dex:
-        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        image: ghcr.io/dexidp/dex:v2.43.1
         command: ["dex", "serve", "/config.yaml"]
         ports:
 
@@ -348,7 +348,7 @@ services:
         network_mode: host
 
     context-forge:
-        image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
         ports:
 
             - 4444:4444

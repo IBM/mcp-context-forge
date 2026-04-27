@@ -1,19 +1,20 @@
-## Observability
+# Observability
 
-ContextForge provides comprehensive observability through two complementary systems:
+ContextForge provides comprehensive observability through multiple complementary systems, allowing you to monitor, trace, and analyze your gateway operations.
 
-1. **Internal Observability** - Built-in database-backed tracing with Admin UI dashboards
-2. **OpenTelemetry** - Standard distributed tracing to external backends (Phoenix, Jaeger, Tempo)
+## Overview
 
-## Documentation
+ContextForge offers three observability approaches:
 
-- **[OpenTelemetry Overview](observability/observability.md)** - External observability with OTLP backends
-- **[Internal Observability](observability/internal-observability.md)** - Built-in tracing, metrics, and Admin UI dashboards
-- **[Phoenix Integration](observability/phoenix.md)** - AI/LLM-focused observability with Arize Phoenix
+1. **[Internal Observability](observability/internal.md)** - Built-in database-backed tracing with Admin UI dashboards
+2. **[OpenTelemetry Integration](observability/opentelemetry.md)** - Standard distributed tracing to external backends (Phoenix, Jaeger, Tempo, Langfuse)
+3. **[Prometheus Metrics](observability/prometheus.md)** - Time-series metrics for monitoring and alerting
 
-## Quick Start
+## Quick Start Guides
 
 ### Internal Observability (Built-in)
+
+Database-backed tracing with Admin UI dashboards:
 
 ```bash
 # Enable internal observability
@@ -25,7 +26,13 @@ mcpgateway
 # View dashboards at http://localhost:4444/admin/observability
 ```
 
-### OpenTelemetry (External)
+**Features**: Tools/prompts/resources analytics, trace visualization, performance metrics, error tracking
+
+**[Full Guide →](observability/internal.md)**
+
+### OpenTelemetry (External Backends)
+
+Standard distributed tracing to external observability platforms:
 
 ```bash
 # Enable OpenTelemetry (disabled by default)
@@ -33,143 +40,210 @@ export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 
-# Start Phoenix for AI/LLM observability
-docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
+# Run ContextForge
+mcpgateway
+```
+
+**Supported Backends**: Phoenix, Jaeger, Tempo, Langfuse, Zipkin, Datadog, New Relic, Honeycomb, and any OTLP-compatible backend
+
+**[Full Guide →](observability/opentelemetry.md)**
+
+### Prometheus Metrics
+
+Time-series metrics for monitoring and alerting:
+
+```bash
+# Enable Prometheus metrics endpoint
+export ENABLE_METRICS=true
+
+# Generate scrape token
+export METRICS_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username prometheus@monitoring --exp 0 \
+  --secret $JWT_SECRET_KEY)
 
 # Run ContextForge
 mcpgateway
 
-# View traces at http://localhost:6006
+# Metrics available at http://localhost:4444/metrics/prometheus
 ```
 
-## Prometheus metrics (important)
+**Features**: Request rates, error rates, latency percentiles, custom labels
 
-Note: the metrics exposure is wired from `mcpgateway/main.py` but the HTTP
-handler itself is registered by the metrics module. The main application
-imports and calls `setup_metrics(app)` from `mcpgateway.services.metrics`. The
-`setup_metrics` function instruments the FastAPI app and registers the
-Prometheus scrape endpoint using the Prometheus instrumentator; the endpoint
-available to Prometheus scrapers is:
+**[Full Guide →](observability/prometheus.md)**
 
-- GET /metrics/prometheus
+## Documentation
 
-The route is defined as a custom FastAPI endpoint in
-`mcpgateway/services/metrics.py` with `Depends(require_auth)` for JWT
-authentication. The endpoint is registered with `include_in_schema=True` (so it
-appears in OpenAPI / Swagger) and supports gzip compression via the
-`Accept-Encoding` header.
+### Core Guides
 
-### Env vars / settings that control metrics
+- **[Internal Observability](observability/internal.md)** - Built-in tracing, metrics, and Admin UI dashboards
+- **[OpenTelemetry Integration](observability/opentelemetry.md)** - External observability with OTLP backends
+- **[Prometheus Metrics](observability/prometheus.md)** - Time-series metrics and monitoring
 
-- `ENABLE_METRICS` (env) — set to `true` to enable instrumentation; defaults to `false`. The endpoint requires JWT authentication when enabled.
-- `METRICS_EXCLUDED_HANDLERS` (env / settings) — comma-separated regexes for endpoints to exclude from instrumentation (useful for SSE/WS or per-request high-cardinality paths). The implementation reads `settings.METRICS_EXCLUDED_HANDLERS` and compiles the patterns.
-- `METRICS_CUSTOM_LABELS` (env / settings) — comma-separated `key=value` pairs used as static labels on the `app_info` gauge (low-cardinality values only). When present, a Prometheus `app_info` gauge is created and set to 1 with those labels.
-- Additional settings in `mcpgateway/config.py`: `METRICS_NAMESPACE`, `METRICS_SUBSYSTEM`. Note: these config fields exist, but the current `metrics` module does not wire them into the instrumentator by default (they're available for future use/consumption by custom collectors).
+### Backend-Specific Guides
 
-### Enable / verify locally
+- **[Langfuse Integration](observability/langfuse.md)** - LLM observability, prompt management, and evaluations
+- **[Phoenix Integration](observability/phoenix.md)** - AI/LLM-focused observability with Arize Phoenix
 
-1. Set `ENABLE_METRICS=true` in your shell or `.env` and generate a scrape token.
+### Technical Documentation
 
-     ```bash
-     export ENABLE_METRICS=true
-     export METRICS_CUSTOM_LABELS="env=local,team=dev"
-     export METRICS_EXCLUDED_HANDLERS="/servers/.*/sse,/static/.*"
-     ```
+- **[OpenTelemetry Architecture](../architecture/observability-otel.md)** - Technical implementation details, W3C trace context, baggage
 
-2. Start the gateway (development). By default the app listens on port 4444. The Prometheus endpoint will be:
+## Choosing an Approach
 
-     http://localhost:4444/metrics/prometheus
+### Internal Observability
 
-3. Generate a scrape token (non-expiring service JWT):
+**Characteristics:**
+- Zero external dependencies
+- Database storage (SQLite or PostgreSQL)
+- Admin UI visualization
+- Self-contained deployment
 
-     ```bash
-     export METRICS_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-       --username prometheus@monitoring --exp 0 \
-       --secret $JWT_SECRET_KEY --algo HS256)
-     ```
+**Common Use Cases:**
+- Development and testing environments
+- Small to medium deployments
+- Scenarios where deployment simplicity is important
+- When external observability infrastructure is not available
 
-4. Quick check (get the first lines of exposition text):
+### OpenTelemetry
 
-     ```bash
-     curl -sS -H "Authorization: Bearer $METRICS_TOKEN" \
-       http://localhost:4444/metrics/prometheus | head -n 20
-     ```
+**Characteristics:**
+- Distributed tracing across multiple services
+- Vendor-agnostic standard (OTLP protocol)
+- Integration with existing observability platforms
+- Advanced APM capabilities
 
-5. If metrics are disabled, the endpoint returns a JSON 503 response (authentication is still required).
+**Common Use Cases:**
+- Production environments with multiple services
+- Organizations with existing observability infrastructure
+- Scenarios requiring vendor flexibility
+- High-scale deployments with specialized backends
 
-### Prometheus scrape job example
+### Prometheus
 
-Add the job below to your `prometheus.yml` for local testing:
+**Characteristics:**
+- Time-series metrics storage
+- Industry-standard exposition format
+- Integration with Grafana and alerting systems
+- Trend analysis and capacity planning
 
-```yaml
-scrape_configs:
-    - job_name: 'mcp-gateway'
-        metrics_path: /metrics/prometheus
-        authorization:
-            type: Bearer
-            credentials_file: /path/to/metrics-token.jwt
-        static_configs:
-            - targets: ['localhost:4444']
+**Common Use Cases:**
+- Production monitoring and alerting
+- Long-term trend analysis
+- Capacity planning
+- Integration with existing Prometheus/Grafana stacks
+
+### Combining Multiple Approaches
+
+ContextForge supports running multiple observability systems simultaneously:
+
+- Internal observability for local debugging alongside external production monitoring
+- Different retention policies for different data types
+- Redundancy in observability data collection
+- Supporting different team tooling preferences
+
+## Comparison Matrix
+
+| Feature | Internal | OpenTelemetry | Prometheus |
+|---------|----------|---------------|------------|
+| **Storage** | Database (SQLite/PostgreSQL) | External backends | Time-series DB |
+| **Setup** | Built-in, zero config | Requires external services | Requires Prometheus server |
+| **Cost** | Free, self-hosted | Depends on backend | Free (OSS) or paid (cloud) |
+| **Retention** | Configurable in-database | Backend-dependent | Configurable |
+| **UI** | Admin UI dashboards | Backend-specific UIs | Grafana dashboards |
+| **Use Cases** | Dev, testing, small deployments | Production, microservices | Monitoring, alerting |
+| **Standards** | Custom implementation | OpenTelemetry standard | Prometheus exposition format |
+| **Integration** | Self-contained | APM ecosystem | Monitoring ecosystem |
+
+## Configuration Reference
+
+### Internal Observability
+
+```bash
+OBSERVABILITY_ENABLED=true
+OBSERVABILITY_TRACE_HTTP_REQUESTS=true
+OBSERVABILITY_TRACE_RETENTION_DAYS=7
+OBSERVABILITY_MAX_TRACES=100000
+OBSERVABILITY_SAMPLE_RATE=1.0
 ```
 
-To create the token file: `echo -n "$METRICS_TOKEN" > /path/to/metrics-token.jwt`.
+**[Full Configuration →](observability/internal.md#configuration-reference)**
 
-If Prometheus runs in Docker, adjust the target host accordingly (host networking
-or container host IP). The Docker Compose monitoring profile generates the scrape
-token automatically via the `prometheus_token` service.
-See the repo `docs/manage/scale.md` for examples of deploying Prometheus in
-Kubernetes.
+### OpenTelemetry
 
-### Grafana and dashboards
+```bash
+OTEL_ENABLE_OBSERVABILITY=true
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_SERVICE_NAME=mcp-gateway
+OTEL_SERVICE_VERSION=1.0.0
+```
 
-- Use Grafana to import dashboards for Kubernetes, PostgreSQL and Redis (IDs
-    suggested elsewhere in the repo). For ContextForge app metrics, create panels
-    for:
+**[Full Configuration →](observability/opentelemetry.md#configuration-reference)**
 
-    - Request rate: `rate(http_requests_total[1m])`
-    - Error rate: `rate(http_requests_total{status=~"5.."}[5m])`
-    - P99 latency: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
+### Prometheus
 
-### Common pitfalls — short guidance
+```bash
+ENABLE_METRICS=true
+METRICS_CUSTOM_LABELS="env=production,region=us-east-1"
+METRICS_EXCLUDED_HANDLERS="/servers/.*/sse,/static/.*"
+```
 
-- High-cardinality labels
+**[Full Configuration →](observability/prometheus.md#configuration-reference)**
 
-    - Never add per-request identifiers (user IDs, full URIs, request IDs) as
-        Prometheus labels. They explode the number of time series and can crash
-        Prometheus memory.
-    - Use `METRICS_CUSTOM_LABELS` only for low-cardinality labels (env, region).
+## What Gets Traced
 
-- Compression (gzip) vs CPU
+All observability systems capture:
 
-    - The metrics exposer in `mcpgateway.services.metrics` enables gzip by
-        default for the `/metrics/prometheus` endpoint. Compressing the payload
-        reduces network usage but increases CPU on scrape time. On CPU-constrained
-        nodes consider increasing scrape interval (e.g. 15s→30s) or disabling gzip
-        at the instrumentor layer.
+- **Tool invocations** - Full lifecycle with arguments, results, and timing
+- **Prompt rendering** - Template processing and message generation
+- **Resource fetching** - URI resolution, caching, and content retrieval
+- **Gateway federation** - Cross-gateway requests and health checks
+- **Plugin execution** - Pre/post hooks if plugins are enabled
+- **Errors and exceptions** - Full context and error details
 
-- Duplicate collectors during reloads/tests
+## Production Deployment
 
-    - Instrumentation registers collectors on the global Prometheus registry.
-        When reloading the app in the same process (tests, interactive sessions)
-        you may see "collector already registered"; restart the process or clear
-        the registry in test fixtures.
+### High Availability
 
-### Quick checklist
+For production deployments:
 
-- [ ] `ENABLE_METRICS=true`
-- [ ] Generate scrape JWT: `python -m mcpgateway.utils.create_jwt_token --username prometheus@monitoring --exp 0 --secret $JWT_SECRET_KEY`
-- [ ] `/metrics/prometheus` reachable (with `Authorization: Bearer <token>`)
-- [ ] Add scrape job to Prometheus with `authorization: { type: Bearer, credentials_file: <path> }`
-- [ ] Exclude high-cardinality paths with `METRICS_EXCLUDED_HANDLERS`
-- [ ] Use tracing (OTel) for high-cardinality debugging information
+1. **Enable all three systems** for comprehensive observability
+2. **Use PostgreSQL** for internal observability storage
+3. **Deploy Prometheus** with remote write to long-term storage
+4. **Configure OpenTelemetry** to send to production APM
+5. **Set appropriate retention** policies for each system
 
-## Where to look in the code
+### Example Production Configuration
 
-- `mcpgateway/main.py` — wiring: imports and calls `setup_metrics(app)` from
-    `mcpgateway.services.metrics`. The function call instruments the app at
-    startup; the `/metrics/prometheus` endpoint is registered as a custom
-    auth-gated handler inside `mcpgateway/services/metrics.py`.
-- `mcpgateway/services/metrics.py` — instrumentation implementation and env-vars.
-- `mcpgateway/config.py` — settings defaults and names used by the app.
+```bash
+# Internal observability (short retention)
+OBSERVABILITY_ENABLED=true
+OBSERVABILITY_TRACE_RETENTION_DAYS=3
+OBSERVABILITY_SAMPLE_RATE=0.1
 
----
+# OpenTelemetry (production APM)
+OTEL_ENABLE_OBSERVABILITY=true
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-collector.prod.example.com
+OTEL_TRACES_SAMPLER_ARG=0.01
+
+# Prometheus (monitoring)
+ENABLE_METRICS=true
+METRICS_CUSTOM_LABELS="env=production,region=us-east-1"
+METRICS_EXCLUDED_HANDLERS="/health.*,/metrics.*,/static/.*"
+```
+
+## Getting Started
+
+1. **Choose an approach**: Review the comparison matrix and use cases above
+2. **Follow the quick start**: Use the configuration examples for your chosen system(s)
+3. **Configure backends**: See the backend-specific guides for detailed setup instructions
+4. **Set up dashboards**: Configure visualization tools (Admin UI, Grafana, or backend-specific UIs)
+5. **Configure retention**: Adjust sampling rates and retention policies based on your requirements
+
+## Related Documentation
+
+- [Configuration Reference](configuration.md) - All observability settings
+- [Scaling Guide](scale.md) - Production deployment patterns
+- [Security Features](../architecture/security-features.md) - Authentication and authorization
+- [Admin UI Documentation](ui-customization.md) - Customizing observability dashboards

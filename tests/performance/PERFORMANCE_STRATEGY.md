@@ -1315,7 +1315,7 @@ services:
       - "pg_stat_statements.track=all"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-bookworm
     ports:
       - "6379:6379"
 
@@ -1673,19 +1673,19 @@ Compare performance across PostgreSQL versions:
 ```yaml
 database_tests:
   postgres_15:
-    image: "postgres:15-alpine"
+    image: "postgres:15-bookworm"
     config_overrides:
       shared_buffers: "256MB"
       effective_cache_size: "1GB"
 
   postgres_16:
-    image: "postgres:16-alpine"
+    image: "postgres:16-bookworm"
     config_overrides:
       shared_buffers: "256MB"
       effective_cache_size: "1GB"
 
   postgres_17:
-    image: "postgres:17-alpine"
+    image: "postgres:17-bookworm"
     config_overrides:
       shared_buffers: "256MB"
       effective_cache_size: "1GB"

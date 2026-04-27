@@ -142,15 +142,19 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
+    issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims
         "sub": user.email,
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
-        "iat": int(now.timestamp()),
+        "iat": issued_at,
         "exp": int(expire.timestamp()),
         "jti": jti or str(__import__("uuid").uuid4()),
+        # Idle-timeout bootstrap: first request after issuance uses this until
+        # `TokenBlocklistService.update_activity()` writes a fresher value to Redis.
+        "last_activity": issued_at,
         # User profile information
         "user": {
             "email": str(getattr(user, "email", "")),
@@ -574,7 +578,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 @email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
 @require_permission("admin.user_management")
 async def list_users(
-    cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Pagination cursor for fetching the next set of results"),
     limit: Optional[int] = Query(
         None,
         ge=0,

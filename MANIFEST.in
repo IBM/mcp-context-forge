@@ -8,13 +8,14 @@ include README.md
 include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
-include Containerfile
 include Containerfile.lite
-include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
 include alembic/README
+include Cargo.lock
+include Cargo.toml
+include rust-toolchain.toml
 
 # Top-level config, examples and helper scripts
 include *.py
@@ -43,7 +44,9 @@ include .interrogaterc
 include .jshintrc
 include .npmrc
 include whitesource.config
+include .darglint
 include .dockerignore
+include .flake8
 include .htmlhintrc
 include .pycodestyle
 include .pylintrc*
@@ -59,6 +62,9 @@ include .snyk
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 exclude mcpgateway/static/iframe-test-harness.html
+# Vite build artifacts (gitignored; regenerated per build with hashed filenames)
+exclude mcpgateway/static/bundle-*.js
+recursive-exclude mcpgateway/static/.vite *
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
 recursive-include mcpgateway *.json
@@ -96,18 +102,22 @@ recursive-include plugins *.json
 recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
+recursive-include plugins *.txt
 
-# Rust plugins (optional - exclude build artifacts)
-recursive-include plugins_rust *.rs
-recursive-include plugins_rust *.toml
-recursive-include plugins_rust *.md
-recursive-include plugins_rust *.py
-recursive-include plugins_rust *.pyi
-recursive-include plugins_rust *.json
-recursive-include plugins_rust Makefile
-recursive-include plugins_rust *.lock
-prune plugins_rust/target
-recursive-exclude plugins_rust/*/target *
+# Supply-chain policy data shipped in sdist for tooling parity
+recursive-include supply-chain *.toml
+recursive-include supply-chain *.lock
+
+# Rust workspace (crates/): plugins, gateway_rs, mcp-servers, tools
+recursive-include crates *.lock
+recursive-include crates *.toml
+recursive-include crates *.rs
+recursive-include crates *.md
+recursive-include crates *.py
+recursive-include crates *.pyi
+recursive-include crates *.sh
+recursive-include crates Makefile
+recursive-include crates pyproject.toml
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -125,13 +135,14 @@ exclude CLAUDE.*
 exclude llms-full.txt
 exclude AGENTS.md
 
-# Exclude deployment, mcp-servers, agent_runtimes and llms
+# Exclude deployment, mcp-servers, agent_runtimes, ansible and llms
+prune ansible
 prune deployment
 prune mcp-servers
 prune a2a-agents
 prune agent_runtimes
 prune llms
-prune tools_rust
+prune crates/tools
 
 # Development and CI/CD artifacts
 prune .github
@@ -157,7 +168,6 @@ prune node_modules
 prune plugins/external/opa/.venv
 prune plugins/external/llmguard/.venv
 prune plugins/external/cedar/.venv
-prune plugins_rust/url_reputation/.venv
 global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
@@ -187,7 +197,6 @@ exclude vitest.config.js
 exclude .stylelintrc.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt
-exclude .pyspelling.yml
 exclude .prospector.yaml
 exclude .hadolint.yaml
 exclude .ruff.toml

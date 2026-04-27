@@ -8,6 +8,10 @@
  * for use by HTMX and Alpine.js in templates.
  */
 
+// Import HTMX and make it globally available
+import htmx from 'htmx.org';
+window.htmx = htmx;
+
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
 
@@ -59,11 +63,12 @@ Admin.logRestrictedContext = logRestrictedContext;
 // TIER 2: Feature modules (fully converted to ES modules)
 // ===================================================================
 
-import { editA2AAgent, testA2AAgent, viewA2AAgent } from "./a2aAgents.js";
+import { editA2AAgent, testA2AAgent, viewA2AAgent, toggleUAIDFields } from "./a2aAgents.js";
 
 Admin.editA2AAgent = editA2AAgent;
 Admin.testA2AAgent = testA2AAgent;
 Admin.viewA2AAgent = viewA2AAgent;
+Admin.toggleUAIDFields = toggleUAIDFields;
 
 // Auth
 import {
@@ -317,6 +322,11 @@ import { paginationData } from "./pagination.js";
 
 Admin.paginationData = paginationData;
 
+// Alpine components
+import { overflowMenu } from "./components/overflow-menu.js";
+
+Admin.overflowMenu = overflowMenu;
+
 // Plugins
 import {
   closePluginDetails,
@@ -480,6 +490,7 @@ Admin.showUsageStatsModal = showUsageStatsModal;
 import {
   editTool,
   initToolSelect,
+  invokeTool,
   testTool,
   enrichTool,
   generateToolTestCases,
@@ -491,6 +502,7 @@ import {
 
 Admin.editTool = editTool;
 Admin.initToolSelect = initToolSelect;
+Admin.invokeTool = invokeTool;
 Admin.testTool = testTool;
 Admin.enrichTool = enrichTool;
 Admin.generateToolTestCases = generateToolTestCases;

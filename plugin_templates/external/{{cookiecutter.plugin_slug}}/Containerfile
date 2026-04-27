@@ -34,7 +34,9 @@ USER 1001
 # Install plugin package
 COPY . .
 
-# Install base package, optionally with gRPC extras
+# Install base package (optionally with gRPC extras) and create writable cache
+# directory in a single layer.
+# hadolint ignore=DL3013
 RUN pip install --no-cache-dir uv && \
     if [ "${INSTALL_GRPC}" = "true" ]; then \
         echo "Installing with gRPC support..." && \
@@ -42,10 +44,8 @@ RUN pip install --no-cache-dir uv && \
     else \
         echo "Installing without gRPC support..." && \
         python -m uv pip install .; \
-    fi
-
-# Make default cache directory writable
-RUN mkdir -p -m 0776 ${HOME}/.cache
+    fi && \
+    mkdir -p -m 0776 ${HOME}/.cache
 
 # Update labels
 LABEL maintainer="ContextForge Team" \

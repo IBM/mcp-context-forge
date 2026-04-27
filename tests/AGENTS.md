@@ -33,12 +33,13 @@ tests/
 ```bash
 # Core testing
 make test                         # Run unit tests
+pytest -k "<name>" tests/unit/    # Run only tests matching <name>
 make doctest                      # Run doctests in modules
 make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
-make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
+make test-mcp-protocol-e2e        # MCP protocol via FastMCP client (needs live gateway)
 make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
 make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
 make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels

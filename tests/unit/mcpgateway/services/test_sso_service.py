@@ -359,6 +359,54 @@ class TestAuthFlow:
         assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is True
         assert sso_service._is_email_verified_claim({}) is True
 
+    def test_is_email_verified_claim_microsoft_verified_primary_email(self, sso_service):
+        """Test Microsoft Entra ID verified_primary_email claim is recognized."""
+        assert sso_service._is_email_verified_claim({"verified_primary_email": True}) is True
+        assert sso_service._is_email_verified_claim({"verified_primary_email": False}) is False
+        assert sso_service._is_email_verified_claim({"verified_primary_email": 1}) is True
+        assert sso_service._is_email_verified_claim({"verified_primary_email": 0}) is False
+        assert sso_service._is_email_verified_claim({"verified_primary_email": "true"}) is True
+        assert sso_service._is_email_verified_claim({"verified_primary_email": "false"}) is False
+
+    def test_is_email_verified_claim_microsoft_verified_secondary_email(self, sso_service):
+        """Test Microsoft Entra ID verified_secondary_email claim is recognized."""
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": True}) is True
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": False}) is False
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": 1}) is True
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": 0}) is False
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": "yes"}) is True
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": "no"}) is False
+
+    def test_is_email_verified_claim_standard_takes_precedence(self, sso_service):
+        """Test that standard email_verified claim takes precedence over Microsoft claims."""
+        # Standard claim is True, Microsoft claim is False - standard wins
+        assert sso_service._is_email_verified_claim({"email_verified": True, "verified_primary_email": False}) is True
+
+        # Standard claim is False, Microsoft claim is True - standard wins
+        assert sso_service._is_email_verified_claim({"email_verified": False, "verified_primary_email": True}) is False
+
+    def test_is_email_verified_claim_primary_takes_precedence_over_secondary(self, sso_service):
+        """Test that verified_primary_email takes precedence over verified_secondary_email."""
+        # Primary is True, Secondary is False - primary wins
+        assert sso_service._is_email_verified_claim({"verified_primary_email": True, "verified_secondary_email": False}) is True
+
+        # Primary is False, Secondary is True - primary wins (blocks login)
+        assert sso_service._is_email_verified_claim({"verified_primary_email": False, "verified_secondary_email": True}) is False
+
+    def test_is_email_verified_claim_all_microsoft_claims_absent_is_pass_through(self, sso_service):
+        """Test that absence of all verification claims allows login (Entra ID work accounts)."""
+        # No verification claims at all - should pass through
+        assert sso_service._is_email_verified_claim({"email": "user@company.com", "name": "Test User", "sub": "abc123"}) is True
+
+    def test_is_email_verified_claim_microsoft_unrecognized_type_fails_secure(self, sso_service):
+        """Unrecognized value types on Microsoft claims are rejected, symmetric with email_verified."""
+        # None / dict / list on the primary claim blocks login instead of silently
+        # falling through to the secondary claim.
+        assert sso_service._is_email_verified_claim({"verified_primary_email": None}) is False
+        assert sso_service._is_email_verified_claim({"verified_secondary_email": None}) is False
+        assert sso_service._is_email_verified_claim({"verified_primary_email": {}}) is False
+        assert sso_service._is_email_verified_claim({"verified_primary_email": None, "verified_secondary_email": True}) is False
+
     def test_normalize_adfs_email_returns_none_for_empty_input(self, sso_service):
         """Test _normalize_adfs_email returns None when raw_email is empty."""
         assert sso_service._normalize_adfs_email("", "example.com") is None
@@ -4444,7 +4492,6 @@ class TestApplyTeamMapping:
             role_svc = AsyncMock()
             MockRoleService.return_value = role_svc
             result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp", "other"], provider)
-
 
 
 class TestADFSProvider:

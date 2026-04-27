@@ -12,7 +12,7 @@ visibility settings, OAuth configuration, and advanced features.
 # Standard
 import re
 import uuid
-import base64 # To encode the transparent PNG
+import base64  # To encode the transparent PNG
 
 # Third-Party
 from playwright.sync_api import Error as PlaywrightError, expect
@@ -473,7 +473,8 @@ class TestServersExtended:
         server_row = servers_page.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
         expect(server_row).to_be_visible(timeout=10000)
 
-        # Click View button
+        # Click View button (inside the overflow menu)
+        servers_page.open_action_dropdown(server_row)
         view_btn = server_row.locator('button:has-text("View")')
         if view_btn.count() > 0:
             view_btn.click()
@@ -516,7 +517,8 @@ class TestServersExtended:
         server_row = servers_page.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
         expect(server_row).to_be_visible(timeout=10000)
 
-        # Click Edit button
+        # Click Edit button (inside the overflow menu)
+        servers_page.open_action_dropdown(server_row)
         edit_btn = server_row.locator('button:has-text("Edit")')
         if edit_btn.count() > 0:
             edit_btn.click()
@@ -565,6 +567,7 @@ class TestServersExtended:
         expect(server_row).to_be_visible(timeout=10000)
 
         # Click Export button
+        servers_page.open_action_dropdown(server_row)
         export_btn = server_row.locator('button:has-text("Export"), a:has-text("Export")')
         if export_btn.count() > 0:
             # For export, we just verify the button exists and is clickable
@@ -602,6 +605,7 @@ class TestServersExtended:
         expect(server_row).to_be_visible(timeout=10000)
 
         # Click Deactivate button — re-query within the visible row to avoid stale refs
+        servers_page.open_action_dropdown(server_row)
         deactivate_btn = server_row.locator('button:has-text("Deactivate"), button:has-text("Disable")')
         if deactivate_btn.count() > 0:
             expect(deactivate_btn.first).to_be_visible(timeout=5000)
@@ -644,6 +648,7 @@ class TestServersExtended:
 
         # Click Delete button - this will trigger TWO browser confirm() dialogs
         # (delete confirmation + metrics purge), then a form POST with page navigation.
+        servers_page.open_action_dropdown(server_row)
         delete_btn = server_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         if delete_btn.count() > 0:
             expect(delete_btn).to_be_visible(timeout=10000)
@@ -833,7 +838,7 @@ class TestEditServerSelectionBugs:
                     return checked.length >= 2;
                 }
                 """,
-                timeout=20000
+                timeout=20000,
             )
 
             # Capture count from DOM checkboxes after Select All
@@ -844,17 +849,13 @@ class TestEditServerSelectionBugs:
             # Search for a term that matches some tools (this triggers innerHTML replacement).
             # Use expect_response to deterministically wait for the debounce (300 ms) +
             # network round-trip instead of a fixed sleep.
-            with servers_page.page.expect_response(
-                lambda r: "admin/tools/search" in r.url, timeout=15000
-            ) as search_resp:
+            with servers_page.page.expect_response(lambda r: "admin/tools/search" in r.url, timeout=15000) as search_resp:
                 servers_page.fill_locator(servers_page.edit_tools_search_input, "time")
             search_resp.value  # blocks until the search response is fully received
 
             # Clear search (this should restore all checkboxes from the store).
             # The clear path fetches /admin/tools/partial, wait for that response.
-            with servers_page.page.expect_response(
-                lambda r: "admin/tools/partial" in r.url, timeout=15000
-            ) as clear_resp:
+            with servers_page.page.expect_response(lambda r: "admin/tools/partial" in r.url, timeout=15000) as clear_resp:
                 servers_page.fill_locator(servers_page.edit_tools_search_input, "")
             clear_resp.value  # blocks until the default-list response is fully received
             # Checkboxes attached means JS has restored selections from the store.
@@ -920,7 +921,7 @@ class TestEditServerSelectionBugs:
                     return checked.length >= 1;
                 }
                 """,
-                timeout=20000
+                timeout=20000,
             )
 
             # Capture count from DOM checkboxes after Select All
@@ -929,15 +930,11 @@ class TestEditServerSelectionBugs:
             assert select_all_count >= 1, f"Select All should check at least 1 resource, got {select_all_count}"
 
             # Search and clear (triggers innerHTML replacement)
-            with servers_page.page.expect_response(
-                lambda r: "admin/resources/search" in r.url, timeout=15000
-            ) as search_resp:
+            with servers_page.page.expect_response(lambda r: "admin/resources/search" in r.url, timeout=15000) as search_resp:
                 servers_page.fill_locator(servers_page.edit_resources_search_input, "xyznonexistent999")
             search_resp.value
 
-            with servers_page.page.expect_response(
-                lambda r: "admin/resources/partial" in r.url, timeout=15000
-            ) as clear_resp:
+            with servers_page.page.expect_response(lambda r: "admin/resources/partial" in r.url, timeout=15000) as clear_resp:
                 servers_page.fill_locator(servers_page.edit_resources_search_input, "")
             clear_resp.value
             servers_page.page.wait_for_selector(
@@ -997,7 +994,7 @@ class TestEditServerSelectionBugs:
                     return checked.length >= 1;
                 }
                 """,
-                timeout=20000
+                timeout=20000,
             )
 
             # Capture count from DOM checkboxes after Select All
@@ -1006,15 +1003,11 @@ class TestEditServerSelectionBugs:
             assert select_all_count >= 1, f"Select All should check at least 1 prompt, got {select_all_count}"
 
             # Search and clear (triggers innerHTML replacement)
-            with servers_page.page.expect_response(
-                lambda r: "admin/prompts/search" in r.url, timeout=15000
-            ) as search_resp:
+            with servers_page.page.expect_response(lambda r: "admin/prompts/search" in r.url, timeout=15000) as search_resp:
                 servers_page.fill_locator(servers_page.edit_prompts_search_input, "xyznonexistent999")
             search_resp.value
 
-            with servers_page.page.expect_response(
-                lambda r: "admin/prompts/partial" in r.url, timeout=15000
-            ) as clear_resp:
+            with servers_page.page.expect_response(lambda r: "admin/prompts/partial" in r.url, timeout=15000) as clear_resp:
                 servers_page.fill_locator(servers_page.edit_prompts_search_input, "")
             clear_resp.value
             servers_page.page.wait_for_selector(

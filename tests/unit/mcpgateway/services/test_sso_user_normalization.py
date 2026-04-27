@@ -277,6 +277,98 @@ class TestEntraIDNormalization:
 
         assert normalized["email_verified"] is True
 
+    def test_entra_verified_primary_email_claim(self, sso_service, entra_provider):
+        """Test Entra ID with verified_primary_email claim (Microsoft B2B/External ID)."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "verified_primary_email": True,  # Microsoft-specific claim
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is True
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "entra"
+
+    def test_entra_verified_secondary_email_claim(self, sso_service, entra_provider):
+        """Test Entra ID with verified_secondary_email claim (Microsoft B2B/External ID)."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "verified_secondary_email": True,  # Microsoft-specific claim
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is True
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "entra"
+
+    def test_entra_verified_primary_email_false(self, sso_service, entra_provider):
+        """Test Entra ID with verified_primary_email=False blocks login."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "verified_primary_email": False,  # Explicit rejection
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
+    def test_entra_verified_secondary_email_false(self, sso_service, entra_provider):
+        """Test Entra ID with verified_secondary_email=False blocks login."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "verified_secondary_email": False,  # Explicit rejection
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
+    def test_entra_standard_claim_takes_precedence(self, sso_service, entra_provider):
+        """Test that standard email_verified claim takes precedence over Microsoft-specific claims."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "email_verified": True,  # Standard claim
+            "verified_primary_email": False,  # Should be ignored
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        # Standard claim should take precedence
+        assert normalized["email_verified"] is True
+
+    def test_entra_primary_takes_precedence_over_secondary(self, sso_service, entra_provider):
+        """Test that verified_primary_email takes precedence over verified_secondary_email."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "verified_primary_email": True,  # Should be used
+            "verified_secondary_email": False,  # Should be ignored
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        # Primary claim should take precedence
+        assert normalized["email_verified"] is True
+
 
 class TestGitHubNormalization:
     """Test GitHub user info normalization."""

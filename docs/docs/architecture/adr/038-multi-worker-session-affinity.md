@@ -1,12 +1,25 @@
 # ADR-038: Multi-Worker Session Affinity for SSE and Streamable HTTP
 
-- *Status:* Accepted
+- *Status:* Accepted (with scope change — see note below)
 - *Date:* 2025-01-31
 - *Deciders:* Platform Team
 
+> **Note — scope narrowed by #4205.** The cross-worker routing mechanism
+> described here is still in place, but it no longer lives inside a
+> "session pool" class that also manages upstream MCP `ClientSession`s.
+> The pooling concern was moved to
+> `mcpgateway.services.upstream_session_registry.UpstreamSessionRegistry`
+> (1:1 binding per downstream session), and the affinity machinery —
+> Redis-backed session→worker mapping, worker heartbeat, atomic
+> `SET NX` ownership claim, Lua CAS reclaim from dead workers, RPC
+> listener, session-owner HTTP forwarding — now lives on its own in
+> `mcpgateway.services.session_affinity.SessionAffinity`. Function
+> surface is unchanged beyond the `pool_` / `streamable_http_` prefixes
+> being dropped from public method names. ADR-032 has been superseded.
+
 ## Context
 
-ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway maintains pooled sessions to backend MCP servers for efficiency (see ADR-032).
+ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway needs to pin each downstream MCP session to one worker so the worker-local `UpstreamSessionRegistry` (see #4205) can serve subsequent calls without rebuilding upstream state.
 
 **The Problem:** In a multi-worker deployment, a client's requests may hit different workers. If each worker creates its own upstream MCP session, we lose:
 1. **Connection efficiency** - Multiple sessions to the same backend instead of one
@@ -20,9 +33,9 @@ ContextForge supports horizontal scaling with multiple worker processes (e.g., `
 Implement **unified session affinity** using Redis Pub/Sub for cross-worker coordination:
 
 1. **SSE Transport**: Uses Redis Pub/Sub for JSON-RPC message routing via `broadcast()` → `respond()` pattern
-2. **Streamable HTTP Transport**: Uses Redis Pub/Sub for full HTTP request forwarding via `forward_streamable_http_to_owner()` pattern
+2. **Streamable HTTP Transport**: Uses Redis Pub/Sub for full HTTP request forwarding via `forward_to_owner()` pattern
 
-Both transports share the core session pool (`MCPSessionPool`), ownership registration (`register_session_mapping()`), and **Redis Pub/Sub communication mechanism**. The only difference is the payload format (JSON-RPC messages vs full HTTP requests).
+Both transports share the `SessionAffinity` service, ownership registration (`register_session_mapping()`), and the **Redis Pub/Sub communication mechanism**. The only difference is the payload format (JSON-RPC messages vs full HTTP requests).
 
 ## Architecture Overview
 
@@ -35,7 +48,7 @@ Both transports share the core session pool (`MCPSessionPool`), ownership regist
 │  │  WORKER_A   │    │  WORKER_B   │    │  WORKER_C   │                         │
 │  │             │    │             │    │             │                         │
 │  │ ┌─────────┐ │    │ ┌─────────┐ │    │ ┌─────────┐ │                         │
-│  │ │ Session │ │    │ │ Session │ │    │ │ Session │ │   MCPSessionPool        │
+│  │ │ Session │ │    │ │ Session │ │    │ │ Session │ │   SessionAffinity        │
 │  │ │  Pool   │ │    │ │  Pool   │ │    │ │  Pool   │ │   (per worker)          │
 │  │ └─────────┘ │    │ └─────────┘ │    │ └─────────┘ │                         │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                         │
@@ -65,7 +78,7 @@ SSE uses a **persistent connection** from client to gateway. Only one worker own
 | `broadcast()` | `session_registry.py:961` | Routes messages to session owner via Redis/DB |
 | `respond()` | `session_registry.py:1119` | Listens for messages and processes them |
 | `generate_response()` | `session_registry.py:1863` | Executes requests via internal `/rpc` call |
-| `_register_session_mapping()` | `session_registry.py:900` | Registers session ownership in pool |
+| `_register_session_mapping()` | `session_registry.py:900` | Registers session ownership with `SessionAffinity` |
 
 ### Sequence Diagram
 
@@ -100,7 +113,7 @@ sequenceDiagram
     WA->>WA: generate_response()
     WA->>WA: POST /rpc (internal)
     WA->>WA: tool_service.invoke_tool()
-    WA->>WA: MCPSessionPool.acquire()
+    WA->>WA: SessionAffinity.acquire()
     WA->>Backend: Execute tool
     Backend-->>WA: Result
 
@@ -109,6 +122,8 @@ sequenceDiagram
 ```
 
 ### Detailed Flow
+
+> **Post-#4205 reading note.** References below to `pool.register_session_mapping(...)` and `pool.*` inside the ASCII box now resolve to the `SessionAffinity` service (same Redis keys, same semantics). Upstream `ClientSession` acquisition — shown as the last step of the owner-worker branch — now lives on the worker-local `UpstreamSessionRegistry`, keyed by `(downstream_session_id, gateway_id)`. ASCII widths weren't churned for the rename.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -169,7 +184,7 @@ sequenceDiagram
 │          │           │                                                          │
 │          │           └─► tool_service.invoke_tool()                             │
 │          │                 │                                                    │
-│          │                 └─► MCPSessionPool.acquire()                         │
+│          │                 └─► SessionAffinity.acquire()                         │
 │          │                       │                                              │
 │          │                       └─► Use pooled session to backend              │
 │          │                                                                      │
@@ -207,20 +222,20 @@ The MCP SDK's `StreamableHTTPSessionManager` stores sessions in an in-memory `_s
 2. **Sessions get cleaned up** - SDK clears `_server_instances` between requests
 3. **RedisEventStore only handles events** - It stores events for resumability, not session routing
 
-Our solution: **bypass the SDK for request routing** and use `/rpc` endpoint directly, which leverages `MCPSessionPool` for upstream connections.
+Our solution: **bypass the SDK for request routing** and use `/rpc` endpoint directly, which leverages `SessionAffinity` for upstream connections.
 
 ### Key Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `handle_streamable_http()` | `streamablehttp_transport.py:1252` | ASGI handler with affinity routing |
-| `forward_streamable_http_to_owner()` | `mcp_session_pool.py:1651` | Redis Pub/Sub forwarding to owner worker |
-| `_execute_forwarded_http_request()` | `mcp_session_pool.py:1554` | Executes forwarded HTTP requests on owner |
-| `get_streamable_http_session_owner()` | `mcp_session_pool.py:1545` | Checks Redis for session ownership |
-| `start_rpc_listener()` | `mcp_session_pool.py:1438` | Listens on both RPC and HTTP Redis channels |
+| `forward_to_owner()` | `session_affinity.py:1651` | Redis Pub/Sub forwarding to owner worker |
+| `_execute_forwarded_http_request()` | `session_affinity.py:1554` | Executes forwarded HTTP requests on owner |
+| `get_session_owner()` | `session_affinity.py:1545` | Checks Redis for session ownership |
+| `start_rpc_listener()` | `session_affinity.py:1438` | Listens on both RPC and HTTP Redis channels |
 | `/rpc` endpoint | `main.py:5259` | Unified request handler for all methods |
-| `register_session_mapping()` | `mcp_session_pool.py:545` | Registers session ownership atomically |
-| `WORKER_ID` | `mcp_session_pool.py:61` | Unique identifier: `{hostname}:{pid}` |
+| `register_session_mapping()` | `session_affinity.py:545` | Registers session ownership atomically |
+| `WORKER_ID` | `session_affinity.py:61` | Unique identifier: `{hostname}:{pid}` |
 
 ### Sequence Diagram
 
@@ -246,7 +261,7 @@ sequenceDiagram
     WA->>Redis: GET mcpgw:pool_owner:ABC → host_a:1 (us!)
     WA->>WA: Route to /rpc (bypass SDK sessions)
     WA->>WA: tool_service.invoke_tool()
-    WA->>WA: MCPSessionPool.acquire()
+    WA->>WA: SessionAffinity.acquire()
     WA->>Backend: Execute tool
     Backend-->>WA: Result
     WA-->>Client: HTTP Response {result}
@@ -256,7 +271,7 @@ sequenceDiagram
     LB->>WB: Route to WORKER_B (different worker!)
     WB->>Redis: GET mcpgw:pool_owner:ABC
     Redis-->>WB: host_a:1 (not us!)
-    WB->>WB: forward_streamable_http_to_owner()
+    WB->>WB: forward_to_owner()
     WB->>Redis: Subscribe to response channel
     WB->>Redis: PUBLISH to mcpgw:pool_http:host_a:1 (hex-encoded request)
 
@@ -293,14 +308,14 @@ sequenceDiagram
 │          ├─► Extract mcp_session_id from headers                                │
 │          │     (checks both "mcp-session-id" and "x-mcp-session-id")            │
 │          │                                                                      │
-│          ├─► pool.get_streamable_http_session_owner(mcp_session_id)             │
+│          ├─► pool.get_session_owner(mcp_session_id)             │
 │          │     │                                                                │
 │          │     └─► Redis GET mcpgw:pool_owner:{session_id}                      │
 │          │           └─► Returns: "host_a:1" (WORKER_A owns it)                 │
 │          │                                                                      │
 │          ├─► owner != WORKER_ID → Forward HTTP request                          │
 │          │                                                                      │
-│          └─► pool.forward_streamable_http_to_owner(...)                         │
+│          └─► pool.forward_to_owner(...)                         │
 │                │                                                                │
 │                ├─► Generate unique response channel UUID                        │
 │                │     response_channel = mcpgw:pool_http_response:{uuid}        │
@@ -365,7 +380,7 @@ sequenceDiagram
 │                            ├─► Normalize session ID from headers                │
 │                            │     (both mcp-session-id and x-mcp-session-id)     │
 │                            │                                                    │
-│                            └─► MCPSessionPool.acquire()                         │
+│                            └─► SessionAffinity.acquire()                         │
 │                                  │                                              │
 │                                  ├─► Reuse pooled connection to backend         │
 │                                  │                                              │
@@ -385,7 +400,7 @@ sequenceDiagram
 │          │                                                                      │
 │          ├─► is_internally_forwarded = False                                    │
 │          │                                                                      │
-│          ├─► pool.get_streamable_http_session_owner(mcp_session_id)             │
+│          ├─► pool.get_session_owner(mcp_session_id)             │
 │          │     └─► Returns: "host_a:1" (that's us!)                             │
 │          │                                                                      │
 │          ├─► owner == WORKER_ID → We own it, but DON'T use SDK                  │
@@ -393,7 +408,7 @@ sequenceDiagram
 │          │                                                                      │
 │          └─► Route to /rpc (same path as forwarded requests)                    │
 │                │                                                                │
-│                └─► tool_service.invoke_tool() → MCPSessionPool → Backend        │
+│                └─► tool_service.invoke_tool() → SessionAffinity → Backend        │
 │                                                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -410,7 +425,7 @@ self._server_instances: dict[str, ServerInstance] = {}
 **Problem:** This dictionary is cleared between requests, causing "Session not found" errors.
 
 **Solution:** Route ALL requests with session IDs to `/rpc`, which:
-1. Uses `MCPSessionPool` for upstream connections (Redis-backed)
+1. Uses `SessionAffinity` for upstream connections (Redis-backed)
 2. Doesn't depend on SDK's in-memory session storage
 3. Works identically for forwarded and local requests
 
@@ -488,7 +503,7 @@ MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT=30
 
 **Important Notes**:
 - `CACHE_TYPE=redis` is **required** - the Redis client will not initialize without it
-- Session affinity works independently of session pooling - the MCP session pool will be initialized automatically when `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true`, even if `MCP_SESSION_POOL_ENABLED=false`
+- Session affinity and per-worker upstream session management are independent concerns. The `SessionAffinity` service is initialized whenever `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true`. The `UpstreamSessionRegistry` that holds upstream `ClientSession`s is always on and does not require a feature flag (see #4205).
 - Redis must be accessible at the configured `REDIS_URL` before starting the application
 
 ## Atomic Ownership with SETNX
@@ -518,7 +533,7 @@ This ensures:
 Each worker has a unique `WORKER_ID` using the format `{hostname}:{pid}`:
 
 ```python
-# In mcp_session_pool.py
+# In session_affinity.py
 import socket
 import os
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
@@ -552,7 +567,7 @@ While `hostname:pid` provides unique worker identification, it **cannot be used 
 Since Redis Pub/Sub transports messages as strings (JSON), binary HTTP request/response bodies must be encoded:
 
 ```python
-# In forward_streamable_http_to_owner() - encoding request
+# In forward_to_owner() - encoding request
 forward_data = {
     "type": "http_forward",
     "body": body.hex() if body else "",  # bytes → hex string
@@ -568,7 +583,7 @@ response_data = {
     ...
 }
 
-# In forward_streamable_http_to_owner() - decoding response
+# In forward_to_owner() - decoding response
 response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
 ```
 
@@ -628,7 +643,7 @@ Messages are routed based on the `type` field:
 
 ### Positive
 - Enables horizontal scaling with session affinity
-- Reuses upstream MCP sessions efficiently via `MCPSessionPool`
+- Reuses upstream MCP sessions efficiently via `SessionAffinity`
 - Works transparently for both SSE and Streamable HTTP
 - Atomic ownership prevents race conditions (SETNX)
 - Bypasses SDK session issues for reliable operation
@@ -680,16 +695,16 @@ redis-cli ping  # Should return "PONG"
 
 ### MCP Session Pool Not Initialized
 
-**Symptoms**: Error message `MCP session pool not initialized. Call init_mcp_session_pool() first.`
+**Symptoms**: Error message `session-affinity service not initialized. Call init_session_affinity() first.`
 
-**Cause**: Session pool initialization was skipped because both `MCP_SESSION_POOL_ENABLED=false` and `MCPGATEWAY_SESSION_AFFINITY_ENABLED=false`.
+**Cause**: The affinity service is only initialized when `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true`.
 
-**Solution**: The session pool is automatically initialized when session affinity is enabled. Ensure:
+**Solution**: Enable the flag:
 ```bash
 MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
 ```
 
-The pool will initialize even if `MCP_SESSION_POOL_ENABLED=false` (affinity needs the ownership registry but not the full pooling functionality).
+(The `MCP_SESSION_POOL_ENABLED` setting referenced in earlier versions of this ADR was removed with #4205 — there is no separate pool to enable.)
 
 ### Session Affinity Not Working (No "Owner from Redis" in Logs)
 
@@ -705,7 +720,7 @@ The pool will initialize even if `MCP_SESSION_POOL_ENABLED=false` (affinity need
 **Debug Logging**: Look for these log messages during startup:
 ```
 Redis client initialized: parser=AsyncHiredisParser, pool_size=10...
-MCP session pool initialized
+session-affinity service initialized
 Multi-worker session affinity RPC listener started
 ```
 

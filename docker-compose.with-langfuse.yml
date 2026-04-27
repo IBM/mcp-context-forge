@@ -74,6 +74,13 @@ services:
   # Langfuse accepts OTLP/HTTP at /api/public/otel (gRPC not supported)
   # ──────────────────────────────────────────────────────────────────────
   gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     environment:
       - OTEL_ENABLE_OBSERVABILITY=true
       - OTEL_TRACES_EXPORTER=otlp

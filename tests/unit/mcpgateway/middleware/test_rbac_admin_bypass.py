@@ -150,33 +150,3 @@ class TestAdminWithoutPlatformAdminRole:
 # ---------------------------------------------------------------------------
 # D3.3: Decorator-level bypass enforcement verification
 # ---------------------------------------------------------------------------
-
-
-class TestAdminUIBypassEnforcement:
-    """Verify admin UI endpoints actually use allow_admin_bypass=False."""
-
-    def test_admin_ui_endpoints_use_bypass_false(self):
-        """Spot-check that admin.py decorators set allow_admin_bypass=False."""
-        # Standard
-        import inspect
-
-        # First-Party
-        import mcpgateway.admin as admin_mod
-
-        source = inspect.getsource(admin_mod)
-        # Count occurrences of bypass=False in admin.py
-        bypass_false_count = source.count("allow_admin_bypass=False")
-        # admin.py should have many endpoints with bypass=False
-        assert bypass_false_count > 20, f"Expected >20 admin UI endpoints with bypass=False, found {bypass_false_count}"
-
-    def test_rbac_crud_endpoints_use_bypass_false_or_require_admin(self):
-        """Verify RBAC router uses require_admin_permission or admin.user_management."""
-        # Standard
-        import inspect
-
-        # First-Party
-        import mcpgateway.routers.rbac as rbac_router
-
-        source = inspect.getsource(rbac_router)
-        # RBAC router should use require_admin_permission or admin.user_management
-        assert "require_admin_permission" in source or "admin.user_management" in source

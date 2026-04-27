@@ -310,6 +310,7 @@ async def get_isolated_http_client(
     connect_timeout: Optional[float] = None,
     write_timeout: Optional[float] = None,
     pool_timeout: Optional[float] = None,
+    follow_redirects: bool = True,
 ) -> AsyncIterator[httpx.AsyncClient]:
     """
     Create an isolated HTTP client with custom settings.
@@ -330,6 +331,8 @@ async def get_isolated_http_client(
         connect_timeout: Optional connect timeout override (seconds).
         write_timeout: Optional write timeout override (seconds).
         pool_timeout: Optional pool timeout override (seconds).
+        follow_redirects: Whether to follow HTTP redirects (default: True).
+                          Set to False for SSRF-sensitive requests.
 
     Yields:
         httpx.AsyncClient: A new isolated client instance.
@@ -359,6 +362,6 @@ async def get_isolated_http_client(
         verify=effective_verify,
         auth=auth,
         http2=http2 if http2 is not None else settings.httpx_http2_enabled,
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
     ) as client:
         yield client

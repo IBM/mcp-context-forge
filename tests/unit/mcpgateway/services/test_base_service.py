@@ -131,11 +131,12 @@ class TestApplyAccessControl:
         return q
 
     @pytest.mark.asyncio
-    async def test_admin_bypass_returns_query_unmodified(self, service, mock_db, query):
-        """When user_email=None and token_teams=None (admin bypass), return query as-is."""
+    async def test_admin_bypass_filters_private_resources(self, service, mock_db, query):
+        """When user_email=None and token_teams=None (admin bypass), filter out private resources."""
         result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None)
-        assert result is query
-        query.where.assert_not_called()
+        # Admin bypass now filters out private resources (security fix)
+        assert result == "filtered"
+        query.where.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_public_only_token_suppresses_owner_email(self, service, mock_db, query):
@@ -180,9 +181,99 @@ class TestApplyAccessControl:
 
     @pytest.mark.asyncio
     async def test_db_lookup_fallback_no_user_email(self, service, mock_db, query):
-        """When token_teams is None and user_email is None (admin bypass), return query unchanged."""
+        """When token_teams is None and user_email is None (admin bypass), filter out private resources."""
         result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None)
-        assert result is query
+        # Admin bypass now filters out private resources (security fix)
+        assert result == "filtered"
+        query.where.assert_called_once()
+
+    def test_apply_visibility_scope_db_admin_includes_own_private_only(self):
+        """PR #4341 carve-out coverage for the static ``_apply_visibility_scope`` helper.
+
+        ``_apply_visibility_scope`` is the sibling of ``_apply_access_control`` used by
+        completion/tag enumeration. Without this test the (email, None) DB-admin
+        branch in base_service.py:215-221 was unexecuted by the suite; the existing
+        ``test_apply_visibility_scope_admin_bypass_excludes_private`` coverage in
+        test_authorization_access.py only exercises the ``(None, None)`` shape.
+        """
+        from mcpgateway.services.base_service import BaseService
+        from mcpgateway.services.tag_service import TagService
+
+        service = TagService()
+        stmt = sa.select(_FakeItem)
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            scoped = BaseService._apply_visibility_scope(
+                stmt,
+                _FakeItem,
+                user_email="dba@test.com",
+                token_teams=None,
+                team_ids=[],
+                db=mock_db,
+            )
+
+        compiled = _compile_where(scoped)
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller: {compiled}"
+        # Same OR-count guard as test_db_admin_bypass_includes_own_private_only.
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
+        # Sanity: TagService._apply_visibility_scope is unused here (the static
+        # helper on BaseService is what we exercise) but importing it ensures the
+        # module-level binding exists so this test fails loudly if a refactor
+        # removes the indirection.
+        assert callable(getattr(service, "_apply_visibility_scope", None))
+
+    @pytest.mark.asyncio
+    async def test_db_admin_bypass_includes_own_private_only(self, service, mock_db):
+        """PR #4341 carve-out: DB-admin (email, None) shape compiles a WHERE that allows own private but not others'.
+
+        Asserts the actual compiled predicate so a wrong predicate (e.g. unconditional
+        ``True`` allowing all private) cannot slip through. The ``(email, None)`` shape
+        was previously a fall-through with no filter applied — the equivalent leak class
+        as B5 (resource_service.list_resource_templates).
+        """
+        base_query = sa.select(_FakeItem)
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            result = await service._apply_access_control(
+                base_query,
+                mock_db,
+                user_email="dba@test.com",
+                token_teams=None,
+            )
+
+        compiled = _compile_where(result)
+
+        assert "visibility != 'private'" in compiled, f"public/team carve-out missing: {compiled}"
+        assert "visibility = 'private'" in compiled, f"own-private allowance missing: {compiled}"
+        assert "owner_email = 'dba@test.com'" in compiled, f"owner clause must bind caller: {compiled}"
+        # Exactly one OR — multiple ORs would indicate a too-broad predicate
+        # (e.g. an extra unconditional private allowance bolted on).
+        or_count = compiled.upper().count(" OR ")
+        assert or_count == 1, f"expected exactly 1 OR in WHERE clause, got {or_count}: {compiled}"
+
+    @pytest.mark.asyncio
+    async def test_non_admin_with_email_but_null_token_teams_does_not_bypass(self, service, mock_db, query):
+        """Non-admin (email, None) shape must NOT take the DB-admin branch — falls through to TeamManagementService lookup."""
+        with (
+            patch("mcpgateway.services.base_service.is_user_admin", return_value=False),
+            patch("mcpgateway.services.base_service.TeamManagementService") as mock_tms_cls,
+            patch.object(service, "_apply_visibility_filter", return_value="filtered") as mock_filter,
+        ):
+            mock_tms_cls.return_value.get_user_teams = AsyncMock(return_value=[])
+            result = await service._apply_access_control(
+                query,
+                mock_db,
+                user_email="user@example.com",
+                token_teams=None,
+            )
+
+            mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@example.com")
+            mock_filter.assert_called_once_with(query, "user@example.com", [], None)
+            assert result == "filtered"
 
 
 # ---------------------------------------------------------------------------

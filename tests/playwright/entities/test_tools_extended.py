@@ -140,9 +140,7 @@ class TestToolsTableStructure:
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
-        description = tools_page.page.locator(
-            "text=This is the global catalog of MCP Tools available"
-        )
+        description = tools_page.page.locator("text=This is the global catalog of MCP Tools available")
         expect(description).to_be_visible()
 
 
@@ -253,12 +251,8 @@ class TestToolsAddForm:
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
-        schema_builder_radio = tools_page.add_tool_form.locator(
-            'input[name="schema_input_mode"][value="ui"]'
-        )
-        json_input_radio = tools_page.add_tool_form.locator(
-            'input[name="schema_input_mode"][value="json"]'
-        )
+        schema_builder_radio = tools_page.add_tool_form.locator('input[name="schema_input_mode"][value="ui"]')
+        json_input_radio = tools_page.add_tool_form.locator('input[name="schema_input_mode"][value="json"]')
         expect(schema_builder_radio).to_be_attached()
         expect(json_input_radio).to_be_attached()
 
@@ -270,9 +264,7 @@ class TestToolsAddForm:
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
-        help_text = tools_page.add_tool_form.locator(
-            "text=Enter tags separated by commas"
-        )
+        help_text = tools_page.add_tool_form.locator("text=Enter tags separated by commas")
         expect(help_text).to_be_visible()
 
     def test_output_schema_optional_text(self, tools_page: ToolsPage):
@@ -280,9 +272,7 @@ class TestToolsAddForm:
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
-        optional_text = tools_page.add_tool_form.locator(
-            "text=Optional JSON Schema for validating structured tool output"
-        )
+        optional_text = tools_page.add_tool_form.locator("text=Optional JSON Schema for validating structured tool output")
         expect(optional_text).to_be_visible()
 
     def test_submit_button_present(self, tools_page: ToolsPage):
@@ -621,9 +611,7 @@ class TestToolsEditModal:
 
         first_row = tools_page.get_tool_row(0)
         current_name = first_row.locator("td").nth(4).text_content().strip()
-        assert current_name == original_name, (
-            f"Name should be unchanged after Cancel: expected '{original_name}', got '{current_name}'"
-        )
+        assert current_name == original_name, f"Name should be unchanged after Cancel: expected '{original_name}', got '{current_name}'"
 
     def test_edit_modal_has_visibility_radios(self, tools_page: ToolsPage):
         """Test that edit modal contains visibility radio buttons."""
@@ -662,9 +650,7 @@ class TestToolsTestModal:
         tools_page.open_tool_test_modal(0)
 
         expect(tools_page.tool_test_modal).to_be_visible()
-        expect(
-            tools_page.tool_test_modal.locator("#tool-test-modal-title")
-        ).to_contain_text("Test Tool")
+        expect(tools_page.tool_test_modal.locator("#tool-test-modal-title")).to_contain_text("Test Tool")
 
         tools_page.close_tool_test_modal()
 
@@ -743,9 +729,7 @@ class TestToolsTestModal:
         tools_page.open_tool_test_modal(0)
 
         result_text = tools_page.tool_test_result.text_content().strip()
-        assert result_text == "", (
-            f"Tool test result should be empty on open, got: '{result_text[:100]}'"
-        )
+        assert result_text == "", f"Tool test result should be empty on open, got: '{result_text[:100]}'"
 
         tools_page.close_tool_test_modal()
 
@@ -764,29 +748,21 @@ class TestToolsTestModal:
 
         # Open test modal for first tool and inject fake result content
         tools_page.open_tool_test_modal(0)
-        first_title = tools_page.tool_test_modal.locator(
-            "#tool-test-modal-title"
-        ).text_content()
-        tools_page.page.evaluate(
-            """() => {
+        first_title = tools_page.tool_test_modal.locator("#tool-test-modal-title").text_content()
+        tools_page.page.evaluate("""() => {
                 const el = document.getElementById('tool-test-result');
                 if (el) el.textContent = 'STALE_RESULT_MARKER';
-            }"""
-        )
+            }""")
         tools_page.close_tool_test_modal()
 
         # Open test modal for second tool
         tools_page.open_tool_test_modal(1)
 
-        second_title = tools_page.tool_test_modal.locator(
-            "#tool-test-modal-title"
-        ).text_content()
+        second_title = tools_page.tool_test_modal.locator("#tool-test-modal-title").text_content()
         assert first_title != second_title, "Test modal should show different tool"
 
         result_text = tools_page.tool_test_result.text_content().strip()
-        assert "STALE_RESULT_MARKER" not in result_text, (
-            "Tool test result should not contain stale data from previous tool"
-        )
+        assert "STALE_RESULT_MARKER" not in result_text, "Tool test result should not contain stale data from previous tool"
 
         tools_page.close_tool_test_modal()
 
@@ -822,6 +798,7 @@ class TestToolsRowActions:
         _skip_if_no_tools(tools_page)
 
         first_row = tools_page.get_tool_row(0)
+        tools_page.open_action_dropdown(first_row)
         test_btn = first_row.locator('button:has-text("Test")')
         expect(test_btn).to_be_visible()
 
@@ -832,6 +809,7 @@ class TestToolsRowActions:
         _skip_if_no_tools(tools_page)
 
         first_row = tools_page.get_tool_row(0)
+        tools_page.open_action_dropdown(first_row)
         view_btn = first_row.locator('button:has-text("View")')
         expect(view_btn).to_be_visible()
 
@@ -854,9 +832,7 @@ class TestToolsRowActions:
 
         first_row = tools_page.get_tool_row(0)
         # Could be either Deactivate (active tool) or Activate (inactive tool)
-        toggle_btn = first_row.locator(
-            'button:has-text("Deactivate"), button:has-text("Activate")'
-        )
+        toggle_btn = first_row.locator('button:has-text("Deactivate"), button:has-text("Activate")')
         expect(toggle_btn.first).to_be_attached()
 
     def test_row_has_delete_button(self, tools_page: ToolsPage):
@@ -1021,9 +997,7 @@ class TestToolsPagination:
         # The default value depends on URL params or server config; just
         # verify it is one of the valid options.
         current_value = per_page.input_value()
-        assert current_value in (
-            "10", "25", "50", "100", "200", "500"
-        ), f"Unexpected per-page value: '{current_value}'"
+        assert current_value in ("10", "25", "50", "100", "200", "500"), f"Unexpected per-page value: '{current_value}'"
 
     def test_pagination_info_text(self, tools_page: ToolsPage):
         """Test that pagination info shows item count or no items message."""
@@ -1112,7 +1086,7 @@ class TestToolsAnnotationBadges:
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
-        legend = tools_page.tools_panel.locator('text=Annotation badges:')
+        legend = tools_page.tools_panel.locator("text=Annotation badges:")
         expect(legend).to_be_visible()
 
     def test_annotation_badge_read_only(self, tools_page: ToolsPage):

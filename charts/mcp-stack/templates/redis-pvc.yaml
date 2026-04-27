@@ -15,6 +15,9 @@ spec:
   {{- if .Values.redis.persistence.storageClassName }}
   storageClassName: {{ .Values.redis.persistence.storageClassName }}
   {{- end }}
+  {{- if .Values.redis.persistence.volumeName }}
+  volumeName: {{ .Values.redis.persistence.volumeName }}
+  {{- end }}
   accessModes: {{- toYaml .Values.redis.persistence.accessModes | nindent 4 }}
   resources:
     requests:

@@ -976,6 +976,70 @@ SSO_ENTRA_TENANT_ID=correct-tenant-id-here
 # Gateway constructs this automatically from tenant ID
 ```
 
+### ID Token Signature Verification Failed
+
+**Problem**: Gateway rejects ID tokens with signature verification errors
+**Solution**: Ensure Microsoft's JWKS endpoint is accessible and properly configured
+
+The gateway cryptographically verifies ID token signatures using Microsoft Entra ID's JWKS endpoint. Common issues:
+
+**1. JWKS Endpoint Unreachable**
+
+```bash
+# Test JWKS endpoint accessibility from gateway
+curl https://login.microsoftonline.com/{tenant-id}/discovery/v2.0/keys
+
+# Should return JSON with public keys
+# If this fails, check network/firewall rules
+```
+
+**2. Tenant ID Mismatch**
+
+Ensure the tenant ID in your configuration matches the tenant that issued the token:
+
+```bash
+# Verify tenant ID from Azure portal
+# Microsoft Entra ID → Overview → Tenant ID
+SSO_ENTRA_TENANT_ID=your-actual-tenant-id
+
+# The issuer will be: https://login.microsoftonline.com/{tenant-id}/v2.0
+```
+
+**3. Clock Skew**
+
+ID tokens have expiration times. Ensure gateway and Azure servers have synchronized clocks:
+
+```bash
+# Check time on gateway server
+date -u  # Should match actual UTC time
+
+# Sync with NTP if needed
+sudo ntpdate -s time.nist.gov
+```
+
+**4. Multi-Tenant Applications**
+
+For multi-tenant apps, the issuer varies by tenant. The gateway automatically handles this by validating against the tenant ID in the token's `tid` claim.
+
+**5. Network/Proxy Issues**
+
+If the gateway is behind a corporate proxy or firewall:
+
+```bash
+# Ensure outbound HTTPS access to:
+# - https://login.microsoftonline.com (issuer and JWKS)
+# - https://graph.microsoft.com (optional, for user info)
+```
+
+**6. Token Version Mismatch**
+
+Ensure you're using v2.0 tokens (default). If using v1.0 tokens, the issuer format differs:
+
+```bash
+# v2.0 (recommended): https://login.microsoftonline.com/{tenant-id}/v2.0
+# v1.0 (legacy): https://sts.windows.net/{tenant-id}/
+```
+
 ### MFA Not Prompting
 
 **Problem**: MFA not enforced during login

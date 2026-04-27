@@ -327,10 +327,11 @@ class ResultsStore:
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                f"""
+                """
                 DELETE FROM evaluation_results
-                WHERE created_at < datetime('now', '-{days_old} days')
-            """
+                WHERE created_at < datetime('now', '-' || CAST(? AS TEXT) || ' days')
+            """,
+                (days_old,),
             )
 
             # Steps are deleted automatically due to foreign key constraint

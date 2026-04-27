@@ -6,4 +6,3 @@ nav:
   - grpc-transport.md
   - unix-socket-transport.md
   - mtls.md
-  - rust-plugins.md

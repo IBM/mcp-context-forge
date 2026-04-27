@@ -401,6 +401,51 @@ class TestResourceServicePluginIntegration:
         assert "mysecret123" not in result.text
 
     @pytest.mark.asyncio
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_post_fetch_receives_resolved_content(self, mock_ssl, resource_service_with_plugins, mock_db):
+        """RESOURCE_POST_FETCH payload must carry content resolved by invoke_resource, not the DB placeholder."""
+        # First-Party
+        import mcpgateway.services.resource_service as resource_service_mod
+
+        resource_service_mod.PLUGINS_AVAILABLE = True
+        service = resource_service_with_plugins
+        mock_manager = await service._get_plugin_manager(None)
+        mock_ssl.return_value = MagicMock()
+
+        # DB row carries only a URI-style placeholder in text; real content is fetched via invoke_resource.
+        mock_resource = MagicMock()
+        mock_resource.content = ResourceContent(
+            type="resource",
+            id="res-1",
+            uri="file:///data/x.txt",
+            text="file:///data/x.txt",
+        )
+        mock_resource.uri = "file:///data/x.txt"
+        mock_resource.visibility = "public"
+        mock_resource.owner_email = None
+        mock_resource.team_id = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        mock_db.get.return_value = mock_resource
+
+        resolved_sentinel = "actual file content resolved by gateway"
+        service.invoke_resource = AsyncMock(return_value=resolved_sentinel)
+
+        captured = {}
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                return PluginResult(continue_processing=True), {"context": "data"}
+            captured["text"] = payload.content.text
+            return PluginResult(continue_processing=True, modified_payload=None), None
+
+        mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+
+        result = await service.read_resource(mock_db, "file:///data/x.txt")
+
+        assert captured["text"] == resolved_sentinel
+        assert result.text == resolved_sentinel
+
+    @pytest.mark.asyncio
     async def test_read_resource_plugin_error_handling(self, resource_service_with_plugins, mock_db):
         """Test read_resource handles plugin errors gracefully."""
         # First-Party

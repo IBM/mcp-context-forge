@@ -10,11 +10,14 @@ A **binding** is a `(team_id, tool_name, plugin_id)` triple with an associated `
 
 ### Supported plugins
 
-| `plugin_id`          | Plugin class name          | Hook phase        | What it does                                       |
-|----------------------|----------------------------|-------------------|----------------------------------------------------|
-| `OUTPUT_LENGTH_GUARD`| `OutputLengthGuardPlugin`  | `tool_post_invoke`| Truncates or blocks responses that exceed a character limit |
-| `RATE_LIMITER`       | `RateLimiterPlugin`        | `tool_pre_invoke` | Throttles calls per user, tenant, or tool          |
-| `SECRETS_DETECTION`  | `SecretsDetection`         | `tool_post_invoke`| Detects and optionally redacts/blocks secrets in outputs |
+`plugin_id` is the **plugin class name** as registered in `config.yaml`. Any plugin loaded by the gateway can be used; the table below lists the commonly bound ones.
+
+| `plugin_id`               | Hook phase        | What it does                                                  |
+|---------------------------|-------------------|---------------------------------------------------------------|
+| `OutputLengthGuardPlugin` | `tool_post_invoke`| Truncates or blocks responses that exceed a character limit   |
+| `RateLimiterPlugin`       | `tool_pre_invoke` | Throttles calls per user, tenant, or tool                     |
+| `SecretsDetection`        | `tool_post_invoke`| Detects and optionally redacts/blocks secrets in outputs      |
+| `SQLSanitizer`            | `tool_pre_invoke` | Blocks dangerous SQL patterns; strips comments                |
 
 ---
 
@@ -54,6 +57,8 @@ Non-admin callers may only create bindings for teams they belong to. Attempting 
 - **Updated in place** if a row already exists (the `id`, `created_at`, and `created_by` are preserved).
 - **Inserted** if no matching row exists.
 
+**Stale tool pruning**: when a policy includes a `binding_reference_id`, any existing binding that shares the same `binding_reference_id` and `plugin_id` but whose `tool_name` is **not** in the incoming `tool_names` list is automatically deleted. This keeps the stored state in sync when an external system sends a full replacement tool list on an update event.
+
 On success, returns **all created/updated** bindings and immediately invalidates the in-process plugin cache so the new config takes effect on the very next tool call.
 
 #### Request body
@@ -68,6 +73,7 @@ On success, returns **all created/updated** bindings and immediately invalidates
           "plugin_id": "<PLUGIN_ID>",
           "mode": "enforce | permissive | disabled",
           "priority": 10,
+          "binding_reference_id": "<EXTERNAL_BINDING_ID>",
           "config": { /* plugin-specific — see below */ }
         }
       ]
@@ -81,9 +87,10 @@ On success, returns **all created/updated** bindings and immediately invalidates
 | `teams`                     | object          | ✅        | —          | Keys are `team_id` strings                                         |
 | `teams.<id>.policies`       | array           | ✅        | —          | At least one item required                                         |
 | `policies[].tool_names`     | string[]        | ✅        | —          | Use `["*"]` to match all tools in the team                         |
-| `policies[].plugin_id`      | enum string     | ✅        | —          | `OUTPUT_LENGTH_GUARD`, `RATE_LIMITER`, or `SECRETS_DETECTION`      |
+| `policies[].plugin_id`      | string          | ✅        | —          | Plugin class name as registered in `config.yaml` (e.g. `OutputLengthGuardPlugin`, `SQLSanitizer`, `RateLimiterPlugin`, `SecretsDetection`) |
 | `policies[].mode`           | enum string     | ❌        | `enforce`  | `enforce` = fail on violation; `permissive` = log only; `disabled` = skip |
 | `policies[].priority`       | int (1–1000)    | ❌        | `50`       | Lower runs first                                                    |
+| `policies[].binding_reference_id` | string   | ❌        | `null`     | External reference ID for correlating this binding with an upstream system. Used for stale-tool pruning on update and bulk delete. Max 255 chars; must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. |
 | `policies[].config`         | object          | ✅        | —          | All config fields for the plugin must be present (full replace, no partial patch) |
 
 #### `mode` semantics
@@ -102,9 +109,18 @@ On success, returns **all created/updated** bindings and immediately invalidates
 
 List all bindings across all teams (admin use).
 
+| Query param            | Type   | Required | Description                                          |
+|------------------------|--------|----------|------------------------------------------------------|
+| `binding_reference_id` | string | ❌        | Filter — return only bindings with this reference ID |
+
 ```bash
+# All bindings
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings | jq
+
+# Filtered by external reference ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
 ```
 
 ---
@@ -113,9 +129,32 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 List all bindings for a specific team.
 
+| Query param            | Type   | Required | Description                                                                                          |
+|------------------------|--------|----------|------------------------------------------------------------------------------------------------------|
+| `binding_reference_id` | string | ❌        | If provided, **takes precedence over `team_id`** — returns all bindings with this reference ID across all teams |
+
 ```bash
+# All bindings for a team
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/<YOUR_TEAM_ID> | jq
+
+# Filtered by external reference ID (team_id is ignored when binding_reference_id is present)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/<YOUR_TEAM_ID>?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
+```
+
+---
+
+### `DELETE /v1/tools/plugin_bindings?binding_reference_id={ref}`
+
+Delete **all** bindings tagged with the given external reference ID. Intended for external systems that need to remove all bindings associated with one of their own reference objects without knowing the internal ContextForge UUIDs.
+
+Returns the deleted records. Returns an empty list (not an error) if no bindings matched.
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings?binding_reference_id=<EXTERNAL_REFERENCE_ID>" | jq
 ```
 
 ---
@@ -143,7 +182,7 @@ All write operations (`POST`, `DELETE`) and read operations (`GET`) return the s
   "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
   "team_id": "<YOUR_TEAM_ID>",
   "tool_name": "echo_text",
-  "plugin_id": "OUTPUT_LENGTH_GUARD",
+  "plugin_id": "OutputLengthGuardPlugin",
   "mode": "enforce",
   "priority": 10,
   "config": {
@@ -152,6 +191,7 @@ All write operations (`POST`, `DELETE`) and read operations (`GET`) return the s
     "strategy": "truncate",
     "ellipsis": "..."
   },
+  "binding_reference_id": "<EXTERNAL_REFERENCE_ID>",
   "created_at": "2026-04-07T17:00:00Z",
   "created_by": "admin@example.com",
   "updated_at": "2026-04-07T17:05:00Z",
@@ -176,9 +216,9 @@ The `config` object in a policy item **must include all fields** for the plugin.
 
 ---
 
-### `OUTPUT_LENGTH_GUARD`
+### `OutputLengthGuardPlugin`
 
-Enforces a character-count budget on tool outputs. Responses that exceed `max_chars` are either truncated (with an optional `ellipsis` suffix) or blocked entirely.
+Enforces a character or token budget on tool outputs. Responses that exceed the limit are either truncated (with an optional `ellipsis` suffix) or blocked entirely.
 
 **Hooks:** `tool_post_invoke`
 
@@ -186,19 +226,35 @@ Enforces a character-count budget on tool outputs. Responses that exceed `max_ch
 {
   "min_chars": 0,
   "max_chars": 2000,
+  "min_tokens": 0,
+  "max_tokens": null,
+  "chars_per_token": 4,
+  "limit_mode": "character",
   "strategy": "truncate",
-  "ellipsis": "..."
+  "ellipsis": "\u2026",
+  "word_boundary": false,
+  "max_text_length": 1000000,
+  "max_structure_size": 10000,
+  "max_recursion_depth": 100
 }
 ```
 
-| Field       | Type                     | Default    | Constraints       | Description                                      |
-|-------------|--------------------------|------------|-------------------|--------------------------------------------------|
-| `min_chars` | integer                  | `0`        | `>= 0`            | Minimum allowed character count (0 = no minimum) |
-| `max_chars` | integer                  | `2000`     | `> 1`             | Maximum allowed character count                  |
-| `strategy`  | `"truncate"` \| `"block"` | `"truncate"` | —               | `truncate` = cut output; `block` = return error  |
-| `ellipsis`  | string                   | `"..."`    | max length 20     | Suffix appended to truncated output              |
+| Field                 | Type                         | Default      | Constraints        | Description                                                                   |
+|-----------------------|------------------------------|--------------|--------------------|-------------------------------------------------------------------------------|
+| `min_chars`           | integer                      | `0`          | `>= 0`             | Minimum allowed character count (0 = no minimum)                              |
+| `max_chars`           | integer \| null              | `null`       | —                  | Maximum allowed character count; `null` or `0` disables the check             |
+| `min_tokens`          | integer                      | `0`          | `>= 0`             | Minimum allowed token count (0 = no minimum)                                  |
+| `max_tokens`          | integer \| null              | `null`       | —                  | Maximum allowed token count; `null` or `0` disables the check                 |
+| `chars_per_token`     | integer                      | `4`          | `1–10`             | Characters-per-token ratio used to estimate token count                       |
+| `limit_mode`          | `"character"` \| `"token"`   | `"character"` | —                 | Which limit to enforce — character count or estimated token count             |
+| `strategy`            | `"truncate"` \| `"block"`    | `"truncate"` | —                  | `truncate` = cut output at the limit; `block` = return an error               |
+| `ellipsis`            | string                       | `"…"`        | max length 20      | Suffix appended when truncating                                               |
+| `word_boundary`       | boolean                      | `false`      | —                  | Truncate at word boundaries to avoid mid-word cuts                            |
+| `max_text_length`     | integer                      | `1000000`    | `>= 1`             | Maximum raw text size (bytes) to process; prevents memory exhaustion          |
+| `max_structure_size`  | integer                      | `10000`      | `>= 1`             | Maximum items in a list or dict; prevents DoS on large structured outputs     |
+| `max_recursion_depth` | integer                      | `100`        | `>= 1`             | Maximum nesting depth; prevents stack overflow on deeply nested outputs       |
 
-**Validation:** `min_chars` must be strictly less than `max_chars`.
+**Validation:** `min_chars` must be strictly less than `max_chars` when `max_chars` is set. Same applies to `min_tokens` / `max_tokens`.
 
 #### Example — truncate at 500 chars
 
@@ -211,14 +267,22 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["echo_text"],
-          "plugin_id": "OUTPUT_LENGTH_GUARD",
+          "plugin_id": "OutputLengthGuardPlugin",
           "mode": "enforce",
           "priority": 10,
           "config": {
             "min_chars": 0,
             "max_chars": 500,
+            "min_tokens": 0,
+            "max_tokens": null,
+            "chars_per_token": 4,
+            "limit_mode": "character",
             "strategy": "truncate",
-            "ellipsis": "…"
+            "ellipsis": "\u2026",
+            "word_boundary": false,
+            "max_text_length": 1000000,
+            "max_structure_size": 10000,
+            "max_recursion_depth": 100
           }
         }]
       }
@@ -233,16 +297,24 @@ curl -s -X POST \
 {
   "min_chars": 0,
   "max_chars": 1000,
+  "min_tokens": 0,
+  "max_tokens": null,
+  "chars_per_token": 4,
+  "limit_mode": "character",
   "strategy": "block",
-  "ellipsis": "..."
+  "ellipsis": "\u2026",
+  "word_boundary": false,
+  "max_text_length": 1000000,
+  "max_structure_size": 10000,
+  "max_recursion_depth": 100
 }
 ```
 
 ---
 
-### `RATE_LIMITER`
+### `RateLimiterPlugin`
 
-Throttles tool invocations before they are dispatched. Limits can be set independently for the calling user, the tenant (team), and the tool itself. At least one limit field must be non-null.
+Throttles tool invocations before they are dispatched. Limits can be set independently for the calling user, the tenant (team), or per individual tool.
 
 **Hooks:** `tool_pre_invoke`
 
@@ -250,19 +322,29 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 
 ```json
 {
-  "by_user":   "60/m",
-  "by_tenant": "600/m",
-  "by_tool":   "10/s"
+  "by_user":         "60/m",
+  "by_tenant":       "600/m",
+  "by_tool":         { "search": "10/m", "fetch_data": "5/s" },
+  "algorithm":       "fixed_window",
+  "backend":         "memory",
+  "redis_url":       null,
+  "redis_key_prefix": "rl",
+  "redis_fallback":  true
 }
 ```
 
-| Field       | Type            | Default | Format            | Description                              |
-|-------------|-----------------|---------|-------------------|------------------------------------------|
-| `by_user`   | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-user rate limit                |
-| `by_tenant` | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-tenant (team) rate limit       |
-| `by_tool`   | string \| null  | `null`  | `<int>/s` or `<int>/m` | Per-tool rate limit                |
+| Field              | Type                                               | Default          | Format / Constraints               | Description                                                              |
+|--------------------|----------------------------------------------------|------------------|------------------------------------|--------------------------------------------------------------------------|
+| `by_user`          | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per calling user; `null` disables                             |
+| `by_tenant`        | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per tenant (team); `null` disables                            |
+| `by_tool`          | object (string → string) \| null                  | `null`           | values: `<int>/s` or `<int>/m`     | Per-tool rate limits as a map of `tool_name → rate`; `null` disables     |
+| `algorithm`        | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                    | Counting algorithm to use                                                |
+| `backend`          | `"memory"` \| `"redis"`                           | `"memory"`       | —                                  | Storage backend for counters                                             |
+| `redis_url`        | string \| null                                     | `null`           | valid Redis URL                    | Redis connection URL; required when `backend` is `"redis"`               |
+| `redis_key_prefix` | string                                             | `"rl"`           | —                                  | Prefix for all Redis counter keys                                        |
+| `redis_fallback`   | boolean                                            | `true`           | —                                  | Fall back to in-memory counting if Redis is unavailable                  |
 
-**Validation:** Each non-null value must match `^\d+/[sm]$`.
+**Validation:** Each non-null rate string must match `^\d+/[sm]$`.
 
 #### Example — 30 calls/min per user, 300/min per tenant
 
@@ -275,13 +357,18 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["*"],
-          "plugin_id": "RATE_LIMITER",
+          "plugin_id": "RateLimiterPlugin",
           "mode": "enforce",
           "priority": 5,
           "config": {
             "by_user":   "30/m",
             "by_tenant": "300/m",
-            "by_tool":   null
+            "by_tool":   null,
+            "algorithm": "fixed_window",
+            "backend":   "memory",
+            "redis_url": null,
+            "redis_key_prefix": "rl",
+            "redis_fallback": true
           }
         }]
       }
@@ -294,7 +381,7 @@ curl -s -X POST \
 
 ---
 
-### `SECRETS_DETECTION`
+### `SecretsDetection`
 
 Scans tool outputs for common secret patterns (AWS keys, GCP API keys, Slack tokens, private keys, JWTs, hex secrets, etc.). Can redact findings or block the response.
 
@@ -351,7 +438,7 @@ curl -s -X POST \
       "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["fetch_data", "query_db"],
-          "plugin_id": "SECRETS_DETECTION",
+          "plugin_id": "SecretsDetection",
           "mode": "enforce",
           "priority": 20,
           "config": {
@@ -379,6 +466,67 @@ curl -s -X POST \
 
 ---
 
+### `SQLSanitizer`
+
+Inspects tool arguments for dangerous SQL patterns before the tool is invoked. Blocks statements such as `DROP`, `TRUNCATE`, `ALTER`, `GRANT`, and `REVOKE`, optionally blocks `DELETE`/`UPDATE` without a `WHERE` clause, and can strip SQL comments from the input.
+
+**Hooks:** `tool_pre_invoke`
+
+```json
+{
+  "fields": ["sql", "query", "statement"],
+  "blocked_statements": ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"],
+  "block_delete_without_where": true,
+  "block_update_without_where": true,
+  "strip_comments": true,
+  "require_parameterization": false,
+  "block_on_violation": true
+}
+```
+
+| Field                        | Type       | Default | Description                                                                                          |
+|------------------------------|------------|---------|------------------------------------------------------------------------------------------------------|
+| `fields`                     | string[]   | —       | Argument key names to inspect (e.g. `sql`, `query`, `statement`)                                     |
+| `blocked_statements`         | string[]   | —       | Regex patterns matched case-insensitively; any match blocks the call                                 |
+| `block_delete_without_where` | boolean    | `true`  | Block `DELETE` statements that have no `WHERE` clause                                                |
+| `block_update_without_where` | boolean    | `true`  | Block `UPDATE` statements that have no `WHERE` clause                                                |
+| `strip_comments`             | boolean    | `true`  | Remove `--` line comments and `/* */` block comments before passing the SQL on                       |
+| `require_parameterization`   | boolean    | `false` | Block any statement that contains literal string or numeric values instead of `?`/`$N` placeholders  |
+| `block_on_violation`         | boolean    | `true`  | Return an error on violation; if `false`, violations are logged but the call proceeds                |
+
+#### Example — protect a database query tool
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teams": {
+      "<YOUR_TEAM_ID>": {
+        "policies": [{
+          "tool_names": ["query_db"],
+          "plugin_id": "SQLSanitizer",
+          "mode": "enforce",
+          "priority": 45,
+          "binding_reference_id": "query-db-sql-sanitizer-v1",
+          "config": {
+            "fields": ["sql", "query", "statement"],
+            "blocked_statements": ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"],
+            "block_delete_without_where": true,
+            "block_update_without_where": true,
+            "strip_comments": true,
+            "require_parameterization": false,
+            "block_on_violation": true
+          }
+        }]
+      }
+    }
+  }' \
+  http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings | jq
+```
+
+---
+
 ## Multi-plugin, multi-team example
 
 A single `POST` can configure multiple plugins across multiple teams:
@@ -393,25 +541,38 @@ curl -s -X POST \
         "policies": [
           {
             "tool_names": ["*"],
-            "plugin_id": "RATE_LIMITER",
+            "plugin_id": "RateLimiterPlugin",
             "mode": "enforce",
             "priority": 5,
             "config": {
               "by_user": "60/m",
               "by_tenant": "600/m",
-              "by_tool": null
+              "by_tool": null,
+              "algorithm": "fixed_window",
+              "backend": "memory",
+              "redis_url": null,
+              "redis_key_prefix": "rl",
+              "redis_fallback": true
             }
           },
           {
             "tool_names": ["summarize_doc", "extract_invoice"],
-            "plugin_id": "OUTPUT_LENGTH_GUARD",
+            "plugin_id": "OutputLengthGuardPlugin",
             "mode": "enforce",
             "priority": 10,
             "config": {
               "min_chars": 0,
               "max_chars": 4000,
+              "min_tokens": 0,
+              "max_tokens": null,
+              "chars_per_token": 4,
+              "limit_mode": "character",
               "strategy": "truncate",
-              "ellipsis": "…"
+              "ellipsis": "\u2026",
+              "word_boundary": false,
+              "max_text_length": 1000000,
+              "max_structure_size": 10000,
+              "max_recursion_depth": 100
             }
           }
         ]
@@ -420,7 +581,7 @@ curl -s -X POST \
         "policies": [
           {
             "tool_names": ["*"],
-            "plugin_id": "SECRETS_DETECTION",
+            "plugin_id": "SecretsDetection",
             "mode": "enforce",
             "priority": 20,
             "config": {
@@ -456,13 +617,13 @@ curl -s -X POST \
 | `400`       | Invalid request payload (missing fields, bad config values)              |
 | `401`       | Missing or invalid Bearer token                                          |
 | `403`       | Caller lacks `tools.manage_plugins` or configuring bindings for a team they don't belong to |
-| `404`       | Binding ID not found (DELETE only)                                       |
+| `404`       | Binding ID not found (DELETE `/{binding_id}` only)                       |
 
-### Example 400 — bad `OUTPUT_LENGTH_GUARD` config
+### Example 400 — bad `OutputLengthGuardPlugin` config
 
 ```json
 {
-  "detail": "Invalid OUTPUT_LENGTH_GUARD config: [min_chars must be less than max_chars]"
+  "detail": "Invalid OutputLengthGuardPlugin config: [min_chars must be less than max_chars]"
 }
 ```
 
@@ -470,7 +631,7 @@ curl -s -X POST \
 
 ```json
 {
-  "detail": "Invalid RATE_LIMITER config: [by_user: Rate string '5/h' is invalid. Use format '<count>/s' or '<count>/m']"
+  "detail": "Invalid RateLimiterPlugin config: [by_user: Rate string '5/h' is invalid. Use format '<count>/s' or '<count>/m']"
 }
 ```
 
@@ -482,14 +643,14 @@ curl -s -X POST \
 2. `GatewayTenantPluginManagerFactory.get_config_from_db()` fetches all DB bindings for the `(team_id, tool_name)` pair, including any wildcard `*` bindings.
 3. For each binding, the DB `mode` and `config` are merged over the global `config.yaml` values (`_merge_tenant_config`). DB values always win.
 4. A **`TenantPluginManager`** is instantiated with the merged config and cached in memory, keyed by context ID.
-5. On upsert or delete, the cache entry is invalidated immediately so the next call picks up the new config.
+5. On upsert or delete, the handling worker invalidates its local cache entry and broadcasts a `binding_change` frame on the `plugin:invalidation` Redis pub/sub channel, so peer workers evict within milliseconds. If pub/sub delivery fails, the cache TTL (default 30 seconds) bounds the worst-case drift. For wildcard bindings (`tool_name="*"`), every cached context for the team is evicted on the handling worker.
 
 ### Priority execution order
 
 Plugins with lower `priority` values run first. The default is `50`. Example ordering:
 
 ```
-priority 5  → RATE_LIMITER   (gate-keep before any work is done)
-priority 10 → OUTPUT_LENGTH_GUARD
-priority 20 → SECRETS_DETECTION
+priority 5  → RateLimiterPlugin        (gate-keep before any work is done)
+priority 10 → OutputLengthGuardPlugin
+priority 20 → SecretsDetection
 ```

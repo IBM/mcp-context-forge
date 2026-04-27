@@ -518,13 +518,13 @@ async def test_factory_reload_inflight_cleanup():
         with patch("mcpgateway.plugins.framework.manager.TenantPluginManager.initialize", new_callable=AsyncMock) as mock_init:
             # Make initialize slow
             async def slow_init():
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)
 
             mock_init.side_effect = slow_init
 
             # Start build in background
             task = asyncio.create_task(factory.get_manager(context_id="slow_reload"))
-            await asyncio.sleep(0.1)  # Let it start
+            await asyncio.sleep(0.05)  # Let it start
 
             # Reload should cancel and clean up
             manager = await factory.reload_tenant(context_id="slow_reload")
@@ -565,13 +565,13 @@ async def test_factory_shutdown_with_active_inflight():
     with patch("mcpgateway.plugins.framework.manager.TenantPluginManager.initialize", new_callable=AsyncMock) as mock_init:
         # Make initialize slow
         async def slow_init():
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
 
         mock_init.side_effect = slow_init
 
         # Start builds in background
         tasks = [asyncio.create_task(factory.get_manager(context_id=f"tool{i}")) for i in range(3)]
-        await asyncio.sleep(0.1)  # Let them start
+        await asyncio.sleep(0.05)  # Let them start
 
         # Shutdown should cancel all inflight tasks
         await factory.shutdown()

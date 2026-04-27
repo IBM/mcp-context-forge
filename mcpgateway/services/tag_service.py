@@ -18,7 +18,7 @@ import logging
 from typing import Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -198,7 +198,7 @@ class TagService:
             if include_entities:
                 # Get full entity details
                 stmt = select(model).where(model.tags.isnot(None))
-                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
                 result = db.execute(stmt)
 
                 for entity in result.scalars():
@@ -240,7 +240,7 @@ class TagService:
             else:
                 # Just get tags without entity details
                 stmt = select(model.tags).where(model.tags.isnot(None))
-                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
                 result = db.execute(stmt)
 
                 for row in result:
@@ -357,14 +357,11 @@ class TagService:
         user_teams = await team_service.get_user_teams(user_email)
         return [team.id for team in user_teams]
 
-    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
-        """Apply token/user visibility scope to a SQLAlchemy statement.
+    @staticmethod
+    def _apply_visibility_scope(stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Session):
+        """Thin passthrough to :meth:`BaseService._apply_visibility_scope`.
 
-        Semantics mirror list/read endpoints:
-        - token_teams is None and user_email is None -> unrestricted (admin bypass)
-        - token_teams == [] -> public-only
-        - token_teams == [...] -> public + matching-team (+ owner if user_email present)
-        - token_teams is None and user_email present -> use DB team memberships
+        See :class:`BaseService` for the full admin-bypass contract.
 
         Args:
             stmt: SQLAlchemy statement to constrain
@@ -372,23 +369,15 @@ class TagService:
             user_email: Caller email used for owner visibility
             token_teams: Explicit token team scope when present
             team_ids: Effective team IDs for team visibility
+            db: Required session for the admin bypass check.
 
         Returns:
             Scoped SQLAlchemy statement.
         """
-        if token_teams is None and user_email is None:
-            return stmt
+        # First-Party
+        from mcpgateway.services.base_service import BaseService  # pylint: disable=import-outside-toplevel
 
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        access_conditions = [model.visibility == "public"]
-
-        if not is_public_only_token and user_email:
-            access_conditions.append(model.owner_email == user_email)
-
-        if team_ids:
-            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
-
-        return stmt.where(or_(*access_conditions))
+        return BaseService._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
     async def get_entities_by_tag(
         self,
@@ -486,7 +475,7 @@ class TagService:
             # Query entities that have this tag
             # Using json_contains_tag_expr for cross-database compatibility (PostgreSQL/SQLite)
             stmt = select(model).where(json_contains_tag_expr(db, model.tags, [tag_name], match_any=True))
-            stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+            stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
             result = db.execute(stmt)
 
             for entity in result.scalars():

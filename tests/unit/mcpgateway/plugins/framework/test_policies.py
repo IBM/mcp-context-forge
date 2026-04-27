@@ -828,36 +828,6 @@ class TestBorgPolicyBackfill:
         assert result.modified_payload.secret == "safe"  # Policy filtered this out
 
 
-class TestFrameworkImportIsolation:
-    """Verify the plugin framework has no remaining imports from mcpgateway.common or mcpgateway.utils."""
-
-    def test_no_common_or_utils_imports_in_framework(self):
-        # Standard
-        import ast
-        from pathlib import Path
-
-        # Walk up to repo root (where pyproject.toml lives) instead of hardcoding parent depth.
-        _here = Path(__file__).resolve().parent
-        repo_root = _here
-        while not (repo_root / "pyproject.toml").exists() and repo_root != repo_root.parent:
-            repo_root = repo_root.parent
-        framework_dir = repo_root / "mcpgateway" / "plugins" / "framework"
-        violations = []
-
-        for py_file in framework_dir.rglob("*.py"):
-            source = py_file.read_text()
-            try:
-                tree = ast.parse(source)
-            except SyntaxError:
-                continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    if node.module.startswith(("mcpgateway.common", "mcpgateway.utils")):
-                        violations.append(f"{py_file.relative_to(framework_dir)}:{node.lineno} -> {node.module}")
-
-        assert violations == [], "Framework still imports from gateway internals:\n" + "\n".join(violations)
-
-
 class TestMultiPluginDictChain:
     """Tests for multi-plugin chains where an earlier plugin returns a dict payload."""
 

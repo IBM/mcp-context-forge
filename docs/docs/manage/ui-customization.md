@@ -11,7 +11,7 @@ deployment).
 
 | Library | Version | Purpose |
 |---------|---------|---------|
-| HTMX | 1.9.10 | AJAX interactions, HTML-over-HTTP |
+| HTMX | 2.0.3 | AJAX interactions, HTML-over-HTTP (bundled via npm/Vite) |
 | Alpine.js | 3.x | Lightweight reactive components |
 | Tailwind CSS | CDN | Utility-first styling |
 | CodeMirror | 5.65.18 | Syntax-highlighted code editing |
@@ -181,7 +181,7 @@ When packaging the gateway:
   docker run \
     -v $(pwd)/overrides/admin.html:/app/mcpgateway/templates/admin.html:ro \
     -v $(pwd)/overrides/static:/app/mcpgateway/static/custom:ro \
-    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
   ```
   Then update template references to point at `static/custom/...`.
 

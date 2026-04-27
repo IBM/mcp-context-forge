@@ -556,18 +556,18 @@ mod comprehensive_tests {
         }
 
         // Test with single root
-        let args = Args::parse_from(&["program", "--roots", "/tmp/root1"]);
+        let args = Args::parse_from(["program", "--roots", "/tmp/root1"]);
         assert_eq!(args.roots.len(), 1);
         assert_eq!(args.roots[0], "/tmp/root1");
 
         // Test with multiple roots
-        let args = Args::parse_from(&["program", "--roots", "/tmp/root1", "--roots", "/tmp/root2"]);
+        let args = Args::parse_from(["program", "--roots", "/tmp/root1", "--roots", "/tmp/root2"]);
         assert_eq!(args.roots.len(), 2);
         assert_eq!(args.roots[0], "/tmp/root1");
         assert_eq!(args.roots[1], "/tmp/root2");
 
         // Test with no roots
-        let args = Args::parse_from(&["program"]);
+        let args = Args::parse_from(["program"]);
         assert_eq!(args.roots.len(), 0);
     }
 

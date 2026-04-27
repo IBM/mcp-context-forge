@@ -13,21 +13,16 @@
 name: Tests & Coverage
 
 on:
-  push:
-    branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "tests/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/pytest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
-    # paths:
-    #   - "mcpgateway/**"
-    #   - "tests/**"
-    #   - "pyproject.toml"
-    #   - ".github/workflows/pytest.yml"
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "!tests/e2e_rust/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/pytest.yml"
   # schedule:
   #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
 
@@ -77,38 +72,23 @@ jobs:
       # 2  Install uv
       # -----------------------------------------------------------
       - name: ⚡ Install uv
-        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.11"
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
-      # 2.5  Setup Rust toolchain for Rust plugins
+      # Note: Rust plugin builds removed - all plugins now distributed as PyPI packages
+      # Rust MCP runtime (tools_rust/mcp_runtime) not needed for main pytest suite
+      # (e2e_rust tests are excluded and run in separate workflow)
       # -----------------------------------------------------------
-      - name: 🦀  Install Rust stable
-        run: rustup default stable
 
-      - name: 📦  Cache Cargo dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            plugins_rust/*/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: 🔨  Build Rust plugins (clean, install, verify stubs)
-        run: make rust-clean-stubs && make rust-install && make rust-verify-stubs
-
-      # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
-          uv run pytest -n auto \
-            --durations=5 \
+          uv run --extra plugins pytest -n auto \
+            --durations=10 \
             --ignore=tests/fuzz \
             --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \
@@ -117,8 +97,6 @@ jobs:
             --cov-report=term \
             --cov-branch \
             --cov-fail-under=95
-        env:
-          REQUIRE_RUST: "1"
 
       # -----------------------------------------------------------
       # 3.5  Diff-cover: enforce 93% coverage on changed lines (PRs only)

@@ -249,22 +249,22 @@ async def test_unix_client_high_throughput(unix_server_proc):
 # PluginManager Integration Tests
 # =============================================================================
 
-# Fixed socket path for PluginManager tests (matches valid_unix_external_plugin_manager.yaml)
-PLUGIN_MANAGER_SOCKET_PATH = "/tmp/mcpgateway-pm-test.sock"
-
 
 @pytest.fixture
 def unix_server_proc_for_manager():
-    """Start a Unix socket plugin server on the fixed path for PluginManager tests."""
+    """Start a Unix socket plugin server with a unique path for PluginManager tests.
+
+    Uses a UUID-based socket path to avoid conflicts when tests run in
+    parallel under pytest-xdist (-n auto).
+    """
+    short_id = uuid.uuid4().hex[:8]
+    socket_path = f"/tmp/unix-pm-test-{short_id}.sock"
+
     current_env = os.environ.copy()
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
     current_env["PLUGINS_TRANSPORT"] = "unix"
-    current_env["PLUGINS_UNIX_SOCKET_PATH"] = PLUGIN_MANAGER_SOCKET_PATH
-
-    # Clean up any existing socket
-    if os.path.exists(PLUGIN_MANAGER_SOCKET_PATH):
-        os.unlink(PLUGIN_MANAGER_SOCKET_PATH)
+    current_env["PLUGINS_UNIX_SOCKET_PATH"] = socket_path
 
     try:
         with subprocess.Popen(
@@ -273,23 +273,23 @@ def unix_server_proc_for_manager():
             stderr=subprocess.STDOUT,
             env=current_env,
         ) as server_proc:
-            _wait_for_socket(PLUGIN_MANAGER_SOCKET_PATH, proc=server_proc)
-            yield server_proc
+            _wait_for_socket(socket_path, proc=server_proc)
+            yield server_proc, socket_path
             server_proc.terminate()
             server_proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
         server_proc.kill()
         server_proc.wait(timeout=3)
     finally:
-        if os.path.exists(PLUGIN_MANAGER_SOCKET_PATH):
-            os.unlink(PLUGIN_MANAGER_SOCKET_PATH)
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="Unix domain sockets are not supported on Windows.")
 @pytest.mark.asyncio
 async def test_unix_plugin_manager_invoke_hook(unix_server_proc_for_manager):
     """Test PluginManager can invoke hooks through Unix socket external plugin."""
-    server_proc = unix_server_proc_for_manager
+    server_proc, socket_path = unix_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     # Reset PluginManager singleton state
@@ -298,6 +298,7 @@ async def test_unix_plugin_manager_invoke_hook(unix_server_proc_for_manager):
     plugin_manager = PluginManager(
         config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
     )
+    plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:
         await plugin_manager.initialize()
@@ -327,13 +328,14 @@ async def test_unix_plugin_manager_invoke_hook(unix_server_proc_for_manager):
 @pytest.mark.asyncio
 async def test_unix_plugin_manager_multiple_hooks(unix_server_proc_for_manager):
     """Test PluginManager can invoke multiple hook types through Unix socket."""
-    server_proc = unix_server_proc_for_manager
+    server_proc, socket_path = unix_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
     plugin_manager = PluginManager(
         config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
     )
+    plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:
         await plugin_manager.initialize()
@@ -369,13 +371,14 @@ async def test_unix_plugin_manager_multiple_hooks(unix_server_proc_for_manager):
 @pytest.mark.asyncio
 async def test_unix_plugin_manager_context_persistence(unix_server_proc_for_manager):
     """Test that context is maintained across multiple PluginManager calls."""
-    server_proc = unix_server_proc_for_manager
+    server_proc, socket_path = unix_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
     plugin_manager = PluginManager(
         config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
     )
+    plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:
         await plugin_manager.initialize()

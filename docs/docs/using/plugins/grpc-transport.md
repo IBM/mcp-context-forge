@@ -105,7 +105,7 @@ The plugin server reads its configuration from a YAML file. Configure the gRPC s
 # resources/plugins/config.yaml (on the plugin server)
 plugins:
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     mode: "enforce"
     priority: 50

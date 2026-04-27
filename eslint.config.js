@@ -2,6 +2,10 @@
 const neostandard = require("neostandard");
 
 module.exports = [
+  // Ignore compiled build artefacts — these are minified and not authored code
+  {
+    ignores: ["mcpgateway/static/bundle-*.js", "mcpgateway/static/.vite/**"],
+  },
   ...neostandard({
     env: ["browser"],
     ignores: neostandard.resolveIgnoresFromGitignore(),

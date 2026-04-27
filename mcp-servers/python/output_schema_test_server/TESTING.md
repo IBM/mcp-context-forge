@@ -12,7 +12,7 @@ This document provides step-by-step instructions for testing the `outputSchema` 
 
 2. **Start ContextForge** (in separate terminal):
    ```bash
-   cd /home/cmihai/github/mcp-context-forge
+   cd /path/to/mcp-context-forge
    make dev
    ```
 

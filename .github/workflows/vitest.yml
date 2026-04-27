@@ -10,14 +10,6 @@
 name: JavaScript Tests (Vitest)
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/static/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/vitest.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
@@ -39,7 +31,7 @@ jobs:
   vitest:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: vitest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 15
 
     steps:
@@ -55,17 +47,25 @@ jobs:
       # -----------------------------------------------------------
       # 1️⃣  Node.js Setup
       # -----------------------------------------------------------
-      - name: 📦  Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: '20'
-          cache: npm
+      - name: 📦  Install Node.js 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl gnupg
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
 
       # -----------------------------------------------------------
       # 2️⃣  Upgrade npm to minimum required version
       # -----------------------------------------------------------
       - name: 🔧  Upgrade npm to minimum required version
-        run: npm install -g npm@^11.10.0
+        run: sudo npm install -g npm@^11.10.0
 
       # -----------------------------------------------------------
       # 3️⃣  Install Dependencies
