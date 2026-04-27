@@ -3249,6 +3249,11 @@ class ToolService(BaseService):
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
+            # Clean up server_tool_association rows referencing this tool.
+            # The association table FK has no ondelete cascade, so rows must
+            # be removed explicitly before the tool row can be deleted.
+            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
+
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
             result = db.execute(stmt)
