@@ -118,16 +118,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         r"^/a2a(/.*)?$",
     }
 
-    # Paths that can be cached (public, static content)
+    # Paths that can be cached (public, static content).
+    # NOTE: /docs, /redoc, /openapi.json are intentionally NOT here — they are
+    # auth-protected by DocsAuthMiddleware and must receive no-store/private.
     EXEMPTED_PATH_PATTERNS: Set[str] = {
         r"^/static/.*$",
-        r"^/docs$",
-        r"^/redoc$",
-        r"^/openapi\.json$",
         r"^/health$",
         r"^/ready$",
         r"^/\.well-known/.*$",
-        r"^/servers/.*/\.well-known/.*$",  # Virtual server well-known files
+        r"^/servers/[^/]+/\.well-known/.*$",
     }
 
     def __init__(self, app: Any) -> None:
