@@ -449,7 +449,7 @@
         <!-- Sidebar Header -->
         <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
              :class="sidebarCollapsed ? 'justify-center' : 'justify-between'">
-          <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
+          <a href="{{ root_path }}/v1/admin" class="flex items-center" x-show="!sidebarCollapsed">
             <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge logo" class="h-8 dark:hidden" />
             <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge logo" class="h-8 hidden dark:block" />
           </a>
@@ -935,7 +935,7 @@
 
               <!-- Logout -->
               {% if 'logout' not in hidden_header_items %}
-              <form method="post" action="{{ root_path }}/admin/logout" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to logout?" data-prevent-default="false">
+              <form method="post" action="{{ root_path }}/v1/admin/logout" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to logout?" data-prevent-default="false">
                 <button
                   type="submit"
                   class="px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
@@ -1666,7 +1666,7 @@
       <!-- Performance Panel -->
       {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
-           hx-get="{{ root_path }}/admin/performance/stats"
+           hx-get="{{ root_path }}/v1/admin/performance/stats"
            hx-trigger="revealed once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
@@ -1682,7 +1682,7 @@
       <!-- Observability Panel -->
       {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
-           hx-get="{{ root_path }}/admin/observability/partial"
+           hx-get="{{ root_path }}/v1/admin/observability/partial"
            hx-trigger="revealed once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
@@ -2031,7 +2031,7 @@
           <div id="llm-settings-content-providers" class="llm-settings-content">
             <div
               id="llm-providers-container"
-              hx-get="{{ root_path }}/admin/llm/providers/html"
+              hx-get="{{ root_path }}/v1/admin/llm/providers/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2049,7 +2049,7 @@
           <div id="llm-settings-content-models" class="llm-settings-content hidden">
             <div
               id="llm-models-container"
-              hx-get="{{ root_path }}/admin/llm/models/html"
+              hx-get="{{ root_path }}/v1/admin/llm/models/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2067,7 +2067,7 @@
           <div id="llm-settings-content-test" class="llm-settings-content hidden">
             <div
               id="llm-test-container"
-              hx-get="{{ root_path }}/admin/llm/api-info/html"
+              hx-get="{{ root_path }}/v1/admin/llm/api-info/html"
               hx-trigger="revealed once"
               hx-swap="innerHTML"
             >
@@ -2399,7 +2399,7 @@
               checked
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
-              hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('servers-search-input')?.value || '', tags: document.getElementById('servers-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
@@ -2464,7 +2464,7 @@
           <div id="servers-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/v1/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -2778,7 +2778,7 @@
                         {% if server.enabled %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/servers/{{ server.id }}/state"
+                          action="{{ root_path }}/v1/admin/servers/{{ server.id }}/state"
                           class="contents"
                           data-action-submit="handleToggleSubmit" data-arg0="servers"
                         >
@@ -2794,7 +2794,7 @@
                         {% else %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/servers/{{ server.id }}/state"
+                          action="{{ root_path }}/v1/admin/servers/{{ server.id }}/state"
                           class="contents"
                           data-action-submit="handleToggleSubmit" data-arg0="servers"
                         >
@@ -2810,7 +2810,7 @@
                         {% endif %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
+                          action="{{ root_path }}/v1/admin/servers/{{ server.id }}/delete"
                           class="contents"
                           data-action-submit="handleDeleteSubmit" data-arg0="server" data-arg1="{{ server.name|tojson_attr }}" data-arg2="servers"
                         >
@@ -2913,7 +2913,7 @@
                   <div
                     id="associatedGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-get="{{ root_path }}/v1/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -2993,7 +2993,7 @@
                   <div
                     id="associatedTools"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-get="{{ root_path }}/v1/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                     hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
@@ -3065,7 +3065,7 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                  hx-get="{{ root_path }}/v1/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
@@ -3132,7 +3132,7 @@
                 <div
                   id="associatedPrompts"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                  hx-get="{{ root_path }}/v1/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
@@ -3424,7 +3424,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
-              hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
               hx-target="#tools-table"
               hx-swap="outerHTML"
@@ -3469,7 +3469,7 @@
           <div id="tools-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('tools', '{{ root_path }}/admin/tools/partial', {include_inactive: (document.getElementById('show-inactive-tools')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('tools', '{{ root_path }}/v1/admin/tools/partial', {include_inactive: (document.getElementById('show-inactive-tools')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -4208,7 +4208,7 @@
                     id="show-inactive-tools-toolops"
                     name="include_inactive"
                     class="mr-2 show-inactive-toggle"
-                    hx-get="{{ root_path }}/admin/tool-ops/partial?page=1"
+                    hx-get="{{ root_path }}/v1/admin/tool-ops/partial?page=1"
                     hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools-toolops').checked}"
                     hx-trigger="change"
                     hx-target="#tool-ops-main-content-wrapper"
@@ -4224,7 +4224,7 @@
               </div>
 
               <!-- This div will be the target for the HTMX initial load and subsequent swaps -->
-              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML" hx-indicator="#tool-ops-loading-indicator">
+              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/v1/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML" hx-indicator="#tool-ops-loading-indicator">
 
               </div>
 
@@ -4444,7 +4444,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
               hx-target="#resources-table"
               hx-swap="outerHTML"
@@ -4489,7 +4489,7 @@
           <div id="resources-table-wrapper" class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              x-init="$el.setAttribute('hx-get', buildTableUrl('resources', '{{ root_path }}/admin/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('resources', '{{ root_path }}/v1/admin/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4696,7 +4696,7 @@
               name="include_inactive"
               x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
@@ -4741,7 +4741,7 @@
           <div id="prompts-table-wrapper" class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              x-init="$el.setAttribute('hx-get', buildTableUrl('prompts', '{{ root_path }}/admin/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('prompts', '{{ root_path }}/v1/admin/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4773,7 +4773,7 @@
           </h3>
           <form
             method="POST"
-            action="{{ root_path }}/admin/prompts"
+            action="{{ root_path }}/v1/admin/prompts"
             id="add-prompt-form"
           >
             <div class="grid grid-cols-1 gap-7">
@@ -4952,7 +4952,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <!-- Overview Panel -->
       {% if 'overview' not in hidden_sections %}
       <div id="overview-panel" class="tab-panel"
-           hx-get="{{ root_path }}/admin/overview/partial"
+           hx-get="{{ root_path }}/v1/admin/overview/partial"
            hx-trigger="load"
            hx-swap="innerHTML">
         <div class="flex items-center justify-center py-12">
@@ -4987,7 +4987,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               checked
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
-              hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
@@ -5033,7 +5033,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="gateways-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/v1/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -5359,7 +5359,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% if gateway.enabled %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
+                          action="{{ root_path }}/v1/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
                           data-action-submit="handleToggleSubmit" data-arg0="gateways"
                         >
@@ -5375,7 +5375,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% else %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
+                          action="{{ root_path }}/v1/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
                           data-action-submit="handleToggleSubmit" data-arg0="gateways"
                         >
@@ -5391,7 +5391,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% endif %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
+                          action="{{ root_path }}/v1/admin/gateways/{{ gateway.id }}/delete"
                           class="contents"
                           data-action-submit="handleSubmitWithConfirmation" data-arg0="gateways"
                         >
@@ -6218,7 +6218,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <form
               id="create-user-form"
-              hx-post="{{ root_path }}/admin/users"
+              hx-post="{{ root_path }}/v1/admin/users"
               hx-target="#user-creation-messages"
               hx-swap="innerHTML"
               class="space-y-4"
@@ -6425,7 +6425,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <!-- Users list container -->
             <div
               id="users-list-container"
-              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
+              hx-get="{{ root_path }}/v1/admin/users/partial?page=1&per_page=50"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#users-loading"
@@ -6458,7 +6458,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               name="include_inactive"
               x-init="syncCheckboxFromUrl('tokens', 'show-inactive-tokens')"
               @change="updateInactiveUrlState('tokens', $el.checked)"
-              hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
               hx-target="#tokens-table"
               hx-swap="innerHTML"
@@ -6703,7 +6703,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Tokens table loaded via HTMX -->
             <div id="tokens-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('tokens', '{{ root_path }}/admin/tokens/partial', {include_inactive: (document.getElementById('show-inactive-tokens')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('tokens', '{{ root_path }}/v1/admin/tokens/partial', {include_inactive: (document.getElementById('show-inactive-tokens')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load, refreshTokens"
                  hx-swap="innerHTML"
                  hx-indicator="#tokens-loading">
@@ -6798,7 +6798,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               name="include_inactive"
               x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
-              hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-get="{{ root_path }}/v1/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
               hx-target="#agents-table"
               hx-swap="outerHTML"
@@ -6851,7 +6851,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div id="agents-table-wrapper" class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
-                   x-init="$el.setAttribute('hx-get', buildTableUrl('agents', '{{ root_path }}/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                   x-init="$el.setAttribute('hx-get', buildTableUrl('agents', '{{ root_path }}/v1/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#agents-loading">
@@ -7910,7 +7910,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                   </div>
                   <div class="flex flex-col space-y-2 ml-4">
-                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/state?activate={{ 'false' if service.enabled else 'true' }}" method="POST" class="inline">
+                    <form action="{{ root_path }}/v1/admin/grpc/{{ service.id }}/state?activate={{ 'false' if service.enabled else 'true' }}" method="POST" class="inline">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium rounded-md {% if service.enabled %}bg-yellow-100 text-yellow-800 hover:bg-yellow-200{% else %}bg-green-100 text-green-800 hover:bg-green-200{% endif %}"
@@ -7918,7 +7918,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% if service.enabled %}Deactivate{% else %}Activate{% endif %}
                       </button>
                     </form>
-                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/reflect" method="POST" class="inline">
+                    <form action="{{ root_path }}/v1/admin/grpc/{{ service.id }}/reflect" method="POST" class="inline">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200"
@@ -7932,7 +7932,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       View Methods
                     </button>
-                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
+                    <form action="{{ root_path }}/v1/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200"
@@ -8066,7 +8066,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <hr class="border-gray-200 dark:border-gray-600 my-1">
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/roots/{{ root.uri }}/delete"
+                          action="{{ root_path }}/v1/admin/roots/{{ root.uri }}/delete"
                           class="contents"
                           @submit="menuOpen = false"
                           data-action-submit="handleSubmitWithConfirmation" data-arg0="roots"
@@ -8111,7 +8111,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </h3>
           <form
             method="POST"
-            action="{{ root_path }}/admin/roots"
+            action="{{ root_path }}/v1/admin/roots"
             id="add-root-form"
             data-action-submit="handleToggleSubmit" data-arg0="roots"
           >
@@ -8171,7 +8171,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- System Metrics Content (loaded via HTMX) -->
           <div
-            hx-get="{{ root_path }}/admin/system/stats"
+            hx-get="{{ root_path }}/v1/admin/system/stats"
             hx-trigger="revealed once"
             hx-swap="outerHTML"
           >
@@ -8235,7 +8235,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-tools" class="top-performers-panel">
             <div class="overflow-x-auto">
               <div id="top-tools-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=tools&page=1&per_page=10"
+                   hx-get="{{ root_path }}/v1/admin/metrics/partial?entity_type=tools&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-tools-loading-visible">
@@ -8251,7 +8251,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-resources" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-resources-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=resources&page=1&per_page=10"
+                   hx-get="{{ root_path }}/v1/admin/metrics/partial?entity_type=resources&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-resources-loading-visible">
@@ -8267,7 +8267,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-prompts" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-prompts-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=prompts&page=1&per_page=10"
+                   hx-get="{{ root_path }}/v1/admin/metrics/partial?entity_type=prompts&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-prompts-loading-visible">
@@ -8283,7 +8283,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="top-performers-panel-servers" class="top-performers-panel hidden">
             <div class="overflow-x-auto">
               <div id="top-servers-content-visible"
-                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=servers&page=1&per_page=10"
+                   hx-get="{{ root_path }}/v1/admin/metrics/partial?entity_type=servers&page=1&per_page=10"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#top-servers-loading-visible">
@@ -11331,7 +11331,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div
                     id="associatedEditGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-get="{{ root_path }}/v1/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -11410,7 +11410,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                        hx-get="{{ root_path }}/v1/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -11485,7 +11485,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                        hx-get="{{ root_path }}/v1/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
@@ -11552,7 +11552,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                        hx-get="{{ root_path }}/v1/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
@@ -14207,7 +14207,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
             <form
               id="create-team-form"
-              hx-post="{{ root_path }}/admin/teams"
+              hx-post="{{ root_path }}/v1/admin/teams"
               hx-target="#create-team-error"
               hx-swap="innerHTML"
               data-team-validation="true"

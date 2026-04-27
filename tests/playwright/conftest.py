@@ -268,7 +268,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             if not _retry_ui_login_before_jwt(page, login_page, admin_email, settings, current_password):
                 raise AssertionError("Admin login failed after JWT fallback and form-login recovery.")
 
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=30000)
+    expect(page).to_have_url(re.compile(r".*/v1/admin(?!/login).*"), timeout=30000)
 
     # Wait for the application shell to load
     try:

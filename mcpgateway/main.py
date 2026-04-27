@@ -12283,9 +12283,9 @@ if UI_ENABLED:
         Raises:
             HTTPException: If there is an error during redirection.
         """
-        logger.debug("Redirecting root path to /admin/")
+        logger.debug("Redirecting root path to /v1/admin/")
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
+        return RedirectResponse(f"{root_path}/v1/admin/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
 
     # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
