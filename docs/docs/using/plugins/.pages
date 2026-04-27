@@ -2,6 +2,7 @@ nav:
   - index.md
   - lifecycle.md
   - plugins.md
+  - content-moderation.md
   - http-auth-hooks.md
   - grpc-transport.md
   - unix-socket-transport.md

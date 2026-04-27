@@ -74,7 +74,6 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.auth_context import (
-    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
     get_request_identity,
@@ -83,6 +82,7 @@ from mcpgateway.auth_context import (
     get_token_teams_from_request,
     get_user_email,
     has_valid_internal_mcp_runtime_auth_header,
+    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult

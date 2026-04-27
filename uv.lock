@@ -8,24 +8,25 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-13T08:30:04.597062Z"
+exclude-newer = "2026-04-17T20:59:09.705483Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
-cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
 mako = "2026-04-22T23:59:59Z"
-langsmith = "2026-04-22T23:59:59Z"
 langchain-core = "2026-04-22T23:59:59Z"
-python-multipart = "2026-04-22T23:59:59Z"
 cpex-retry-with-backoff = "2026-04-09T23:59:59Z"
 cpex-pii-filter = "2026-04-21T23:59:59Z"
 cpex-url-reputation = "2026-04-20T23:59:59Z"
 cpex-rate-limiter = "2026-04-22T23:59:59Z"
-cpex-secrets-detection = "2026-04-20T23:59:59Z"
-langchain-openai = "2026-04-22T23:59:59Z"
 cryptography = "2026-04-11T23:59:59Z"
 uv = "2026-04-11T23:59:59Z"
 authlib = "2026-04-19T23:59:59Z"
+langchain-openai = "2026-04-22T23:59:59Z"
+langsmith = "2026-04-22T23:59:59Z"
+cpex-content-moderation = "2026-04-27T23:59:59Z"
+python-multipart = "2026-04-22T23:59:59Z"
+cpex-secrets-detection = "2026-04-20T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
 
 [[package]]
 name = "a2a-sdk"
@@ -882,6 +883,19 @@ wheels = [
 [package.optional-dependencies]
 toml = [
     { name = "tomli", marker = "python_full_version <= '3.11'" },
+]
+
+[[package]]
+name = "cpex-content-moderation"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/7d/21530546562ac3c1231f9e2f4185282371187e552e1d4a0dbaaee7ce6d1b/cpex_content_moderation-1.0.0.tar.gz", hash = "sha256:e28c9818ca76afc41c2998d6260260fe7e9a0c9fc6f2a9a890d01c98a5896c6b", size = 17181, upload-time = "2026-04-27T20:03:31.412Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/f0/da540b9bbac7a6cd74ef48ac77d139a2478d0608c64d0db67e16a5f0bdd2/cpex_content_moderation-1.0.0-py3-none-any.whl", hash = "sha256:3a9c1a0c1d9054773fbf9ab4fe99fcc289040147d95d24b55b0da526b8f3f48e", size = 13256, upload-time = "2026-04-27T20:03:29.991Z" },
 ]
 
 [[package]]
@@ -2887,6 +2901,7 @@ asyncpg = [
     { name = "asyncpg" },
 ]
 dev-all = [
+    { name = "cpex-content-moderation" },
     { name = "cpex-encoded-exfil-detection" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
@@ -2935,6 +2950,7 @@ playwright = [
     { name = "python-owasp-zap-v2-4" },
 ]
 plugins = [
+    { name = "cpex-content-moderation" },
     { name = "cpex-encoded-exfil-detection" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
@@ -3041,6 +3057,7 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "brotli", specifier = "==1.2.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
+    { name = "cpex-content-moderation", marker = "extra == 'plugins'", specifier = ">=1.0.0" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.2.1" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.4" },

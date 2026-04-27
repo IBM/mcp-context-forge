@@ -28,6 +28,7 @@ request_headers_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.Contex
 # ContextVar — transport layer fills it, service layer reads it.
 user_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 
+# First-Party
 # Structured user identity for identity propagation to upstream servers.
 # Populated by _set_user_identity_from_dict() in the transport layer;
 # read by tool/resource/prompt services when building upstream requests.
