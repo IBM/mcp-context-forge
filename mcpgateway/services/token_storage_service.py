@@ -299,23 +299,31 @@ class TokenStorageService:
             from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
 
             def normalize_resource(url: str, *, preserve_query: bool = False) -> str | None:
-                """Normalize resource URL per RFC 8707.
+                """Normalize a resource value per RFC 8707, or pass through opaque identifiers.
+
+                URL-shaped inputs are canonicalized (fragment stripped; query stripped
+                or preserved per ``preserve_query``).  Non-URL inputs are returned
+                verbatim so that opaque audience identifiers learned from IdPs that do
+                not honor RFC 8707 (e.g. ServiceNow / Authentik returning ``aud=client_id``)
+                round-trip correctly through token refresh.  RFC 8707 §2 explicitly
+                permits the AS to map ``resource`` to an abstract identifier; the
+                resource server therefore must accept either form.
 
                 Args:
-                    url: Resource URL to normalize
+                    url: Resource URL or opaque audience identifier to normalize.
                     preserve_query: If True, preserve query (for explicit config). If False, strip query.
 
                 Returns:
-                    Normalized URL string, or None if invalid.
+                    Normalized URL string, the original opaque value, or None if input is empty.
                 """
                 if not url:
                     return None
                 parsed = urlparse(url)
-                # RFC 8707: resource MUST be absolute URI (requires scheme)
-                # Support both hierarchical URIs and URNs
+                # If the value lacks a scheme it is not a URL; treat as an opaque
+                # audience identifier and pass through verbatim so a learned
+                # client_id-style audience survives refresh.
                 if not parsed.scheme:
-                    logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
-                    return None
+                    return url
                 # Remove fragment (MUST NOT); query: preserve for explicit, strip for auto-derived
                 query = parsed.query if preserve_query else ""
                 return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
@@ -328,17 +336,17 @@ class TokenStorageService:
                     normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
                     oauth_config["resource"] = [r for r in normalized if r]
                     if not oauth_config["resource"] and original_count > 0:
-                        logger.warning(f"All {original_count} configured resource values were invalid and removed during refresh")
+                        logger.warning(f"All {original_count} configured resource values were empty and removed during refresh")
                 else:
                     normalized = normalize_resource(existing_resource, preserve_query=True)
                     if not normalized and existing_resource:
-                        logger.warning(f"Configured resource was invalid and removed during refresh: {existing_resource}")
+                        logger.warning(f"Configured resource was empty and removed during refresh: {existing_resource}")
                     oauth_config["resource"] = normalized
             elif gateway.url:
                 # Derive from gateway.url if not explicitly configured (strip query)
                 oauth_config["resource"] = normalize_resource(gateway.url)
                 if not oauth_config.get("resource"):
-                    logger.warning(f"Gateway URL is not a valid absolute URI, skipping resource parameter: {gateway.url}")
+                    logger.warning(f"Gateway URL is empty, skipping resource parameter: {gateway.url}")
 
             # Use OAuthManager to refresh the token
             # First-Party

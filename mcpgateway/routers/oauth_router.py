@@ -83,8 +83,19 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     ensure that subsequent token validation in ``_validate_audience`` succeeds
     and that future OAuth requests use the IdP's preferred audience identifier.
 
-    This is a best-effort operation: opaque tokens and missing aud claims are
-    silently ignored.
+    Persistence is **first-write-only**: the learned audience is written only
+    when ``oauth_config["resource"]`` is currently unset.  The OAuth callback
+    path enforces gateway access (read-equivalent) but not ``gateways.update``,
+    so allowing every authenticated callback to overwrite shared gateway
+    configuration would let any user with gateway access mutate global state on
+    behalf of all other users.  To re-learn a stale audience after an IdP
+    change, an admin must clear the ``resource`` field via the gateway update
+    API (which does enforce ``gateways.update``).
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
+    already-set (truthy) resources are silently skipped.  Empty strings and
+    empty lists count as unset, so an admin can clear the field to trigger
+    re-learning on the next callback.
 
     Args:
         gateway: The gateway ORM object (will be mutated and flushed).
@@ -96,17 +107,21 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     if token_aud is None:
         return
 
-    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
-    current_resource = (gateway.oauth_config or {}).get("resource")
-    if current_resource == token_aud:
-        return  # Already correct
+    # First-write-only: do not overwrite an existing usable resource.  Empty
+    # strings and empty lists are treated as unset (Python truthiness) so an
+    # admin can clear the field via the gateway update API to trigger
+    # re-learning on the next callback.  See docstring for the authorization
+    # rationale.
+    oauth_config = gateway.oauth_config or {}
+    if oauth_config.get("resource"):
+        return
 
-    # Persist the learned audience as resource
+    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
     updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
     updated_config["resource"] = token_aud
     gateway.oauth_config = updated_config
     db.flush()
-    logger.debug("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
+    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
