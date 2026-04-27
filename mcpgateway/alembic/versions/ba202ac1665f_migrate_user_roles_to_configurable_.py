@@ -277,7 +277,6 @@ def upgrade() -> None:
             )
             members_without_roles = result.fetchall()
 
-
             # Tag inserted rows with migration_source = MIGRATION_SOURCE so
             # downgrade() can identify and remove only the rows this migration
             # created. The migration_source column is added by migration

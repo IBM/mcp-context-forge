@@ -17,9 +17,7 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 # Third-Party
@@ -156,7 +154,7 @@ def _normalise_schema(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def _run(args, **kwargs) -> subprocess.CompletedProcess:
     """Run a subprocess, raise on non-zero exit."""
-    result = subprocess.run(args, capture_output=True, text=True, **kwargs)
+    result = subprocess.run(args, capture_output=True, text=True, check=False, **kwargs)
     if result.returncode != 0:
         raise RuntimeError(
             f"Command failed: {' '.join(str(a) for a in args)}\n"
@@ -168,7 +166,6 @@ def _run(args, **kwargs) -> subprocess.CompletedProcess:
 def _wait_health(url: str, timeout: int = 120) -> None:
     """Poll *url* until it returns HTTP 200 or *timeout* seconds elapse."""
     import urllib.request
-    import urllib.error
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -186,6 +183,7 @@ def _wait_pg_ready(container: str, timeout: int = 60) -> None:
         r = subprocess.run(
             ["docker", "exec", container, "pg_isready", "-U", "postgres", "-d", "mcp"],
             capture_output=True,
+            check=False,
         )
         if r.returncode == 0:
             return
@@ -203,6 +201,7 @@ def _introspect_in_container(container: str, db_url: str) -> Dict[str, Any]:
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -258,7 +257,7 @@ def _sqlite_schema(tmp_path_factory, container_runtime):
 
     finally:
         if container:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
 
 
 @pytest.fixture(scope="module")
@@ -318,9 +317,9 @@ def _postgres_schema(tmp_path_factory, container_runtime):
     finally:
         for c in [gw_container, pg_container]:
             if c:
-                subprocess.run(["docker", "rm", "-f", c], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", c], capture_output=True, check=False)
         if network:
-            subprocess.run(["docker", "network", "rm", network], capture_output=True)
+            subprocess.run(["docker", "network", "rm", network], capture_output=True, check=False)
 
 
 # ---------------------------------------------------------------------------
