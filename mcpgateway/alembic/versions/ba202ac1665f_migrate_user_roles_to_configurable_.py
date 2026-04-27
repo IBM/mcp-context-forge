@@ -46,6 +46,12 @@ down_revision: Union[str, Sequence[str], None] = "a31c6ffc2239"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Sentinel value written to user_roles.migration_source for rows inserted by
+# Phase 2 backfill in this migration. Used by downgrade() to remove only
+# the rows this migration created. The migration_source column is added by an
+# earlier migration (v1a2b3c4d5e6) in the chain.
+MIGRATION_SOURCE = "migration:ba202ac1665f"
+
 # Previous hardcoded defaults
 OLD_ADMIN_ROLE = "platform_admin"
 OLD_USER_ROLE = "platform_viewer"
@@ -209,24 +215,43 @@ def upgrade() -> None:
             )
             members_without_roles = result.fetchall()
 
+
+            # Tag inserted rows with migration_source = MIGRATION_SOURCE so
+            # downgrade() can identify and remove only the rows this migration
+            # created. The migration_source column is added by migration
+            # v1a2b3c4d5e6 earlier in the chain. If for some reason it's
+            # missing (e.g. a future chain reorder), fall back to the legacy
+            # untagged INSERT so the migration still completes; downgrade
+            # will then be best-effort.
+            user_roles_columns = [col["name"] for col in inspector.get_columns("user_roles")]
+            has_migration_source = "migration_source" in user_roles_columns
+            if has_migration_source:
+                insert_sql = text(
+                    "INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, granted_at, is_active, migration_source) "
+                    "VALUES (:id, :user_email, :role_id, 'team', :team_id, :granted_by, :granted_at, true, :migration_source)"
+                )
+            else:
+                insert_sql = text(
+                    "INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, granted_at, is_active) "
+                    "VALUES (:id, :user_email, :role_id, 'team', :team_id, :granted_by, :granted_at, true)"
+                )
+
             for member in members_without_roles:
                 user_email, team_id, membership_role = member
                 role_id = team_owner_role_id if membership_role == "owner" else team_member_role_id
                 # Use self-grant for compatibility with deployments where granted_by
                 # enforces a foreign key to email_users.email.
-                bind.execute(
-                    text(
-                        "INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, granted_at, is_active) VALUES (:id, :user_email, :role_id, 'team', :team_id, :granted_by, :granted_at, true)"
-                    ),
-                    {
-                        "id": _generate_uuid(),
-                        "user_email": user_email,
-                        "role_id": role_id,
-                        "team_id": team_id,
-                        "granted_by": user_email,
-                        "granted_at": datetime.now(timezone.utc),
-                    },
-                )
+                params = {
+                    "id": _generate_uuid(),
+                    "user_email": user_email,
+                    "role_id": role_id,
+                    "team_id": team_id,
+                    "granted_by": user_email,
+                    "granted_at": datetime.now(timezone.utc),
+                }
+                if has_migration_source:
+                    params["migration_source"] = MIGRATION_SOURCE
+                bind.execute(insert_sql, params)
 
             total += len(members_without_roles)
             print(f"  ✓ Created {len(members_without_roles)} team-scoped role assignments for existing team members")
@@ -257,8 +282,24 @@ def downgrade() -> None:
     print("=== Reverting user_roles migration ===")
     total = 0
 
-    # Note: Phase 2 backfill rows used granted_by=user_email (self-grant) for
-    # FK safety, so they cannot be distinguished from legitimate assignments.
+    # Phase 2 cleanup: delete only rows that were inserted by Phase 2 backfill,
+    # identified by migration_source = MIGRATION_SOURCE. Bootstrap, manual,
+    # and SSO grants use other migration_source values (NULL, 'manual', 'sso',
+    # etc.) and are preserved.
+    user_roles_columns = [col["name"] for col in inspector.get_columns("user_roles")]
+    if "migration_source" in user_roles_columns:
+        try:
+            result = bind.execute(
+                text("DELETE FROM user_roles WHERE migration_source = :ms"),
+                {"ms": MIGRATION_SOURCE},
+            )
+            removed = getattr(result, "rowcount", 0) or 0
+            total += removed
+            print(f"  ✓ Removed {removed} Phase 2 backfill rows (migration_source={MIGRATION_SOURCE})")
+        except Exception as e:
+            print(f"  ⚠ Could not remove Phase 2 backfill rows: {e}")
+    else:
+        print("  ℹ user_roles.migration_source column not present; cannot identify Phase 2 rows. Skipping cleanup.")
 
     # Attempt role remap reversal (environment-dependent)
     new_admin_role = settings.default_admin_role
