@@ -204,6 +204,8 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     re.compile(r"^content-length$", re.IGNORECASE),
     re.compile(r"^connection$", re.IGNORECASE),
     re.compile(r"^upgrade$", re.IGNORECASE),
+    # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
+    re.compile(r"^content-type$", re.IGNORECASE),
 )
 
 
@@ -4916,6 +4918,23 @@ class ToolService(BaseService):
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
+                    _url_query_params = query_params if not tool_query_mapping else None
+
+                    # Detect body encoding from the final Content-Type header (after auth/plugin/mapping modifications).
+                    # Supports application/x-www-form-urlencoded and multipart/form-data in addition to the default JSON.
+                    _ct_base = next((v for k, v in headers.items() if k.lower() == "content-type"), "").lower().split(";")[0].strip()
+
+                    # For non-GET form-urlencoded and multipart requests without mappings,
+                    # extract URL query params so they are forwarded via params= (query string)
+                    # rather than being silently embedded in the URL or lost.  GET has its own
+                    # extraction below; JSON POST intentionally preserves query params in the URL
+                    # for signed-URL support.
+                    if method != "GET" and not has_query_mapping and not has_header_mapping and _ct_base in ("application/x-www-form-urlencoded", "multipart/form-data"):
+                        parsed = urlparse(final_url)
+                        if parsed.query:
+                            final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                            _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
                         try:
@@ -4937,6 +4956,22 @@ class ToolService(BaseService):
 
                                 payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "application/x-www-form-urlencoded":
+                                # NOTE: Intentional asymmetry with the JSON/default path below.
+                                # Form-encoded bodies use params= to keep URL query params on the
+                                # query string (semantically correct for form encoding), whereas
+                                # the JSON path merges them into the body via payload.update() for
+                                # backward compatibility and signed-URL support.
+                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
+                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
+                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
+                                response = await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                )
                             else:
                                 # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
                                 if has_query_mapping or has_header_mapping:
@@ -5996,6 +6031,15 @@ class ToolService(BaseService):
                 # Track performance with threshold checking
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
+
+    @staticmethod
+    def _form_value_to_str(v: Any) -> str:
+        """Coerce a payload value to string for form/multipart encoding."""
+        if v is None:
+            return ""
+        if isinstance(v, (dict, list, bool)):
+            return orjson.dumps(v).decode()
+        return str(v)
 
     @staticmethod
     def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
