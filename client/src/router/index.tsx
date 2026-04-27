@@ -201,7 +201,11 @@ export function Redirect({ to }: { to: string }) {
 // ---------------------------------------------------------------------------
 
 // Exact paths that are always public.
-const DEFAULT_PUBLIC_PATHS: readonly string[] = ["/app/login", "/app/forgot-password"];
+const DEFAULT_PUBLIC_PATHS: readonly string[] = [
+  "/app/loading",
+  "/app/login",
+  "/app/forgot-password",
+];
 
 // Path prefixes whose subtrees are always public.
 const DEFAULT_PUBLIC_PREFIXES: readonly string[] = ["/app/reset-password/"];
@@ -231,6 +235,6 @@ export function AuthGuard({
     }
   }, [authenticated, isPublic, navigate]);
 
-  if (!authenticated) return null;
+  if (isPublic || !authenticated) return null;
   return <>{children}</>;
 }
