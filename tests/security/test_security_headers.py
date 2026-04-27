@@ -301,7 +301,6 @@ def client(app_with_temp_db):
     return TestClient(app_with_temp_db)
 
 
-
 class TestCacheControlHardening:
     """
     Test suite for hardened cache control policies on authenticated endpoints.
@@ -323,6 +322,22 @@ class TestCacheControlHardening:
                 assert "no-store" in cache_control, f"{path} missing 'no-store' in Cache-Control: {cache_control}"
                 assert "private" in cache_control, f"{path} missing 'private' in Cache-Control: {cache_control}"
 
+    def test_docs_endpoints_are_cache_hardened(self, client: TestClient):
+        """Docs/schema endpoints are auth-protected and must NOT be cacheable.
+
+        Regression guard: a prior version of this middleware exempted /docs,
+        /redoc, and /openapi.json. They are protected by DocsAuthMiddleware,
+        so a shared cache could replay an authenticated docs/schema response
+        to unauthenticated viewers — Web Cache Deception.
+        """
+        with patch.object(settings, "auth_required", False):
+            for path in ("/docs", "/redoc", "/openapi.json"):
+                response = client.get(path)
+                cache_control = response.headers.get("Cache-Control", "")
+
+                assert "no-store" in cache_control, f"{path} missing 'no-store': {cache_control}"
+                assert "private" in cache_control, f"{path} missing 'private': {cache_control}"
+
     def test_protected_endpoints_have_vary_authorization(self, client: TestClient):
         """Test that protected endpoints include Vary: Authorization header."""
         with patch.object(settings, "auth_required", False):
@@ -340,14 +355,14 @@ class TestCacheControlHardening:
             assert response.headers.get("Expires") == "0", "Missing or incorrect Expires header"
 
     def test_exempted_endpoints_can_be_cached(self, client: TestClient):
-        """Test that public/static endpoints do NOT have no-store headers."""
-        # Health endpoint should not have no-store (it's exempted)
+        """Test that public/static endpoints do NOT receive the no-store/private cache hardening."""
         response = client.get("/health")
         cache_control = response.headers.get("Cache-Control", "")
 
-        # Health endpoint should not have the strict no-store, private from cache deception fix
-        # (it may have other cache control, but not our specific fix)
-        assert not (("no-store" in cache_control) and ("private" in cache_control))
+        assert "no-store" not in cache_control, f"Exempted /health unexpectedly got 'no-store': {cache_control}"
+        assert "private" not in cache_control, f"Exempted /health unexpectedly got 'private': {cache_control}"
+        assert response.headers.get("Pragma") != "no-cache"
+        assert response.headers.get("Expires") != "0"
 
     def test_cache_headers_with_query_parameters(self, client: TestClient):
         """Test that cache headers are applied even with query parameters."""
@@ -361,12 +376,11 @@ class TestCacheControlHardening:
     def test_cache_headers_on_nested_endpoints(self, client: TestClient):
         """Test that cache headers apply to nested protected endpoints."""
         with patch.object(settings, "auth_required", False):
-            # Test nested endpoint pattern
             response = client.get("/servers/test-id/tools")
             cache_control = response.headers.get("Cache-Control", "")
 
-            # Should have cache control even on nested paths
-            assert "no-store" in cache_control or "private" in cache_control
+            assert "no-store" in cache_control, f"Nested path missing 'no-store': {cache_control}"
+            assert "private" in cache_control, f"Nested path missing 'private': {cache_control}"
 
     def test_cache_headers_coexist_with_cors(self, client: TestClient):
         """Test that cache headers coexist properly with CORS headers."""
@@ -391,19 +405,26 @@ class TestCacheControlHardening:
 
             # Even on error, cache headers should be present
             cache_control = response.headers.get("Cache-Control", "")
+            assert "no-store" in cache_control, f"Error response missing 'no-store': {cache_control}"
+            assert "private" in cache_control, f"Error response missing 'private': {cache_control}"
+            assert response.headers.get("Pragma") == "no-cache"
+            assert response.headers.get("Expires") == "0"
 
 
 class TestSecurityHeadersAdditionalCoverage:
     """Additional tests for edge cases to improve coverage to 95%+."""
 
     def test_security_headers_disabled(self, client: TestClient):
-        """Test that when security headers are disabled, they are not added."""
+        """Test that when security headers are disabled, none are emitted by SecurityHeadersMiddleware."""
         with patch.object(settings, "security_headers_enabled", False):
             response = client.get("/health")
 
-            # When disabled, security headers should not be present
-            # (or may be present from other middleware, but not from SecurityHeadersMiddleware)
             assert response.status_code == 200
+            assert "X-Content-Type-Options" not in response.headers
+            assert "X-Frame-Options" not in response.headers
+            assert "X-XSS-Protection" not in response.headers
+            assert "Content-Security-Policy" not in response.headers
+            assert "Referrer-Policy" not in response.headers
 
     def test_x_frame_options_sameorigin(self, client: TestClient):
         """Test X-Frame-Options with SAMEORIGIN value."""
@@ -450,8 +471,7 @@ class TestSecurityHeadersAdditionalCoverage:
         with patch.object(settings, "x_frame_options", ""):
             response = client.get("/health")
 
-            # Empty string should result in no X-Frame-Options header
-            assert "X-Frame-Options" not in response.headers or response.headers.get("X-Frame-Options") == ""
+            assert "X-Frame-Options" not in response.headers
 
     def test_server_headers_removed(self, client: TestClient):
         """Test that Server and X-Powered-By headers are removed when configured."""
