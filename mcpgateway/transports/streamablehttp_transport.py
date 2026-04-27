@@ -243,6 +243,7 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 # `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
 # keep working.
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
+
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 
@@ -1988,7 +1989,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    email = payload.get("email") or payload.get("sub")
     is_admin = payload.get("is_admin", False)
     if not is_admin:
         user_info = payload.get("user", {})
@@ -4821,7 +4822,7 @@ class _StreamableHttpAuthHandler:
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
+            user_email = user_payload.get("email") or user_payload.get("sub")
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin

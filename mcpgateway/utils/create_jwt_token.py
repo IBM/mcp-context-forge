@@ -485,7 +485,7 @@ def main() -> None:  # pragma: no cover
     scopes_dict = None
 
     if args.admin or args.teams or args.scopes or args.full_name:
-        user_email = payload.get("sub") or payload.get("username", "admin@example.com")
+        user_email = payload.get("email") or payload.get("sub") or payload.get("username", "admin@example.com")
 
         # Build user data
         user_data = {
