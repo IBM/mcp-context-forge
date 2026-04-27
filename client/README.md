@@ -25,11 +25,26 @@ npm install
 
 ### Development
 
-```bash
-npm run dev
-```
+The client development workflow requires both the client dev server and the backend gateway:
 
-Starts the development server at `http://localhost:5173` with hot module replacement.
+1. **Build the client assets:**
+   ```bash
+   npm run build
+   ```
+
+2. **Start the client development server:**
+   ```bash
+   npm run dev
+   ```
+   This starts the Vite dev server at `http://localhost:5173` with hot module replacement.
+
+3. **In another terminal, start the backend gateway:**
+   ```bash
+   make dev
+   ```
+
+4. **Access the application:**
+   Open your browser and navigate to `http://localhost:8000/app` to view the UI.
 
 ### Build
 
