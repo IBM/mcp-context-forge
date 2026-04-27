@@ -22,6 +22,7 @@ nav:
   - proxy.md
   - dcr.md
   - oauth.md
+  - oauth-resource-configuration.md
   - oauth-troubleshooting.md
   - identity-propagation.md
   - securing.md
