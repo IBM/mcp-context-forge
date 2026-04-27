@@ -405,7 +405,7 @@ def main_app_with_admin_api():
         )
 
         set_logging_service(main_mod.logging_service)
-        main_mod.app.include_router(admin_router)
+        main_mod.app.include_router(admin_router, prefix="/v1")
         validate_section_permissions(admin_router)
 
     # Ensure /v1/admin/well-known is mounted. When main was imported with

@@ -283,28 +283,28 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
 # Routes on other routers (version.py, llm_admin_router, etc.) are excluded
 # from validation since they're mounted separately and have their own decorators.
 _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
-    "users": "/v1/admin/users/partial",
-    "maintenance": "/v1/admin/maintenance/partial",
-    "logs": "/v1/admin/logs",
-    "export-import": "/v1/admin/export/configuration",
-    "plugins": "/v1/admin/plugins/partial",
-    "metrics": "/v1/admin/metrics",
-    # "version-info": "/v1/admin/version",  # Route is on version.py router, not admin_router
-    # "settings": "/v1/admin/llm-settings",  # No such route exists
-    # "llm-providers": "/v1/admin/llm/providers/html",  # Route is on llm_admin_router
-    # "llm-models": "/v1/admin/llm/models/html",  # Route is on llm_admin_router
-    # "llm-api-info": "/v1/admin/llm/api-info/html",  # Route is on llm_admin_router
-    "tools": "/v1/admin/tools/partial",
-    "servers": "/v1/admin/servers/partial",
-    "resources": "/v1/admin/resources/partial",
-    "prompts": "/v1/admin/prompts/partial",
-    "gateways": "/v1/admin/gateways/partial",
-    "teams": "/v1/admin/teams/partial",
-    "tokens": "/v1/admin/tokens/partial",
-    "agents": "/v1/admin/a2a/partial",
-    "overview": "/v1/admin/overview/partial",
-    # "roots": "/v1/admin/roots/partial",  # No such route exists on admin_router
-    "mcp-registry": "/v1/admin/servers/partial",
+    "users": "/admin/users/partial",
+    "maintenance": "/admin/maintenance/partial",
+    "logs": "/admin/logs",
+    "export-import": "/admin/export/configuration",
+    "plugins": "/admin/plugins/partial",
+    "metrics": "/admin/metrics",
+    # "version-info": "/admin/version",  # Route is on version.py router, not admin_router
+    # "settings": "/admin/llm-settings",  # No such route exists
+    # "llm-providers": "/admin/llm/providers/html",  # Route is on llm_admin_router
+    # "llm-models": "/admin/llm/models/html",  # Route is on llm_admin_router
+    # "llm-api-info": "/admin/llm/api-info/html",  # Route is on llm_admin_router
+    "tools": "/admin/tools/partial",
+    "servers": "/admin/servers/partial",
+    "resources": "/admin/resources/partial",
+    "prompts": "/admin/prompts/partial",
+    "gateways": "/admin/gateways/partial",
+    "teams": "/admin/teams/partial",
+    "tokens": "/admin/tokens/partial",
+    "agents": "/admin/a2a/partial",
+    "overview": "/admin/overview/partial",
+    # "roots": "/admin/roots/partial",  # No such route exists on admin_router
+    "mcp-registry": "/admin/servers/partial",
 }
 
 
@@ -1578,7 +1578,7 @@ async def enforce_admin_csrf(request: Request) -> None:
 
 
 admin_router = APIRouter(
-    prefix="/v1/admin",
+    prefix="/admin",
     tags=["Admin UI"],
     dependencies=[Depends(enforce_admin_csrf)],
 )

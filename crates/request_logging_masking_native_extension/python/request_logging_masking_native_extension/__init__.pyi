@@ -3,7 +3,6 @@
 
 import builtins
 import typing
-
 __all__ = [
     "mask_sensitive_data",
     "mask_sensitive_headers",
@@ -11,5 +10,7 @@ __all__ = [
 ]
 
 def mask_sensitive_data(data: typing.Any, max_depth: typing.Optional[builtins.int]) -> typing.Any: ...
+
 def mask_sensitive_headers(headers: typing.Any) -> typing.Any: ...
+
 def mask_sensitive_json_bytes(payload: typing.Sequence[builtins.int], max_depth: typing.Optional[builtins.int]) -> typing.Any: ...
