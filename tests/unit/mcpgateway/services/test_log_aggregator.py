@@ -1136,3 +1136,29 @@ class TestAggregateAdvisoryLock:
             mock_db.execute.side_effect = Exception("connection error")
             result = _try_aggregate_pg_lock(mock_db)
         assert result is True
+
+    def test_try_lock_returns_scalar_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.return_value.scalar.return_value = True
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is True
+
+    def test_try_lock_returns_false_when_lock_not_available(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.return_value.scalar.return_value = False
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is False
+
+    def test_release_executes_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            _release_aggregate_pg_lock(mock_db)
+        mock_db.execute.assert_called_once()
+
+    def test_release_swallows_exception_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = Exception("unlock error")
+            _release_aggregate_pg_lock(mock_db)
