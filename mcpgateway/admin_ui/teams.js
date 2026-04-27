@@ -713,8 +713,7 @@ export const hideAddMemberForm = function (teamId) {
 
 // Reset team creation form after successful HTMX actions
 export const resetTeamCreateForm = function () {
-  const form = document.querySelector('form[hx-post*="/admin/teams"]');
-  if (form) {
+      const form = document.querySelector('form[hx-post*="/v1/admin/teams"]');  if (form) {
     form.reset();
   }
   const errorEl = safeGetElement("create-team-error");
@@ -1248,8 +1247,7 @@ export const loadTeamSelectorDropdown = function () {
     '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading teams\u2026</div>';
   const rootPath = window.ROOT_PATH || "";
   fetch(
-    rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector",
-    { credentials: "same-origin" }, // pragma: allowlist secret
+          rootPath + "/v1/admin/teams/partial?page=1&per_page=10&render=selector",    { credentials: "same-origin" }, // pragma: allowlist secret
   )
     .then(function (resp) {
       if (!resp.ok) {

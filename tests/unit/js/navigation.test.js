@@ -40,7 +40,7 @@ describe("navigateAdmin", () => {
 
   test("navigates with proxy prefix preserved", () => {
     window.ROOT_PATH = "";
-    window.location.pathname = "/api/proxy/mcp/admin";
+    window.location.pathname = "/api/proxy/mcp/v1/admin";
 
     navigateAdmin("servers");
 
@@ -150,7 +150,7 @@ describe("navigateAdmin", () => {
 
   test("handles deep proxy paths", () => {
     window.ROOT_PATH = "";
-    window.location.pathname = "/api/v1/proxy/mcp/admin";
+    window.location.pathname = "/api/v1/proxy/mcp/v1/admin";
 
     navigateAdmin("catalog");
 
@@ -192,7 +192,7 @@ describe("navigateAdmin", () => {
 
   test("handles administrator path segment correctly", () => {
     window.ROOT_PATH = "";
-    window.location.pathname = "/administrator/admin";
+    window.location.pathname = "/administrator/v1/admin";
 
     navigateAdmin("tools");
 

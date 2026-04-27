@@ -286,7 +286,7 @@ export const handleSelectiveImport = async function (dryRun = false) {
     console.log("🎯 Selected entities for import:", selectedEntities);
 
     const response = await fetch(
-      (window.ROOT_PATH || "") + "/admin/import/configuration",
+      (window.ROOT_PATH || "") + "/v1/admin/import/configuration",
       {
         method: "POST",
         headers: {

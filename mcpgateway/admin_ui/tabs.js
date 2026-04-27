@@ -620,7 +620,7 @@ export const showTab = function (tabName) {
           if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
             const rootPath = window.ROOT_PATH || "";
             fetchWithTimeout(
-              `${rootPath}/admin/plugins/partial`,
+              `${rootPath}/v1/admin/plugins/partial`,
               {
                 method: "GET",
                 credentials: "same-origin", // pragma: allowlist secret

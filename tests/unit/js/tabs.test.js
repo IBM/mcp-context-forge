@@ -859,7 +859,7 @@ describe("showTab", () => {
 
     expect(ajaxSpy).toHaveBeenCalledWith(
       "GET",
-      "/admin/mcp-registry/partial",
+      "/v1/admin/mcp-registry/partial",
       expect.any(Object)
     );
     logSpy.mockRestore();
@@ -937,7 +937,7 @@ describe("showTab", () => {
 
     await vi.waitFor(() => {
       expect(fetchWithTimeout).toHaveBeenCalledWith(
-        "/admin/plugins/partial",
+        "/v1/admin/plugins/partial",
         expect.any(Object),
         5000
       );
@@ -1180,7 +1180,7 @@ describe("showTab", () => {
     vi.runAllTimers();
 
     await vi.waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith("/admin/mcp-registry/partial");
+      expect(global.fetch).toHaveBeenCalledWith("/v1/admin/mcp-registry/partial");
     });
 
     logSpy.mockRestore();

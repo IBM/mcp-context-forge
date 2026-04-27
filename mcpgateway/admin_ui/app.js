@@ -84,7 +84,7 @@ import { isAdminUser, safeGetElement } from "./utils.js";
       if (
         evt.detail.pathInfo &&
         evt.detail.pathInfo.requestPath &&
-        evt.detail.pathInfo.requestPath.includes("/admin/tools/partial")
+        evt.detail.pathInfo.requestPath.includes("/v1/admin/tools/partial")
       ) {
         // Use a slight delay to ensure DOM is fully updated
         setTimeout(() => {
@@ -256,7 +256,7 @@ import { isAdminUser, safeGetElement } from "./utils.js";
       if (
         evt.detail.pathInfo &&
         evt.detail.pathInfo.requestPath &&
-        evt.detail.pathInfo.requestPath.includes("/admin/resources/partial")
+        evt.detail.pathInfo.requestPath.includes("/v1/admin/resources/partial")
       ) {
         setTimeout(() => {
           // Find the container
@@ -376,7 +376,7 @@ import { isAdminUser, safeGetElement } from "./utils.js";
       if (
         evt.detail.pathInfo &&
         evt.detail.pathInfo.requestPath &&
-        evt.detail.pathInfo.requestPath.includes("/admin/prompts/partial")
+        evt.detail.pathInfo.requestPath.includes("/v1/admin/prompts/partial")
       ) {
         setTimeout(() => {
           // Find the container

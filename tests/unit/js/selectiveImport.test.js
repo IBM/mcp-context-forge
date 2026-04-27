@@ -240,7 +240,7 @@ describe("handleSelectiveImport", () => {
     await handleSelectiveImport(false);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/import/configuration",
+      "/v1/admin/import/configuration",
       expect.objectContaining({ method: "POST" })
     );
 
@@ -344,7 +344,7 @@ describe("handleSelectiveImport", () => {
     await handleSelectiveImport(false);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/myprefix/admin/import/configuration",
+      "/myprefix/v1/admin/import/configuration",
       expect.anything()
     );
   });

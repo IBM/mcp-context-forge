@@ -340,8 +340,7 @@ export const previewImport = async function () {
     showImportProgress(true);
 
     const response = await fetch(
-      (window.ROOT_PATH || "") + "/admin/import/preview",
-      {
+              (window.ROOT_PATH || "") + "/v1/admin/import/preview",      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -396,8 +395,7 @@ export const handleImport = async function (dryRun = false) {
     };
 
     const response = await fetch(
-      (window.ROOT_PATH || "") + "/admin/import/configuration",
-      {
+              (window.ROOT_PATH || "") + "/v1/admin/import/configuration",      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -552,8 +550,7 @@ export const showImportProgress = function (show) {
 export const loadRecentImports = async function () {
   try {
     const response = await fetch(
-      (window.ROOT_PATH || "") + "/admin/import/status",
-      {
+              (window.ROOT_PATH || "") + "/v1/admin/import/status",      {
         headers: {
           Authorization: `Bearer ${await getAuthToken()}`,
         },

@@ -279,7 +279,7 @@ describe("submitApiKeyForm", () => {
 
     expect(event.preventDefault).toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/mcp-registry/srv-1/register",
+      "/v1/admin/mcp-registry/srv-1/register",
       expect.objectContaining({ method: "POST" })
     );
 
@@ -361,7 +361,7 @@ describe("viewGrpcMethods", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/grpc/svc-1/methods",
+      "/v1/admin/grpc/svc-1/methods",
       expect.objectContaining({ method: "GET" })
     );
     expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining("pkg.Service/Method"));

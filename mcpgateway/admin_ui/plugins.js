@@ -313,7 +313,7 @@ export const showPluginDetails = async function (pluginName) {
     const rootPath = window.ROOT_PATH || "";
     // Fetch plugin details
     const response = await fetch(
-      `${rootPath}/admin/plugins/${encodeURIComponent(pluginName)}`,
+      `${rootPath}/v1/admin/plugins/${encodeURIComponent(pluginName)}`,
       {
         credentials: "same-origin", // pragma: allowlist secret
         headers: {
