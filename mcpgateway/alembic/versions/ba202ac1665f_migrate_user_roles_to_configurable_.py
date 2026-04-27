@@ -42,7 +42,7 @@ from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "ba202ac1665f"
-down_revision: Union[str, Sequence[str], None] = "a31c6ffc2239"
+down_revision: Union[str, Sequence[str], None] = "f9a8b7c6d5e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -57,6 +57,60 @@ OLD_ADMIN_ROLE = "platform_admin"
 OLD_USER_ROLE = "platform_viewer"
 OLD_TEAM_OWNER_ROLE = "team_admin"
 OLD_TEAM_MEMBER_ROLE = "viewer"
+
+# Keys used to store config values in migration_metadata.
+_META_KEYS = ("default_admin_role", "default_user_role", "default_team_owner_role", "default_team_member_role")
+
+
+def _snapshot_config(bind, rev: str, values: dict) -> None:
+    """Persist runtime config values into migration_metadata for hermetic downgrade.
+
+    If the table does not exist (e.g. the schema was migrated before this fix
+    was applied), emits a warning and skips — downgrade will fall back to live
+    settings with a prominent warning.
+    """
+    inspector = sa.inspect(bind)
+    if "migration_metadata" not in inspector.get_table_names():
+        print("  ⚠ migration_metadata table not found; skipping config snapshot."
+              " Downgrade will use live settings (non-hermetic).")
+        return
+    for key, value in values.items():
+        bind.execute(
+            text(
+                "INSERT INTO migration_metadata (revision, key, value, created_at) "
+                "VALUES (:rev, :key, :value, :ts) "
+                "ON CONFLICT (revision, key) DO UPDATE SET value = excluded.value, created_at = excluded.created_at"
+            ),
+            {"rev": rev, "key": key, "value": value, "ts": datetime.now(timezone.utc)},
+        )
+    print(f"  ✓ Snapshotted {len(values)} config value(s) into migration_metadata (revision={rev})")
+
+
+def _read_config_snapshot(bind, rev: str) -> dict:
+    """Read config values previously snapshotted by _snapshot_config.
+
+    Returns an empty dict if the table is absent or has no rows for this
+    revision (pre-fix databases).
+    """
+    inspector = sa.inspect(bind)
+    if "migration_metadata" not in inspector.get_table_names():
+        return {}
+    rows = bind.execute(
+        text("SELECT key, value FROM migration_metadata WHERE revision = :rev"),
+        {"rev": rev},
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def _delete_config_snapshot(bind, rev: str) -> None:
+    """Remove snapshot rows for *rev* from migration_metadata after downgrade."""
+    inspector = sa.inspect(bind)
+    if "migration_metadata" not in inspector.get_table_names():
+        return
+    bind.execute(
+        text("DELETE FROM migration_metadata WHERE revision = :rev"),
+        {"rev": rev},
+    )
 
 
 def _generate_uuid() -> str:
@@ -146,6 +200,14 @@ def upgrade() -> None:
     new_user_role = settings.default_user_role
     new_team_owner_role = settings.default_team_owner_role
     new_team_member_role = settings.default_team_member_role
+
+    # Snapshot config values so downgrade() can be hermetic.
+    _snapshot_config(bind, revision, {
+        "default_admin_role": new_admin_role,
+        "default_user_role": new_user_role,
+        "default_team_owner_role": new_team_owner_role,
+        "default_team_member_role": new_team_member_role,
+    })
 
     total = 0
 
@@ -262,14 +324,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert user_roles migration.
 
-    Note: Phase 2 backfill rows (granted_by=user_email) cannot be selectively
-    removed without risking deletion of legitimate role assignments. They are
-    left intact as valid team-role grants.
+    Phase 2 cleanup: deletes only the backfill rows that upgrade() inserted,
+    identified by migration_source = MIGRATION_SOURCE.  Legitimate grants are
+    untouched.
 
-    Role remap reversal (environment-dependent): Attempts to revert role name
-    remapping using current runtime settings. WARNING: This assumes the current
-    DEFAULT_*_ROLE env vars match those used during upgrade. If env vars have
-    changed between upgrade and downgrade, the reversal may be incorrect.
+    Phase 1 reversal: reads the role-name config values from the
+    migration_metadata snapshot written during upgrade() so the reversal is
+    hermetic regardless of current env-var values.  Falls back to live settings
+    with a warning for databases upgraded before this fix was applied.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -281,6 +343,24 @@ def downgrade() -> None:
 
     print("=== Reverting user_roles migration ===")
     total = 0
+
+    # Read the config values that were live at upgrade time (hermetic).
+    # Falls back to live settings with a warning on pre-fix databases that
+    # have no snapshot row.
+    snapshot = _read_config_snapshot(bind, revision)
+    if snapshot:
+        new_admin_role = snapshot.get("default_admin_role", settings.default_admin_role)
+        new_user_role = snapshot.get("default_user_role", settings.default_user_role)
+        new_team_owner_role = snapshot.get("default_team_owner_role", settings.default_team_owner_role)
+        new_team_member_role = snapshot.get("default_team_member_role", settings.default_team_member_role)
+        print(f"  ✓ Loaded config snapshot from migration_metadata (revision={revision})")
+    else:
+        print("  ⚠ No config snapshot found in migration_metadata."
+              " Falling back to live settings — downgrade correctness depends on env vars matching upgrade time.")
+        new_admin_role = settings.default_admin_role
+        new_user_role = settings.default_user_role
+        new_team_owner_role = settings.default_team_owner_role
+        new_team_member_role = settings.default_team_member_role
 
     # Phase 2 cleanup: delete only rows that were inserted by Phase 2 backfill,
     # identified by migration_source = MIGRATION_SOURCE. Bootstrap, manual,
@@ -301,17 +381,10 @@ def downgrade() -> None:
     else:
         print("  ℹ user_roles.migration_source column not present; cannot identify Phase 2 rows. Skipping cleanup.")
 
-    # Attempt role remap reversal (environment-dependent)
-    new_admin_role = settings.default_admin_role
-    new_user_role = settings.default_user_role
-    new_team_owner_role = settings.default_team_owner_role
-    new_team_member_role = settings.default_team_member_role
-
+    # Revert Phase 1 role remap using the snapshotted (or fallback) config values.
     if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE and new_team_member_role == OLD_TEAM_MEMBER_ROLE:
         print("  All default roles match hardcoded values. No remap reversal needed.")
     else:
-        print("\n  ⚠ WARNING: Role remap reversal depends on current environment settings")
-        print("  matching those used during upgrade. Verify settings match if unexpected.")
         total += _migrate_role(bind, new_admin_role, OLD_ADMIN_ROLE, "global")
         total += _migrate_role(bind, new_user_role, OLD_USER_ROLE, "global")
         total += _migrate_role(bind, new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team")
@@ -339,5 +412,8 @@ def downgrade() -> None:
                 reverted = getattr(result, "rowcount", 0)
                 total += reverted
                 print(f"  ✓ Reverted {reverted} non-self-granted assignments: '{current_name}' -> '{old_name}' ({scope})")
+
+    # Clean up this migration's snapshot rows now that downgrade is done.
+    _delete_config_snapshot(bind, revision)
 
     print(f"\n✅ Downgrade complete: {total} role assignments reverted")
