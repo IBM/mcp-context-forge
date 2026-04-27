@@ -8450,25 +8450,25 @@ migration-test-performance:               ## Run migration performance benchmark
 	@echo "✅ Performance tests complete!"
 
 migration-test-rollback:                  ## Run only downgrade/reverse migration tests (pytest + roundtrip)
-        @echo "⏪ Running reverse migration (downgrade) tests..."
-        @test -d "$(VENV_DIR)" || $(MAKE) venv
-        @/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-                pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
-                       $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-                -k 'reverse or rollback' \
-                -v --tb=short --log-cli-level=INFO"
-        @echo "🔄 Running upgrade/downgrade roundtrip validation..."
-        @BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
-        @echo "✅ Rollback tests complete!"
+	@echo "⏪ Running reverse migration (downgrade) tests..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	               $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	        -k 'reverse or rollback' \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "🔄 Running upgrade/downgrade roundtrip validation..."
+	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
+	@echo "✅ Rollback tests complete!"
 
 migration-test-cross-db:                  ## Run cross-database schema consistency test
-        @echo "🔀 Running cross-database schema consistency test..."
-        @test -d "$(VENV_DIR)" || $(MAKE) venv
-        @/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-                UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
-                pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
-                -v --tb=short --log-cli-level=INFO"
-        @echo "✅ Cross-database schema consistency check complete!"
+	@echo "🔀 Running cross-database schema consistency test..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+	        pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "✅ Cross-database schema consistency check complete!"
 	@echo "📦 Pulling required container images..."
 	@if command -v docker >/dev/null 2>&1; then \
 		for version in $(MIGRATION_VERSIONS); do \
