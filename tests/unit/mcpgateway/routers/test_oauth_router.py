@@ -142,8 +142,8 @@ class TestPersistLearnedAudience:
         db.flush.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skips_when_resource_already_matches(self):
-        """Does not flush if the persisted resource already matches aud."""
+    async def test_skips_when_resource_already_set_to_same_value(self):
+        """First-write-only: does not flush when resource is already set, even if it matches."""
         oauth_result = {"token_aud": "my-client-id", "user_id": "u1"}
 
         gateway = Mock(spec=Gateway)
@@ -157,6 +157,29 @@ class TestPersistLearnedAudience:
         await _persist_learned_audience(gateway, oauth_result, db)
 
         db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_resource_already_set_to_different_value(self):
+        """First-write-only: never overwrites a previously learned/configured resource.
+
+        The OAuth callback path only enforces gateway access, not gateways.update.
+        Allowing a non-admin user to overwrite a shared resource value would let
+        any authenticated user mutate global config on behalf of all other users.
+        """
+        oauth_result = {"token_aud": "new-client-id", "user_id": "u1"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "my-client-id", "resource": "previously-learned-id"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+        assert gateway.oauth_config["resource"] == "previously-learned-id"
 
     @pytest.mark.asyncio
     async def test_skips_opaque_token(self):
@@ -191,6 +214,29 @@ class TestPersistLearnedAudience:
         await _persist_learned_audience(gateway, oauth_result, db)
 
         db.flush.assert_not_called()
+
+    @pytest.mark.parametrize("falsy_resource", ["", []])
+    @pytest.mark.asyncio
+    async def test_persists_when_existing_resource_is_falsy(self, falsy_resource):
+        """Empty string / empty list persisted resource counts as unset; re-learning proceeds.
+
+        This lets an admin clear the field via the gateway update API to trigger
+        re-learning on the next callback (recovery path after stale config).
+        """
+        oauth_result = {"token_aud": "fresh-client-id"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "resource": falsy_resource}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_called_once()
+        assert gateway.oauth_config["resource"] == "fresh-client-id"
 
 
 class TestOAuthRouter:
