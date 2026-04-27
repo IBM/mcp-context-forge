@@ -1,0 +1,23 @@
+description: "Screens prompts and tool arguments for prompt injection and jailbreak attempts using deterministic regex heuristics (+ optional LLM Guard classifier). OWASP LLM01/LLM07."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["security", "injection", "jailbreak", "owasp-llm01", "owasp-llm07", "prompt-injection"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  mode: "block"
+  check_tool_output: false
+  use_llm_guard: false
+  redaction_placeholder: "[INJECTION_REDACTED]"
+  categories:
+    injection:
+      threshold: 0.75
+      action: "block"
+    jailbreak:
+      threshold: 0.80
+      action: "block"
+    system_prompt_leak:
+      threshold: 0.70
+      action: "block"
