@@ -65,13 +65,13 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
+from mcpgateway.services.session_affinity import get_session_affinity
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, resolve_gateway_auth_headers
@@ -1963,9 +1963,9 @@ class ResourceService(BaseService):
                                 # Use session pool if enabled for 10-20x latency improvement
                                 use_pool = False
                                 pool = None
-                                if settings.mcp_session_pool_enabled:
+                                if settings.mcpgateway_session_affinity_enabled:
                                     try:
-                                        pool = get_mcp_session_pool()
+                                        pool = get_session_affinity()
                                         use_pool = True
                                     except RuntimeError:
                                         # Pool not initialized (e.g., in tests), fall back to per-call sessions
@@ -2044,9 +2044,9 @@ class ResourceService(BaseService):
                                 # Use session pool if enabled for 10-20x latency improvement
                                 use_pool = False
                                 pool = None
-                                if settings.mcp_session_pool_enabled:
+                                if settings.mcpgateway_session_affinity_enabled:
                                     try:
-                                        pool = get_mcp_session_pool()
+                                        pool = get_session_affinity()
                                         use_pool = True
                                     except RuntimeError:
                                         # Pool not initialized (e.g., in tests), fall back to per-call sessions
