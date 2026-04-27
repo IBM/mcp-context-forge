@@ -17,6 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 from datetime import datetime, timezone
+import mimetypes
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,11 +28,10 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
-from mcpgateway.services.resource_service import (
-    ResourceError,
-    ResourceNotFoundError,
-    ResourceService,
-)
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+
+# Local
+from tests.helpers.admin_mocks import install_admin_user
 
 # --------------------------------------------------------------------------- #
 # Fixtures and test helpers                                                   #
@@ -213,6 +213,22 @@ class TestResourceServiceLifecycle:
         await resource_service.initialize()
         # EventService handles subscribers internally now
         assert resource_service._template_cache == {}
+
+    def test_init_registers_missing_markdown_mime_types(self):
+        """ResourceService.__init__ registers .md/.markdown when the system MIME DB lacks them."""
+        original_guess = mimetypes.guess_type
+
+        def _no_markdown(url, strict=True):
+            if url.endswith((".md", ".markdown")):
+                return (None, None)
+            return original_guess(url, strict)
+
+        with patch("mcpgateway.services.resource_service.mimetypes.guess_type", side_effect=_no_markdown):
+            with patch("mcpgateway.services.resource_service.mimetypes.add_type") as mock_add:
+                ResourceService()
+                calls = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
+                assert ("text/markdown", ".md") in calls
+                assert ("text/markdown", ".markdown") in calls
 
     @pytest.mark.asyncio
     async def test_shutdown(self, resource_service):
@@ -1497,6 +1513,82 @@ class TestResourceSubscriptions:
         assert events[0]["data"]["uri"] == "resource://public"
 
     @pytest.mark.asyncio
+    async def test_subscribe_events_admin_bypass_yields_private_events(self, resource_service):
+        """Pre-resolved is_admin_bypass=True yields all events including private/team."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://private", "visibility": "private", "owner_email": "other@example.com"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://team", "visibility": "team", "team_id": "other-team"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(
+            user_email="admin@example.com",
+            token_teams=None,
+            is_admin_bypass=True,
+        ):
+            events.append(event)
+
+        # All 3 events (including private owned by another user and team from another team) yielded.
+        assert len(events) == 3
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_admin_bypass_is_sticky_for_stream_lifetime(self, resource_service):
+        """is_admin_bypass is snapshotted at call time — caller controls freshness.
+
+        Documents the TOCTOU contract: subscribe_events does not re-check
+        admin status mid-stream.  Even if the user is demoted after the
+        generator starts, the bypass remains in effect until reconnect.
+        """
+        events_to_emit = [
+            {"type": "resource_updated", "data": {"uri": "resource://private-1", "visibility": "private", "owner_email": "other@example.com"}},
+            {"type": "resource_updated", "data": {"uri": "resource://private-2", "visibility": "private", "owner_email": "other@example.com"}},
+        ]
+
+        async def mock_generator():
+            for event in events_to_emit:
+                yield event
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        # Ensure no admin lookup happens inside subscribe_events (caller resolved it).
+        with patch("mcpgateway.utils.admin_check.is_user_admin") as mock_is_admin:
+            events = []
+            async for event in resource_service.subscribe_events(
+                user_email="admin@example.com",
+                token_teams=None,
+                is_admin_bypass=True,
+            ):
+                events.append(event)
+            mock_is_admin.assert_not_called()
+
+        assert len(events) == 2
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_bypass_false_falls_through_to_filtering(self, resource_service):
+        """is_admin_bypass=False must NOT grant visibility; per-event filtering still applies."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+            yield {"type": "resource_updated", "data": {"uri": "resource://private", "visibility": "private", "owner_email": "other@example.com"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(
+            user_email="user@example.com",
+            token_teams=[],
+            is_admin_bypass=False,
+        ):
+            events.append(event)
+
+        # Only public event yielded (public-only token).
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
     async def test_subscribe_events_user_with_none_token_teams_fails_closed(self, resource_service):
         """User-scoped subscriptions with missing token_teams should normalize to public-only."""
 
@@ -2290,31 +2382,6 @@ class TestResourceServiceContentTypeError:
             assert len(exc_info.value.allowed_types) > 0
 
     @pytest.mark.asyncio
-    async def test_update_resource_mime_type_validated_without_content_change(self, resource_service, mock_db, mock_resource, monkeypatch):
-        """Test that changing MIME type without updating content still validates against allowlist."""
-        # First-Party
-        from mcpgateway import config
-        from mcpgateway.schemas import ResourceUpdate
-        from mcpgateway.services.content_security import ContentTypeError
-
-        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
-        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
-
-        mock_resource.owner_email = "user@example.com"
-        mock_resource.mime_type = "text/plain"
-        mock_db.get = MagicMock(return_value=mock_resource)
-
-        # Update MIME type only (no content change) - should still be validated
-        update = ResourceUpdate(mime_type="application/x-executable")
-
-        with pytest.raises(ContentTypeError) as exc_info:
-            await resource_service.update_resource(mock_db, 1, update)
-
-        assert exc_info.value.mime_type == "application/x-executable"
-        # Session must stay clean — rejected type must NOT be written to the model
-        assert mock_resource.mime_type == "text/plain"
-
-    @pytest.mark.asyncio
     async def test_register_resource_vendor_mime_type_in_log_only_mode(self, resource_service, mock_db, sample_resource_create, monkeypatch):
         """Test that vendor MIME types (x- prefix) are allowed in log-only mode."""
         # First-Party
@@ -2393,8 +2460,6 @@ class TestResourceUpdateMimeTypeDetection:
     @pytest.mark.asyncio
     async def test_update_resource_with_empty_mime_type_detects_from_uri(self, resource_service, mock_db):
         """Test that empty MIME type triggers detection from URI."""
-        # Standard
-
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
@@ -2531,12 +2596,41 @@ class TestResourceUpdateMimeTypeDetection:
                     assert mock_resource.mime_type == "text/markdown"
 
 
-class TestResourceMimeTypePriority:
-    """Tests for MIME type resolution priority: user-provided > URI-detected > content fallback."""
+class TestResourceUrlDetectedMimeTypePriority:
+    """Tests for URL-detected MIME type priority over user-provided values."""
 
     @pytest.mark.asyncio
-    async def test_register_resource_user_provided_takes_priority(self, resource_service, mock_db):
-        """Test that user-provided MIME type takes priority over URI detection during registration."""
+    async def test_register_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
+        """Test that URL-detected MIME type takes priority over user-provided during registration."""
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate
+
+        # Mock database operations
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing resource
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        # Create resource with .md extension but user provides text/plain
+        resource = ResourceCreate(uri="https://gist.github.com/user/example.md", name="Test Markdown", mime_type="text/plain", content="# Test")  # User provides wrong type
+
+        with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
+            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                # Capture log messages
+                with patch("mcpgateway.services.resource_service.logger") as mock_logger:
+                    await resource_service.register_resource(mock_db, resource)
+
+                    # Verify the resource was added with URL-detected MIME type
+                    added_resource = mock_db.add.call_args[0][0]
+                    assert added_resource.mime_type == "text/markdown"  # URL-detected, not user's text/plain
+
+                    # Verify logging of the override - check if info was called with the message
+                    log_calls = [str(call) for call in mock_logger.info.call_args_list]
+                    assert any("text/markdown" in str(call) and "text/plain" in str(call) for call in log_calls), f"Expected log about MIME type override, got: {log_calls}"
+
+    @pytest.mark.asyncio
+    async def test_register_resource_uses_user_mime_when_no_url_detection(self, resource_service, mock_db):
+        """Test that user-provided MIME type is used when URL detection fails."""
         # First-Party
         from mcpgateway.schemas import ResourceCreate
 
@@ -2545,64 +2639,59 @@ class TestResourceMimeTypePriority:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        # User explicitly declares text/plain even though URI is .md
-        resource = ResourceCreate(uri="https://gist.github.com/user/example.md", name="Test", mime_type="text/plain", content="# Test")
+        # URI with no extension
+        resource = ResourceCreate(uri="test://no-extension", name="Test Resource", mime_type="text/plain", content="test")
 
         with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
                 await resource_service.register_resource(mock_db, resource)
 
+                # Verify user's MIME type was used
                 added_resource = mock_db.add.call_args[0][0]
-                # User-provided type wins over URI detection
                 assert added_resource.mime_type == "text/plain"
 
     @pytest.mark.asyncio
-    async def test_register_resource_uri_fallback_when_no_user_type(self, resource_service, mock_db):
-        """Test that URI detection is used as fallback when user omits MIME type."""
+    async def test_register_resource_url_detection_various_extensions(self, resource_service, mock_db, monkeypatch):
+        """Test URL detection works for various file extensions."""
         # First-Party
         from mcpgateway.schemas import ResourceCreate
 
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        mock_db.add = MagicMock()
-        mock_db.commit = MagicMock()
-        mock_db.refresh = MagicMock()
+        # Mock content security to bypass MIME validation
+        mock_content_security = MagicMock()
+        mock_content_security.validate_resource_size = MagicMock()
+        mock_content_security.validate_resource_mime_type = MagicMock()
 
-        # No user-provided MIME type — URI detection should kick in
-        resource = ResourceCreate(uri="https://example.com/data.json", name="Test", content="test")
+        test_cases = [
+            ("https://example.com/file.json", "application/json"),
+            ("https://example.com/file.pdf", "application/pdf"),
+            ("https://example.com/file.png", "image/png"),
+            ("https://example.com/file.jpg", "image/jpeg"),
+            ("https://example.com/file.html", "text/html"),
+        ]
 
-        with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
-            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
-                await resource_service.register_resource(mock_db, resource)
+        for uri, expected_mime in test_cases:
+            mock_db.execute.return_value.scalar_one_or_none.return_value = None
+            mock_db.add = MagicMock()
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
 
-                added_resource = mock_db.add.call_args[0][0]
-                assert added_resource.mime_type == "application/json"
+            resource = ResourceCreate(uri=uri, name="Test", mime_type="text/plain", content="test")  # Wrong type
 
-    @pytest.mark.asyncio
-    async def test_register_resource_content_fallback_when_no_uri_detection(self, resource_service, mock_db):
-        """Test content-based fallback when user omits MIME type and URI has no extension."""
-        # First-Party
-        from mcpgateway.schemas import ResourceCreate
+            with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_content_security):
+                with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
+                    with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                        await resource_service.register_resource(mock_db, resource)
 
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        mock_db.add = MagicMock()
-        mock_db.commit = MagicMock()
-        mock_db.refresh = MagicMock()
-
-        resource = ResourceCreate(uri="test://no-extension", name="Test", content="hello")
-
-        with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
-            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
-                await resource_service.register_resource(mock_db, resource)
-
-                added_resource = mock_db.add.call_args[0][0]
-                assert added_resource.mime_type == "text/plain"  # string content → text/plain
+                        added_resource = mock_db.add.call_args[0][0]
+                        assert added_resource.mime_type == expected_mime, f"Failed for {uri}"
 
     @pytest.mark.asyncio
-    async def test_update_resource_user_provided_takes_priority(self, resource_service, mock_db):
-        """Test that user-provided MIME type takes priority during updates."""
+    async def test_update_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
+        """Test that URL-detected MIME type takes priority during updates."""
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
 
+        # Existing resource
         mock_resource = MagicMock()
         mock_resource.id = 1
         mock_resource.uri = "test://old"
@@ -2617,15 +2706,20 @@ class TestResourceMimeTypePriority:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        # User explicitly provides text/html even though URI is .json
-        update = ResourceUpdate(uri="https://api.example.com/data.json", mime_type="text/html")
+        # Update with new URI that has .json extension
+        update = ResourceUpdate(uri="https://api.example.com/data.json", mime_type="text/html")  # User provides wrong type
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
             with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
-                await resource_service.update_resource(mock_db, 1, update)
+                with patch("mcpgateway.services.resource_service.logger") as mock_logger:
+                    await resource_service.update_resource(mock_db, 1, update)
 
-                # User-provided type wins
-                assert mock_resource.mime_type == "text/html"
+                    # Verify URL-detected MIME type was used
+                    assert mock_resource.mime_type == "application/json"
+
+                    # Verify logging - check if info was called with the message
+                    log_calls = [str(call) for call in mock_logger.info.call_args_list]
+                    assert any("application/json" in str(call) and "text/html" in str(call) for call in log_calls), f"Expected log about MIME type override, got: {log_calls}"
 
     @pytest.mark.asyncio
     async def test_update_resource_empty_mime_with_url_detection(self, resource_service, mock_db):
@@ -2703,36 +2797,6 @@ class TestResourceMimeTypePriority:
         for uri, expected_mime in test_cases:
             result = resource_service._detect_mime_type_from_uri(uri)
             assert result == expected_mime, f"Failed for {uri}: expected {expected_mime}, got {result}"
-
-    @pytest.mark.asyncio
-    async def test_update_resource_uri_change_without_mime_type(self, resource_service, mock_db):
-        """Test that changing URI without providing MIME type triggers URL detection."""
-        # First-Party
-        from mcpgateway.schemas import ResourceUpdate
-
-        mock_resource = MagicMock()
-        mock_resource.id = 1
-        mock_resource.uri = "test://old"
-        mock_resource.mime_type = "text/plain"
-        mock_resource.text_content = "content"
-        mock_resource.binary_content = None
-        mock_resource.visibility = "private"
-        mock_resource.team_id = None
-        mock_resource.version = 1
-
-        mock_db.get = MagicMock(return_value=mock_resource)
-        mock_db.commit = MagicMock()
-        mock_db.refresh = MagicMock()
-
-        # Update URI only (no mime_type provided) — should trigger URL detection
-        update = ResourceUpdate(uri="https://example.com/data.json")
-
-        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
-            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
-                await resource_service.update_resource(mock_db, 1, update)
-
-                # URL-detected MIME type should be applied
-                assert mock_resource.mime_type == "application/json"
 
 
 class TestResourceServiceMetricsExtended:
@@ -3093,12 +3157,51 @@ class TestResourceAccessAuthorization:
         assert await resource_service._check_resource_access(mock_db, public_resource, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
-    async def test_check_resource_access_admin_bypass(self, resource_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
+    async def test_check_resource_access_admin_bypass_denied_for_private(self, resource_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
 
-        # Admin bypass: both None = unrestricted access
-        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is True
+        # Admin bypass: both None, but private resources are NEVER accessible via admin bypass
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_bypass_grants_team_access(self, resource_service, mock_db):
+        """Admin bypass grants access to team resources."""
+        team_resource = self._create_mock_resource(visibility="team", owner_email="owner@test.com", team_id="team-abc")
+
+        # Admin bypass: both None = access to team resources
+        assert await resource_service._check_resource_access(mock_db, team_resource, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_database_admin_bypass(self, resource_service, mock_db):
+        """DB admin bypass: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+        own_private = self._create_mock_resource(visibility="private", owner_email="admin@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        # token_teams=None + DB admin viewing OWN private → allowed (#4341 carve-out for self-access)
+        assert await resource_service._check_resource_access(mock_db, own_private, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OTHER user's private → denied (#4341 invariant)
+        assert await resource_service._check_resource_access(mock_db, other_users_private, user_email="admin@test.com", token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_with_narrowed_token_still_narrowed(self, resource_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass (#4106 guard)."""
+        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_admin_with_public_only_token_stays_public_only(self, resource_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public."""
+        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_resource_access_private_denied_to_unauthenticated(self, resource_service, mock_db):
@@ -3870,7 +3973,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 
@@ -3923,7 +4025,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 
@@ -3971,7 +4072,6 @@ class TestInvokeResourceCoverage:
             db = MagicMock()
             db.close = MagicMock()
 
-            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
             monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
 
@@ -4300,10 +4400,11 @@ class TestInvokeResourceCoverage:
         assert result == "http-ok"
 
     @pytest.mark.asyncio
-    async def test_sse_session_pool_used_and_signature_validated(self, resource_service):
-        """Cover session pool path (SSE) and certificate signature validation branch."""
+    async def test_sse_registry_used_and_signature_validated(self, resource_service):
+        """Cover registry path (SSE) and certificate signature validation branch (#4205)."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import TransportType
+        from mcpgateway.services.upstream_session_registry import TransportType
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         resource = self._make_resource()
         gateway = self._make_gateway(transport="sse", auth_type=None)
@@ -4313,58 +4414,63 @@ class TestInvokeResourceCoverage:
         db = MagicMock()
         db.close = MagicMock()
 
-        captured_pool_kwargs: dict[str, object] = {}
+        captured_acquire_kwargs: dict[str, object] = {}
 
-        pooled_session = AsyncMock()
-        pooled_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="pooled-ok", blob=None)]))
+        upstream_session = AsyncMock()
+        upstream_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="registry-ok", blob=None)]))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return MagicMock(session=pooled_session)
+                return MagicMock(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        def pool_session(**kwargs):
-            captured_pool_kwargs.update(kwargs)
-            return _PooledCM()
+        def fake_acquire(**kwargs):
+            captured_acquire_kwargs.update(kwargs)
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = pool_session
+        registry = MagicMock()
+        registry.acquire = fake_acquire
 
         span = MagicMock()
 
-        # Avoid real SSL context creation; we're only covering validation branch.
+        # Avoid real SSL context creation; we're only covering the validation branch.
         resource_service.create_ssl_context = MagicMock(return_value=MagicMock())
 
-        with (
-            patch(
-                "mcpgateway.services.resource_service.settings",
-                MagicMock(
-                    enable_ed25519_signing=True,
-                    ed25519_public_key="pk",
-                    platform_admin_email="admin@test.com",
-                    httpx_max_connections=10,
-                    httpx_max_keepalive_connections=5,
-                    httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
-                    health_check_timeout=1,
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-res"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=True,
+                        ed25519_public_key="pk",
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
                 ),
-            ),
-            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
-            patch(
-                "mcpgateway.services.resource_service.create_span",
-                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
-            ),
-            patch("mcpgateway.services.resource_service.validate_signature", return_value=True),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-        ):
-            mock_trace.get = MagicMock(return_value=None)
-            mock_metrics_buffer.return_value = MagicMock()
-            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
-        assert result == "pooled-ok"
-        assert captured_pool_kwargs.get("transport_type") == TransportType.SSE
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch(
+                    "mcpgateway.services.resource_service.create_span",
+                    MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+                ),
+                patch("mcpgateway.services.resource_service.validate_signature", return_value=True),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                mock_metrics_buffer.return_value = MagicMock()
+                result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result == "registry-ok"
+        assert captured_acquire_kwargs.get("transport_type") == TransportType.SSE
+        assert captured_acquire_kwargs.get("downstream_session_id") == "downstream-res"
 
 
 # ============================================================================
@@ -6621,13 +6727,13 @@ class TestInvokeResourceCoverageEdges:
                     httpx_max_connections=10,
                     httpx_max_keepalive_connections=5,
                     httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
                     health_check_timeout=1,
                 ),
             ),
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # Registry not initialized → registry path short-circuits, fallback taken.
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
@@ -6642,11 +6748,12 @@ class TestInvokeResourceCoverageEdges:
         assert out == "ok"
 
     @pytest.mark.asyncio
-    async def test_invoke_resource_streamablehttp_uses_session_pool_when_available(self):
-        """Cover StreamableHTTP pooled path (1870-1875, 1878-1888)."""
+    async def test_invoke_resource_streamablehttp_uses_registry_when_available(self):
+        """Cover StreamableHTTP registry path (#4205)."""
         # First-Party
-        from mcpgateway.services.mcp_session_pool import TransportType
         from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.services.upstream_session_registry import TransportType
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         svc = ResourceService()
         db = MagicMock()
@@ -6667,47 +6774,52 @@ class TestInvokeResourceCoverageEdges:
             auth_query_params=None,
         )
 
-        pooled_session = AsyncMock()
-        pooled_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="pooled-ok")]))
+        upstream_session = AsyncMock()
+        upstream_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="registry-ok")]))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return MagicMock(session=pooled_session)
+                return MagicMock(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
         captured_kwargs: dict[str, object] = {}
 
-        def _pool_session(**kwargs):
+        def _fake_acquire(**kwargs):
             captured_kwargs.update(kwargs)
-            return _PooledCM()
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = _pool_session
+        registry = MagicMock()
+        registry.acquire = _fake_acquire
 
-        with (
-            patch(
-                "mcpgateway.services.resource_service.settings",
-                MagicMock(
-                    enable_ed25519_signing=False,
-                    platform_admin_email="admin@test.com",
-                    httpx_max_connections=10,
-                    httpx_max_keepalive_connections=5,
-                    httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
-                    health_check_timeout=1,
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-r"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=False,
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
                 ),
-            ),
-            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-        ):
-            mock_trace.get = MagicMock(return_value=None)
-            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
-        assert out == "pooled-ok"
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert out == "registry-ok"
         assert captured_kwargs.get("transport_type") == TransportType.STREAMABLE_HTTP
+        assert captured_kwargs.get("downstream_session_id") == "downstream-r"
 
     @pytest.mark.asyncio
     async def test_invoke_resource_transport_none_raises_and_hits_outer_exception_block(self):
@@ -6846,13 +6958,13 @@ class TestInvokeResourceCoverageEdges:
                     httpx_max_connections=10,
                     httpx_max_keepalive_connections=5,
                     httpx_keepalive_expiry=30,
-                    mcp_session_pool_enabled=True,
                     health_check_timeout=1,
                 ),
             ),
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # Registry not initialized → registry path short-circuits, fallback taken.
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
@@ -6865,6 +6977,130 @@ class TestInvokeResourceCoverageEdges:
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "http-ok"
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_sse_falls_back_on_registry_not_initialized_error(self):
+        """The #4205-narrowed `except RegistryNotInitializedError` must be exercised on the SSE path.
+
+        Pins a downstream Mcp-Session-Id so ``use_registry`` is truthy, then raises
+        ``RegistryNotInitializedError``. Covers resource_service.py:1955-1956.
+        """
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
+        )
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="fallback-ok", blob=None)])
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=False,
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
+                ),
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+        assert out == "fallback-ok"
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_streamablehttp_falls_back_on_registry_not_initialized_error(self):
+        """Mirror of the SSE fallback test but for the StreamableHTTP branch.
+
+        Covers resource_service.py:2033-2034.
+        """
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1",
+            name="GW",
+            url="http://gw.test",
+            transport="streamablehttp",
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            auth_type=None,
+            auth_value={},
+            oauth_config=None,
+            auth_query_params=None,
+        )
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-fallback-ok", blob=None)])
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-http"})
+        try:
+            with (
+                patch(
+                    "mcpgateway.services.resource_service.settings",
+                    MagicMock(
+                        enable_ed25519_signing=False,
+                        platform_admin_email="admin@test.com",
+                        httpx_max_connections=10,
+                        httpx_max_keepalive_connections=5,
+                        httpx_keepalive_expiry=30,
+                        health_check_timeout=1,
+                    ),
+                ),
+                patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+                patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+                patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
+                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            ):
+                mock_trace.get = MagicMock(return_value=None)
+                mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        finally:
+            request_headers_var.reset(headers_token)
+        assert out == "http-fallback-ok"
 
 
 class TestResourceServiceImportCoverage:
@@ -7236,7 +7472,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
-        """meta_data is accepted but not forwarded to session.read_resource (SDK doesn't support _meta)."""
+        """meta_data is forwarded to the upstream via send_request (SDK read_resource lacks _meta support)."""
         # Standard
         from contextlib import asynccontextmanager
 
@@ -7250,6 +7486,8 @@ class TestReadResourceDirectProxy:
         result_mock.contents = [first_content]
 
         client_session_cm, session_mock = self._make_session_mock(result_mock)
+        # send_request is used instead of read_resource when meta_data is provided
+        session_mock.send_request = AsyncMock(return_value=result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
@@ -7275,10 +7513,9 @@ class TestReadResourceDirectProxy:
                 meta_data=meta,
             )
 
-        # MCP SDK read_resource() only accepts uri; _meta is not forwarded
-        session_mock.read_resource.assert_awaited_once_with(
-            uri="http://example.com/dp-resource",
-        )
+        # _meta is forwarded via send_request; read_resource is not called when meta_data is set
+        session_mock.send_request.assert_awaited_once()
+        session_mock.read_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
@@ -7552,3 +7789,182 @@ class TestListResourcesGatewayIdFilter:
         assert mock_create_span.call_args[0][0] == "resource_template.list"
         attrs = mock_create_span.call_args[0][1]
         assert attrs["server_id"] == "server-1"
+
+
+# --------------------------------------------------------------------------- #
+# Security regression tests for meta_data handling (CWE-400, CWE-20, CWE-284)#
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMetaData:
+    """Unit tests for _validate_meta_data (CWE-400 guards)."""
+
+    def test_none_is_accepted(self):
+        """None meta_data must always pass without raising."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data(None)
+
+    def test_empty_dict_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({})
+
+    def test_valid_small_dict_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
+
+    def test_too_many_keys_raises(self):
+        """meta_data with more than _META_MAX_KEYS keys must be rejected (DoS guard)."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(oversized)
+
+    def test_excessive_nesting_depth_raises(self):
+        """meta_data with depth > _META_MAX_DEPTH must be rejected."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deeply_nested = {"level1": {"level2": {"level3": "value"}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(deeply_nested)
+
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # A list at depth 1 containing a dict that itself contains a dict = 3 levels total
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_list_of_scalars_at_max_depth_is_accepted(self):
+        """A list of scalar values at depth 1 must not be rejected (CWE-400 guard is not over-broad)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        # List of scalars at first level is fine
+        _validate_meta_data({"tags": ["a", "b", "c"]})
+
+    def test_exact_max_depth_is_accepted(self):
+        """meta_data with exactly _META_MAX_DEPTH levels must be allowed."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        two_levels = {"outer": {"inner": "value"}}
+        _validate_meta_data(two_levels)
+
+    def test_oversized_bytes_raises(self):
+        """meta_data whose JSON encoding exceeds _META_MAX_BYTES must be rejected."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_BYTES
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        large_value = "x" * (META_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"k": large_value})
+
+    def test_non_serializable_value_raises(self):
+        """meta_data containing a non-JSON-serializable value must raise ValueError (CWE-20/Finding 6)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
+
+
+class TestBuildReadResourceRequest:
+    """Unit tests for _build_read_resource_request (CWE-20 and CWE-284 guards)."""
+
+    def test_meta_is_injected_under_alias_key(self):
+        """_meta must be present and meta (non-alias) must not shadow it (CWE-20)."""
+        # First-Party
+        from mcpgateway.services.resource_service import _build_read_resource_request
+
+        meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
+        request = _build_read_resource_request("file:///test.txt", meta_data)
+        # Unwrap to the inner params model
+        inner_params = request.root.params
+        assert inner_params is not None
+        assert inner_params.meta is not None
+        dumped = inner_params.meta.model_dump()
+        # All meta_data keys must survive; MCP SDK may add progressToken alongside
+        assert meta_data.items() <= dumped.items()
+
+    def test_returns_client_request_type(self):
+        """Return value must be a ClientRequest wrapping ReadResourceRequest."""
+        # Third-Party
+        from mcp import types
+        from mcp.types import ReadResourceRequest
+
+        # First-Party
+        from mcpgateway.services.resource_service import _build_read_resource_request
+
+        req = _build_read_resource_request("file:///test.txt", {"k": "v"})
+        assert isinstance(req, types.ClientRequest)
+        assert isinstance(req.root, ReadResourceRequest)
+
+
+class TestReadResourceMetaDataValidationIntegration:
+    """Integration tests: _validate_meta_data is called by read_resource (CWE-400)."""
+
+    @pytest.mark.asyncio
+    async def test_read_resource_rejects_oversized_meta_data(self):
+        """read_resource must raise ValueError for oversized meta_data before DB access."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service.read_resource(db, resource_uri="file:///test.txt", meta_data=oversized)
+
+        # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_oversized_meta_data(self):
+        """invoke_resource must raise ValueError for oversized meta_data before DB access (Finding 2 / CWE-400)."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=oversized)
+
+        # DB must not have been touched
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_rejects_list_of_dicts_depth_bypass(self):
+        """invoke_resource must reject _meta with list-of-dicts depth bypass (Finding 2/3 / CWE-400)."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        service = ResourceService()
+        db = MagicMock()
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=hidden_depth)
+
+        db.execute.assert_not_called()

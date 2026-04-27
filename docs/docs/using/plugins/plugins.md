@@ -20,14 +20,14 @@ Plugins for protecting against security threats, detecting sensitive data, and m
 | Plugin | Type | Description |
 |--------|------|-------------|
 | [Simple Token Auth](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) | Native | Custom token-based authentication with file storage, expiration, and CLI management. Complete example of HTTP authentication hooks (http_pre_request, http_auth_resolve_user, http_auth_check_permission, http_post_request) |
-| [PII Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/pii_filter) | Native | Detects and masks sensitive information including SSN, credit cards, and emails with configurable masking strategies |
-| [Secrets Detection](https://github.com/IBM/mcp-context-forge/tree/main/plugins/secrets_detection) | Native | Detects likely credentials/secrets (AWS keys, API keys, JWT tokens, private keys) in inputs and outputs with optional redaction and blocking |
+| [PII Filter](https://pypi.org/project/cpex-pii-filter/) | Package | Detects and masks sensitive information including SSN, credit cards, and emails with configurable masking strategies |
+| [Secrets Detection](https://pypi.org/project/cpex-secrets-detection/) | Package | Detects likely credentials/secrets (AWS keys, API keys, JWT tokens, private keys) in inputs and outputs with optional redaction and blocking |
 | [Code Safety Linter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/code_safety_linter) | Native | Detects unsafe code patterns in tool outputs (eval, exec, os.system, subprocess, rm -rf) |
 | [Safe HTML Sanitizer](https://github.com/IBM/mcp-context-forge/tree/main/plugins/safe_html_sanitizer) | Native | Sanitizes HTML to remove XSS vectors, dangerous tags, event handlers, and bad URL schemes with optional text conversion |
 | [SQL Sanitizer](https://github.com/IBM/mcp-context-forge/tree/main/plugins/sql_sanitizer) | Native | Detects risky SQL patterns and sanitizes/blocks dangerous statements (DROP, TRUNCATE, DELETE/UPDATE without WHERE) |
 | [Harmful Content Detector](https://github.com/IBM/mcp-context-forge/tree/main/plugins/harmful_content_detector) | Native | Detects harmful content (self-harm, violence, hate speech) via lexicons and blocks or annotates accordingly |
 | [Content Moderation](https://github.com/IBM/mcp-context-forge/tree/main/plugins/content_moderation) | Native | Advanced AI-powered content moderation using IBM Watson, IBM Granite Guardian, OpenAI, Azure, or AWS with configurable thresholds and actions |
-| [URL Reputation](https://github.com/IBM/mcp-context-forge/tree/main/plugins/url_reputation) | Native | Static URL reputation checks using blocked domains and patterns |
+| [URL Reputation](https://pypi.org/project/cpex-url-reputation/) | Package | Static URL reputation checks using blocked domains and patterns |
 | [VirusTotal Checker](https://github.com/IBM/mcp-context-forge/tree/main/plugins/virus_total_checker) | Native | Integrates with VirusTotal v3 to check URLs, domains, IPs, and file hashes before fetching with configurable blocking policies |
 | [LLMGuard](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/llmguard) | External | Comprehensive AI guardrails utilizing LLM Guard library with filters and sanitizers for input prompts and model outputs. Supports complex policy expressions and vault-based anonymization |
 | [ClamAV Remote](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/clamav_server) | External | External MCP server plugin that scans files and text content using ClamAV for malware detection in resources, prompts, and tool outputs |
@@ -40,10 +40,10 @@ Plugins for improving system reliability, performance, and resource management.
 |--------|------|-------------|
 | [Circuit Breaker](https://github.com/IBM/mcp-context-forge/tree/main/plugins/circuit_breaker) | Native | Trips per-tool breaker on high error rates or consecutive failures and blocks during cooldown |
 | [Watchdog](https://github.com/IBM/mcp-context-forge/tree/main/plugins/watchdog) | Native | Enforces maximum runtime for tools with warn or block actions on threshold violations |
-| [Rate Limiter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/rate_limiter) | Native | Per-user, tenant, and tool rate limiting with selectable algorithms (fixed_window, sliding_window, token_bucket) and memory or Redis backends |
+| [Rate Limiter](https://pypi.org/project/cpex-rate-limiter/) | Package | Rate limiting by user, tenant, or tool with fixed-window, sliding-window, and token-bucket algorithms; memory and Redis backends |
 | [Cached Tool Result](https://github.com/IBM/mcp-context-forge/tree/main/plugins/cached_tool_result) | Native | Caches idempotent tool results in-memory with configurable TTL and key fields |
 | [Response Cache by Prompt](https://github.com/IBM/mcp-context-forge/tree/main/plugins/response_cache_by_prompt) | Native | Advisory response cache using cosine similarity over prompt/input fields with configurable threshold |
-| [Retry with Backoff](https://github.com/IBM/mcp-context-forge/tree/main/plugins/retry_with_backoff) | Native | Annotates retry/backoff policy in metadata with exponential backoff on specific HTTP status codes |
+| [Retry with Backoff](https://pypi.org/project/cpex-retry-with-backoff/) | Package | Annotates retry/backoff policy in metadata with exponential backoff on specific HTTP status codes |
 
 ## Observability & Monitoring
 
@@ -133,7 +133,7 @@ Example configuration:
 plugins:
 
   - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     mode: "enforce"
     priority: 50

@@ -7,6 +7,9 @@ Authors: Mihai Criveti
 A2A Agents page object for Agent management features.
 """
 
+# Standard
+import re
+
 # Third-Party
 from playwright.sync_api import expect, Locator
 
@@ -95,6 +98,57 @@ class AgentsPage(BasePage):
     def passthrough_headers_input(self) -> Locator:
         """Passthrough headers input field."""
         return self.add_agent_form.locator('input[name="passthrough_headers"]')
+
+    # ==================== UAID Fields ====================
+
+    @property
+    def generate_uaid_checkbox(self) -> Locator:
+        """Generate UAID checkbox."""
+        return self.add_agent_form.locator("#a2a-generate-uaid")
+
+    @property
+    def uaid_fields_container(self) -> Locator:
+        """UAID fields container."""
+        return self.add_agent_form.locator("#uaid-fields-a2a")
+
+    @property
+    def uaid_registry_input(self) -> Locator:
+        """UAID registry name input field."""
+        return self.add_agent_form.locator("#a2a-uaid-registry")
+
+    @property
+    def uaid_protocol_select(self) -> Locator:
+        """UAID protocol select field."""
+        return self.add_agent_form.locator("#a2a-uaid-protocol")
+
+    # ==================== Edit Modal UAID Fields ====================
+
+    @property
+    def edit_modal(self) -> Locator:
+        """Edit agent modal."""
+        return self.page.locator("#a2a-edit-modal")
+
+    @property
+    def edit_generate_uaid_checkbox(self) -> Locator:
+        """Generate UAID checkbox in edit form."""
+        return self.edit_modal.locator("#a2a-generate-uaid-edit")
+
+    @property
+    def edit_uaid_fields_container(self) -> Locator:
+        """UAID fields container in edit form."""
+        return self.edit_modal.locator("#uaid-fields-a2a-edit")
+
+    @property
+    def edit_uaid_registry_input(self) -> Locator:
+        """UAID registry name input field in edit form."""
+        return self.edit_modal.locator("#a2a-uaid-registry-edit")
+
+    @property
+    def edit_uaid_protocol_select(self) -> Locator:
+        """UAID protocol select field in edit form."""
+        return self.edit_modal.locator("#a2a-uaid-protocol-edit")
+
+    # ==================== Submit Button ====================
 
     @property
     def add_agent_btn(self) -> Locator:
@@ -340,6 +394,61 @@ class AgentsPage(BasePage):
         self.fill_locator(self.auth_username_input, username)
         self.fill_locator(self.auth_password_input, password)
 
+    def enable_uaid(self, registry: str = "context-forge", protocol: str = "a2a") -> None:
+        """Enable UAID generation for the agent.
+
+        Args:
+            registry: Registry name (default: context-forge)
+            protocol: Protocol type (a2a, mcp, rest, grpc)
+        """
+        # Check the UAID checkbox
+        self.click_locator(self.generate_uaid_checkbox)
+        # Wait for UAID fields to become visible
+        self.wait_for_visible(self.uaid_fields_container)
+        # Fill in registry and protocol
+        self.fill_locator(self.uaid_registry_input, registry)
+        self.uaid_protocol_select.select_option(protocol)
+
+    def create_agent_with_uaid(
+        self,
+        name: str,
+        endpoint_url: str,
+        agent_type: str = "generic",
+        description: str = "",
+        tags: str = "",
+        visibility: str = "public",
+        registry: str = "context-forge",
+        protocol: str = "a2a",
+    ) -> None:
+        """Create a new A2A agent with UAID enabled.
+
+        Args:
+            name: Agent name
+            endpoint_url: Agent endpoint URL
+            agent_type: Agent type (generic, openai, anthropic, custom)
+            description: Agent description
+            tags: Comma-separated tags
+            visibility: Visibility setting (public, team, private)
+            registry: UAID registry name
+            protocol: UAID protocol (a2a, mcp, rest, grpc)
+        """
+        self.fill_agent_form_basic(name, endpoint_url, agent_type, description, tags, visibility)
+        self.enable_uaid(registry, protocol)
+        self.click_locator(self.add_agent_btn)
+
+    def get_agent_id_type_badge(self, agent_row_index: int = 0) -> str:
+        """Get the ID type badge text (UAID or UUID) for an agent.
+
+        Args:
+            agent_row_index: Index of the agent row (0-based)
+
+        Returns:
+            Badge text ("UAID" or "UUID")
+        """
+        # The ID Type column is the 3rd column (index 2) after Actions and S.No.
+        badge = self.agent_rows.nth(agent_row_index).locator("td").nth(2).locator("span")
+        return badge.inner_text().strip()
+
     def fill_bearer_auth(self, token: str) -> None:
         """Fill bearer token authentication field.
 
@@ -407,6 +516,27 @@ class AgentsPage(BasePage):
             Locator for the agent row
         """
         return self.agent_rows.nth(agent_index)
+
+    def open_edit_modal(self, agent_index: int = 0) -> None:
+        """Open the edit modal for an A2A agent.
+
+        The JS handler fetches GET /admin/a2a/{id} before showing the modal.
+
+        Args:
+            agent_index: Index of the agent row (default: 0 for first agent)
+        """
+        row = self.get_agent_row(agent_index)
+        self._open_action_dropdown(row)
+        edit_btn = row.locator('button[role="menuitem"]:has-text("Edit")')
+        with self.page.expect_response(
+            lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+            timeout=30000,
+        ) as resp_info:
+            edit_btn.click()
+        response = resp_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Agent API fetch failed (HTTP {response.status}) for {response.url}")
+        self.page.wait_for_selector("#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000)
 
     def agent_exists(self, agent_name: str) -> bool:
         """Check if an agent with the given name exists.

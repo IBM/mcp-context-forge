@@ -2,7 +2,7 @@
 
 ## ⚠️ Beta Software Notice
 
-**Current Version: 1.0.0-RC-2**
+**Current Version: 1.0.0-RC-3**
 
 ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -93,7 +93,7 @@ Our security pipeline operates at multiple levels:
 
 **Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, Gitleaks for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, detect-secrets for secret detection with baseline allowlist, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
@@ -108,7 +108,7 @@ Our security pipeline operates at multiple levels:
 Our security toolchain includes **40+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
-- **Secret Detection**: Gitleaks for git history scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
+- **Secret Detection**: detect-secrets with baseline allowlist for tracked-file scanning and pre-commit enforcement, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
 - **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
 - **Container Security**: Dockerfile linting, SBOM generation, and Dockle where used
 - **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
@@ -121,7 +121,7 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 - **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
 - **AI Content Integrity**: Pre-commit hooks preventing AI-generated artifacts (hallucinated citations, stock phrases, placeholder references, malformed code fences)
 - **Unicode & Trojan-Source Prevention**: texthooks for fixing smart quotes and ligatures, forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)
-- **Documentation Security**: Spellcheck and markdown validation and gitleaks to prevent information disclosure
+- **Documentation Security**: Spellcheck, markdown validation, and detect-secrets to prevent information disclosure
 - **Security Testing**: Playwright browser-driven security end-to-end tests, diff-cover enforcing appropriate coverage on changed lines in PRs
 
 ### Developer Experience & Security
@@ -141,8 +141,7 @@ We believe that security should enhance rather than hinder the development proce
 - `make semgrep` - Advanced semantic code analysis for security patterns
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
 - `make devskim` - DevSkim security anti-pattern detection (Microsoft)
-- `make gitleaks` - Scan git history for accidentally committed secrets
-- `make detect-secrets-scan` - Scan git structure for accidentally committed secrets
+- `make detect-secrets-scan` - Scan tracked files for accidentally committed secrets against `.secrets.baseline` allowlist
 - `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
 - `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
 - `make interrogate` - Ensure comprehensive docstring coverage
@@ -275,6 +274,89 @@ As of version 1.0.0-RC-2, ContextForge implements log injection protection to pr
 **Attack Prevention:**
 - Prevents fake log entry injection
 - Protects log parsing and SIEM systems
+
+### Template Injection Protection (CWE-1336)
+
+As of version 1.0.0-RC-2, ContextForge implements comprehensive Jinja2 template injection protection to prevent code execution attacks through malicious prompt templates:
+
+**Protection Mechanism:**
+- [`validate_prompt_template()`](mcpgateway/services/content_security.py:411) - Multi-layer template validation
+- Three-stage validation pipeline: syntax → patterns → Jinja2 parsing
+- Configurable via `CONTENT_VALIDATE_PROMPT_TEMPLATES` (enabled by default)
+- Customizable blocked patterns via `CONTENT_BLOCKED_TEMPLATE_PATTERNS`
+
+**Validation Layers:**
+
+1. **Balanced Braces Check:**
+   - Stack-based validation of Jinja2 delimiters (`{{`, `}}`, `{%`, `%}`, `{#`, `#}`)
+   - Prevents malformed templates that could bypass security checks
+   - Detects mismatched or incomplete delimiter pairs
+
+2. **Dangerous Pattern Detection:**
+   - Case-insensitive regex scanning for injection vectors
+   - Default blocked patterns:
+     - `__import__` - Prevents module imports
+     - `eval\s*\(` - Blocks eval() calls
+     - `exec\s*\(` - Blocks exec() calls
+     - `__.*__` - Prevents dunder method access (e.g., `__class__`, `__mro__`)
+   - First-match early exit for performance
+
+3. **Jinja2 Syntax Validation:**
+   - Parses template with Jinja2 Environment
+   - Validates template semantics and structure
+   - Catches syntax errors before template execution
+
+**Attack Prevention:**
+- Prevents arbitrary code execution via `__import__('os').system()`
+- Blocks object introspection attacks via `__class__.__bases__`
+- Prevents eval/exec injection
+- Protects against template syntax manipulation
+
+**Configuration:**
+```bash
+# Enable validation (default: true)
+CONTENT_VALIDATE_PROMPT_TEMPLATES=true
+
+# Customize blocked patterns (JSON array of regex patterns)
+CONTENT_BLOCKED_TEMPLATE_PATTERNS='["__import__","eval\\s*\\(","exec\\s*\\(","__.*__"]'
+```
+
+**Example Usage:**
+```python
+from mcpgateway.services.content_security import get_content_security_service, TemplateValidationError
+
+security = get_content_security_service()
+
+try:
+    # Validate template before storage
+    security.validate_prompt_template(
+        template="Hello {{ name }}!",
+        name="greeting_prompt",
+        user_email="user@example.com",
+        ip_address="192.168.1.1"
+    )
+except TemplateValidationError as e:
+    logger.error(f"Template validation failed: {e.reason}")
+    # Returns HTTP 400 with detailed error information
+```
+
+**Security Audit Trail:**
+- All validation failures are logged with sanitized PII
+- User emails hashed (8-character prefix)
+- IP addresses masked (last octet/segment hidden)
+- Template name, failure reason, and matched pattern recorded
+
+**Integration Points:**
+- Automatic validation in `register_prompt()` - prompt creation
+- Automatic validation in `update_prompt()` - prompt updates
+- Automatic validation in `register_prompts_bulk()` - bulk imports
+- Global exception handler returns HTTP 400 with structured error details
+
+**Performance:**
+- Validation overhead: < 1ms for simple templates, < 5ms for complex templates
+- Can be disabled via configuration if needed (not recommended)
+- Patterns compiled once at startup for efficiency
+
 - Prevents hiding malicious activity in logs
 - Ensures log integrity for security auditing
 
@@ -373,6 +455,8 @@ When deploying ContextForge in production:
 - [ ] Verify XSS protection is active (SecurityValidator automatically applied via Pydantic schemas)
 - [ ] Verify SSRF protection is active (validate_url() used for all external requests)
 - [ ] Verify log injection protection is applied to user-controlled data in logs
+- [ ] Verify template injection protection is enabled (CONTENT_VALIDATE_PROMPT_TEMPLATES=true)
+- [ ] Review and customize blocked template patterns if needed (CONTENT_BLOCKED_TEMPLATE_PATTERNS)
 - [ ] Secure database connections (use TLS, strong passwords, restricted access)
 - [ ] Secure Redis connections if using Redis (password, TLS, network isolation)
 - [ ] Configure resource limits (CPU, memory) to prevent DoS attacks
@@ -458,7 +542,7 @@ flowchart TD
     N --> N1[Bandit - Security Issues]
     N --> N2[Semgrep - Semantic Patterns]
     N --> N3[Dodgy - Hardcoded Secrets]
-    N --> N4[Gitleaks - Git History Secrets]
+    N --> N4[detect-secrets - Baseline-Audited Secret Scanning]
     N --> N6[Prospector - Comprehensive Analysis]
     N --> N7[Interrogate - Docstring Coverage]
     N --> N8[DevSkim - Security Anti-patterns]
@@ -542,7 +626,7 @@ flowchart TD
     W --> W4[make bandit - Security Scanner]
     W --> W5[make semgrep - Semantic Analysis]
     W --> W6[make dodgy - Secret Detection]
-    W --> W7[make gitleaks - Git History Scan]
+    W --> W7[make detect-secrets-scan - Baseline-Audited Secret Scan]
     W --> W9[make interrogate - Docstring Coverage]
     W --> W10[make prospector - Comprehensive Analysis]
     W --> W11[make pyupgrade - Modernize Syntax]

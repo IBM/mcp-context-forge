@@ -39,8 +39,7 @@ MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
 
 # Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+VENV_DIR ?= $(CURDIR)/.venv
 
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
@@ -72,7 +71,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
 	tests/playwright/screenshots tests/playwright/videos \
 	tests/jmeter/results tests/async/profiles tests/async/reports \
-	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target
+	tests/migration/reports tests/migration/logs .jmeter
 
 EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 	playwright-report-*.html test-results-*.xml \
@@ -101,6 +100,28 @@ CONTAINER_CPUS   = 2
 # The -r flag for xargs is GNU-specific and will fail on macOS
 XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
 
+# -----------------------------------------------------------------------------
+#  Allow override of the image to be used in various docker compose
+#  up and down actions
+# -----------------------------------------------------------------------------
+ifndef IMAGE_LOCAL
+  # Base image name (without any prefix)
+  IMAGE_BASE := mcpgateway/mcpgateway
+  IMAGE_TAG := latest
+
+  # Handle runtime-specific image naming
+  ifeq ($(CONTAINER_RUNTIME),podman)
+    # Podman adds localhost/ prefix for local builds
+    IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  else
+    # Docker doesn't add prefix
+    IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  endif
+endif
 
 # =============================================================================
 # 📖 DYNAMIC HELP
@@ -180,10 +201,81 @@ uv:
 UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
 export UV_BIN
 
+# ----------------------------------------------------------------------------
+# Virtual environment execution policy
+# ----------------------------------------------------------------------------
+# Targets in this Makefile deliberately split how they use `uv`:
+#
+#   * Execution: invoke tools via `$(VENV_DIR)/bin/<tool>` directly (e.g.
+#     pytest, black, ruff, pylint, python). `uv run` — even with `--active` —
+#     has historically resolved against an unexpected environment when the
+#     caller has already `source`d the project venv, producing confusing
+#     "works on my machine" failures. Direct invocation removes the ambiguity:
+#     the tool that runs is unambiguously the one installed in $(VENV_DIR).
+#
+#   * Package management: continue to use `uv pip install` / `uv pip show` /
+#     `uv pip list`. These are intentionally NOT rewritten to
+#     `$(VENV_DIR)/bin/pip` because `uv venv` does not seed `pip` into the
+#     created environment (no `--seed` flag is passed in the `venv` target
+#     above), so `$(VENV_DIR)/bin/pip` simply does not exist. `uv pip` is also
+#     materially faster than vanilla pip and is the supported way to manage
+#     packages in a uv-managed venv.
+#
+# If you add a new target: use `$(VENV_DIR)/bin/<tool>` to *run* something and
+# `uv pip ...` to *install* something. Do not reintroduce `uv run`.
+#
+# Exception — tools invoked via `uvx`: `black`, `isort`, `ruff`, `pylint`,
+# `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`, and
+# `detect-secrets` are invoked through `uv tool run <spec>` with pinned
+# versions (see the pins just below). This isolates the tool versions from
+# whatever is resolved into $(VENV_DIR) by the dev dependency group, so CI
+# and local runs always use the same version regardless of when the venv was
+# last rebuilt. These targets still depend on the `uv` target so `uvx` is
+# guaranteed present. `detect-secrets` is special-cased to use a git-URL
+# spec because the project uses IBM's hardened fork, which is not published
+# to PyPI — see DETECT_SECRETS_SPEC below.
+#
+# Sub-exception — pylint needs project context: unlike the pure-AST tools
+# (ruff, black, isort, vulture, interrogate, radon), pylint does deep type
+# inference via astroid and relies on being able to *import* the project
+# modules and their runtime dependencies (pydantic, fastapi, …) to avoid
+# false positives like E1133 (not-an-iterable) and spurious W0246
+# (useless-parent-delegation) suppressions from pylint-pydantic that only
+# activate when the pydantic class hierarchy is resolvable. The `pylint` and
+# `images`/pyreverse targets therefore pass `--with-editable .` to `uv tool
+# run` so the project and its deps are installed into pylint's isolated
+# tool environment. This costs ~5–10s of resolve/install on a cold uvx
+# cache but restores the inference behavior that the previous
+# venv-installed pylint (via `pip install -e .[dev]`) had for free.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# Pinned linter/formatter versions (invoked via `uvx`)
+# ----------------------------------------------------------------------------
+# Bump these in lockstep with the lower bounds in pyproject.toml's dev group
+# so editors (which typically use the venv-installed version) and Makefile
+# targets (which use these pins via uvx) stay aligned.
+BLACK_VERSION           ?= 26.3.1
+ISORT_VERSION           ?= 6.1.0
+RUFF_VERSION            ?= 0.15.1
+PYLINT_VERSION          ?= 3.3.9
+PYLINT_PYDANTIC_VERSION ?= 0.3.5
+VULTURE_VERSION         ?= 2.14
+INTERROGATE_VERSION     ?= 1.7.0
+RADON_VERSION           ?= 6.0.1
+YAMLLINT_VERSION        ?= 1.38.0
+TOMLCHECK_VERSION       ?= 0.2.3
+PYSPELLING_VERSION      ?= 2.11
+
+# detect-secrets: pinned to IBM's hardened fork (Tag 0.13.1+ibm.64.dss).
+# Uses a git-URL + commit SHA rather than a PyPI version because the IBM
+# fork is not published to PyPI.
+DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976
+
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@mkdir -p "$(VENV_DIR)"
 	@$(UV_BIN) venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
@@ -201,12 +293,34 @@ install-db: venv
 
 .PHONY: install-dev
 install-dev: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
 	else \
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
+	fi
+	@$(MAKE) build-ui
+
+# help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
+.PHONY: build-ui
+build-ui:
+	@if [ "$(SKIP_UI_BUILD)" = "1" ]; then \
+		echo "⏭️  SKIP_UI_BUILD=1 — skipping Admin UI build (the Admin UI will not load at runtime)"; \
+	elif command -v npm >/dev/null 2>&1; then \
+		echo "🔨 Building Admin UI bundle..."; \
+		if [ -f package-lock.json ]; then \
+			npm ci --no-audit --no-fund; \
+		else \
+			echo "ℹ️  package-lock.json not found — falling back to 'npm install'"; \
+			npm install --no-audit --no-fund; \
+		fi && \
+		npm run vite:build; \
+	else \
+		echo "❌ npm not found — install Node.js (https://nodejs.org) to build the Admin UI."; \
+		echo "   Without the bundle, /admin will fail to load at runtime."; \
+		echo "   To bypass this step intentionally, re-run with SKIP_UI_BUILD=1."; \
+		exit 1; \
 	fi
 
 .PHONY: update
@@ -267,7 +381,7 @@ js-build:                        ## Install npm dependencies and build JS bundle
 	fi
 
 ## --- Primary servers ---------------------------------------------------------
-serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
+serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
@@ -578,8 +692,8 @@ grpc-proto:                          ## Generate gRPC stubs for external plugin 
 	@echo "🔧  Generating gRPC protocol buffer stubs..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip show grpcio-tools >/dev/null 2>&1 || \
-		uv pip install -q grpcio-tools"
+		$(UV_BIN) pip show grpcio-tools >/dev/null 2>&1 || \
+		$(UV_BIN) pip install -q grpcio-tools"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python -m grpc_tools.protoc \
 			-I mcpgateway/plugins/framework/external/grpc/proto \
@@ -632,10 +746,12 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-mcp-cli         - Run MCP protocol tests via mcp-cli against live gateway (localhost:8080)
-# help:                        Requires: mcp-cli installed, ContextForge running (docker-compose up)
-# help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
-# help:                        No LLM or API key required - tests MCP protocol only
+# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
+# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
+# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
+# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -667,9 +783,10 @@ clean:
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
-    tests/e2e/test_mcp_cli_protocol.py \
+    tests/e2e/test_mcp_protocol_e2e.py \
     tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust
+    tests/e2e_rust \
+    tests/protocol_compliance
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -681,21 +798,54 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
-	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+test-mcp-protocol-e2e:  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
-			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
-		echo "✅ mcp-cli protocol tests passed!"'
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+			|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }; \
+		echo "✅ MCP protocol E2E tests passed!"'
+
+test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
+	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
+	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
+	@$(MAKE) test-mcp-protocol-e2e
+
+test-protocol-compliance:  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
+	@echo "📜 Running MCP protocol compliance harness (tests/protocol_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
+			|| { echo "❌ protocol compliance harness failed!"; exit 1; }; \
+		echo "✅ protocol compliance harness passed!"'
+
+test-protocol-compliance-reference:  ## Protocol compliance harness — reference server only (fast, always-on)
+	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "reference-stdio" -v --tb=short \
+			|| { echo "❌ reference-target compliance harness failed!"; exit 1; }; \
+		echo "✅ reference-target compliance harness passed!"'
+
+test-protocol-compliance-gateway:  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
+	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+			|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }; \
+		echo "✅ gateway-target compliance harness passed!"'
+
+test-protocol-compliance-matrix:  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/python scripts/compliance_matrix.py $(MATRIX_ARGS)'
 
 test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv pip show pytest-playwright >/dev/null 2>&1 || \
-			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && playwright install --with-deps chromium; } && \
-		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
+		$(UV_BIN) pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; $(UV_BIN) pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
 
@@ -703,7 +853,7 @@ test-mcp-access-matrix:  ## Detailed Rust MCP role/access matrix test with stron
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
 			|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }; \
 		echo "✅ MCP role/access matrix tests passed!"'
 
@@ -711,7 +861,7 @@ test-mcp-plugin-parity:  ## MCP plugin parity E2E for current Python or Rust sta
 	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
 			|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }; \
 		echo "✅ MCP plugin parity tests passed!"'
 
@@ -719,7 +869,7 @@ test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust pu
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
+		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
 		echo "✅ MCP session/auth isolation tests passed!"'
 
@@ -752,7 +902,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+		$(VENV_DIR)/bin/pytest -n auto --maxfail=0 -v --durations=5 \
 			$(PYTEST_IGNORE_FLAGS)"
 
 test-verbose:
@@ -763,7 +913,7 @@ test-verbose:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
+		$(VENV_DIR)/bin/pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -773,7 +923,7 @@ test-profile:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
+		$(VENV_DIR)/bin/pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
 
 .PHONY: coverage-pytest
 coverage-pytest: install-dev
@@ -869,7 +1019,7 @@ pytest-examples:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest pytest-examples && \
+		$(UV_BIN) pip install -q pytest pytest-examples && \
 		pytest -v test_readme.py"
 
 test-curl:
@@ -916,7 +1066,7 @@ test-db-perf:                    ## Run database performance and N+1 detection t
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest tests/performance/test_db_query_patterns.py -v --tb=short"
+		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v --tb=short"
 
 test-db-perf-verbose:            ## Run database performance tests with full SQL query output
 	@echo "🔍 Running database performance tests with query logging..."
@@ -926,7 +1076,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export SQLALCHEMY_ECHO=true && \
-		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
 
 2025-11-25:                      ## Run full MCP 2025-11-25 compliance suite
 	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
@@ -940,7 +1090,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-core:                 ## Run MCP core compliance subset
 	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
@@ -954,7 +1104,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-tasks:                ## Run MCP tasks compliance subset
 	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
@@ -968,7 +1118,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-auth:                 ## Run MCP authorization compliance subset
 	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
@@ -982,7 +1132,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
 
 2025-11-25-report:               ## Run MCP suite and emit JUnit XML + Markdown reports
 	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
@@ -997,7 +1147,7 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
 		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
 		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
+		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
 			--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
 			--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
 			$(MCP_2025_PYTEST_ARGS)"
@@ -1525,9 +1675,10 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@mkdir -p reports
+	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -1538,6 +1689,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
+	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1584,7 +1736,7 @@ testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast --profile sso down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -1678,20 +1830,21 @@ DEMO_A2A_APIKEY_PID := /tmp/demo-a2a-apikey.pid
 
 demo-a2a-up:                               ## Start all 3 A2A demo agents with auto-registration
 	@echo "🤖 Starting A2A demo agents for authentication testing (Issue #2002)..."
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	@echo ""
 	@# Start Basic Auth agent (PYTHONUNBUFFERED=1 ensures print output is captured immediately)
 	@echo "Starting Basic Auth agent on port $(DEMO_A2A_BASIC_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register > /tmp/demo-a2a-basic.log 2>&1 & echo $$! > $(DEMO_A2A_BASIC_PID)
 	@sleep 1
 	@# Start Bearer Token agent
 	@echo "Starting Bearer Token agent on port $(DEMO_A2A_BEARER_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register > /tmp/demo-a2a-bearer.log 2>&1 & echo $$! > $(DEMO_A2A_BEARER_PID)
 	@sleep 1
 	@# Start X-API-Key agent
 	@echo "Starting X-API-Key agent on port $(DEMO_A2A_APIKEY_PORT)..."
-	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+	@PYTHONUNBUFFERED=1 $(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py \
 		--auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register > /tmp/demo-a2a-apikey.log 2>&1 & echo $$! > $(DEMO_A2A_APIKEY_PID)
 	@sleep 2
 	@echo ""
@@ -1743,15 +1896,18 @@ demo-a2a-status:                           ## Show status of A2A demo agents
 
 demo-a2a-basic:                            ## Start only Basic Auth demo agent
 	@echo "🔐 Starting Basic Auth demo agent on port $(DEMO_A2A_BASIC_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
 
 demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@echo "🎫 Starting Bearer Token demo agent on port $(DEMO_A2A_BEARER_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
 demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
-	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
+	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
+	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
 # help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
@@ -1899,8 +2055,6 @@ benchmark-status:                          ## Show status of benchmark services
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
 
-bench-compare:                             ## Run performance comparisons for Rust plugins
-	@$(MAKE) -C plugins_rust bench-compare
 
 # =============================================================================
 # 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
@@ -2378,21 +2532,6 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 			--only-summary"
 	@echo "✅ Report: reports/loadtest_fasttime.html"
 
-.PHONY: test-secrets-detection-plugin
-test-secrets-detection-plugin: rust-ensure-deps ## Validate the secrets detection plugin end to end
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@echo "🧪 Validating secrets detection plugin..."
-	@cd plugins_rust/secrets_detection && cargo test
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/secrets_detection/Cargo.toml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/plugins/test_secrets_detection.py -q"
-
-.PHONY: test-pii-filter-plugin
-test-pii-filter-plugin: rust-ensure-deps ## Validate the PII filter plugin changes
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@echo "🧪 Validating PII filter plugin..."
-	@cd plugins_rust/pii_filter && cargo test
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/pii_filter/Cargo.toml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -q -k 'secret_like_values_are_not_pii or prompt_post_fetch'"
 
 .PHONY: load-test-secret-detection-compare
 load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
@@ -2876,6 +3015,87 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 			--processes=-1'
 
 # =============================================================================
+# 🔴 OCP DEPLOYMENT & BENCHMARK
+# =============================================================================
+# Make targets wrap Ansible playbooks in ansible/ocp/playbooks/.
+# All logic lives in the playbooks — Make provides a simpler interface.
+# Requires: pip install ansible && ansible-galaxy collection install kubernetes.core
+
+# OCP_NS is used as both the namespace and the Helm release name (kept identical for simplicity)
+OCP_NS ?=
+BENCH_USERS ?= 125
+BENCH_SPAWN ?= 30
+BENCH_RUNTIME ?= 60s
+OCP_INVENTORY ?= ansible/ocp/inventory/cluster.yml
+
+define check_ansible
+@command -v ansible-playbook >/dev/null 2>&1 || \
+	(echo "ERROR: ansible-playbook not found." && \
+	 echo "Install with: pip install ansible && ansible-galaxy collection install kubernetes.core" && \
+	 exit 1)
+endef
+
+ocp-install-operator:                        ## Install CrunchyData PGO operator (one-time, cluster-wide, requires OCP_CLUSTER)
+	$(check_ansible)
+	@if [ -z "$(OCP_CLUSTER)" ]; then echo "Usage: make ocp-install-operator OCP_CLUSTER=<api-url>"; echo "Example: make ocp-install-operator OCP_CLUSTER=https://api.my-cluster.example.com:6443"; exit 1; fi
+	@CURRENT=$$(oc whoami --show-server 2>/dev/null) || (echo "ERROR: Not logged in. Run: oc login $(OCP_CLUSTER)" && exit 1); \
+		if [ "$$CURRENT" != "$(OCP_CLUSTER)" ]; then \
+			echo "ERROR: Currently logged into $$CURRENT but OCP_CLUSTER=$(OCP_CLUSTER)"; \
+			echo "Run: oc login $(OCP_CLUSTER)"; exit 1; \
+		fi
+	@/bin/bash -c 'read -p "Install CrunchyData PGO operator on $(OCP_CLUSTER)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/install-operator.yml \
+		-i $(OCP_INVENTORY) \
+		-e skip_confirm=true
+
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-deploy for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/deploy.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-benchmark-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS; optional BENCH_USERS, BENCH_SPAWN, BENCH_RUNTIME)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace> [BENCH_USERS=500 BENCH_SPAWN=50 BENCH_RUNTIME=60s]"; exit 1; fi
+	ansible-playbook ansible/ocp/playbooks/benchmark.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e bench_users=$(BENCH_USERS) \
+		-e bench_spawn=$(BENCH_SPAWN) \
+		-e bench_runtime=$(BENCH_RUNTIME) \
+		-e skip_confirm=true
+
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-uninstall for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/uninstall.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+# =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
 # help: 📊 JMETER PERFORMANCE TESTING
@@ -3206,7 +3426,7 @@ mutmut-install:
 	@echo "📥 Installing mutmut..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q mutmut==3.3.1"
+		$(UV_BIN) pip install -q mutmut==3.3.1"
 
 mutmut-run: mutmut-install
 	@echo "🧬 Running mutation testing (sample mode - 20 mutants)..."
@@ -3362,7 +3582,7 @@ docs: docs-assets images sbom
 	@echo "📚  Generating documentation with handsdown..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q handsdown && \
+		$(UV_BIN) pip install -q handsdown && \
 		python3 -m handsdown --external https://github.com/IBM/mcp-context-forge/ \
 		         -o $(DOCS_DIR)/docs \
 		         -n app --name '$(PROJECT_NAME)' --cleanup"
@@ -3377,7 +3597,7 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q code2flow && \
+		$(UV_BIN) pip install -q code2flow && \
 		$(VENV_DIR)/bin/code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true"
 	@command -v dot >/dev/null 2>&1 || { \
 		echo "⚠️  Graphviz (dot) not installed - skipping diagram generation"; \
@@ -3385,13 +3605,11 @@ images:
 	} && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q snakefood3 && \
+		$(UV_BIN) pip install -q snakefood3 && \
 		python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pylint && \
-		$(VENV_DIR)/bin/pyreverse --colorized mcpgateway || true"
+	@$(UV_BIN) tool run --with-editable . --from pylint==$(PYLINT_VERSION) pyreverse --colorized mcpgateway || true
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
@@ -3636,7 +3854,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.25.8
+LINT_GO_TOOLCHAIN ?= go1.26.2
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3874,16 +4092,16 @@ CHECK ?=
 
 black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🎨  black --check $(TARGET)..." && uv run black -l 200 --check --diff $(TARGET); \
+		echo "🎨  black --check $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 --check --diff $(TARGET); \
 	else \
-		echo "🎨  black $(TARGET)..." && uv run black -l 200 $(TARGET); \
+		echo "🎨  black $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 $(TARGET); \
 	fi
 
 isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🔀  isort --check $(TARGET)..." && uv run isort --check-only --diff $(TARGET); \
+		echo "🔀  isort --check $(TARGET)..." && $(UV_BIN) tool run isort==$(ISORT_VERSION) --check-only --diff $(TARGET); \
 	else \
-		echo "🔀  isort $(TARGET)..." && uv run isort $(TARGET); \
+		echo "🔀  isort $(TARGET)..." && $(UV_BIN) tool run isort==$(ISORT_VERSION) $(TARGET); \
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
@@ -3900,7 +4118,9 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	@uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+	@rcfile=".pylintrc"; \
+	 if [ -f ".pylintrc.$(TARGET)" ]; then rcfile=".pylintrc.$(TARGET)"; fi; \
+	 $(UV_BIN) tool run --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -3991,7 +4211,7 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	select_flag=""; \
 	if [ -n "$(RUFF_SELECT)" ]; then select_flag="--select $(RUFF_SELECT)"; fi; \
 	echo "⚡ ruff $$ruff_cmd $$select_flag $(TARGET)..."; \
-	uv run ruff $$ruff_cmd $$select_flag $(TARGET)
+	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
 # deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
@@ -4015,7 +4235,7 @@ future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged f
 		echo "ℹ️  No Python files diverged from main"; \
 	else \
 		echo "⚡ ruff check --select G,BLE on $$(echo $$changed | wc -w | tr -d ' ') file(s)..."; \
-		uv run ruff check --select G,BLE $$changed; \
+		$(UV_BIN) tool run ruff==$(RUFF_VERSION) check --select G,BLE $$changed; \
 	fi
 
 ty:                                 ## ⚡  Ty type checker
@@ -4024,17 +4244,17 @@ ty:                                 ## ⚡  Ty type checker
 pyright:                            ## 🏷️  Pyright type-checking
 	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
 
-radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s $(TARGET) && \
-	$(VENV_DIR)/bin/radon cc -s $(TARGET) && \
-	$(VENV_DIR)/bin/radon hal $(TARGET) && \
-	$(VENV_DIR)/bin/radon raw -s $(TARGET)
+radon: uv                           ## 📈  Complexity / MI metrics
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi -s $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) cc -s $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) hal $(TARGET) && \
+	$(UV_BIN) tool run radon==$(RADON_VERSION) raw -s $(TARGET)
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
 spellcheck:                         ## 🔤  Spell-check
-	@$(VENV_DIR)/bin/pyspelling || true
+	@$(UV_BIN) tool run --with 'lxml>=6.1.0' pyspelling==$(PYSPELLING_VERSION) || true
 
 .PHONY: fawltydeps
 fawltydeps:                         ## 🏗️  Dependency sanity
@@ -4046,7 +4266,7 @@ wily:                               ## 📈  Maintainability report
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@git stash --quiet
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q wily && \
+		$(UV_BIN) pip install -q wily && \
 		python3 -m wily build -n 10 . > /dev/null || true && \
 		python3 -m wily report . || true"
 	@git stash pop --quiet
@@ -4063,7 +4283,7 @@ depend:                             ## 📦  List dependencies
 	@echo "📦  List dependencies"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pdm && \
+		$(UV_BIN) pip install -q pdm && \
 		python3 -m pdm list --freeze"
 
 .PHONY: snakeviz
@@ -4071,7 +4291,7 @@ snakeviz:                           ## 🐍  Interactive profile visualiser
 	@echo "🐍  Interactive profile visualiser..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q snakeviz && \
+		$(UV_BIN) pip install -q snakeviz && \
 		python3 -m cProfile -o mcp.prof mcpgateway/main.py && \
 		python3 -m snakeviz mcp.prof --server"
 
@@ -4080,7 +4300,7 @@ pstats:                             ## 📊  Static call-graph image
 	@echo "📊  Static call-graph image"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q gprof2dot && \
+		$(UV_BIN) pip install -q gprof2dot && \
 		python3 -m cProfile -o mcp.pstats mcpgateway/main.py && \
 		$(VENV_DIR)/bin/gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
 		dot -Tpng -o $(DOCS_DIR)/pstats.png"
@@ -4094,7 +4314,7 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q tox tox-uv && \
+		$(UV_BIN) pip install -q tox tox-uv && \
 		python3 -m tox -p auto $(TOXARGS)"
 
 .PHONY: sbom
@@ -4138,8 +4358,8 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
-vulture:                            ## 🧹  Dead code detection
-	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
+vulture: uv                         ## 🧹  Dead code detection
+	@echo "🧹  vulture $(TARGET) …" && $(UV_BIN) tool run vulture==$(VULTURE_VERSION) $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
 
 # Shell script linting for individual files
 shell-lint-file:                    ## 🐚  Lint shell script
@@ -4211,7 +4431,7 @@ install-watchdog:						## 📦 Install watchdog for file watching
 	@echo "📦 Installing watchdog for file watching..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q watchdog"
+		$(UV_BIN) pip install -q watchdog"
 
 # Watch mode - lint on file changes
 lint-watch: install-watchdog			## 👁️ Watch for changes and auto-lint
@@ -4438,7 +4658,7 @@ lint-parallel:							## 🚀 Run linters in parallel
 	@echo "🚀 Running linters in parallel on $(TARGET)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest-xdist"
+		$(UV_BIN) pip install -q pytest-xdist"
 	@# Run fast linters in parallel
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)" & \
 	$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)" & \
@@ -4479,16 +4699,13 @@ lint-stats:								## 📊 Show linting statistics
 	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" 2>/dev/null || true
 
 # Analyze code complexity
-lint-complexity:						## 📈 Analyze code complexity
+lint-complexity: uv					## 📈 Analyze code complexity
 	@echo "📈 Analyzing code complexity for $(TARGET)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q radon && \
-		echo '📊 Cyclomatic Complexity:' && \
-		$(VENV_DIR)/bin/radon cc $(TARGET) -s && \
-		echo '' && \
-		echo '📊 Maintainability Index:' && \
-		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
+	@echo '📊 Cyclomatic Complexity:'
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) cc $(TARGET) -s
+	@echo ''
+	@echo '📊 Maintainability Index:'
+	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi $(TARGET) -s
 
 # -----------------------------------------------------------------------------
 # 📑 CONTAINER SECURITY REVIEW
@@ -4513,13 +4730,9 @@ LINTERS += yamllint jsonlint tomllint
 # ➋  Individual targets
 .PHONY: yamllint jsonlint tomllint
 
-yamllint:                         ## 📑 YAML linting
+yamllint: uv                      ## 📑 YAML linting
 	@echo '📑  yamllint ...'
-	$(call ensure_pip_package,yamllint)
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q yamllint 2>/dev/null || true"
-	@$(VENV_DIR)/bin/yamllint -c .yamllint .
+	@$(UV_BIN) tool run yamllint==$(YAMLLINT_VERSION) -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
 	@command -v jq >/dev/null 2>&1 || { \
@@ -4541,17 +4754,14 @@ jsonlint:                         ## 📑 JSON validation (jq)
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 
-tomllint:                         ## 📑 TOML validation (tomlcheck)
+tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' \
 	  -not -path './.cache/*' \
 	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
-	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
+	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
 # =============================================================================
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
@@ -4727,12 +4937,12 @@ PROJECT_BASEDIR     ?= $(strip $(PWD))
 ## ─────────── Dependencies (compose + misc) ─────────────────────────────
 sonar-deps-podman: uv
 	@echo "🔧 Installing podman-compose ..."
-	uv tool install --quiet podman-compose
+	$(UV_BIN) tool install --quiet podman-compose
 
 sonar-deps-docker: uv
 	@echo "🔧 Ensuring $(COMPOSE_CMD) is available ..."
 	@command -v $(firstword $(COMPOSE_CMD)) >/dev/null || \
-	  uv tool install --quiet docker-compose
+	  $(UV_BIN) tool install --quiet docker-compose
 
 ## ─────────── Run SonarQube server (compose) ────────────────────────────
 sonar-up-podman:
@@ -4831,7 +5041,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -4869,9 +5079,8 @@ hadolint:
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
 # help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
-# help: containerfile-update - Update base image in Containerfile to latest tag
 
-.PHONY: deps-update containerfile-update
+.PHONY: deps-update
 
 deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
@@ -4879,12 +5088,6 @@ deps-update:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
-
-containerfile-update:
-	@echo "⬆️  Updating base image in Containerfile to :latest tag..."
-	@test -f Containerfile || { echo "❌ Containerfile not found."; exit 1; }
-	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
-	@echo "✅ Base image updated to latest."
 
 
 # =============================================================================
@@ -4899,12 +5102,12 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
-	@uv build
+	@$(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -4913,14 +5116,14 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@echo ''
 	@echo '💡 To publish both Python and Rust packages:'
 	@echo '   make publish         # Publish Python package'
-	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
+	@echo '   make rust-release-publish  # Publish Rust wheels (if configured)'
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@uv build --wheel
+	@$(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -4929,7 +5132,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 
 sdist: uv                    ## Build source distribution only
 	@echo "📦 Building source distribution..."
-	@uv build --sdist
+	@$(UV_BIN) build --sdist
 	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist uv            ## Build, run metadata & manifest checks
@@ -4972,22 +5175,6 @@ CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker ||
 
 print-runtime:
 	@echo Using container runtime: $(CONTAINER_RUNTIME)
-# Base image name (without any prefix)
-IMAGE_BASE := mcpgateway/mcpgateway
-IMAGE_TAG := latest
-
-# Handle runtime-specific image naming
-ifeq ($(CONTAINER_RUNTIME),podman)
-  # Podman adds localhost/ prefix for local builds
-  IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-else
-  # Docker doesn't add prefix
-  IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-endif
 
 print-image:
 	@echo "🐳 Container Runtime: $(CONTAINER_RUNTIME)"
@@ -5042,8 +5229,8 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden)
-#CONTAINER_FILE ?= Containerfile
+# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# multi-stage production build); falls back to Dockerfile if absent.
 CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
@@ -5113,7 +5300,7 @@ container-build-rust:
 
 container-build-rust-lite:
 	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
+	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
@@ -5270,10 +5457,14 @@ container-health:
 	@echo "Logs:"
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
+# Default platforms if not specified
+PLATFORMS ?= linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
+
 .PHONY: container-build-multi
 container-build-multi:
-	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x, ppc64le)..."
+	@echo "🔨 Building multi-architecture image for platforms: $(PLATFORMS)..."
 	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
+	@echo "💡 Tip: Override platforms with PLATFORMS='linux/amd64,linux/arm64' to build specific architectures."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
 			echo "📦 Creating buildx builder with docker-container driver..."; \
@@ -5282,7 +5473,7 @@ container-build-multi:
 		docker buildx use $(PROJECT_NAME)-builder; \
 		if [ -n "$(REGISTRY)" ]; then \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+				--platform=$(PLATFORMS) \
 				-f $(CONTAINER_FILE) \
 				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
 				--push \
@@ -5290,7 +5481,7 @@ container-build-multi:
 			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
 		else \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+				--platform=$(PLATFORMS) \
 				-f $(CONTAINER_FILE) \
 				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 				.; \
@@ -5298,7 +5489,7 @@ container-build-multi:
 		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+		$(CONTAINER_RUNTIME) build --platform=$(PLATFORMS) \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
@@ -5506,13 +5697,13 @@ container-wait-healthy:
 	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-prod:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman
@@ -5593,19 +5784,19 @@ podman-top:
 	docker-top docker-shell
 
 docker-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
 
 docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -5616,7 +5807,7 @@ docker-prod-rust-no-cache:
 #   memray flamegraph /tmp/profile.bin -o flamegraph.html
 docker-prod-profiling:
 	@echo "📊 Building production image WITH profiling tools..."
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -6636,7 +6827,7 @@ local-pypi-upload-auth:
 local-pypi-test:
 	@echo "📥  Installing from local PyPI..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
+	$(UV_BIN) pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
 	            --reinstall $(PROJECT_NAME)"
 	@echo "✅  Installed from local PyPI"
@@ -6707,7 +6898,7 @@ DEVPI_PID := /tmp/devpi-server.pid
 devpi-install:
 	@echo "📦  Installing devpi server and client..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install devpi-server devpi-client devpi-web"
+	$(UV_BIN) pip install devpi-server devpi-client devpi-web"
 	@echo "✅  DevPi installed"
 
 devpi-init: devpi-install
@@ -6814,7 +7005,7 @@ devpi-test:
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
+	$(UV_BIN) pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
 	            --reinstall mcp-contextforge-gateway"
 	@echo "✅  Installed mcp-contextforge-gateway from devpi"
@@ -7206,7 +7397,7 @@ playwright-install:
 	@echo "🎭 Installing Playwright browsers (chromium)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
+		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
 		playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium"
 	@echo "✅ Playwright chromium browser installed!"
 
@@ -7214,7 +7405,7 @@ playwright-install-all:
 	@echo "🎭 Installing all Playwright browsers..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
+		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
 		playwright install $(PLAYWRIGHT_INSTALL_FLAGS)"
 	@echo "✅ All Playwright browsers installed!"
 
@@ -7243,7 +7434,7 @@ define run_playwright_test
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	$(if $(strip $(2)),@mkdir -p $(2),)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(if $(strip $(3)),uv pip install -q $(3) &&,) \
+		$(if $(strip $(3)),$(UV_BIN) pip install -q $(3) &&,) \
 		$(if $(strip $(4)),export $(4) &&,) \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		pytest $(5) \
@@ -7333,7 +7524,7 @@ test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests 
 	@mkdir -p $(ZAP_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		uv run --active pytest tests/playwright/security/owasp/ \
+		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
 			-v -m owasp_a01 --tb=short \
 			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
 	@echo "✅ OWASP security tests completed!"
@@ -7352,7 +7543,7 @@ test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP d
 		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
 		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
 		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
-		uv run --active pytest tests/playwright/security/owasp/ \
+		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
 			-v -m owasp_a01_zap --tb=short \
 			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
@@ -7370,7 +7561,7 @@ test-full: coverage test-js test-ui-report
 # 🔒 SECURITY TOOLS
 # =============================================================================
 # help: 🔒 SECURITY TOOLS
-# help: security-all        - Run all security tools (semgrep, dodgy, gitleaks, etc.)
+# help: security-all        - Run all security tools (semgrep, dodgy, detect-secrets-scan, etc.)
 # help: security-report     - Generate comprehensive security report in docs/security/
 # help: security-fix        - Auto-fix security issues where possible (pyupgrade, etc.)
 # help: semgrep             - Static analysis for security patterns
@@ -7380,8 +7571,6 @@ test-full: coverage test-js test-ui-report
 # help: interrogate         - Check docstring coverage
 # help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
-# help: gitleaks-install    - Install gitleaks secret scanner
-# help: gitleaks            - Scan git history for secrets
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
@@ -7390,9 +7579,9 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7404,9 +7593,6 @@ security-all:
 	    echo "- $$t"; \
 	    $(MAKE) $$t || true; \
 	done
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "🔍  Running gitleaks (if installed)..."
-	@command -v gitleaks >/dev/null 2>&1 && $(MAKE) gitleaks || echo "⚠️  gitleaks not installed - run 'make gitleaks-install'"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅  Security scan complete!"
 
@@ -7427,7 +7613,7 @@ dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q dodgy && \
+		$(UV_BIN) pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
 
@@ -7435,28 +7621,26 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@echo "⬆️  pyupgrade - checking for syntax upgrade opportunities..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pyupgrade && \
+		$(UV_BIN) pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
 	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
 interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv run --active interrogate -vv mcpgateway || true"
+	@$(UV_BIN) tool run interrogate==$(INTERROGATE_VERSION) -vv mcpgateway || true
 
 prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q prospector[with_everything] && \
+		$(UV_BIN) pip install -q prospector[with_everything] && \
 		$(VENV_DIR)/bin/prospector mcpgateway || true"
 
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pip-audit && \
+		$(UV_BIN) pip install -q pip-audit && \
 		pip-audit --strict || true"
 
 
@@ -7493,9 +7677,9 @@ async-test: async-lint async-debug
 		--junitxml=$(REPORTS_DIR)/async-test-results.xml \
 		-v
 
-async-lint:
+async-lint: uv
 	@echo "🔍 Running async-aware linting..."
-	@$(VENV_DIR)/bin/ruff check mcpgateway/ tests/ \
+	@$(UV_BIN) tool run ruff==$(RUFF_VERSION) check mcpgateway/ tests/ \
 		--select=F,E,B,ASYNC \
 		--output-format=github
 	@$(VENV_DIR)/bin/mypy mcpgateway/ \
@@ -7563,52 +7747,40 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-## --------------------------------------------------------------------------- ##
-##  Gitleaks (Go binary - separate installation)
-## --------------------------------------------------------------------------- ##
-gitleaks-install:                   ## 📥 Install gitleaks secret scanner
-	@echo "📥 Installing gitleaks..."
-	@if [ "$$(uname)" = "Darwin" ]; then \
-		brew install gitleaks; \
-	elif [ "$$(uname)" = "Linux" ]; then \
-		VERSION=$$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d '"' -f 4); \
-		curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/$$VERSION/gitleaks_$${VERSION#v}_linux_x64.tar.gz | tar -xz -C /tmp; \
-		sudo mv /tmp/gitleaks /usr/local/bin/; \
-		sudo chmod +x /usr/local/bin/gitleaks; \
-	else \
-		echo "❌ Unsupported OS. Download from https://github.com/gitleaks/gitleaks/releases"; \
-		exit 1; \
-	fi
-	@echo "✅  gitleaks installed successfully!"
-
-gitleaks:                           ## 🔍 Scan for secrets in git history
-	@command -v gitleaks >/dev/null 2>&1 || { \
-		echo "❌ gitleaks not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • macOS: brew install gitleaks"; \
-		echo "   • Linux: Run 'make gitleaks-install'"; \
-		echo "   • Or download from https://github.com/gitleaks/gitleaks/releases"; \
-		exit 1; \
-	}
-	@echo "🔍 Scanning for secrets with gitleaks..."
-	@gitleaks detect --source . -v || true
-	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+# Exclude pattern for detect-secrets to skip common directories and auto generated files.
+# Uses Python verbose-regex mode (?x) so each alternative can be commented.
+# Backslash line continuations collapse the value to one line with interleaved
+# spaces — harmless under (?x).
+DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
+  package-lock\.json$$         \
+  |Cargo\.lock$$               \
+  |uv\.lock$$                  \
+  |go\.sum$$                   \
+  |mcpgateway/sri_hashes\.json$$ \
+)'
 
 .PHONY: detect-secrets-scan
-detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
+detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
+		--update .secrets.baseline \
+		--use-all-plugins \
+		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
+	@echo "📊 detect-secrets findings report:"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline || true
 
 .PHONY: detect-secrets-audit
-detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
+detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
 	@echo "🔎 Running detect-secrets audit..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit .secrets.baseline
 
 .PHONY: detect-secrets-hook
-detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
+detect-secrets-hook: uv                      ## 🔎  detect-secrets pre-commit hook equivalent
 	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
-
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook \
+		--baseline .secrets.baseline \
+		--use-all-plugins \
+		--fail-on-unaudited
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
@@ -7651,6 +7823,10 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 	@echo "🛡️  Running DevSkim static analysis..."
 	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
 		export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		export DOTNET_ROLL_FORWARD=Major && \
+		if [ -z "$$DOTNET_ROOT" ] && [ -d /opt/homebrew/opt/dotnet/libexec ]; then \
+			export DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec; \
+		fi && \
 		echo "📂 Scanning mcpgateway/ for security anti-patterns..." && \
 		devskim analyze --source-code mcpgateway --output-file devskim-results.sarif -f sarif && \
 		echo "" && \
@@ -7690,12 +7866,12 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q semgrep && \
+		$(UV_BIN) pip install -q semgrep && \
 		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q dodgy && \
+		$(UV_BIN) pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
@@ -7711,15 +7887,15 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "🔧 Attempting to auto-fix security issues..."
 	@echo "➤ Upgrading Python syntax with pyupgrade..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pyupgrade && \
+		$(UV_BIN) pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip list --outdated"
+		$(UV_BIN) pip list --outdated"
 	@echo "✅ Auto-fixes applied where possible"
 	@echo "⚠️  Manual review still required for:"
 	@echo "   - Dependency updates (run 'make update')"
-	@echo "   - Secrets in code (review dodgy/gitleaks output)"
+	@echo "   - Secrets in code (review dodgy/detect-secrets output)"
 	@echo "   - Security patterns (review semgrep output)"
 	@echo "   - DevSkim findings (review devskim-results.sarif)"
 
@@ -7826,9 +8002,9 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
-		snyk iac test $(CONTAINERFILE) \
+		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-docker-results.json || true; \
@@ -8101,7 +8277,7 @@ fuzz-install:                       ## 🔧 Install all fuzzing dependencies
 	@echo "🔧 Installing fuzzing dependencies..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -e .[fuzz]"
+		$(UV_BIN) pip install -e .[fuzz]"
 	@echo "✅ Fuzzing tools installed"
 
 .PHONY: fuzz-hypothesis
@@ -8345,44 +8521,56 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🦀 RUST
+# =============================================================================
+# 🦀 RUST (workspace: crates/*)
+# =============================================================================
+# help: 🦀 RUST
+# help: -----------------------------------------------------------------------------
+# help: Workspace-wide (all crates):
+# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
+# help: rust-build                            - Build Rust workspace (release)
+# help: rust-build-check                      - Build workspace (debug) + verify maturin crates build
+# help: rust-test                             - Run Rust workspace tests
+# help: rust-format                           - Format Rust code (cargo fmt)
+# help: rust-fmt-check                        - Check formatting (cargo fmt --check)
+# help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-doc                              - Build Rust documentation
+# help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
+# help: rust-licenses                         - Run cargo-deny license check
+# help: rust-coverage                         - Run coverage (cargo-llvm-cov)
+# help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
+# help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
 # help:
-# help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
-# help: ========================================================================================================
-# help: rust-install                          - Install all Rust plugins into venv
-# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
-# help: rust-build                            - Build Rust plugins in release mode (native)
-# help: rust-dev                              - Build and install Rust plugins in development mode
-# help: rust-test                             - Run Rust plugin tests
-# help: rust-test-integration                 - Run Rust integration tests
-# help: rust-test-all                         - Run all Rust and Python integration tests
-# help: rust-bench                            - Run Rust plugin benchmarks
-# help: rust-bench-build                      - Compile Rust plugin benchmarks without running them
-# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
-# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
-# help: rust-check                            - Run all Rust checks (format, lint, test)
-# help: rust-verify                           - Verify Rust plugin installation
-# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
-# help: rust-clean                            - Clean Rust build artifacts
+# help: Maturin (Python bindings, crates/* with pyproject.toml):
+# help: rust-install                          - Install maturin crates into venv (release build)
+# help: rust-dev                              - Install maturin crates in debug mode
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates
+# help: rust-verify-stubs                     - Verify stub files and pyproject.toml
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-clean-stubs                      - Remove generated stub files from maturin crates
+# help: rust-uninstall-plugins                - Uninstall maturin crates from Python environment
+# help: rust-build-wheels                     - Build Python wheels for maturin crates
 # help:
-# help: rust-install-deps                     - Install all Rust build dependencies
-# help: rust-install-targets                  - Install all Rust cross-compilation targets
-# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
-# help: rust-build-all-linux                  - Build for all Linux architectures
-# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross                            - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build              - Install targets + build all platforms (one command)
+# help: Runtime:
 # help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
 # help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
+# help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-build rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
-.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
-.PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-bench-check
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
-rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
+# Intentional broad scan under crates/: workspace-owned crates live here and CI
+# should pick up new maturin crates automatically rather than curating a short list.
+RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+# Keep rust server helpers discoverable without pulling mcp-servers/rust into the
+# shared workspace commands.
+RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+
+rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
 		echo "🦀 Rust not found."; \
 		echo "❌ Refusing to install Rust via remote shell bootstrapper."; \
@@ -8408,74 +8596,161 @@ rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and a
 		fi; \
 	fi
 
-rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
-	@$(MAKE) -C plugins_rust install
+rust-verify-python-crates:             ## Fail if a PyO3 crate is missing pyproject.toml packaging metadata
+	@python3 -c 'import pathlib, sys; cargos=sorted(pathlib.Path("crates").rglob("Cargo.toml")); missing=[cargo.parent.as_posix() for cargo in cargos if "pyo3" in cargo.read_text(encoding="utf-8", errors="ignore").lower() and not cargo.with_name("pyproject.toml").exists()]; print("✅ PyO3 crate packaging metadata verified" if not missing else "❌ PyO3 crates missing pyproject.toml:"); [print(f"  - {crate}") for crate in missing]; sys.exit(1 if missing else 0)'
 
-rust-build: rust-ensure-deps            ## Build Rust plugins (release)
-	@$(MAKE) -C plugins_rust build
+rust-install: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Install maturin crates into venv
+	@echo "🦀 Installing maturin crates into venv (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate..."; \
+		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed"
 
-rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
-	@$(MAKE) -C plugins_rust install
+rust-build: rust-ensure-deps            ## Build Rust workspace (release)
+	@echo "🦀 Building Rust workspace (release)..."
+	@cargo build --workspace --release
+	@echo "✅ Rust workspace built"
 
-rust-test: rust-ensure-deps             ## Run Rust plugin tests
-	@$(MAKE) -C plugins_rust test
+rust-build-check: rust-ensure-deps rust-verify-python-crates  ## Build Rust workspace + verify all maturin crates build (debug, for CI)
+	@echo "🦀 Building Rust workspace..."
+	@cargo build --workspace
+	@echo "🦀 Verifying all maturin crates build..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building maturin crate: $$crate"; \
+		uv run maturin build --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ Rust workspace and all maturin crates build OK"
 
-rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
-	@$(MAKE) -C plugins_rust test-python
+rust-dev: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build and install maturin crates (debug mode)
+	@echo "🦀 Installing maturin crates (development/debug mode)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate (debug)..."; \
+		uv run maturin develop --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed (dev mode)"
 
-rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+rust-test: rust-ensure-deps             ## Run Rust workspace tests
+	@echo "🦀 Running Rust workspace tests..."
+	@cargo test --workspace
+	@echo "✅ Rust tests passed"
 
-rust-bench: rust-ensure-deps            ## Run Rust benchmarks
-	@$(MAKE) -C plugins_rust bench
+rust-format: rust-ensure-deps           ## Format Rust code (cargo fmt)
+	@echo "🦀 Formatting Rust code..."
+	@cargo fmt --all
+	@echo "✅ Rust code formatted"
 
-rust-bench-build: rust-ensure-deps      ## Compile Rust plugin benchmarks without running them
-	@$(MAKE) -C plugins_rust bench-build
+rust-fmt-check: rust-ensure-deps        ## Check formatting (cargo fmt --check)
+	@echo "🦀 Checking Rust code format..."
+	@cargo fmt --all -- --check
+	@echo "✅ Rust format check passed"
 
-rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
-	@$(MAKE) -C plugins_rust bench-compare
+rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
+	@echo "🦀 Linting Rust workspace..."
+	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
+	@echo "✅ Rust lint passed"
 
-rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
-	@$(MAKE) -C plugins_rust compare
-
-rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
-	@$(MAKE) -C plugins_rust check
+rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+	@echo "✅ Rust check passed"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
-	@$(MAKE) -C plugins_rust doc
+	@echo "🦀 Building Rust documentation..."
+	@cargo doc --workspace --no-deps --document-private-items
+	@echo "✅ Rust doc built"
 
-rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust build-wheels
+rust-build-wheels: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build Python wheels for maturin crates
+	@echo "🦀 Building wheels for maturin crates (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building wheel: $$crate"; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All wheels built"
 
-rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
-	@$(MAKE) -C plugins_rust audit
+rust-vet: rust-ensure-deps              ## Run cargo-vet with strict supply-chain policy
+	@echo "🦀 Running cargo-vet..."
+	@command -v cargo-vet >/dev/null 2>&1 || { echo "Installing cargo-vet..."; cargo install --locked cargo-vet --version 0.10.2; }
+	@cargo vet check
+	@echo "✅ Rust supply-chain vetting passed"
 
-rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on all Rust plugins
-	@$(MAKE) -C plugins_rust deny
+rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on the Rust workspace
+	@echo "🦀 Running cargo-deny policy checks (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
+	@cargo deny check advisories bans sources
+	@echo "✅ Rust dependency policy check done"
 
-rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
-	@$(MAKE) -C plugins_rust coverage
+rust-licenses: rust-ensure-deps         ## Run cargo-deny license check (workspace)
+	@echo "🦀 Running cargo-deny license check (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
+	@cargo deny check licenses
+	@echo "✅ Rust license check done"
 
-rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust release
+rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
+	@echo "🦀 Running coverage (workspace)..."
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
+	@mkdir -p coverage
+	@cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml
+	@echo "✅ Coverage written to coverage/cobertura.xml"
 
-rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
-	@$(MAKE) -C plugins_rust release-publish
+rust-bench-check: rust-ensure-deps      ## Verify benchmarks build (no run; for CI)
+	@echo "🦀 Verifying Rust benchmarks build (no run)..."
+	@cargo bench --workspace --no-run
+	@echo "✅ Rust benchmarks build OK"
 
-rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
-	@$(MAKE) -C plugins_rust uninstall
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall maturin crates from Python environment
+	@echo "🦀 Uninstalling maturin crates from venv..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(grep '^name = ' $$crate/pyproject.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
+		[ -n "$$pkg" ] && uv pip uninstall -y "$$pkg" 2>/dev/null || true; \
+	done
+	@echo "✅ Maturin crates uninstalled"
 
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
-	@$(MAKE) -C plugins_rust uninstall
-	@$(MAKE) -C plugins_rust clean
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall maturin crates
+	@$(MAKE) --no-print-directory rust-uninstall-plugins
+	@echo "🦀 Cleaning Rust build artifacts..."
+	@cargo clean
+	@rm -rf target
+	@echo "✅ Rust clean done"
 
-rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
-	@$(MAKE) -C plugins_rust verify
+rust-verify: rust-ensure-deps rust-verify-python-crates  ## Verify maturin crate installation
+	@echo "🦀 Verifying maturin crate installations..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(sed -n '/^\[lib\]/,/^\[/p' $$crate/Cargo.toml 2>/dev/null | grep '^name = ' | head -1 | sed 's/.*\"\([^\"]*\)\".*/\1/'); \
+		[ -z "$$pkg" ] && { echo "  ❌ $$crate: no [lib] name in Cargo.toml"; exit 1; }; \
+		uv run python -c "import $$pkg; print('  ✅ $$pkg')" || { echo "  ❌ $$pkg not installed"; exit 1; }; \
+	done
+	@echo "✅ All maturin crates verified"
 
-rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
-	@$(MAKE) -C plugins_rust verify-stubs
+rust-verify-stubs: rust-ensure-deps rust-verify-python-crates  ## Verify stub generation and pyproject.toml for maturin crates
+	@echo "🦀 Verifying stub files and pyproject.toml..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
+		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
+		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
+		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		echo "  ✅ $$crate"; \
+	done
+	@echo "✅ All stubs verified"
 
-rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
-	@$(MAKE) -C plugins_rust clean-stubs
+rust-clean-stubs: rust-ensure-deps rust-verify-python-crates  ## Remove generated stub files from maturin crates
+	@echo "🦀 Removing generated stub files..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		find $$crate/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
+	done
+	@echo "✅ Rust clean-stubs done"
+
+rust-stub-gen: rust-ensure-deps rust-verify-python-crates  ## Generate Python type stubs for maturin crates that have stub_gen
+	@echo "🦀 Generating Python type stubs..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pkg=$$(grep '^name = ' $$crate/Cargo.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
+			echo "  Stub-gen: $$pkg"; \
+			cargo run -p $$pkg --bin "$${pkg}_stub_gen" || exit 1; \
+		fi; \
+	done
+	@echo "✅ All stub files generated"
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"
@@ -8491,39 +8766,29 @@ rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
-	@echo "🎯 Ensuring Rust target $* is installed..."
-	@rustup target add $*
-	@$(MAKE) -C plugins_rust build-target-$*
-
-rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
-	@echo "✅ Built for all Linux architectures"
-
-rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
-	@echo "🦀 Building for macOS..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
-	@echo "🦀 Building for Windows..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
-	@echo "✅ Built for all platforms"
-
-rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
-	@echo "✅ Cross-compilation complete"
-
-rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
-	@echo "✅ Full cross-compilation setup and build complete"
-
-rust-mcp-runtime-build:                    ## Build the experimental Rust MCP runtime
+rust-mcp-runtime-build:                 ## Build the experimental Rust MCP runtime
 	@echo "🦀 Building experimental Rust MCP runtime..."
-	@cd tools_rust/mcp_runtime && cargo build --release
+	@cd crates/mcp_runtime && cargo build --release
 
-rust-mcp-runtime-test:                     ## Run tests for the experimental Rust MCP runtime
+rust-mcp-runtime-test:                  ## Run tests for the experimental Rust MCP runtime
 	@echo "🧪 Running Rust MCP runtime tests..."
-	@cd tools_rust/mcp_runtime && cargo test --release
+	@cd crates/mcp_runtime && cargo test --release
 
-rust-mcp-runtime-run:                      ## Run the experimental Rust MCP runtime against local gateway /rpc
+rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
-	@cd tools_rust/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
+	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
+
+rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
+	@echo "🦀 Building experimental Rust A2A runtime..."
+	@cd crates/a2a_runtime && cargo build --release
+
+rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
+	@echo "🧪 Running Rust A2A runtime tests..."
+	@cd crates/a2a_runtime && cargo test --release
+
+rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
+	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
+	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

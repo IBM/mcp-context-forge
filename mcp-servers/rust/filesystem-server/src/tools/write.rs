@@ -260,7 +260,7 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("a/b/c");
-        let result = create_directory(&sandbox, &path.to_str().unwrap()).await;
+        let result = create_directory(&sandbox, path.to_str().unwrap()).await;
 
         assert_eq!(
             result.unwrap().to_string(),

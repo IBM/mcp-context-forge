@@ -8,7 +8,7 @@ Verifies:
 4. RetryWithBackoffPlugin.__init__ — max_retries clamping, tool_overrides clamping
 5. tool_post_invoke — first failure signals retry, exhaustion gives up, success resets state
 6. State isolation — unique request_id per make_context() call ensures natural key isolation
-7. Rust / Python path selection — Rust fast path taken when available, Python fallback when absent
+7. Execution-path selection — native state manager handles structured failures, local state path handles text-content inspection
 8. retry_policy metadata — all return paths include advisory policy dict; resource_post_fetch hook
 """
 
@@ -17,7 +17,7 @@ import uuid
 import pytest
 from unittest.mock import MagicMock, patch
 
-from plugins.retry_with_backoff.retry_with_backoff import (
+from cpex_retry_with_backoff.retry_with_backoff import (
     RetryWithBackoffPlugin,
     RetryConfig,
     _STATE,
@@ -281,19 +281,19 @@ class TestCfgFor:
 
 class TestPluginInit:
     def test_max_retries_not_clamped_when_within_ceiling(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 5
             plugin = make_plugin({"max_retries": 3})
             assert plugin._cfg.max_retries == 3
 
     def test_max_retries_clamped_to_gateway_ceiling(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 2
             plugin = make_plugin({"max_retries": 5})
             assert plugin._cfg.max_retries == 2
 
     def test_tool_override_max_retries_clamped(self):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 2
             plugin = make_plugin(
                 {
@@ -304,7 +304,7 @@ class TestPluginInit:
             assert plugin._cfg.tool_overrides["slow_api"]["max_retries"] == 2
 
     def test_clamping_emits_warning(self, caplog):
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 1
             with caplog.at_level(logging.WARNING):
                 make_plugin({"max_retries": 5})
@@ -312,7 +312,7 @@ class TestPluginInit:
 
     def test_max_retries_equal_ceiling_not_clamped(self):
         """max_retries exactly equal to the gateway ceiling must not be clamped."""
-        with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
+        with patch("cpex_retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 3
             plugin = make_plugin({"max_retries": 3})
             assert plugin._cfg.max_retries == 3
@@ -467,7 +467,7 @@ class TestGetState:
 
         key = "evict_tool:evict_req"
         # Inject a stale entry directly into _STATE
-        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+        from cpex_retry_with_backoff.retry_with_backoff import _ToolRetryState
 
         _STATE[key] = _ToolRetryState(consecutive_failures=3, last_failure_at=time.monotonic() - _STATE_TTL_SECONDS - 1)
         assert key in _STATE
@@ -482,7 +482,7 @@ class TestGetState:
         import time
 
         key = "fresh_tool:fresh_req"
-        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+        from cpex_retry_with_backoff.retry_with_backoff import _ToolRetryState
 
         _STATE[key] = _ToolRetryState(consecutive_failures=1, last_failure_at=time.monotonic())
         _get_state("other_tool2", "other_req2")
@@ -493,32 +493,29 @@ class TestGetState:
 
 
 # ---------------------------------------------------------------------------
-# 7. Rust / Python path selection
+# 7. Execution-path selection
 # ---------------------------------------------------------------------------
 
 
-class TestRustFallback:
-    """Verify that the plugin behaves identically whether the Rust extension is
-    present or absent, and that the correct code path is selected in each case.
-    """
+class TestExecutionPathSelection:
+    """Verify the plugin uses the correct state-management path for each signal type."""
 
     @pytest.mark.asyncio
-    async def test_python_fallback_when_rust_unavailable(self):
-        """With _rust patched to None the Python path must still retry correctly."""
+    async def test_local_state_path_handles_absent_native_manager(self):
+        """Without a native manager the local state path must still retry correctly."""
         plugin = make_plugin()
         ctx = make_context()
 
         with patch.object(plugin, "_rust", None):
             r1 = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
-            assert r1.retry_delay_ms > 0, "Python fallback should request a retry on first failure"
+            assert r1.retry_delay_ms > 0, "local state path should request a retry on first failure"
 
             r2 = await plugin.tool_post_invoke(make_payload("t", {"result": "ok"}), ctx)
-            assert r2.retry_delay_ms == 0, "Python fallback should return 0 on success"
+            assert r2.retry_delay_ms == 0, "local state path should return 0 on success"
 
     @pytest.mark.asyncio
-    async def test_rust_path_taken_when_available(self):
-        """When _RUST is not None and check_text_content=False, check_and_update
-        must be called instead of the Python state functions."""
+    async def test_native_state_manager_handles_structured_failures(self):
+        """Without text-content parsing the plugin should delegate retry tracking to the native state manager."""
         plugin = make_plugin()
         ctx = make_context()
 
@@ -534,9 +531,8 @@ class TestRustFallback:
         assert r.retry_delay_ms == 300
 
     @pytest.mark.asyncio
-    async def test_rust_path_bypassed_for_check_text_content(self):
-        """When check_text_content=True the plugin must use the Python path
-        even if _RUST is present, because signal 3 isn't implemented in Rust."""
+    async def test_text_content_checks_bypass_native_state_manager(self):
+        """When check_text_content=True the plugin must use the local state path even when the native manager exists."""
         plugin = make_plugin({"check_text_content": True})
         ctx = make_context()
 

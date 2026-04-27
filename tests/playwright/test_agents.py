@@ -386,3 +386,158 @@ class TestAgentsUI:
         # The server should respond with either success (2xx) or a validation error (4xx).
         # A 5xx would indicate an unexpected server error.
         assert response.status < 500, f"Unexpected server error: {response.status}"
+
+    def test_uaid_checkbox_visibility(self, agents_page: AgentsPage):
+        """Test that UAID checkbox is present and functional."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Verify UAID checkbox is visible
+        expect(agents_page.generate_uaid_checkbox).to_be_visible()
+        expect(agents_page.generate_uaid_checkbox).not_to_be_checked()
+
+        # Verify UAID fields are initially hidden
+        expect(agents_page.uaid_fields_container).to_be_hidden()
+
+    def test_uaid_fields_toggle(self, agents_page: AgentsPage):
+        """Test that UAID fields appear when checkbox is checked."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Check UAID checkbox
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.page.wait_for_timeout(300)
+
+        # Verify UAID fields are now visible
+        expect(agents_page.uaid_fields_container).to_be_visible()
+        expect(agents_page.uaid_registry_input).to_be_visible()
+        expect(agents_page.uaid_protocol_select).to_be_visible()
+
+        # Uncheck and verify fields are hidden again
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.page.wait_for_timeout(300)
+        expect(agents_page.uaid_fields_container).to_be_hidden()
+
+    def test_uaid_protocol_options(self, agents_page: AgentsPage):
+        """Test that UAID protocol select has correct options."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Enable UAID fields
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.wait_for_visible(agents_page.uaid_fields_container)
+
+        # Get protocol options
+        options = agents_page.uaid_protocol_select.locator("option")
+        option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
+
+        # Verify expected options are present
+        assert "a2a" in option_values
+        assert "mcp" in option_values
+        assert "rest" in option_values
+        assert "grpc" in option_values
+
+    def test_uaid_default_values(self, agents_page: AgentsPage):
+        """Test that UAID fields have correct default values."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Enable UAID fields
+        agents_page.click_locator(agents_page.generate_uaid_checkbox)
+        agents_page.wait_for_visible(agents_page.uaid_fields_container)
+
+        # Check default registry value
+        registry_value = agents_page.uaid_registry_input.input_value()
+        assert registry_value == "context-forge"
+
+        # Check default protocol value
+        protocol_value = agents_page.uaid_protocol_select.input_value()
+        assert protocol_value == "a2a"
+
+    def test_edit_agent_without_uaid_can_add_uaid(self, agents_page: AgentsPage):
+        """Test that editing an agent without UAID allows adding one."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Create an agent WITHOUT UAID
+        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent No UAID")
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://no-uaid.example.com")
+        agents_page.agent_type_select.select_option("custom")
+        agents_page.auth_type_select.select_option("bearer")
+        agents_page.wait_for_visible(agents_page.auth_bearer_fields)
+        agents_page.fill_locator(agents_page.auth_token_input, "test-token")
+
+        # Do NOT check UAID checkbox
+        expect(agents_page.generate_uaid_checkbox).not_to_be_checked()
+
+        # Submit form
+        agents_page.submit_agent_form()
+        agents_page.page.wait_for_timeout(2000)
+
+        # Open edit modal for the newly created agent
+        agents_page.open_edit_modal(agent_index=0)
+
+        # Verify UAID checkbox is NOT checked and is ENABLED (can be checked)
+        expect(agents_page.edit_generate_uaid_checkbox).not_to_be_checked()
+        expect(agents_page.edit_generate_uaid_checkbox).to_be_enabled()
+
+        # Check the UAID checkbox to add UAID
+        agents_page.click_locator(agents_page.edit_generate_uaid_checkbox)
+        agents_page.wait_for_visible(agents_page.edit_uaid_fields_container)
+
+        # Verify UAID fields are visible and editable
+        expect(agents_page.edit_uaid_registry_input).to_be_visible()
+        expect(agents_page.edit_uaid_registry_input).to_be_enabled()
+        expect(agents_page.edit_uaid_protocol_select).to_be_visible()
+        expect(agents_page.edit_uaid_protocol_select).to_be_enabled()
+
+        # Verify default values are set
+        registry_value = agents_page.edit_uaid_registry_input.input_value()
+        assert registry_value == "context-forge"
+
+        protocol_value = agents_page.edit_uaid_protocol_select.input_value()
+        assert protocol_value == "a2a"
+
+    def test_edit_agent_with_uaid_fields_readonly(self, agents_page: AgentsPage):
+        """Test that editing an agent with UAID shows read-only fields."""
+        # Navigate to agents tab
+        agents_page.navigate_to_agents_tab()
+
+        # Create an agent WITH UAID
+        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent With UAID")
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://with-uaid.example.com")
+        agents_page.agent_type_select.select_option("custom")
+        agents_page.auth_type_select.select_option("bearer")
+        agents_page.wait_for_visible(agents_page.auth_bearer_fields)
+        agents_page.fill_locator(agents_page.auth_token_input, "test-token")
+
+        # Enable UAID
+        agents_page.enable_uaid(registry="test-registry", protocol="mcp")
+
+        # Submit form
+        agents_page.submit_agent_form()
+        agents_page.page.wait_for_timeout(2000)
+
+        # Open edit modal for the newly created agent
+        agents_page.open_edit_modal(agent_index=0)
+
+        # Verify UAID checkbox is CHECKED and DISABLED (immutable)
+        expect(agents_page.edit_generate_uaid_checkbox).to_be_checked()
+        expect(agents_page.edit_generate_uaid_checkbox).to_be_disabled()
+
+        # Verify UAID fields are visible
+        expect(agents_page.edit_uaid_fields_container).to_be_visible()
+
+        # Verify UAID registry field is read-only and shows correct value
+        expect(agents_page.edit_uaid_registry_input).to_be_visible()
+        registry_value = agents_page.edit_uaid_registry_input.input_value()
+        assert registry_value == "test-registry"
+        # Check if field has readonly attribute or disabled state
+        is_readonly = agents_page.edit_uaid_registry_input.get_attribute("readonly")
+        assert is_readonly is not None, "Registry field should be read-only"
+
+        # Verify UAID protocol field is disabled and shows correct value
+        expect(agents_page.edit_uaid_protocol_select).to_be_visible()
+        expect(agents_page.edit_uaid_protocol_select).to_be_disabled()
+        protocol_value = agents_page.edit_uaid_protocol_select.input_value()
+        assert protocol_value == "mcp"

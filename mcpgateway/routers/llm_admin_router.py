@@ -27,6 +27,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderService,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.paths import resolve_root_path
 
 # Initialize logging
 logging_service = LoggingService()
@@ -111,7 +112,7 @@ async def get_providers_partial(
             "providers": provider_data,
             "provider_types": LLMProviderType.get_all_types(),
             "pagination": pagination,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": resolve_root_path(request),
         },
     )
 
@@ -125,7 +126,7 @@ async def get_providers_partial(
 @require_permission("admin.system_config")
 async def get_models_partial(
     request: Request,
-    provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
+    provider_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by provider ID"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
@@ -210,7 +211,7 @@ async def get_models_partial(
             "providers": provider_options,
             "selected_provider_id": provider_id,
             "pagination": pagination,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": resolve_root_path(request),
         },
     )
 
@@ -260,7 +261,7 @@ async def set_provider_state_html(
                     "health_status": provider.health_status,
                     "model_count": len(provider.models),
                 },
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": resolve_root_path(request),
             },
         )
     except LLMProviderNotFoundError as e:
@@ -383,7 +384,7 @@ async def set_model_state_html(
                     "enabled": model.enabled,
                     "deprecated": model.deprecated,
                 },
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": resolve_root_path(request),
             },
         )
     except LLMModelNotFoundError as e:
@@ -481,7 +482,7 @@ async def get_api_info_partial(
             "models": model_data,
             "stats": stats,
             "llmchat_enabled": settings.llmchat_enabled,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": resolve_root_path(request),
         },
     )
 

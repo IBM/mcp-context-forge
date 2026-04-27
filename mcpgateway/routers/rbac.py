@@ -127,7 +127,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 @router.get("/roles", response_model=List[RoleResponse])
 @require_permission("admin.user_management")
 async def list_roles(
-    scope: Optional[str] = Query(None, description="Filter by scope"),
+    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active roles"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -338,7 +338,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
 @require_permission("admin.user_management")
 async def get_user_roles(
     user_email: str,
-    scope: Optional[str] = Query(None, description="Filter by scope"),
+    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active assignments"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -382,8 +382,8 @@ async def get_user_roles(
 async def revoke_user_role(
     user_email: str,
     role_id: str,
-    scope: Optional[str] = Query(None, description="Scope filter"),
-    scope_id: Optional[str] = Query(None, description="Scope ID filter"),
+    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Scope filter"),
+    scope_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Scope ID filter"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -474,7 +474,12 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 
 @router.get("/permissions/user/{user_email}", response_model=List[str])
 @require_permission("admin.security_audit")
-async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_user_permissions(
+    user_email: str,
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Team context"),
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
     """Get all effective permissions for a user.
 
     Args:
@@ -569,7 +574,9 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
 
 
 @router.get("/my/permissions", response_model=List[str])
-async def get_my_permissions(team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_my_permissions(
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+):
     """Get current user's effective permissions.
 
     Args:

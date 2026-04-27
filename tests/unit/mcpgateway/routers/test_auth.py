@@ -8,6 +8,7 @@ Tests for the auth router module.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -276,3 +277,64 @@ class TestLogin:
             assert exc_info.value.status_code == 400
             assert "restricted to admin accounts" in exc_info.value.detail
             mock_create_token.assert_not_called()
+
+
+class TestLogout:
+    """Tests for logout endpoint."""
+
+    @pytest.fixture
+    def mock_request(self):
+        """Create a mock FastAPI request with auth header."""
+        request = MagicMock()
+        request.headers = {"Authorization": "Bearer test_token_with_jti"}
+        return request
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_current_user(self):
+        """Create a mock current user."""
+        user = SimpleNamespace()
+        user.email = "test@example.com"
+        user.id = "test-user-id"
+        return user
+
+    @pytest.mark.asyncio
+    async def test_logout_with_secret_str_jwt_key(self, mock_request, mock_db, mock_current_user):
+        """Test logout when jwt_secret_key is a SecretStr type (covers line 239)."""
+        from mcpgateway.routers.auth import logout
+
+        # Create a mock SecretStr
+        mock_secret_str = MagicMock()
+        mock_secret_str.get_secret_value.return_value = "test-secret-key"
+
+        with (
+            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_blocklist_service,
+            patch("mcpgateway.config.settings") as mock_settings,
+        ):
+            # Setup settings with SecretStr
+            mock_settings.jwt_secret_key = mock_secret_str
+            mock_settings.jwt_algorithm = "HS256"
+
+            # Setup blocklist service
+            mock_service = MagicMock()
+            mock_service.revoke_token.return_value = True
+            mock_blocklist_service.return_value = mock_service
+
+            # Mock jwt.decode inside the function
+            with patch("jwt.decode") as mock_jwt_decode:
+                mock_jwt_decode.return_value = {
+                    "jti": "test-jti-123",
+                    "exp": 1234567890,
+                    "iat": 1234567800,
+                }
+
+                response = await logout(mock_request, mock_current_user, mock_db)
+
+                assert response["message"] == "Logged out successfully"
+                assert response["revoked_token"] == "test-jti-123"
+                mock_secret_str.get_secret_value.assert_called_once()
+                mock_service.revoke_token.assert_called_once()

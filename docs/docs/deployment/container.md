@@ -20,7 +20,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 docker logs mcpgateway
 ```
@@ -62,7 +62,7 @@ make podman
 ### Using Docker (manual alternative)
 
 ```bash
-docker build -t mcpgateway:latest -f Containerfile .
+docker build -t mcpgateway:latest -f Containerfile.lite .
 ```
 
 > The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
@@ -84,7 +84,7 @@ docker build -f Containerfile.lite -t mcpgateway:airgapped .
 This downloads and bundles:
 
 - Tailwind CSS (~404KB)
-- HTMX (~52KB)
+- HTMX (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
 - Alpine.js (~48KB)
 - Chart.js (~208KB)

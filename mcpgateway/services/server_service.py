@@ -15,18 +15,21 @@ It also publishes event notifications for server changes.
 import asyncio
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import Base
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import get_for_update
@@ -47,6 +50,42 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+
+# ---------------------------------------------------------------------------
+# Server-associable entity registry
+# ---------------------------------------------------------------------------
+# The single source of truth for entity types that have many-to-many
+# relationships with DbServer.  All other metadata (relationship attribute
+# name, schema input field, selectinload options) is derived from
+# SQLAlchemy mapper introspection so that adding a fifth entity type
+# requires only one new entry here.
+
+SERVER_ASSOCIABLE_ENTITY_MODELS: tuple[type[Base], ...] = (DbTool, DbResource, DbPrompt, DbA2AAgent)
+
+
+class _AssociationType(NamedTuple):
+    """Metadata for a single server-associable entity type."""
+
+    model: type[Base]
+    rel_attr: str
+    input_field: str
+    label: str
+
+
+_server_rels: dict[type[Base], Any] = {rel.mapper.class_: rel for rel in sa_inspect(DbServer).relationships if rel.mapper.class_ in set(SERVER_ASSOCIABLE_ENTITY_MODELS)}
+_LABEL_OVERRIDES: dict[type[Base], str] = {DbA2AAgent: "A2A Agent"}
+
+SERVER_ASSOCIATION_TYPES: list[_AssociationType] = [
+    _AssociationType(
+        model=m,
+        rel_attr=_server_rels[m].key,
+        input_field=f"associated_{_server_rels[m].key}",
+        label=_LABEL_OVERRIDES.get(m, m.__name__),
+    )
+    for m in SERVER_ASSOCIABLE_ENTITY_MODELS
+]
+
+SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [selectinload(getattr(DbServer, at.rel_attr)) for at in SERVER_ASSOCIATION_TYPES]
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -165,6 +204,58 @@ class ServerNameConflictError(ServerError):
         if not enabled:
             message += f" (currently inactive, ID: {server_id})"
         super().__init__(message)
+
+
+def _associate_server_entities(db: Session, db_server: DbServer, server_in: ServerCreate) -> None:
+    """Associate tools/resources/prompts/a2a_agents with a server during creation.
+
+    Iterates over ``SERVER_ASSOCIATION_TYPES`` and, for each type whose input
+    field is non-empty, validates that the referenced IDs exist and appends
+    the loaded objects to the corresponding server relationship.
+    """
+    for at in SERVER_ASSOCIATION_TYPES:
+        input_ids = getattr(server_in, at.input_field, None)
+        if not input_ids:
+            continue
+        ids = [id_.strip() for id_ in input_ids if id_.strip()]
+        if not ids:
+            continue
+        rel = getattr(db_server, at.rel_attr)
+        if len(ids) > 1:
+            objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
+            found = {o.id for o in objs}
+            missing = set(ids) - found
+            if missing:
+                raise ServerError(f"{at.label}s with ids {missing} do not exist.")
+            rel.extend(objs)
+            if at.model is DbA2AAgent:
+                for obj in objs:
+                    logger.info(f"A2A agent {obj.name} associated with server {db_server.name}")
+        else:
+            obj = db.get(at.model, ids[0])
+            if not obj:
+                raise ServerError(f"{at.label} with id {ids[0]} does not exist.")
+            rel.append(obj)
+            if at.model is DbA2AAgent:
+                logger.info(f"A2A agent {obj.name} associated with server {db_server.name}")
+
+
+def _update_server_associations(db: Session, server: DbServer, server_update: ServerUpdate) -> None:
+    """Replace tool/resource/prompt/a2a_agent associations during server update.
+
+    For each association type whose input field is explicitly provided (not
+    ``None``), clears the existing relationship and re-populates it from the
+    supplied IDs.
+    """
+    for at in SERVER_ASSOCIATION_TYPES:
+        new_ids = getattr(server_update, at.input_field, None)
+        if new_ids is None:
+            continue
+        setattr(server, at.rel_attr, [])
+        ids = [id_ for id_ in new_ids if id_]
+        if ids:
+            objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
+            setattr(server, at.rel_attr, list(objs))
 
 
 class ServerService(BaseService):
@@ -359,11 +450,12 @@ class ServerService(BaseService):
         else:
             server_dict["metrics"] = None
         # Add associated IDs from relationships
-        server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
-        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
-        server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
-        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
-        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
+        # Filter out deactivated entities for consistent API responses
+        server_dict["associated_tools"] = [tool.name for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
+        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
+        server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
+        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
+        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -520,7 +612,7 @@ class ServerService(BaseService):
 
             # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
             conditions = [
-                DbServer.name == server_in.name,
+                DbServer.name == server_in.name,  # pylint: disable=comparison-with-callable
                 DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
                 DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
             ]
@@ -537,83 +629,7 @@ class ServerService(BaseService):
             logger.info(f"Adding server to DB session: {db_server.name}")
             db.add(db_server)
 
-            # Associate tools, verifying each exists using bulk query when multiple items
-            if server_in.associated_tools:
-                tool_ids = [tool_id.strip() for tool_id in server_in.associated_tools if tool_id.strip()]
-                if len(tool_ids) > 1:
-                    # Use bulk query for multiple items
-                    tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
-                    found_tool_ids = {tool.id for tool in tools}
-                    missing_tool_ids = set(tool_ids) - found_tool_ids
-                    if missing_tool_ids:
-                        raise ServerError(f"Tools with ids {missing_tool_ids} do not exist.")
-                    db_server.tools.extend(tools)
-                elif tool_ids:
-                    # Use single query for single item (maintains test compatibility)
-                    tool_obj = db.get(DbTool, tool_ids[0])
-                    if not tool_obj:
-                        raise ServerError(f"Tool with id {tool_ids[0]} does not exist.")
-                    db_server.tools.append(tool_obj)
-
-            # Associate resources, verifying each exists using bulk query when multiple items
-            if server_in.associated_resources:
-                resource_ids = [resource_id.strip() for resource_id in server_in.associated_resources if resource_id.strip()]
-                if len(resource_ids) > 1:
-                    # Use bulk query for multiple items
-                    resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
-                    found_resource_ids = {resource.id for resource in resources}
-                    missing_resource_ids = set(resource_ids) - found_resource_ids
-                    if missing_resource_ids:
-                        raise ServerError(f"Resources with ids {missing_resource_ids} do not exist.")
-                    db_server.resources.extend(resources)
-                elif resource_ids:
-                    # Use single query for single item (maintains test compatibility)
-                    resource_obj = db.get(DbResource, resource_ids[0])
-                    if not resource_obj:
-                        raise ServerError(f"Resource with id {resource_ids[0]} does not exist.")
-                    db_server.resources.append(resource_obj)
-
-            # Associate prompts, verifying each exists using bulk query when multiple items
-            if server_in.associated_prompts:
-                prompt_ids = [prompt_id.strip() for prompt_id in server_in.associated_prompts if prompt_id.strip()]
-                if len(prompt_ids) > 1:
-                    # Use bulk query for multiple items
-                    prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
-                    found_prompt_ids = {prompt.id for prompt in prompts}
-                    missing_prompt_ids = set(prompt_ids) - found_prompt_ids
-                    if missing_prompt_ids:
-                        raise ServerError(f"Prompts with ids {missing_prompt_ids} do not exist.")
-                    db_server.prompts.extend(prompts)
-                elif prompt_ids:
-                    # Use single query for single item (maintains test compatibility)
-                    prompt_obj = db.get(DbPrompt, prompt_ids[0])
-                    if not prompt_obj:
-                        raise ServerError(f"Prompt with id {prompt_ids[0]} does not exist.")
-                    db_server.prompts.append(prompt_obj)
-
-            # Associate A2A agents, verifying each exists using bulk query when multiple items
-            if server_in.associated_a2a_agents:
-                agent_ids = [agent_id.strip() for agent_id in server_in.associated_a2a_agents if agent_id.strip()]
-                if len(agent_ids) > 1:
-                    # Use bulk query for multiple items
-                    agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(agent_ids))).scalars().all()
-                    found_agent_ids = {agent.id for agent in agents}
-                    missing_agent_ids = set(agent_ids) - found_agent_ids
-                    if missing_agent_ids:
-                        raise ServerError(f"A2A Agents with ids {missing_agent_ids} do not exist.")
-                    db_server.a2a_agents.extend(agents)
-
-                    # Note: Auto-tool creation for A2A agents should be handled
-                    # by a separate service or background task to avoid circular imports
-                    for agent in agents:
-                        logger.info(f"A2A agent {agent.name} associated with server {db_server.name}")
-                elif agent_ids:
-                    # Use single query for single item (maintains test compatibility)
-                    agent_obj = db.get(DbA2AAgent, agent_ids[0])
-                    if not agent_obj:
-                        raise ServerError(f"A2A Agent with id {agent_ids[0]} does not exist.")
-                    db_server.a2a_agents.append(agent_obj)
-                    logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
+            _associate_server_entities(db, db_server, server_in)
 
             # Commit the new record and refresh.
             db.commit()
@@ -790,13 +806,18 @@ class ServerService(BaseService):
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1
+        # Filter out deactivated tools, resources, prompts, and agents at query level
         query = (
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
+                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
+                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
+                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
+                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -903,11 +924,16 @@ class ServerService(BaseService):
         team_ids = [team.id for team in user_teams]
 
         # Eager load relationships to avoid N+1 queries
+        # Filter out deactivated tools, resources, prompts, and agents at query level
         query = select(DbServer).options(
             selectinload(DbServer.tools),
+            with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
             selectinload(DbServer.resources),
+            with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
             selectinload(DbServer.prompts),
+            with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
+            with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
             joinedload(DbServer.email_team),
         )
 
@@ -965,18 +991,78 @@ class ServerService(BaseService):
                 # Continue with remaining servers instead of failing completely
         return result
 
-    async def get_server(self, db: Session, server_id: str) -> ServerRead:
-        """Retrieve server details by ID.
+    async def _check_server_access(
+        self,
+        db: Session,
+        server: DbServer,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check whether the caller is allowed to view *server* under Layer 1 visibility.
+
+        Args:
+            db: Database session (used to resolve team membership when token_teams is None).
+            server: The ORM ``DbServer`` instance (must expose ``visibility``, ``team_id``, ``owner_email``).
+            user_email: Requesting user email; ``None`` combined with ``token_teams=None`` is admin bypass.
+            token_teams: JWT-scoped team list; ``None``=admin bypass, ``[]``=public-only, ``[...]``=team-scoped.
+
+        Returns:
+            ``True`` when the caller can see the server, ``False`` otherwise.
+
+        Notes:
+            Admin bypass grants access to public and team servers, but NEVER to private servers.
+        """
+        visibility = getattr(server, "visibility", "public")
+        if visibility == "public":
+            return True
+
+        if token_teams is None and user_email is None:
+            return visibility != "private"
+
+        if not user_email:
+            return False
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False
+
+        server_owner_email = getattr(server, "owner_email", None)
+        if visibility == "private" and server_owner_email and server_owner_email == user_email:
+            return True
+
+        server_team_id = getattr(server, "team_id", None)
+        if server_team_id and visibility in ("team", "public"):
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+            if server_team_id in team_ids:
+                return True
+
+        return False
+
+    async def get_server(
+        self,
+        db: Session,
+        server_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> ServerRead:
+        """Retrieve server details by ID with access control.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             The corresponding ServerRead object.
 
         Raises:
-            ServerNotFoundError: If no server with the given ID exists.
+            ServerNotFoundError: If no server with the given ID exists, or the caller lacks visibility.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -994,14 +1080,35 @@ class ServerService(BaseService):
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
+                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
+                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
+                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
+                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)
         ).scalar_one_or_none()
         if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if not await self._check_server_access(db, server, user_email, token_teams):
+            self._structured_logger.log(
+                level="INFO",
+                message="Server access denied",
+                event_type="server_access_denied",
+                component="server_service",
+                resource_type="server",
+                resource_id=str(server.id),
+                team_id=getattr(server, "team_id", None),
+                user_email=user_email,
+                custom_fields={
+                    "visibility": getattr(server, "visibility", None),
+                    "admin_bypass": user_email is None and token_teams is None,
+                },
+            )
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
             "id": server.id,
@@ -1122,10 +1229,7 @@ class ServerService(BaseService):
                 DbServer,
                 server_id,
                 options=[
-                    selectinload(DbServer.tools),
-                    selectinload(DbServer.resources),
-                    selectinload(DbServer.prompts),
-                    selectinload(DbServer.a2a_agents),
+                    *SERVER_ASSOCIATION_SELECTINLOADS,
                     selectinload(DbServer.email_team),
                 ],
             )
@@ -1147,13 +1251,19 @@ class ServerService(BaseService):
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))
+                    existing_server = get_for_update(
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id)
+                    )  # pylint: disable=comparison-with-callable
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
                     existing_server = get_for_update(
-                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id)
+                        db,
+                        DbServer,
+                        where=and_(
+                            DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id
+                        ),  # pylint: disable=comparison-with-callable
                     )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
@@ -1192,32 +1302,7 @@ class ServerService(BaseService):
                     _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
-            # Update associated tools if provided using bulk query
-            if server_update.associated_tools is not None:
-                server.tools = []
-                if server_update.associated_tools:
-                    tool_ids = [tool_id for tool_id in server_update.associated_tools if tool_id]
-                    if tool_ids:
-                        tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
-                        server.tools = list(tools)
-
-            # Update associated resources if provided using bulk query
-            if server_update.associated_resources is not None:
-                server.resources = []
-                if server_update.associated_resources:
-                    resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
-                    if resource_ids:
-                        resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
-                        server.resources = list(resources)
-
-            # Update associated prompts if provided using bulk query
-            if server_update.associated_prompts is not None:
-                server.prompts = []
-                if server_update.associated_prompts:
-                    prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
-                    if prompt_ids:
-                        prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
-                        server.prompts = list(prompts)
+            _update_server_associations(db, server, server_update)
 
             # Update tags if provided
             if server_update.tags is not None:
@@ -1424,10 +1509,7 @@ class ServerService(BaseService):
                     server_id,
                     nowait=True,
                     options=[
-                        selectinload(DbServer.tools),
-                        selectinload(DbServer.resources),
-                        selectinload(DbServer.prompts),
-                        selectinload(DbServer.a2a_agents),
+                        *SERVER_ASSOCIATION_SELECTINLOADS,
                         selectinload(DbServer.email_team),
                     ],
                 )
@@ -1549,21 +1631,6 @@ class ServerService(BaseService):
             ServerNotFoundError: If the server is not found.
             PermissionError: If user doesn't own the server.
             ServerError: For other deletion errors.
-
-        Examples:
-            >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock, patch
-            >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> server = MagicMock()
-            >>> db.get.return_value = server
-            >>> db.delete = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> service._notify_server_deleted = AsyncMock()
-            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
-            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
-            >>> import asyncio
-            >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
             server = db.get(DbServer, server_id)

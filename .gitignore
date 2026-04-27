@@ -58,6 +58,8 @@ wheels/
 MANIFEST
 .Python
 *.so
+*.dylib
+*.dylib.yml
 
 !scripts/lib
 
@@ -199,7 +201,6 @@ aider*
 .ai*
 .bob
 .claude/*
-!.claude/skills/
 CLAUDE.local.md
 .continue
 
@@ -224,6 +225,7 @@ stats/
 # macOS
 # ========================================
 .DS_Store
+Info.plist
 
 # ========================================
 # Translations
@@ -262,11 +264,6 @@ uv.lock
 .uv-cache/
 .uv-tmp/
 
-# ========================================
-# Rust (plugins_rust)
-# ========================================
-plugins_rust/target/
-plugins_rust/*/target/
 *.rs.bk
 
 # ========================================
@@ -277,8 +274,10 @@ plugins_rust/*/target/
 certs/
 jwt/
 
-# Static assets (downloaded during container build)
+# Static assets (downloaded or built during container build)
 mcpgateway/static/vendor/
+mcpgateway/static/bundle-*.js
+mcpgateway/static/.vite/
 public/
 
 # Export & SBOM files
@@ -372,3 +371,6 @@ tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
 .bob
+
+# OCP deployment secrets (never commit)
+*-secrets.yaml

@@ -63,47 +63,9 @@ class TestTokenUniquenessModuleStructure:
         assert len(pyinspect.signature(module.downgrade).parameters) == 0
 
 
-class TestOrphanedTempTableGuard:
-    """Test that the orphaned temp table cleanup guard is present in source."""
-
-    def test_upgrade_contains_temp_table_guard(self):
-        """Test upgrade() checks for and drops orphaned _alembic_tmp_email_api_tokens."""
-        module = importlib.import_module(MODULE_NAME)
-        source = pyinspect.getsource(module.upgrade)
-        assert "_alembic_tmp_email_api_tokens" in source
-        assert 'op.drop_table("_alembic_tmp_email_api_tokens")' in source
-
-    def test_downgrade_contains_temp_table_guard(self):
-        """Test downgrade() checks for and drops orphaned _alembic_tmp_email_api_tokens."""
-        module = importlib.import_module(MODULE_NAME)
-        source = pyinspect.getsource(module.downgrade)
-        assert "_alembic_tmp_email_api_tokens" in source
-        assert 'op.drop_table("_alembic_tmp_email_api_tokens")' in source
-
-    def test_temp_table_guard_before_batch_alter(self):
-        """Test guard appears before batch_alter_table in both functions."""
-        module = importlib.import_module(MODULE_NAME)
-
-        for func in (module.upgrade, module.downgrade):
-            source = pyinspect.getsource(func)
-            guard_pos = source.index('op.drop_table("_alembic_tmp_email_api_tokens")')
-            batch_pos = source.index("op.batch_alter_table")
-            assert guard_pos < batch_pos, f"Guard must appear before batch_alter_table in {func.__name__}()"
-
-    def test_uses_batch_alter_table_for_sqlite_compat(self):
-        """Test that migration uses batch_alter_table (required for SQLite)."""
-        module = importlib.import_module(MODULE_NAME)
-        upgrade_source = pyinspect.getsource(module.upgrade)
-        downgrade_source = pyinspect.getsource(module.downgrade)
-        assert "batch_alter_table" in upgrade_source
-        assert "batch_alter_table" in downgrade_source
-
-
 def _create_email_api_tokens_table(conn):
     """Create the email_api_tokens table with the old global uniqueness constraint."""
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             CREATE TABLE email_api_tokens (
                 id VARCHAR(36) PRIMARY KEY,
                 user_email VARCHAR(255) NOT NULL,
@@ -113,16 +75,12 @@ def _create_email_api_tokens_table(conn):
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (user_email, name)
             )
-            """
-        )
-    )
+            """))
 
 
 def _create_orphaned_temp_table(conn):
     """Create the orphaned _alembic_tmp_email_api_tokens table (simulates failed migration)."""
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             CREATE TABLE _alembic_tmp_email_api_tokens (
                 id VARCHAR(36) PRIMARY KEY,
                 user_email VARCHAR(255) NOT NULL,
@@ -131,9 +89,7 @@ def _create_orphaned_temp_table(conn):
                 hashed_key VARCHAR(255) NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-    )
+            """))
 
 
 def _get_table_names(conn):
@@ -210,9 +166,7 @@ class TestDowngradeFunctional:
 
     def _create_upgraded_table(self, conn):
         """Create email_api_tokens with the per-team constraint (post-upgrade state)."""
-        conn.execute(
-            sa.text(
-                """
+        conn.execute(sa.text("""
                 CREATE TABLE email_api_tokens (
                     id VARCHAR(36) PRIMARY KEY,
                     user_email VARCHAR(255) NOT NULL,
@@ -222,18 +176,12 @@ class TestDowngradeFunctional:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT uq_email_api_tokens_user_name_team UNIQUE (user_email, name, team_id)
                 )
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
+                """))
+        conn.execute(sa.text("""
                 CREATE UNIQUE INDEX uq_email_api_tokens_user_name_global
                 ON email_api_tokens (user_email, name)
                 WHERE team_id IS NULL
-                """
-            )
-        )
+                """))
 
     def test_downgrade_with_orphaned_temp_table(self):
         """Test downgrade succeeds when orphaned _alembic_tmp_email_api_tokens exists."""

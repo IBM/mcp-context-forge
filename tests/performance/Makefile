@@ -128,17 +128,17 @@ test-single:
 # Database Comparison
 compare-postgres:
 	@echo "Comparing PostgreSQL versions..."
-	@./run-advanced.sh -p medium --postgres-version 15-alpine --save-baseline pg15_comparison.json
-	@./run-advanced.sh -p medium --postgres-version 17-alpine --compare-with pg15_comparison.json
+	@./run-advanced.sh -p medium --postgres-version 15-bookworm --save-baseline pg15_comparison.json
+	@./run-advanced.sh -p medium --postgres-version 17-bookworm --compare-with pg15_comparison.json
 
 test-pg15:
-	@./run-advanced.sh -p medium --postgres-version 15-alpine
+	@./run-advanced.sh -p medium --postgres-version 15-bookworm
 
 test-pg16:
-	@./run-advanced.sh -p medium --postgres-version 16-alpine
+	@./run-advanced.sh -p medium --postgres-version 16-bookworm
 
 test-pg17:
-	@./run-advanced.sh -p medium --postgres-version 17-alpine
+	@./run-advanced.sh -p medium --postgres-version 17-bookworm
 
 # Plugin tests
 test-plugins:
@@ -299,10 +299,10 @@ workflow-optimize:
 workflow-upgrade:
 	@echo "🔍 PostgreSQL Upgrade Workflow"
 	@echo "1. Baseline with PG 15..."
-	@./run-advanced.sh -p medium --postgres-version 15-alpine --save-baseline pg15_pre_upgrade.json
+	@./run-advanced.sh -p medium --postgres-version 15-bookworm --save-baseline pg15_pre_upgrade.json
 	@echo ""
 	@echo "2. Test with PG 17..."
-	@./run-advanced.sh -p medium --postgres-version 17-alpine --compare-with pg15_pre_upgrade.json
+	@./run-advanced.sh -p medium --postgres-version 17-bookworm --compare-with pg15_pre_upgrade.json
 	@echo ""
 	@echo "✅ Review comparison report to evaluate upgrade impact"
 

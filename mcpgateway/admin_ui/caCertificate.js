@@ -314,6 +314,12 @@ export const initializeCACertUpload = function () {
   const fileInput = safeGetElement("upload-ca-certificate");
 
   if (dropZone && fileInput) {
+    // Prevent multiple initializations
+    if (dropZone.dataset.initialized === "true") {
+      return;
+    }
+    dropZone.dataset.initialized = "true";
+
     // Click to upload
     dropZone.addEventListener("click", function (e) {
       fileInput.click();

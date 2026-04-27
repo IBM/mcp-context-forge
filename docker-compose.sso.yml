@@ -8,6 +8,13 @@
 
 services:
   gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
     depends_on:
       keycloak:
         condition: service_healthy

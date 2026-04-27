@@ -1,7 +1,7 @@
 import { AppState } from "./appState.js";
 import { getSelectedGatewayIds } from "./gateways.js";
 import { openModal } from "./modals.js";
-import { escapeHtml, validateInputName, validateJson } from "./security.js";
+import { escapeAttrValue, escapeHtml, validateInputName, validateJson } from "./security.js";
 import { getEditSelections } from "./servers.js";
 import { applyVisibilityRestrictions } from "./teams.js";
 import {
@@ -950,7 +950,7 @@ export const testPrompt = async function (promptId) {
 
     // Update button state
     const testButton = document.querySelector(
-      `[onclick*="testPrompt('${promptId}')"]`
+      `[data-test-prompt-id="${escapeAttrValue(promptId)}"]`
     );
     if (testButton) {
       if (testButton.disabled) {
@@ -1056,7 +1056,7 @@ export const testPrompt = async function (promptId) {
   } finally {
     // Always restore button state
     const testButton = document.querySelector(
-      `[onclick*="testPrompt('${promptId}')"]`
+      `[data-test-prompt-id="${escapeAttrValue(promptId)}"]`
     );
     if (testButton) {
       testButton.disabled = false;

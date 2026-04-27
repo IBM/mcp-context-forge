@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -3231,8 +3231,8 @@ class Tool(Base):
     # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     path_template: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    query_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    header_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    query_mapping: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
+    header_mapping: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
     timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     expose_passthrough: Mapped[bool] = mapped_column(Boolean, default=True)
     allowlist: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -4668,6 +4668,10 @@ class Gateway(Base):
     # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
     gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
 
+    # Per-gateway identity propagation configuration (JSON)
+    # Overrides global settings when set: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}
+    identity_propagation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="Per-gateway identity propagation config overrides")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
@@ -4761,6 +4765,13 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # UAID (Universal Agent ID) fields for HCS-14 support
+    uaid: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True, comment="Full UAID string for UAID-based agents (max 2048 chars)")
+    uaid_registry: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="Registry name extracted from UAID")
+    uaid_proto: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, comment="Protocol from UAID (a2a, mcp, rest, grpc)")
+    uaid_native_id: Mapped[Optional[str]] = mapped_column(String(767), nullable=True, comment="Native endpoint URL for cross-gateway routing")
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -4820,10 +4831,16 @@ class A2AAgent(Base):
     # Associated tool ID (A2A agents are automatically registered as tools)
     tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True)
 
+    # Multi-tenant and display fields
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    icon_url: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
+
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="agent", cascade="all, delete-orphan")
+    auth_config: Mapped[Optional["A2AAgentAuth"]] = relationship("A2AAgentAuth", back_populates="agent", uselist=False, cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
@@ -4934,6 +4951,143 @@ class A2AAgent(Base):
             "<A2AAgent(id='123', name='test-agent', agent_type='custom')>"
         """
         return f"<A2AAgent(id='{self.id}', name='{self.name}', agent_type='{self.agent_type}')>"
+
+
+class A2ATask(Base):
+    """Persists task state snapshots from A2A agent interactions."""
+
+    __tablename__ = "a2a_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    context_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    state: Mapped[str] = mapped_column(String(50), nullable=False, default="submitted", index=True)
+    payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    latest_message: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "task_id", name="uq_a2a_tasks_agent_task"),
+        Index("ix_a2a_tasks_state_updated", "state", "updated_at"),
+    )
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="tasks")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2ATask instance."""
+        return f"<A2ATask(id='{self.id}', task_id='{self.task_id}', state='{self.state}')>"
+
+
+class ServerTaskMapping(Base):
+    """Maps server-level task IDs to downstream agent task IDs for A2A federation."""
+
+    __tablename__ = "server_task_mappings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mappings_server_task"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ServerTaskMapping instance."""
+        return f"<ServerTaskMapping(id='{self.id}', server_task_id='{self.server_task_id}', agent_task_id='{self.agent_task_id}')>"
+
+
+class ServerInterface(Base):
+    """Protocol-specific interface configuration per virtual server."""
+
+    __tablename__ = "server_interfaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    protocol: Mapped[str] = mapped_column(String(50), nullable=False)
+    binding: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("server_id", "protocol", "binding", name="uq_server_interfaces_server_protocol_binding"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ServerInterface instance."""
+        return f"<ServerInterface(id='{self.id}', protocol='{self.protocol}', binding='{self.binding}')>"
+
+
+class A2AAgentAuth(Base):
+    """Extracted 1:1 auth configuration for an A2A agent."""
+
+    __tablename__ = "a2a_agent_auth"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), unique=True, nullable=False)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    auth_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auth_query_params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="auth_config")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2AAgentAuth instance."""
+        return f"<A2AAgentAuth(id='{self.id}', a2a_agent_id='{self.a2a_agent_id}', auth_type='{self.auth_type}')>"
+
+
+class A2APushNotificationConfig(Base):
+    """Push notification webhook configuration for A2A task state changes."""
+
+    __tablename__ = "a2a_push_notification_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    auth_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    events: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("a2a_agent_id", "task_id", "webhook_url", name="uq_push_config_agent_task_url"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2APushNotificationConfig instance."""
+        return f"<A2APushNotificationConfig(id='{self.id}', task_id='{self.task_id}', webhook_url='{self.webhook_url}')>"
+
+
+class A2ATaskEvent(Base):
+    """Persistent event log for A2A streaming task interactions."""
+
+    __tablename__ = "a2a_task_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=True, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (Index("ix_a2a_task_events_task_seq", "task_id", "sequence"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2ATaskEvent instance."""
+        return f"<A2ATaskEvent(id='{self.id}', task_id='{self.task_id}', sequence={self.sequence})>"
 
 
 class GrpcService(Base):
@@ -5339,19 +5493,23 @@ class TokenRevocation(Base):
     """Token revocation blacklist for immediate token invalidation.
 
     This model maintains a blacklist of revoked JWT tokens to provide
-    immediate token invalidation capabilities.
+    immediate token invalidation capabilities. Supports automatic cleanup
+    of expired entries and tracks revocation reasons for security auditing.
 
     Attributes:
         jti (str): JWT ID (primary key)
         revoked_at (datetime): Revocation timestamp
         revoked_by (str): Email of user who revoked the token
-        reason (str): Optional reason for revocation
+        reason (str): Optional reason for revocation (logout, idle_timeout, security, token_refresh, etc.)
+        token_expiry (datetime): Original token expiry for cleanup scheduling
+        last_activity (datetime): Last activity timestamp for idle timeout tracking
 
     Examples:
         >>> revocation = TokenRevocation(
         ...     jti="token-uuid-123",
         ...     revoked_by="admin@example.com",
-        ...     reason="Security compromise"
+        ...     reason="logout",
+        ...     token_expiry=datetime.now(timezone.utc) + timedelta(minutes=20)
         ... )
     """
 
@@ -5361,12 +5519,22 @@ class TokenRevocation(Base):
     jti: Mapped[str] = mapped_column(String(36), primary_key=True)
 
     # Revocation details
-    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
     revoked_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
     reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    # Token lifecycle tracking
+    token_expiry: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_activity: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Relationship
     revoker: Mapped["EmailUser"] = relationship("EmailUser")
+
+    # Indexes for efficient cleanup and queries
+    __table_args__ = (
+        Index("idx_token_revocations_expiry_cleanup", "token_expiry"),
+        Index("idx_token_revocations_revoked_at", "revoked_at"),
+    )
 
 
 class SSOProvider(Base):
@@ -6359,6 +6527,11 @@ class AuditTrail(Base):
     # Additional context
     context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
+    # Identity propagation audit fields
+    auth_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # bearer, api_key, basic, sso, proxy
+    acting_as: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # service account acting on behalf of user
+    delegation_chain: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # chain of delegated identities
+
     __table_args__ = (
         Index("idx_audit_action_time", "action", "timestamp"),
         Index("idx_audit_resource_time", "resource_type", "resource_id", "timestamp"),
@@ -6565,11 +6738,6 @@ class ToolPluginBinding(Base):
     UniqueConstraint).  A POST with an existing triple performs an upsert
     (updates the existing row's config/mode/priority).
 
-    Supported plugin_id values:
-        - ``OUTPUT_LENGTH_GUARD`` — truncate/block responses exceeding a char limit.
-        - ``RATE_LIMITER``        — per-user / per-tenant / per-tool rate gating.
-        - ``SECRETS_DETECTION``   — redact or block secret patterns in output.
-
     Attributes:
         id (str): UUID primary key.
         team_id (str): FK to ``email_teams.id``.
@@ -6578,6 +6746,7 @@ class ToolPluginBinding(Base):
         mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
         priority (int): Execution priority — lower numbers run first.
         config (dict): Plugin-specific JSON configuration blob.
+        binding_reference_id (str): Optional external reference ID for bulk delete and stale-tool pruning.
         created_at (datetime): Row creation timestamp (UTC).
         created_by (str): Email of the user who created the binding.
         updated_at (datetime): Last update timestamp (UTC).
@@ -6587,14 +6756,14 @@ class ToolPluginBinding(Base):
         >>> binding = ToolPluginBinding(
         ...     team_id="abc123",
         ...     tool_name="*",
-        ...     plugin_id="OUTPUT_LENGTH_GUARD",
+        ...     plugin_id="OutputLengthGuardPlugin",
         ...     mode="enforce",
         ...     priority=10,
         ...     config={"max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
         ...     created_by="admin@example.com",
         ... )
         >>> binding.plugin_id
-        'OUTPUT_LENGTH_GUARD'
+        'OutputLengthGuardPlugin'
         >>> binding.mode
         'enforce'
     """
@@ -6608,6 +6777,7 @@ class ToolPluginBinding(Base):
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -6620,6 +6790,7 @@ class ToolPluginBinding(Base):
         UniqueConstraint("team_id", "tool_name", "plugin_id", name="uq_tool_plugin_binding"),
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
+        Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
     )
 
     def __repr__(self) -> str:

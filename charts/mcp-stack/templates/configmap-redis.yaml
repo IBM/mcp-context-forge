@@ -18,9 +18,13 @@ data:
     auto-aof-rewrite-min-size 64mb
 
     # RDB configuration (backup snapshots)
-    save 900 1     # Save after 900 sec if at least 1 key changed
-    save 300 10    # Save after 300 sec if at least 10 keys changed
-    save 60 10000  # Save after 60 sec if at least 10000 keys changed
+    # Note: Redis does not support inline comments on directives
+    # Save after 900 sec if at least 1 key changed
+    save 900 1
+    # Save after 300 sec if at least 10 keys changed
+    save 300 10
+    # Save after 60 sec if at least 10000 keys changed
+    save 60 10000
 
     # Set the directory for persistence files
     dir /data

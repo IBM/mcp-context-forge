@@ -333,7 +333,7 @@ class TestMCPStackPython:
     def test_generate_manifests_invalid_type(self, mock_get_deploy, mock_load, mock_which, tmp_path):
         """Test generating manifests with invalid deployment type."""
         mock_which.return_value = "/usr/bin/docker"
-        with pytest.raises(ValidationError, match=re.escape("1 validation error for MCPStackConfig\ndeployment.type\n  Input should be 'kubernetes' or 'compose' [type=literal_error, input_value='invalid', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/literal_error")):
+        with pytest.raises(ValidationError, match=r"Input should be 'kubernetes' or 'compose'"):
             mock_load.return_value =  MCPStackConfig.model_validate({
                 "deployment": {"type": "invalid"},
                 "gateway": {"image": "mcpgateway:latest"},

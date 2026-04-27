@@ -1,6 +1,6 @@
 # ContextForge Security Features
 
-**Current Version: 1.0.0-RC-2** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 1.0.0-RC-3** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 
@@ -117,7 +117,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 ## Content Security & Resource Protection
 
 - **Content size limits.** `ContentSecurityService` enforces configurable size limits for resources (`CONTENT_MAX_RESOURCE_SIZE`, default 100KB) and prompts (`CONTENT_MAX_PROMPT_SIZE`, default 10KB) to prevent memory exhaustion and DoS attacks. Violations return HTTP 413 (Payload Too Large) with detailed size information.
-- **MIME type validation.** Resource MIME types are validated against a configurable allowlist (`CONTENT_ALLOWED_RESOURCE_MIMETYPES`) to prevent malicious content injection. In strict mode, only types explicitly listed in the allowlist are accepted — vendor types (`application/x-*`, `text/x-*`) and structured-syntax suffix types (e.g., `application/vnd.api+json`) must be added explicitly if needed. Violations return HTTP 415 (Unsupported Media Type).
+- **MIME type validation.** Resource MIME types are validated against a configurable allowlist (`CONTENT_ALLOWED_RESOURCE_MIMETYPES`) to prevent malicious content injection. Vendor types (`application/x-*`, `text/x-*`) and structured-syntax suffix types (e.g., `application/vnd.api+json`) are automatically permitted. Violations return HTTP 415 (Unsupported Media Type).
 - **Feature flag for safe migration.** `CONTENT_STRICT_MIME_VALIDATION` enables log-only mode (default `false`) where MIME type violations are logged but not blocked, allowing gradual rollout and monitoring before enforcement.
 - **Prometheus metrics.** Content security violations are tracked via `content_size_violations_total` (labeled by `content_type`: resource/prompt) and `content_type_violations_total` (labeled by `content_type` and `mime_type`) for monitoring and alerting.
 - **PII-safe audit logging.** All content security events log sanitized user context (SHA256-hashed email, masked IP addresses) to enable security investigations while protecting privacy.
@@ -147,7 +147,7 @@ The default allowlist includes common text, data, and media formats: `text/plain
 - **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).
 - **Security event logging.** `SECURITY_LOGGING_ENABLED` persists authentication attempts, authorization failures, and security-relevant events to the `security_events` table for audit and investigation. `SECURITY_LOGGING_LEVEL` controls verbosity: `all` (every event, high DB load), `failures_only` (default, authentication/authorization failures), or `high_severity` (critical events only). Disabled by default for performance.
 - **Continuous telemetry.** Permission checks, OAuth flows, and token usage log structured events with timestamps, IP addresses, user-agent strings, span attributes, and success/failure flags for downstream monitoring.
-- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make gitleaks`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
+- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make detect-secrets-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
 - **Observability hooks.** OpenTelemetry exports (when configured) tag spans with error flags, latency, and success status, supporting tracing-based detection of anomalies.
 - **Support bundle hygiene.** Operators can gather diagnostics without leaking credentials thanks to sanitisation routines and configurable size/time limits.
 

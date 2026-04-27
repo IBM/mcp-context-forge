@@ -5,6 +5,7 @@ edition = "2024"
 authors = ["Matheus Cafalchio"]
 license = "Apache-2.0"
 
+[workspace]
 
 [dependencies]
 anyhow = "1.0.100"

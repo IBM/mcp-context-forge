@@ -27,6 +27,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
+from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -349,10 +350,10 @@ class TestModuleGetattr:
         old = ts_module._tool_service_instance
         ts_module._tool_service_instance = None
         try:
-            instance = ts_module.__getattr__("tool_service")
+            instance = getattr(ts_module, "tool_service")
             assert isinstance(instance, ToolService)
             # Second access should return the same instance
-            instance2 = ts_module.__getattr__("tool_service")
+            instance2 = getattr(ts_module, "tool_service")
             assert instance is instance2
         finally:
             ts_module._tool_service_instance = old
@@ -363,7 +364,7 @@ class TestModuleGetattr:
         import mcpgateway.services.tool_service as ts_module
 
         with pytest.raises(AttributeError, match="has no attribute"):
-            ts_module.__getattr__("nonexistent_attr")
+            getattr(ts_module, "nonexistent_attr")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -635,16 +636,16 @@ class TestExtractAndValidateStructuredContent:
     def test_valid_candidate_passes(self, tool_service):
         """Valid candidate should pass validation and be attached."""
         tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]})
-        result = ToolResult(content=[])
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate={"x": "hello"})
+        result = ToolResult(content=[], structured_content={"x": "hello"})
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is True
         assert result.structured_content == {"x": "hello"}
 
     def test_invalid_candidate_marks_error(self, tool_service):
         """Invalid candidate should mark result as error."""
         tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]})
-        result = ToolResult(content=[])
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate={"x": 123})
+        result = ToolResult(content=[], structured_content={"x": 123})
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is False
         assert result.is_error is True
         # Error details should be in content
@@ -664,14 +665,6 @@ class TestExtractAndValidateStructuredContent:
         tool = SimpleNamespace(output_schema={"type": "object"})
         result = ToolResult(content=[])
         ok = tool_service._extract_and_validate_structured_content(tool, result)
-        assert ok is True
-
-    def test_unwrap_single_element_list(self, tool_service):
-        """Single-element list wrapping a TextContent-like dict should be unwrapped."""
-        tool = SimpleNamespace(output_schema={"type": "object", "properties": {"a": {"type": "integer"}}})
-        result = ToolResult(content=[])
-        candidate = [{"type": "text", "text": '{"a": 5}'}]
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate=candidate)
         assert ok is True
 
 
@@ -1819,7 +1812,6 @@ class TestValidatorClassAndCheck:
                 if call_count["n"] <= 1:
                     raise jsonschema.exceptions.SchemaError("primary fail")
                 # Second call in final fallback path - just return OK
-                return None
 
         class FallbackFail:
             @staticmethod
@@ -1871,26 +1863,37 @@ class TestSubscribeEvents:
 
 
 class TestStructuredContentAdditional:
-    """Additional branch coverage for _extract_and_validate_structured_content."""
+    """Branch coverage for ``_extract_and_validate_structured_content``.
 
-    def test_unwrap_single_element_list_non_textcontent_inner(self, tool_service):
-        """Single-element list with non-TextContent dict should be unwrapped directly."""
-        tool = SimpleNamespace(output_schema={"type": "object", "properties": {"a": {"type": "integer"}}})
-        result = ToolResult(content=[])
-        # This is a single-element list with a non-text dict
-        candidate = [{"a": 5}]
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate=candidate)
-        assert ok is True
+    These tests cover the edges of the validator that are not themselves
+    part of the #4202 error-handling fix but exercise the surrounding
+    contract introduced by PR #4204: that ``structured_content``, when
+    present, MUST be a JSON object per the MCP 2025-11-25 specification's
+    "Output Schema" section, and that the content-item JSON-parse fallback
+    loop tolerates malformed items gracefully.
+    """
 
-    def test_unwrap_inner_text_with_unparseable_json(self, tool_service):
-        """When inner text fails to parse as JSON, should use inner dict directly."""
+    def test_invalid_structured_content_type_marks_error(self, tool_service):
+        """Non-dict ``structured_content`` fast-fails with a structured error.
+
+        The MCP 2025-11-25 "Output Schema" section requires that
+        ``structuredContent`` be a JSON object. When the gateway receives a
+        list or scalar there it must refuse to validate (since there is no
+        way the payload can conform to the standard
+        ``{"type": "object", ...}`` shape of an outputSchema) and surface a
+        deterministic error describing the type mismatch, so callers can
+        distinguish this from genuine schema-validation failures.
+
+        MCP spec reference: 2025-11-25 "Output Schema".
+        """
         tool = SimpleNamespace(output_schema={"type": "object"})
-        result = ToolResult(content=[])
-        candidate = [{"type": "text", "text": "not-json-at-all"}]
-        # This will try to parse the inner text, fail, and use the inner dict
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate=candidate)
-        # Validation may pass or fail depending on schema, but shouldn't crash
-        assert isinstance(ok, bool)
+        result = SimpleNamespace(content=[], structured_content=[{"a": 5}], is_error=False)
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "invalid_structured_content_type"
+        assert details["expected"] == "object"
 
     def test_content_with_null_text_parses_to_none(self, tool_service):
         """Content with text=None should parse to null and be treated as no structured data."""
@@ -1902,14 +1905,749 @@ class TestStructuredContentAdditional:
         # null parse -> structured=None -> treat as valid (nothing to validate)
         assert ok is True
 
-    def test_validation_error_orjson_fallback(self, tool_service):
-        """When orjson.dumps fails for error details, fall back to str()."""
+    def test_invalid_scalar_structured_content_marks_error(self, tool_service):
+        """Scalar ``structured_content`` (int, string, bool) also fast-fails.
+
+        Complements ``test_invalid_structured_content_type_marks_error`` by
+        exercising the other half of the "not a JSON object" taxonomy — the
+        MCP 2025-11-25 "Output Schema" section forbids any non-object shape
+        in ``structuredContent``, and the validator's fast-fail branch must
+        fire identically for scalars and for arrays. The error dict's
+        ``received`` field must report the actual offending type name so the
+        error is diagnosable.
+
+        MCP spec reference: 2025-11-25 "Output Schema".
+        """
         tool = SimpleNamespace(output_schema={"type": "string"})
-        result = ToolResult(content=[])
-        # Provide an invalid candidate (number when string expected)
-        ok = tool_service._extract_and_validate_structured_content(tool, result, candidate=42)
+        result = SimpleNamespace(content=[], structured_content=42, is_error=False)
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is False
         assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["received"] == "int"
+
+    def test_content_text_parse_failure_skips_and_continues(self, tool_service):
+        """Content-fallback loop tolerates malformed items and continues.
+
+        The MCP specification does not require all ``content`` items to be
+        valid JSON — free-form text, logs and human-readable diagnostics are
+        legal ``TextContent`` payloads. When no ``structured_content`` has
+        been set explicitly, the gateway tries to promote the first parseable
+        text item into the structured channel so ``output_schema``
+        enforcement can run. That promotion must be best-effort: an item
+        whose text is not valid JSON must be silently skipped
+        (``orjson.JSONDecodeError`` caught in the ``except`` branch of the
+        content-fallback loop in ``_extract_and_validate_structured_content``)
+        rather than aborting the loop, so a valid JSON item later in the
+        list is still used.
+
+        MCP spec reference: 2025-11-25 "Content Types" (TextContent admits
+        arbitrary text) and "Output Schema" (structured promotion is
+        best-effort).
+        """
+        tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]})
+        result = SimpleNamespace(
+            content=[
+                {"type": "text", "text": "definitely not json"},  # raises JSONDecodeError -> except -> continue
+                {"type": "text", "text": '{"x": 42}'},  # parses successfully
+            ],
+            structured_content=None,
+            is_error=False,
+        )
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is True
+        # Verifies the loop skipped the bad item and picked up the good one.
+        assert result.structured_content == {"x": 42}
+
+    def test_single_element_list_structured_content_fast_fails(self, tool_service):
+        """Pin the deliberate removal of the old single-element-list unwrap heuristic.
+
+        Before the #4202 refactor, ``_extract_and_validate_structured_content``
+        accepted ``structured_content=[{...}]`` (a one-element list) and
+        silently unwrapped it to ``{...}`` when the declared schema was
+        ``{"type": "object"}``. That heuristic was removed in favour of
+        the stricter MCP 2025-11-25 "Output Schema" rule that
+        ``structuredContent`` must be a JSON *object* — not a list
+        containing one. The new canonical behaviour is the
+        ``invalid_structured_content_type`` fast-fail at
+        ``tool_service.py`` (the same branch ``test_invalid_structured_content_type_marks_error``
+        covers for generic lists).
+
+        This test pins the specific single-element-list shape because
+        that was the one the removed heuristic quietly rescued. Without
+        this guard, a future "help the user" change that reintroduces
+        unwrapping would silently reopen the quirk the refactor closed.
+        """
+        tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]})
+        # Exactly one element — the shape the old heuristic used to unwrap.
+        result = SimpleNamespace(content=[], structured_content=[{"x": 42}], is_error=False)
+
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+
+        # Current canonical behaviour: reject with structured error, not unwrap.
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "invalid_structured_content_type"
+        assert details["expected"] == "object"
+        assert details["received"] == "list"
+        # The inner dict is NOT silently promoted — that was the old heuristic.
+        assert getattr(result, "structured_content", [{"x": 42}]) == [{"x": 42}]
+
+    def test_single_element_list_in_textcontent_text_does_not_unwrap(self, tool_service):
+        """Complementary guard — unwrap is also removed from the text-parse fallback.
+
+        The old heuristic unwrapped both ``structured_content=[{...}]`` and
+        cases where the first ``TextContent.text`` parsed as a JSON array
+        containing a single dict. The new pipeline treats a parsed list
+        as a list and hands it to ``jsonschema.validate``; because the
+        declared schema is ``{"type": "object"}``, validation rejects a
+        list-shaped instance with a ``type`` validator error.
+
+        Note the error ``code`` here (``"type"``) differs from the
+        explicit ``invalid_structured_content_type`` fast-fail code that
+        fires when ``structured_content`` is pre-set with a non-dict
+        value (see ``test_single_element_list_structured_content_fast_fails``).
+        Both paths end in the same user-visible outcome: the list is not
+        unwrapped into an object, and the response is marked as an
+        error. Asserting the distinct error codes pins both paths so
+        that a future refactor can't accidentally route one through the
+        other and silently change the diagnostic surface.
+        """
+        tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]})
+        result = SimpleNamespace(
+            content=[{"type": "text", "text": '[{"x": 42}]'}],  # single-element JSON array
+            structured_content=None,
+            is_error=False,
+        )
+
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+
+        # Under the new strict contract the array body is not unwrapped; it
+        # flows into jsonschema.validate which reports a type mismatch.
+        assert ok is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "type"
+        assert details["expected"] == "object"
+        assert details["received"] == "list"
+
+    def test_invalid_structured_content_orjson_dumps_failure_falls_back_to_str(self, tool_service, monkeypatch):
+        """Defensive fallback when JSON serialisation of the error envelope fails.
+
+        When the validator rejects a non-object ``structured_content`` it
+        synthesises a validation-error dict and writes it onto
+        ``tool_result.content`` as a ``TextContent(text=json)``. In the rare
+        case where ``orjson.dumps`` itself raises (e.g., a sentinel object
+        was smuggled into the details dict), the validator must still
+        produce *some* content so the caller sees a populated error shape
+        rather than an empty response. The fallback at
+        the bare-except ``str(details)`` branch inside
+        ``_extract_and_validate_structured_content``'s non-dict-structured-content
+        fast-fail block uses ``str(details)`` — not valid JSON,
+        but human-readable — which is what this test asserts (by checking
+        that the content text contains the error ``code`` verbatim but
+        cannot round-trip through ``orjson.loads``).
+
+        This mirrors the analogous ``str(details)`` fallback inside the
+        ``except jsonschema.ValidationError`` branch of
+        ``_extract_and_validate_structured_content`` (search the method
+        for ``"str(details)"``).
+
+        MCP spec reference: 2025-11-25 "Error Handling" — error responses
+        must always carry ``content``; the shape must not be empty.
+        """
+        tool = SimpleNamespace(output_schema={"type": "object"})
+        result = SimpleNamespace(content=[], structured_content=[1, 2, 3], is_error=False)
+
+        real_dumps = orjson.dumps
+
+        def flaky_dumps(obj, *args, **kwargs):
+            # Force the non-dict-structured-content details dict to fail so the
+            # except branch runs; leave other callers untouched.
+            if isinstance(obj, dict) and obj.get("code") == "invalid_structured_content_type":
+                raise TypeError("simulated orjson failure")
+            return real_dumps(obj, *args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.orjson.dumps", flaky_dumps)
+
+        ok = tool_service._extract_and_validate_structured_content(tool, result)
+        assert ok is False
+        assert result.is_error is True
+        # Content was stringified via str(details) rather than serialized as JSON
+        assert "invalid_structured_content_type" in result.content[0].text
+        with pytest.raises(orjson.JSONDecodeError):
+            orjson.loads(result.content[0].text)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 24b. _coerce_to_tool_result — canonical payload coercion
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestCoerceToToolResult:
+    """Coverage for ``ToolService._coerce_to_tool_result``.
+
+    The helper is the gateway's single source of truth for turning
+    heterogeneous upstream responses into the canonical ``ToolResult``
+    shape. Correct behaviour here is the foundation of #4202's egress
+    fix across multiple integration types — Codex review identified two
+    regressions when this coercion was too loose (``_coerce_to_tool_result``
+    predecessor):
+
+    - **P1** — direct-proxy MCP calls returned a raw MCP SDK
+      ``CallToolResult`` (camelCase ``isError``) to the egress, which
+      only recognised snake-case, so error responses fell through to
+      the SDK's server-side validator and were re-clobbered
+      (https://github.com/IBM/mcp-context-forge/issues/4202). The new
+      helper coerces MCP SDK ``CallToolResult`` into ``ToolResult`` via
+      ``model_dump(by_alias=True)``, mapping camelCase to snake-case.
+    - **P2** — any dict with a top-level ``content`` key was being
+      reinterpreted as an MCP envelope, silently discarding sibling
+      business fields. The new helper requires strong MCP markers
+      (``isError`` / ``structuredContent`` / ``content`` items with a
+      string ``type`` field) before attempting ``ToolResult.model_validate``.
+
+    MCP spec reference: 2025-11-25 "Tool Result" — the canonical
+    ``CallToolResult`` shape is the target type.
+    """
+
+    def test_passthrough_when_already_toolresult(self, tool_service):
+        """Existing ``ToolResult`` instances are returned by identity.
+
+        Fast path: when an upstream layer has already constructed a proper
+        ``ToolResult`` (e.g. the MCP federation branch that produces one
+        explicitly at ``tool_service.py`` when ``is_direct_proxy=False``),
+        the helper must be a no-op. Returning the same object reference
+        is important because downstream code may have attached
+        ``structured_content`` already; re-wrapping would risk dropping
+        that metadata.
+        """
+        original = ToolResult(content=[TextContent(type="text", text="hello")], is_error=False)
+        result = tool_service._coerce_to_tool_result(original)
+        assert result is original
+
+    def test_coerces_mcp_sdk_calltoolresult_to_toolresult(self, tool_service):
+        """MCP SDK ``CallToolResult`` (camelCase) is coerced to ``ToolResult``.
+
+        Regression guard for Codex P1. Before this helper existed, the
+        ``is_direct_proxy`` branch at ``tool_service.py`` assigned the
+        MCP SDK ``CallToolResult`` directly to ``tool_result``, and the
+        egress handler's ``getattr(result, "is_error", False) is True``
+        check returned ``False`` for the camelCase-only ``isError``
+        attribute. Error responses for direct-proxy tools with a declared
+        ``outputSchema`` then fell through to the success branch and the
+        SDK's server-side validator replaced the original error text with
+        ``"Output validation error: outputSchema defined but no
+        structured output returned"``.
+
+        This test uses the upstream MCP SDK's ``CallToolResult`` type
+        directly to prove the coercion works on real production types,
+        not just on dicts that happen to look MCP-shaped.
+        """
+        # Third-party — use the real MCP SDK type so the test fails if a
+        # future SDK bump renames / restructures fields.
+        # First-Party
+        from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
+
+        sdk_result = mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="You cannot send more than 200 points")],
+            isError=True,
+        )
+
+        result = tool_service._coerce_to_tool_result(sdk_result)
+
+        assert isinstance(result, ToolResult)
+        assert result.is_error is True
+        # Text content preserved verbatim across the coercion.
+        assert result.content[0].text == "You cannot send more than 200 points"
+
+    def test_coerces_mcp_sdk_calltoolresult_preserves_meta(self, tool_service):
+        """Protocol-level ``_meta`` survives the coercion unchanged.
+
+        ``_meta`` carries cross-cutting MCP protocol extensions (progress
+        tokens, trace correlation IDs, etc.). A reviewer raised concern
+        that ``_coerce_to_tool_result`` might silently drop ``_meta``
+        because an earlier variant of ``ToolResult`` elsewhere in the
+        codebase (``mcpgateway/schemas.py`` — not the one this service
+        imports) omits the field. This test pins that the helper, which
+        imports ``ToolResult`` from ``mcpgateway.common.models`` (aliased
+        to ``CallToolResult`` with ``meta: Optional[Dict[str, Any]] =
+        Field(None, alias="_meta")``), round-trips ``_meta`` from an
+        upstream MCP SDK ``CallToolResult`` through
+        ``model_dump(by_alias=True)`` into a canonical ``ToolResult``
+        and emits it again on ``model_dump(by_alias=True)``.
+
+        Without this guard, a future refactor that swaps the imported
+        ``ToolResult`` source or drops the ``meta`` field would silently
+        strip every direct-proxy response of its trace correlation,
+        which matters for observability and debugging across the
+        gateway ↔ upstream boundary.
+        """
+        # First-Party
+        from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
+
+        meta_payload = {"trace_id": "abc-123", "request_id": "r-42"}
+        sdk_result = mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="ok")],
+            isError=False,
+            _meta=meta_payload,
+        )
+
+        coerced = tool_service._coerce_to_tool_result(sdk_result)
+
+        # Field survives into the canonical ToolResult under its Python
+        # attribute name…
+        assert coerced.meta == meta_payload
+        # …and is re-serialised with the wire alias on the way back out.
+        egress = coerced.model_dump(by_alias=True, mode="json")
+        assert egress.get("_meta") == meta_payload
+
+    def test_rejects_rest_payload_with_content_key_but_no_mcp_markers(self, tool_service):
+        """REST business payloads that coincidentally use ``content`` are not misread as MCP envelopes.
+
+        Regression guard for Codex P2. A REST tool's native response shape
+        ``{"content": [{"widget": "alpha"}], "recognitionId": "rec-1"}``
+        must be treated as an opaque JSON body (wrapped into a single
+        ``TextContent``) rather than have its ``content`` list reinterpreted
+        as MCP ``ContentBlock`` items and its ``recognitionId`` sibling
+        silently discarded. The gating heuristic
+        (``_looks_like_mcp_envelope``) requires strong MCP markers
+        (``isError`` / ``structuredContent`` / typed content items) before
+        attempting ``ToolResult.model_validate``.
+        """
+        rest_payload = {"content": [{"widget": "alpha"}], "recognitionId": "rec-1"}
+
+        result = tool_service._coerce_to_tool_result(rest_payload)
+
+        assert isinstance(result, ToolResult)
+        # Payload preserved in full — no fields lost — in the serialized text.
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == rest_payload
+
+    def test_accepts_dict_with_mcp_markers(self, tool_service):
+        """Positive counterpart to the P2 heuristic check.
+
+        A dict carrying a strong MCP marker (``isError`` key, or
+        ``structuredContent``, or ``content`` items with a string ``type``
+        field) is a legitimate MCP envelope and should round-trip through
+        ``ToolResult.model_validate``.
+        """
+        mcp_shaped = {
+            "content": [{"type": "text", "text": "ok"}],
+            "isError": False,
+            "structuredContent": {"recognitionId": "rec-1"},
+        }
+
+        result = tool_service._coerce_to_tool_result(mcp_shaped)
+
+        assert isinstance(result, ToolResult)
+        assert result.is_error is False
+        assert result.structured_content == {"recognitionId": "rec-1"}
+        assert result.content[0].text == "ok"
+
+    def test_accepts_dict_with_structured_content_marker_only(self, tool_service):
+        """Dict with ``structuredContent`` (camelCase) but no ``isError`` is an envelope.
+
+        Covers the ``structuredContent`` branch of ``_looks_like_mcp_envelope``'s
+        layer-2 positive-marker check (search the helper for ``"structuredContent" in keys"``).
+        This exercises the camelCase wire form; the snake-case sibling is
+        covered by the next test.
+        """
+        # No ``isError`` — so the heuristic must admit via structuredContent.
+        payload = {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"recognitionId": "rec-42"},
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.structured_content == {"recognitionId": "rec-42"}
+        assert result.content[0].text == "ok"
+        # ToolResult.is_error defaults to False when unset in the payload.
+        assert result.is_error is False
+
+    def test_accepts_dict_with_snake_case_structured_content_marker(self, tool_service):
+        """Dict with ``structured_content`` (snake_case, gateway-internal) is an envelope.
+
+        Covers the ``structured_content`` half of the layer-2 check. Both
+        spellings live in ``_MCP_ENVELOPE_KEYS`` because forwarded-worker
+        responses and internal serialisations may emit either form.
+        """
+        payload = {
+            "content": [{"type": "text", "text": "ok"}],
+            "structured_content": {"recognitionId": "rec-99"},
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.structured_content == {"recognitionId": "rec-99"}
+
+    def test_accepts_dict_with_only_typed_content_items(self, tool_service):
+        """Dict whose only MCP signal is typed ``content`` items is still admitted.
+
+        Covers the weakest positive marker in ``_looks_like_mcp_envelope`` —
+        ``content`` as a non-empty list of dicts each carrying a string
+        ``type`` field (MCP ``ContentBlock`` shape). No ``isError``,
+        no ``structuredContent``, no ``_meta`` — this test exists so a
+        future tightening that accidentally drops the typed-content branch
+        is caught.
+        """
+        payload = {
+            "content": [
+                {"type": "text", "text": "line 1"},
+                {"type": "text", "text": "line 2"},
+            ],
+        }
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert len(result.content) == 2
+        assert result.content[0].text == "line 1"
+        assert result.content[1].text == "line 2"
+
+    def test_rejects_dict_with_only_meta_marker(self, tool_service):
+        """Dict with only ``_meta`` and no positive signal is not an MCP envelope.
+
+        Covers the final ``return False`` branch of
+        ``_looks_like_mcp_envelope`` — all keys are in the envelope set
+        (layer 1 passes) but no positive marker fires (``isError`` /
+        ``structuredContent`` / typed content items). ``_meta`` alone
+        doesn't make a payload MCP-shaped. The payload is therefore
+        coerced via the opaque-JSON fallback so the caller can inspect
+        the ``_meta`` contents without them being reinterpreted as
+        protocol metadata.
+        """
+        payload = {"_meta": {"trace_id": "abc"}, "content": []}
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        # Falls through to text-serialisation; ``_meta`` preserved as data.
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == payload
+
+    def test_payload_with_broken_str_and_repr_still_produces_toolresult(self, tool_service, caplog):
+        """Even objects whose ``__str__`` *and* ``__repr__`` raise yield a ToolResult.
+
+        The helper's hardest invariant is "never raises, always returns
+        a valid ``ToolResult``". This test exercises the extreme tail of
+        the opaque-JSON last-resort branch: a payload that (1) is not a
+        BaseModel with MCP-shaped fields, (2) isn't JSON-serialisable
+        (so ``orjson.dumps`` raises), (3) whose ``__str__`` raises when
+        the helper tries ``str(payload)``, and (4) whose ``__repr__``
+        also raises. Without ``_safe_text_repr``'s third-tier
+        ``f"<{type_name} object>"`` sentinel, either of those would
+        escape the helper.
+
+        Pairs with ``test_non_json_serialisable_payload_falls_back_to_str``
+        (normal ``str()`` path) and
+        ``test_basemodel_whose_model_dump_raises_falls_back_to_str``
+        (BaseModel.model_dump raising).
+        """
+
+        class AdversarialPayload:
+            """Payload whose textual representations both raise."""
+
+            def __str__(self) -> str:  # pragma: no cover - intentionally explodes
+                raise RuntimeError("__str__ is broken")
+
+            def __repr__(self) -> str:  # pragma: no cover - intentionally explodes
+                raise RuntimeError("__repr__ is also broken")
+
+        payload = AdversarialPayload()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        # Contract held — we got a ``ToolResult`` rather than an exception.
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # Third-tier sentinel used; must be a non-empty string.
+        assert "AdversarialPayload" in result.content[0].text
+        assert "unrepresentable" in result.content[0].text
+        # WARNING-severity reshape log should still have fired.
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
+        assert relevant, "Expected a WARNING-level log from the last-resort fallback"
+        assert relevant[-1].levelname == "WARNING"
+
+    def test_basemodel_whose_model_dump_raises_falls_back_to_str(self, tool_service, caplog):
+        """``BaseModel.model_dump`` raising is caught by the last-resort handler.
+
+        Regression guard for a real failure mode: a Pydantic ``BaseModel``
+        whose ``model_dump(mode="json")`` raises (custom field serialiser
+        that throws, ``PydanticSerializationError`` — a ``ValueError``
+        subclass, not ``TypeError`` — fields holding non-representable
+        objects). Before this fix the ``model_dump`` call lived *outside*
+        the ``try/except`` block, so any such failure escaped the helper
+        and broke the "always returns a valid ``ToolResult``" invariant.
+
+        The current implementation wraps the entire dump-plus-serialise
+        sequence, catches any ``Exception``, logs at WARNING with
+        ``exc_info=True``, and falls back to ``str(payload)``.
+        """
+        # Third-Party
+        from pydantic import BaseModel  # pylint: disable=import-outside-toplevel
+
+        class RaisingDumpModel(BaseModel):
+            """BaseModel whose ``model_dump`` always raises.
+
+            Simulates a third-party model with a broken custom serialiser.
+            Must NOT expose a ``content`` attribute so the earlier
+            BaseModel-with-content branch doesn't handle it — this test
+            targets the opaque-JSON-fallback branch specifically.
+            """
+
+            # A benign field; the model_dump override is where the failure lives.
+            placeholder: str = "ignored"
+
+            def model_dump(self, *_args, **_kwargs):  # type: ignore[override]
+                raise ValueError("simulated custom-serialiser failure")
+
+            def __str__(self) -> str:
+                return "RaisingDumpModel<str-fallback>"
+
+        payload = RaisingDumpModel()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        assert result.content[0].text == "RaisingDumpModel<str-fallback>"
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
+        assert relevant, "Expected a WARNING-level log from the str() fallback"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None
+
+    def test_non_json_serialisable_payload_falls_back_to_str(self, tool_service, caplog):
+        """``orjson.dumps`` TypeError is caught and we fall back to ``str(payload)``.
+
+        ``_coerce_to_tool_result``'s contract is to always return a valid
+        ``ToolResult``, even for payloads that aren't natively JSON-
+        serialisable (e.g. sets, circular references, custom objects
+        without a ``__json__`` method). The last-resort ``TypeError``
+        fallback at the end of the helper catches the ``orjson.dumps``
+        failure, logs at WARNING with ``exc_info=True``, and wraps
+        ``str(payload)`` into a single ``TextContent``. Without this
+        guard the helper would raise and break the pipeline's
+        "always-produces-a-ToolResult" invariant.
+        """
+
+        class NotJSONSerialisable:
+            """Plain Python class with no JSON representation."""
+
+            def __repr__(self) -> str:
+                return "NotJSONSerialisable(opaque)"
+
+        payload = NotJSONSerialisable()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # ``str(payload)`` should be visible in the fallback text.
+        assert "NotJSONSerialisable" in result.content[0].text
+        relevant = [r for r in caplog.records if "could not be JSON-serialised" in r.message]
+        assert relevant, "Expected a WARNING-level log from the str() fallback"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None
+
+    def test_basemodel_with_content_that_fails_validation_falls_back(self, tool_service, caplog):
+        """Pydantic ``BaseModel`` path that fails ``ToolResult`` validation falls back to text.
+
+        Covers the ``except ValidationError`` branch inside
+        ``_coerce_to_tool_result``'s BaseModel dispatch. A caller could
+        conceivably pass a non-MCP Pydantic model that happens to expose
+        a ``content`` attribute but whose ``model_dump(by_alias=True)``
+        produces a shape that ``ToolResult.model_validate`` refuses
+        (e.g. ``content`` is a scalar rather than a list).
+
+        The helper must not raise — it must log at WARNING (so operators
+        see the protocol/schema drift) and fall through to the opaque
+        JSON-serialisation path so the rest of the pipeline still gets
+        a valid ``ToolResult``.
+        """
+        # Third-Party
+        from pydantic import BaseModel  # pylint: disable=import-outside-toplevel
+
+        class BadUpstreamModel(BaseModel):
+            """Stand-in for a third-party model that has ``content`` but wrong shape."""
+
+            content: int = 42  # ``ToolResult.content`` requires ``list[ContentBlock]``
+
+        bad_model = BadUpstreamModel()
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(bad_model)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        # The WARNING-severity reshape log must have fired (see #4202 egress
+        # review round — user-visible reshapes promoted from DEBUG).
+        relevant = [r for r in caplog.records if "did not validate as ToolResult" in r.message]
+        assert relevant, "Expected a WARNING-level reshape log from the BaseModel ValidationError branch"
+        assert relevant[-1].levelname == "WARNING"
+        assert relevant[-1].exc_info is not None, "Expected exc_info=True for post-mortem diagnosis"
+
+    def test_validation_error_falls_back_to_text_serialization(self, tool_service, caplog):
+        """Dicts admitted by the heuristic but rejected by Pydantic fall back to text.
+
+        The heuristic may admit a payload whose keys are all within the
+        MCP envelope set (so it is not a business payload with extras)
+        but whose *shape* still violates ``ToolResult`` (e.g. ``content``
+        is a scalar rather than a list). The helper must not raise in
+        that case — it falls back to serialising the payload into a
+        single ``TextContent`` and logs at DEBUG for diagnosis.
+        """
+        # Only MCP envelope keys present (so the heuristic admits it),
+        # ``isError`` gives a strong positive signal, but ``content`` as a
+        # scalar breaks ``ToolResult.model_validate``.
+        malformed = {"isError": True, "content": 123}
+
+        # User-visible reshape: must surface at WARNING so operators see protocol drift.
+        with caplog.at_level("WARNING", logger="mcpgateway.services.tool_service"):
+            result = tool_service._coerce_to_tool_result(malformed)
+
+        assert isinstance(result, ToolResult)
+        assert len(result.content) == 1
+        assert result.content[0].type == "text"
+        payload = orjson.loads(result.content[0].text)
+        assert payload == malformed
+        assert "failed ToolResult validation" in caplog.text or "falling back" in caplog.text
+        # Severity check — must be WARNING, not DEBUG (would hide the reshape from ops logs).
+        relevant_records = [r for r in caplog.records if "falling back" in r.message or "failed ToolResult validation" in r.message]
+        assert relevant_records, "Expected a reshape log record"
+        assert relevant_records[-1].levelname == "WARNING", f"Expected WARNING, got {relevant_records[-1].levelname}"
+
+    def test_rest_payload_with_mcp_marker_and_extra_key_is_not_coerced(self, tool_service):
+        """Regression guard for the Codex field-dropping follow-up.
+
+        Before the heuristic required *no* keys outside the MCP envelope
+        schema, a payload like
+        ``{"isError": False, "content": [{"type": "text", "text": "ok"}], "recognitionId": "rec-1"}``
+        would pass the old "has isError, therefore MCP" check, round-trip
+        through ``ToolResult.model_validate`` (which inherits
+        ``extra="ignore"`` from ``BaseModelWithConfigDict``), and silently
+        drop ``recognitionId`` on the floor. Any REST tool whose native
+        response happens to use a field name in the MCP envelope set
+        (``isError``, ``structuredContent``, ``content``, ``_meta`` / ``meta``)
+        was vulnerable to this field-dropping bug.
+
+        The fix in ``_looks_like_mcp_envelope`` is to require the dict's
+        full key set to be a subset of the MCP envelope schema — a single
+        unknown sibling key fails the check and the payload is preserved
+        verbatim via the text-serialisation fallback.
+        """
+        rest_payload = {
+            "isError": False,
+            "content": [{"type": "text", "text": "ok"}],
+            "recognitionId": "rec-1",
+        }
+
+        result = tool_service._coerce_to_tool_result(rest_payload)
+
+        # Must be wrapped as opaque text so ``recognitionId`` survives; a
+        # successful MCP-envelope coercion would strip it silently.
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == rest_payload
+        # Specifically pin that the caller-visible payload still carries the
+        # business field — this is the exact regression guard Codex asked for.
+        assert "recognitionId" in roundtripped
+
+    def test_rest_payload_with_structured_content_and_extra_key_is_not_coerced(self, tool_service):
+        """Variant of the preceding guard — triggers via ``structuredContent``.
+
+        Any of the MCP strong markers (``isError``, ``structuredContent``,
+        typed ``content`` items) *must* be paired with the no-extra-keys
+        check. This test exercises the ``structuredContent`` path because
+        it is the marker that historically had the least exercise in
+        unit tests and is the one a future "help the user" change (e.g.
+        auto-populating ``structuredContent`` from a REST tool's schema)
+        would most likely collide with.
+        """
+        rest_payload = {
+            "structuredContent": {"result": "ok"},
+            "content": [{"type": "text", "text": "ok"}],
+            "details": {"trace_id": "abc123"},
+        }
+
+        result = tool_service._coerce_to_tool_result(rest_payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == rest_payload
+        assert "details" in roundtripped
+        assert roundtripped["details"]["trace_id"] == "abc123"
+
+    def test_rest_payload_with_typed_content_list_and_extra_key_is_not_coerced(self, tool_service):
+        """Variant of the preceding guard — triggers via typed ``content`` items.
+
+        The weakest positive MCP signal is "``content`` is a list of
+        dicts each carrying a string ``type`` field". A REST tool that
+        happens to return MCP-like typed items alongside a business
+        field (e.g. a pagination cursor) must not have that sibling
+        silently dropped.
+        """
+        rest_payload = {
+            "content": [{"type": "text", "text": "page 1"}],
+            "nextCursor": "page-2-token",
+        }
+
+        result = tool_service._coerce_to_tool_result(rest_payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.content[0].type == "text"
+        roundtripped = orjson.loads(result.content[0].text)
+        assert roundtripped == rest_payload
+        assert roundtripped["nextCursor"] == "page-2-token"
+
+    def test_mcp_envelope_with_meta_is_still_accepted(self, tool_service):
+        """Positive counterpart — ``_meta`` / ``meta`` are legitimate envelope keys.
+
+        Ensures the tightened heuristic did not over-constrain:
+        well-formed MCP envelopes that include protocol-level metadata
+        (``_meta`` on the wire, ``meta`` in Python) must still be coerced
+        cleanly. Without this test a future simplification that forgot
+        ``_meta`` would silently start text-wrapping valid MCP responses.
+        """
+        envelope = {
+            "content": [{"type": "text", "text": "ok"}],
+            "isError": False,
+            "_meta": {"request_id": "abc-123"},
+        }
+
+        result = tool_service._coerce_to_tool_result(envelope)
+
+        assert isinstance(result, ToolResult)
+        assert result.is_error is False
+        assert result.content[0].text == "ok"
+        assert result.meta == {"request_id": "abc-123"}
+
+    def test_opaque_non_mcp_payload_wraps_into_text_content(self, tool_service):
+        """Arbitrary JSON values (arrays, scalars, no-``content`` dicts) wrap cleanly.
+
+        The fallback serialises with ``orjson.OPT_INDENT_2`` so the
+        resulting ``TextContent`` is human-inspectable. The goal is the
+        invariant "every path yields a well-formed ``ToolResult``" rather
+        than any particular formatting choice.
+        """
+        payload = [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
+
+        result = tool_service._coerce_to_tool_result(payload)
+
+        assert isinstance(result, ToolResult)
+        assert result.is_error is False
+        assert orjson.loads(result.content[0].text) == payload
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2035,7 +2773,7 @@ class TestCreateToolFromA2AAgent:
         tool_service.register_tool = AsyncMock(return_value=mock_tool_read)
         db.get.return_value = MagicMock()
 
-        result = await tool_service.create_tool_from_a2a_agent(db, agent, created_by="admin")
+        await tool_service.create_tool_from_a2a_agent(db, agent, created_by="admin")
 
         # Verify register_tool was called
         tool_service.register_tool.assert_awaited_once()
@@ -2185,7 +2923,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-token"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer my-token"}),
         ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert result == {"data": "custom"}
@@ -2239,7 +2977,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real_key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.example.com/?api_key=real_key"),
             patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.example.com/?api_key=***"),
         ):
@@ -2317,9 +3055,9 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
-            result = await tool_service._call_a2a_agent(agent, {"query": "test"})
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
         call_kwargs = mock_client.post.call_args
         assert "Bearer my-api-key" in call_kwargs[1]["headers"]["Authorization"]
 
@@ -2343,7 +3081,7 @@ class TestRecordToolMetricSync:
             def __exit__(self, *args):
                 return False
 
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", DummySession)
 
         with patch.object(tool_service, "_record_tool_metric_by_id") as mock_record:
             tool_service._record_tool_metric_sync("t1", 1.0, True, None)
@@ -2789,23 +3527,19 @@ class TestCallA2AAgentCoverage:
 
     @pytest.mark.asyncio
     async def test_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service):
-        """If preparing JSONRPC request data fails, the error is logged and re-raised."""
+        """If preparing request data fails, the error propagates to the caller."""
         agent = self._make_agent(agent_type="jsonrpc")
 
         def _info_side_effect(msg, *args, **kwargs):
-            # Allow the initial "Calling A2A agent..." log, but force an exception for the JSONRPC request_data log.
-            if "JSONRPC request_data prepared" in str(msg):
+            # Allow the initial "Calling A2A agent..." log, but force an exception for the request_data log.
+            if "invoke tool request_data prepared" in str(msg):
                 raise RuntimeError("logger boom")
-            return None
 
         with patch("mcpgateway.services.tool_service.logger") as mock_logger:
             mock_logger.info.side_effect = _info_side_effect
-            mock_logger.error = MagicMock()
 
             with pytest.raises(RuntimeError, match="logger boom"):
                 await tool_service._call_a2a_agent(agent, {"query": "hello"})
-
-        mock_logger.error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_custom_agent_format(self, tool_service):
@@ -2833,7 +3567,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer secret-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "secret-key"}),  # pragma: allowlist secret
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -2850,7 +3584,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -2866,7 +3600,10 @@ class TestCallA2AAgentCoverage:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_resp
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+        ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer dict-token"
@@ -2883,7 +3620,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -2901,7 +3638,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -2919,9 +3656,9 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decryption failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decryption failed")),
         ):
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(Exception, match="Decryption failed"):
                 await tool_service._call_a2a_agent(agent, {"query": "test"})
 
     @pytest.mark.asyncio
@@ -2935,9 +3672,9 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real-key"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
-            patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
+            patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert mock_client.post.call_args[0][0] == "http://agent.test/api?api_key=real-key"
@@ -3242,6 +3979,65 @@ class TestDeleteToolPermissionAndPurge:
         assert mock_delete.call_count == 2  # ToolMetric + ToolMetricsHourly
 
 
+class TestDeleteToolServerAssociationCleanup:
+    """Tests for delete_tool cleaning up server_tool_association rows (issue #4261)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        service._event_service = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_delete_tool_cleans_server_tool_association(self, tool_service):
+        """delete_tool must remove server_tool_association rows before deleting the tool."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "a2a_test_agent"
+        mock_tool.url = "http://example.com"
+        mock_tool.tags = ["a2a", "agent"]
+        mock_tool.team_id = None
+        mock_tool.gateway_id = None
+
+        db.get.return_value = mock_tool
+
+        # Track execute calls to verify ordering
+        execute_calls = []
+        assoc_result = MagicMock()
+        assoc_result.rowcount = 1  # One association row removed
+        delete_result = MagicMock()
+        delete_result.rowcount = 1
+
+        def track_execute(stmt):
+            execute_calls.append(str(stmt))
+            # First call is association cleanup, second is tool DELETE
+            if len(execute_calls) == 1:
+                return assoc_result
+            return delete_result
+
+        db.execute.side_effect = track_execute
+
+        mock_admin_cache = MagicMock()
+        mock_admin_cache.invalidate_tags = AsyncMock()
+        mock_metrics_cache = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service._get_registry_cache") as mock_rc,
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tlc,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", mock_admin_cache),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache", mock_metrics_cache),
+        ):
+            mock_rc.return_value = AsyncMock()
+            mock_tlc.return_value = AsyncMock()
+            await tool_service.delete_tool(db, "tool-1")
+
+        # Must have 2 execute calls: association cleanup then tool DELETE
+        assert db.execute.call_count == 2
+        db.commit.assert_called()
+
+
 # ============================================================================
 # convert_tool_to_read with metrics
 # ============================================================================
@@ -3474,17 +4270,6 @@ class TestValidateToolOutputSchemaBranches:
         # Should not crash; schema_type falls to None
         assert result is True or result is False
 
-    def test_single_element_list_unwrap_for_object_schema(self, tool_service):
-        """Unwrap [item] when schema expects object type."""
-        tool_result = SimpleNamespace(content=None, is_error=False)
-        tool = SimpleNamespace(
-            name="t",
-            output_schema={"type": "object", "properties": {"key": {"type": "string"}}},
-        )
-        # Pass a list with single element as candidate
-        result = tool_service._extract_and_validate_structured_content(tool, tool_result, candidate=[{"key": "val"}])
-        assert result is True
-
     def test_validation_error_json_encoding_failure(self, tool_service):
         """When orjson can't encode validation details, falls back to str()."""
         tool_result = SimpleNamespace(
@@ -3522,7 +4307,7 @@ class TestValidateToolOutputSchemaBranches:
 
 
 # ---------------------------------------------------------------------------
-# register_tool — team name conflict (lines 1075-1078) + defaults (1059-1062)
+# register_tool — team name conflict + default visibility
 # ---------------------------------------------------------------------------
 
 
@@ -3579,6 +4364,391 @@ class TestRegisterToolBranches:
         # visibility=None => uses tool.visibility="team", team_id defaults from tool.team_id
         with pytest.raises(ToolNameConflictError):
             await tool_service.register_tool(db, tool, visibility=None, owner_email=None)
+
+
+# ---------------------------------------------------------------------------
+# _extract_and_validate_structured_content — error response handling (#4202)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractAndValidateErrorResponses:
+    """Regression guards for ContextForge #4202 on the gateway's ingress validator.
+
+    Issue: https://github.com/IBM/mcp-context-forge/issues/4202
+
+    The MCP 2025-11-25 specification's "Error Handling" section
+    (https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)
+    states that tool execution errors are reported via ``isError: true`` and
+    explicitly that "error responses do not require structured content". Before
+    #4202 was fixed, ``ToolService._extract_and_validate_structured_content``
+    cross-validated error responses against the tool's declared
+    ``outputSchema`` and, on the expected mismatch, clobbered the original
+    error payload with a validation-error dict — discarding the upstream
+    server's actual error message. The tests in this class pin the
+    spec-compliant behaviour: when ``isError=true`` the validator is a
+    no-op, regardless of whether ``structured_content`` / ``isError`` / both
+    flags are present, and regardless of whether the payload matches the
+    declared schema.
+
+    Related:
+    - Egress-side counterpart guard:
+      ``tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress``
+    - End-to-end regression:
+      ``tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload``
+    """
+
+    def test_skip_validation_for_error_response_is_error(self, tool_service):
+        """Baseline #4202 guard — snake-case ``is_error`` flag.
+
+        Exercises the primary MCP Python shape where ``ToolResult.is_error``
+        is the Pydantic attribute. The method must return ``True`` (skip) and
+        leave the original error text verbatim on ``content[0]["text"]``,
+        proving that the validator did not run the schema check and did not
+        replace the payload with a validation-error dict.
+
+        MCP spec reference: 2025-11-25 "Error Handling" — error responses
+        do not require structured content.
+        """
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "You cannot send more than 200 points"}],
+            is_error=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should return True (skip validation) for error responses
+        assert result is True
+        # Error content should be preserved, not overwritten with validation error
+        assert tool_result.content[0]["text"] == "You cannot send more than 200 points"
+        assert tool_result.is_error is True
+
+    def test_skip_validation_for_error_response_isError(self, tool_service):
+        """#4202 guard — wire-format camelCase ``isError`` flag.
+
+        MCP JSON-RPC responses serialise the flag as ``isError`` (camelCase).
+        Some code paths (notably federated peers forwarding raw dicts through
+        the streamable-http transport) deliver the result with the camelCase
+        attribute intact instead of the snake-cased pydantic alias. The
+        validator must respect both spellings so the skip behaviour is
+        transport-agnostic. Fixed at ``tool_service.py`` by OR-ing
+        ``getattr(result, "is_error", False) or getattr(result, "isError", False)``.
+
+        MCP spec reference: 2025-11-25 "Error Handling".
+        """
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "Tool execution failed"}],
+            isError=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["data"], "properties": {"data": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should return True (skip validation) for error responses
+        assert result is True
+        # Error content should be preserved
+        assert tool_result.content[0]["text"] == "Tool execution failed"
+        assert tool_result.isError is True
+
+    def test_skip_validation_both_error_flags(self, tool_service):
+        """#4202 guard — both ``is_error`` and ``isError`` present simultaneously.
+
+        When a pydantic ``ToolResult`` crosses a serialisation boundary its
+        snake-case attribute may end up alongside the camelCase alias from a
+        ``model_dump(by_alias=True)``. The validator must still skip — it
+        must not, for instance, treat one as authoritative and compare them.
+        Any truthy signal from either spelling is sufficient to invoke the
+        MCP error-response exemption.
+
+        MCP spec reference: 2025-11-25 "Error Handling".
+        """
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": "Error message"}],
+            is_error=True,
+            isError=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["field"], "properties": {"field": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True
+        assert tool_result.content[0]["text"] == "Error message"
+
+    def test_skip_validation_for_error_with_populated_structured_content(self, tool_service):
+        """Scenario A from MCP spec review.
+
+        The spec (2025-11-25 "Error Handling") permits ``isError=true`` responses
+        to carry both ``content`` and ``structuredContent`` and explicitly
+        states that error responses "do not require structured content".
+        It prescribes no validation of ``structuredContent`` against
+        ``outputSchema`` on error responses, and no precedence rule between the
+        two fields.
+
+        Pin the gateway's spec-compliant behaviour: validation is skipped
+        regardless of whether ``structuredContent`` is present, and both the
+        unstructured and structured payloads are preserved verbatim for the
+        caller to inspect.
+        """
+        # Structured payload does NOT satisfy the declared schema — that's the
+        # point: validation must not run, so the mismatch must not clobber the
+        # payload.
+        populated_structured = {"debug": "diagnostic info", "code": 429}
+        tool_result = ToolResult(
+            content=[TextContent(type="text", text="Rate limit exceeded")],
+            structured_content=populated_structured,
+            is_error=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId"],
+                "properties": {"recognitionId": {"type": "string"}},
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+
+        assert result is True
+        # is_error remains True; neither payload mutated.
+        assert tool_result.is_error is True
+        assert tool_result.content[0].text == "Rate limit exceeded"
+        assert tool_result.structured_content == populated_structured
+
+    def test_success_with_schema_but_no_content_currently_passes(self, tool_service):
+        """Scenario B from MCP spec review — known spec deviation pinned as
+        a regression guard.
+
+        Per the 2025-11-25 spec ("Output Schema" section) a server MUST
+        provide structured results conforming to a declared ``outputSchema``.
+        The gateway currently treats the absence of structured data as
+        "nothing to validate" and returns True — lenient behaviour that masks
+        upstream servers violating the spec. This test pins that behaviour so
+        any future change is explicit. Tightening tracked in
+        https://github.com/IBM/mcp-context-forge/issues/4208.
+        """
+        tool_result = ToolResult(content=[], is_error=False)
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId"],
+                "properties": {"recognitionId": {"type": "string"}},
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+
+        # Current lenient behaviour: passes silently.
+        assert result is True
+        assert tool_result.is_error is False
+        assert tool_result.content == []
+        assert tool_result.structured_content is None
+
+    def test_skip_validation_when_candidate_payload_is_error_shape(self, tool_service):
+        """#4202 guard — REST/normalised payloads whose body encodes a ToolResult-shaped error.
+
+        When a REST tool's upstream response happens to return a JSON dict
+        that *looks like* a serialised MCP ``CallToolResult``
+        (``{"isError": true, "content": [...]}``), ``_coerce_to_tool_result``
+        passes it through ``ToolResult.model_validate`` and produces a
+        ToolResult whose ``is_error`` attribute is already ``True`` while
+        ``content`` retains the verbatim JSON string representation of the
+        error envelope. The validator must still recognise the error state
+        and skip schema checking so the original envelope reaches the
+        downstream client untouched.
+
+        MCP spec reference: 2025-11-25 "Error Handling" — isError takes
+        precedence over outputSchema enforcement.
+        """
+        tool_result = ToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text='{"isError":true,"content":[{"type":"text","text":"Value exceeds maximum allowed (Requested: 150)"}]}',
+                )
+            ],
+            is_error=True,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+
+        assert result is True
+        assert tool_result.is_error is True
+        assert tool_result.content[0].text == '{"isError":true,"content":[{"type":"text","text":"Value exceeds maximum allowed (Requested: 150)"}]}'
+
+    def test_validate_success_response_normally(self, tool_service):
+        """Positive control for #4202 — success path continues to validate.
+
+        The #4202 fix narrows the skip to error responses only; successful
+        responses with a declared ``outputSchema`` must still be validated
+        against that schema, and the validator must populate
+        ``tool_result.structured_content`` from the parsed JSON text so
+        downstream code (and the MCP SDK's server-side validator on the
+        egress side) sees a conforming payload.
+
+        MCP spec reference: 2025-11-25 "Output Schema" — servers MUST
+        provide structured results conforming to the declared schema on
+        successful responses.
+        """
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"recognitionId": "123", "message": "Success"}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["recognitionId", "message"], "properties": {"recognitionId": {"type": "string"}, "message": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should validate and succeed
+        assert result is True
+        assert hasattr(tool_result, "structured_content")
+        assert tool_result.structured_content["recognitionId"] == "123"
+
+    def test_validate_success_response_fails_validation(self, tool_service):
+        """Complement to #4202 — schema-violating success payload still fails.
+
+        Confirms that the fix does not overreach: a non-error response whose
+        parsed structured payload violates the declared ``outputSchema``
+        must still be flagged by the validator, and the original content
+        must be replaced with a deterministic validation-error dict (code,
+        expected, received, path, message) so callers can diagnose the
+        mismatch. This is the inverse of the #4202 bug — without this
+        branch, relaxing the error-case check would also relax the
+        success-case check.
+
+        MCP spec reference: 2025-11-25 "Output Schema" — conforming
+        structured output is required on success; non-conforming responses
+        should be surfaced as errors.
+        """
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"wrong": "field"}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should fail validation
+        assert result is False
+        assert tool_result.is_error is True
+        # Content should be replaced with validation error details
+        assert "recognitionId" in tool_result.content[0].text or "required" in tool_result.content[0].text.lower()
+
+    def test_validate_rest_normalized_payload_with_pydantic_text_content(self, tool_service):
+        """Regression guard — REST integration path must still be validated.
+
+        Raised during PR #4204 review as a P1 against the initial fix:
+        ``_coerce_to_tool_result`` wraps a REST tool's JSON body into
+        ``ToolResult(content=[TextContent(...)])``, where ``content`` holds
+        Pydantic objects rather than raw dicts. The first iteration of the
+        #4202 refactor made the content-item fallback loop dict-only, so
+        REST responses parsed to Pydantic ``TextContent`` items were silently
+        skipped and ``output_schema`` was never enforced — an invalid REST
+        payload would be forwarded as success. This test asserts the
+        fallback loop now accepts both dicts and Pydantic content, so a REST
+        payload that is missing the required ``recognitionId`` field is
+        correctly detected and surfaced as an error.
+
+        MCP spec reference: 2025-11-25 "Output Schema".
+        Related issues:
+        - Gateway-side validator is the only enforcement for non-MCP tool
+          invocation paths; e2e coverage for those paths tracked in
+          https://github.com/IBM/mcp-context-forge/issues/4207.
+        """
+        payload = {"wrong": "field"}
+        tool_result = tool_service._coerce_to_tool_result(payload)
+        assert isinstance(tool_result.content[0], TextContent)
+        tool = SimpleNamespace(
+            name="rest_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId"],
+                "properties": {"recognitionId": {"type": "string"}},
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Must not silently pass: schema requires recognitionId, payload lacks it.
+        assert result is False
+        assert tool_result.is_error is True
+        assert "recognitionId" in tool_result.content[0].text or "required" in tool_result.content[0].text.lower()
+
+    def test_validate_rest_normalized_payload_passes_when_schema_matches(self, tool_service):
+        """Positive counterpart to the REST fallback-loop regression guard.
+
+        A REST payload that matches its declared ``output_schema`` must
+        round-trip cleanly through
+        ``_coerce_to_tool_result`` → Pydantic ``TextContent`` → the
+        fallback loop → schema validation, and the parsed dict must end up
+        attached to ``tool_result.structured_content`` so the egress path
+        can populate the downstream-facing ``structuredContent`` field. Pairs
+        with ``test_validate_rest_normalized_payload_with_pydantic_text_content``
+        to prove the fix is symmetric (rejects bad, accepts good).
+
+        MCP spec reference: 2025-11-25 "Output Schema" — success payloads
+        matching the schema must be surfaced as structured content.
+        Related: https://github.com/IBM/mcp-context-forge/issues/4207 (e2e
+        coverage gap for non-MCP paths).
+        """
+        payload = {"recognitionId": "rec-42", "message": "ok"}
+        tool_result = tool_service._coerce_to_tool_result(payload)
+        tool = SimpleNamespace(
+            name="rest_tool",
+            output_schema={
+                "type": "object",
+                "required": ["recognitionId"],
+                "properties": {
+                    "recognitionId": {"type": "string"},
+                    "message": {"type": "string"},
+                },
+            },
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True
+        assert tool_result.structured_content == payload
+
+    @pytest.mark.skip(
+        reason=(
+            "Intentional coverage marker, not an implementation assertion. "
+            "The A2A branch of ToolService.invoke_tool does not currently "
+            "invoke _extract_and_validate_structured_content at all — any A2A "
+            "tool returning isError=true with a declared output_schema "
+            "therefore bypasses the gateway-side validator entirely. This is "
+            "neither a #4202 fix regression nor a correctness hazard today "
+            "(Validator C still runs on the egress and the SDK short-circuit "
+            "still preserves the payload for isError=true), but it means "
+            "there is currently no gateway-side output-schema enforcement for "
+            "A2A tools. Tracked under "
+            "https://github.com/IBM/mcp-context-forge/issues/4210 (Option B: "
+            "unify tool-invocation pipeline around canonical ToolResult). "
+            "Un-skip this test and implement it once #4210 step 3 lands "
+            "(routing A2A through the unified _post_invoke_pipeline)."
+        )
+    )
+    def test_a2a_invoke_with_iserror_outputschema_does_not_clobber(self):
+        """Future regression guard for A2A + #4202 — currently unreachable.
+
+        When #4210 routes the A2A branch through Validator B, this test
+        should drive ``invoke_tool`` against an A2A tool whose upstream
+        agent returns ``isError=True`` with a declared ``output_schema``
+        and assert the original error text is preserved end-to-end —
+        mirroring ``test_rest_payload_shaped_error_skips_output_schema_validation``
+        but for the A2A transport.
+        """
 
 
 # ---------------------------------------------------------------------------
@@ -5311,6 +6481,275 @@ class TestInvokeToolRestSuccess:
             result = await tool_service.invoke_tool(db, "test_tool", {})
         assert result is not None
 
+    @pytest.mark.asyncio
+    async def test_rest_payload_shaped_error_skips_output_schema_validation(self, tool_service):
+        """End-to-end #4202 guard through the REST integration branch of ``invoke_tool``.
+
+        Drives the full REST invocation pipeline (not the unit-scoped
+        ``_extract_and_validate_structured_content`` helper) with an upstream
+        HTTP response whose JSON body is a pre-serialised MCP error envelope:
+        ``{"isError": true, "content": [{"type":"text","text": "<user message>"}]}``.
+        ``_coerce_to_tool_result`` recognises the MCP shape and
+        pydantic-validates it into a ToolResult with ``is_error=True``, after
+        which the validator must skip schema enforcement so the verbatim user
+        message (``"Value exceeds maximum allowed (Requested: 150)"``) reaches
+        the caller unchanged. This is the most realistic #4202 scenario in
+        the non-MCP-federated path — which, per
+        https://github.com/IBM/mcp-context-forge/issues/4207, has no e2e
+        coverage today.
+
+        MCP spec references:
+        - 2025-11-25 "Error Handling" — isError responses do not require
+          structured content and must not be cross-validated against
+          outputSchema.
+        - 2025-11-25 "Output Schema" — governs only the success path.
+        """
+        tp = _make_tool_payload(
+            integration_type="REST",
+            request_type="GET",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "isError": True,
+                "content": [{"type": "text", "text": "Value exceeds maximum allowed (Requested: 150)"}],
+            }
+        )
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert result.is_error is True
+        assert result.content[0].text == "Value exceeds maximum allowed (Requested: 150)"
+
+    @pytest.mark.asyncio
+    async def test_rest_payload_shaped_error_records_success_false_in_metrics(self, tool_service):
+        """Regression guard — metrics must record ``success=False`` for REST ``isError=True`` with outputSchema.
+
+        Before this fix, the REST branch at
+        ``tool_service.py::invoke_tool`` ran
+        ``_extract_and_validate_structured_content`` after
+        ``_coerce_to_tool_result`` and then did ``success = bool(valid)``
+        — clobbering ``success`` back to ``True`` because the validator
+        correctly skips (returns ``True``) on ``isError=true`` per the
+        #4202 fix. That meant every REST tool whose upstream returned a
+        pre-serialised MCP error envelope was recorded in
+        ``metrics_buffer.record_tool_metric`` with ``success=True``,
+        corrupting tool-level success rates and masking real failures in
+        observability.
+
+        The fix replaces the ``success = bool(valid)`` override with
+        ``success = not tool_result.is_error`` after the optional
+        validator call, so the metric reflects both upstream error state
+        *and* any validator-imposed error state uniformly.
+
+        This test drives the full REST pipeline, captures the arguments
+        passed to ``record_tool_metric``, and asserts ``success=False``.
+        The companion assertion on ``result.is_error`` (already covered
+        by ``test_rest_payload_shaped_error_skips_output_schema_validation``)
+        proves the user-visible payload is correct; this test
+        additionally proves the internal bookkeeping is correct.
+        """
+        tp = _make_tool_payload(
+            integration_type="REST",
+            request_type="GET",
+            output_schema={"type": "object", "required": ["recognitionId"], "properties": {"recognitionId": {"type": "string"}}},
+        )
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "isError": True,
+                "content": [{"type": "text", "text": "Value exceeds maximum allowed (Requested: 150)"}],
+            }
+        )
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Capture arguments to record_tool_metric so we can assert success=False.
+        # Patch the module-level singleton directly — ``metrics_buffer`` is
+        # bound at import time in tool_service.py.
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # User-visible payload is still the verbatim upstream error.
+        assert result.is_error is True
+        assert result.content[0].text == "Value exceeds maximum allowed (Requested: 150)"
+        # Metrics were recorded with success=False — the specific bookkeeping
+        # invariant this test exists to pin.
+        assert metrics_record.called, "record_tool_metric was not invoked"
+        # The recorder is called via keyword arguments; accept either form.
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        if recorded_success is None and metrics_record.call_args.args:
+            # Positional fallback: the `success` argument is the 3rd positional
+            # after (tool_id, start_time, success) in the recorder signature.
+            recorded_success = metrics_record.call_args.args[2]
+        assert recorded_success is False, f"Expected metrics success=False for REST isError=true response, got {recorded_success}. This regression would silently inflate tool success rates."
+
+    @pytest.mark.asyncio
+    async def test_mcp_non_direct_proxy_iserror_records_success_false_in_metrics(self, tool_service):
+        """Sibling-path regression guard for the REST metrics fix.
+
+        The REST branch's success-metric bug (``success = bool(valid)``
+        clobber) lived inside ``tool_service.py::invoke_tool``'s
+        ``if tool_integration_type == "REST":`` branch, right after the
+        optional ``_extract_and_validate_structured_content`` call, and
+        was fixed by this PR. The **MCP non-direct-proxy** branch — the
+        ``else`` arm of ``if is_direct_proxy:`` inside
+        ``elif tool_integration_type == "MCP":`` — correctly uses
+        ``success = not is_err`` today (search for the assignment
+        immediately after ``is_err = getattr(tool_call_result, ...)``),
+        but there was no regression test pinning that invariant for
+        federated MCP tools. A future refactor wiring Validator B into
+        the MCP branch for symmetry with REST — or simply re-using the
+        ``bool(valid)`` idiom — would silently re-introduce the #4202
+        clobber here with no unit test to catch it.
+
+        This test drives ``invoke_tool`` through the MCP SSE path with
+        a mocked ``ClientSession.call_tool`` returning an
+        ``isError=True`` ``CallToolResult`` and asserts that
+        ``metrics_buffer.record_tool_metric`` is invoked with
+        ``success=False``. The user-visible assertion on ``is_error``
+        is the secondary check; the primary value is pinning the
+        metric bookkeeping against a future refactor.
+
+        Related tests:
+        - ``test_rest_payload_shaped_error_records_success_false_in_metrics``
+          — REST-branch twin of this guard.
+        - ``test_call_tool_preserves_is_error_for_direct_proxy_egress``
+          — direct-proxy branch; already uses ``_coerce_to_tool_result``
+          + ``success = not tool_result.is_error``.
+        """
+        # Third-party — ``session.call_tool(...)`` returns ``mcp.types.CallToolResult``
+        # (camelCase ``isError``), not the gateway's internal ``ToolResult``.
+        # Using the real SDK type here exercises the
+        # ``getattr(tool_call_result, "isError", False)`` fallback that fires
+        # for federated MCP calls in production. A gateway-type stand-in would
+        # only trip the first ``getattr(..., "is_error")`` branch and hide the
+        # camelCase path from regression coverage.
+        # First-Party
+        from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload()
+        db = MagicMock()
+
+        # Real upstream shape — MCP SDK CallToolResult with camelCase isError.
+        sdk_error_result = mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="You cannot send more than 200 points")],
+            isError=True,
+        )
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=sdk_error_result)
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        # Capture what gets passed to the module-level metrics_buffer.
+        metrics_record = MagicMock()
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = metrics_record
+        mock_metrics_buffer.record_server_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # User-visible payload preserved verbatim (the #4202 contract).
+        assert result.is_error is True
+        assert result.content[0].text == "You cannot send more than 200 points"
+
+        # Primary assertion: metric bookkeeping is correct. The MCP
+        # non-direct-proxy branch must record success=False for
+        # isError=true upstream responses, symmetric with the REST fix.
+        assert metrics_record.called, "record_tool_metric was not invoked"
+        recorded_success = metrics_record.call_args.kwargs.get("success")
+        assert recorded_success is False, (
+            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
+        )
+
 
 # ---------------------------------------------------------------------------
 # invoke_tool — REST non-JSON error response (lines 2949-2950)
@@ -5892,7 +7331,7 @@ class TestInvokeToolPluginContext:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
 
-            result = await tool_service.invoke_tool(
+            await tool_service.invoke_tool(
                 db,
                 "test_tool",
                 {},
@@ -6208,7 +7647,7 @@ class TestInvokeToolMcpSessionAffinity:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
 
-            result = await tool_service.invoke_tool(
+            await tool_service.invoke_tool(
                 db,
                 "test_tool",
                 {},
@@ -6391,6 +7830,76 @@ class TestInvokeToolA2A:
         assert "False" not in result.content[0].text
 
     @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_rust_runtime_text_fallback(self, tool_service):
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": None, "text": "text-only"})
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
+                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is False
+        assert result.content[0].text == "text-only"
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_rust_runtime_error_response(self, tool_service):
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(side_effect=RustA2ARuntimeError("runtime failed"))
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
+                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is True
+        assert "runtime failed" in result.content[0].text
+
+    @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):
         """A2A JSONRPC agent invocation without query uses raw params."""
         tp = _make_tool_payload(
@@ -6568,7 +8077,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -6579,7 +8088,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Bearer my-api-key"
 
     @pytest.mark.asyncio
@@ -6719,8 +8228,9 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"token": "decrypted_val"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"token": "decrypted_val"}),
+            patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
+            patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://a2a-agent:9000/?token=***"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -6822,7 +8332,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Bearer dict-token"
 
     @pytest.mark.asyncio
@@ -6854,7 +8364,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -6865,7 +8375,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("Authorization") == "Basic decrypted-value"
 
     @pytest.mark.asyncio
@@ -6897,7 +8407,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -6908,7 +8418,7 @@ class TestInvokeToolA2A:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.post = fake_post
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("X-Custom-Auth") == "custom-value"
 
     @pytest.mark.asyncio
@@ -6931,7 +8441,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decrypt failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decrypt failed")),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -6941,7 +8451,7 @@ class TestInvokeToolA2A:
 
             tool_service._http_client = AsyncMock()
 
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(ToolInvocationError, match="Tool invocation failed: Decrypt failed"):
                 await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
 
     @pytest.mark.asyncio
@@ -7075,7 +8585,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7091,7 +8600,13 @@ class TestInvokeToolMcpSse:
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_authorization_code_missing_token_raises(self, tool_service):
-        """When no stored token is found for authorization_code flow, a ToolInvocationError is raised."""
+        """When no stored token is found and no plugin injects Authorization, raise an actionable error locally.
+
+        Deny-path regression: with no DB token AND no plugin manager registered,
+        the post-pre-invoke check must raise locally with the actionable
+        ``Please authorize ... /oauth/authorize/{id}`` message rather than letting
+        the upstream return a generic 401.
+        """
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
         db = MagicMock()
@@ -7105,6 +8620,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7113,8 +8629,159 @@ class TestInvokeToolMcpSse:
             mock_mbuf.return_value = MagicMock()
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
 
-            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+            with pytest.raises(ToolInvocationError, match="Please authorize"):
                 await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
+
+    @pytest.mark.asyncio
+    async def test_mcp_gateway_oauth_authorization_code_plugin_injects_auth(self, tool_service):
+        """Plugin-injected Authorization (e.g. Vault) satisfies authorization_code without a DB token.
+
+        Positive plugin path: with no DB-stored OAuth token, a plugin
+        ``tool_pre_invoke`` hook sets the Authorization header. The post-hook
+        check sees Authorization is present and lets the request through to the
+        upstream MCP server. The header that reaches the SSE client must be the
+        plugin-injected value.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
+        db = MagicMock()
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    captured_headers.update(headers or {})
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type != ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(modified_payload=None, continue_processing=True), {}
+            new_headers = dict(payload.headers.root) if payload.headers else {}
+            new_headers["Authorization"] = "Bearer plugin-injected-token"
+            modified = ToolPreInvokePayload(name=payload.name, args=payload.args, headers=HttpHeaderPayload(new_headers))
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
+
+        assert result is not None
+        assert captured_headers.get("Authorization") == "Bearer plugin-injected-token"
+
+    @pytest.mark.asyncio
+    async def test_mcp_gateway_strips_x_vault_tokens_from_outbound_headers(self, tool_service):
+        """X-Vault-Tokens (any case) must be stripped from outbound headers regardless of plugin state.
+
+        Defense in depth: if the Vault plugin is disabled, errors out, or
+        ``X-Vault-Tokens`` is mistakenly added to ``passthrough_allowed``,
+        the gateway must still scrub the header before sending the request
+        upstream so vault tokens never leak outside the gateway boundary.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="bearer", auth_value=None)
+        db = MagicMock()
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    captured_headers.update(headers or {})
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch(
+                "mcpgateway.services.tool_service.compute_passthrough_headers_cached",
+                return_value={"Authorization": "Bearer real", "X-Vault-Tokens": '{"github.com": "ghp_xxx"}', "x-vault-tokens": "lower-case-leak"},
+            ),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            await tool_service.invoke_tool(db, "test_tool", {}, request_headers={"X-Tenant-Id": "acme"})
+
+        outbound_keys_lower = {k.lower() for k in captured_headers}
+        assert "x-vault-tokens" not in outbound_keys_lower
+        assert captured_headers.get("Authorization") == "Bearer real"
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_client_credentials_error_raises(self, tool_service):
@@ -7192,7 +8859,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7255,7 +8921,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7330,7 +8995,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7397,7 +9061,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
             patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("no encryption")),
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7465,7 +9128,6 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.validate_signature", return_value=False) as mock_vs,
             patch.object(settings, "enable_ed25519_signing", True),
             patch.object(settings, "ed25519_public_key", "pubkey"),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7533,9 +9195,10 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_cached_ssl_context", return_value=MagicMock()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
         ):
+            # No downstream Mcp-Session-Id in request_headers_var → registry path is
+            # skipped, fallback per-call session is taken, and the correlation-id /
+            # session-id headers are injected as usual.
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
             mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -7553,8 +9216,11 @@ class TestInvokeToolMcpSse:
         assert captured_headers["X-Correlation-ID"] == "corr-1"
 
     @pytest.mark.asyncio
-    async def test_mcp_sse_uses_session_pool_when_available(self, tool_service):
-        """When session pool is enabled and initialized, MCP SSE uses pooled sessions."""
+    async def test_mcp_sse_uses_registry_when_downstream_session_id_present(self, tool_service):
+        """MCP SSE uses the UpstreamSessionRegistry when a downstream Mcp-Session-Id is in scope (#4205)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(
             auth_type="oauth",
@@ -7566,54 +9232,61 @@ class TestInvokeToolMcpSse:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        captured_pool_kwargs: dict[str, object] = {}
+        captured_acquire_kwargs: dict[str, object] = {}
 
-        pooled_session = AsyncMock()
-        pooled_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                # Exercise the factory to cover get_httpx_client_factory
-                httpx_factory = captured_pool_kwargs.get("httpx_client_factory")
+                httpx_factory = captured_acquire_kwargs.get("httpx_client_factory")
                 if callable(httpx_factory):
-                    httpx_factory(headers=captured_pool_kwargs.get("headers"))
-                return SimpleNamespace(session=pooled_session)
+                    httpx_factory(headers=captured_acquire_kwargs.get("headers"))
+                return SimpleNamespace(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        def pool_session(**kwargs):
-            captured_pool_kwargs.update(kwargs)
-            return _PooledCM()
+        def fake_acquire(**kwargs):
+            captured_acquire_kwargs.update(kwargs)
+            return _AcquireCM()
 
-        pool = MagicMock()
-        pool.session = pool_session
+        registry = MagicMock()
+        registry.acquire = fake_acquire
 
-        with (
-            _setup_cache_for_invoke(tp, gp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _rh, h, *_a, **_k: h),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_cached_ssl_context,
-            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "enable_ed25519_signing", False),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-xyz"})
+        try:
+            with (
+                _setup_cache_for_invoke(tp, gp),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+                patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+                patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+                patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _rh, h, *_a, **_k: h),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_cached_ssl_context,
+                patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+                patch.object(settings, "enable_ed25519_signing", False),
+            ):
+                mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+                mock_trace.get = MagicMock(return_value=None)
+                mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+                mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+                mock_mbuf.return_value = MagicMock()
 
-            result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+                result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
         assert result is not None
         assert mock_cached_ssl_context.call_count == 0
-        assert captured_pool_kwargs.get("transport_type") is not None
+        # The registry received the downstream session id + gateway id — this is the
+        # 1:1 binding that prevents cross-session upstream state leakage (#4205).
+        assert captured_acquire_kwargs.get("downstream_session_id") == "downstream-xyz"
+        assert captured_acquire_kwargs.get("gateway_id") == "gw-uuid-1"
+        assert captured_acquire_kwargs.get("transport_type") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -7678,7 +9351,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7734,7 +9406,6 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7806,8 +9477,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            # No downstream session id in scope → registry is skipped, fallback taken.
             patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
             patch.object(tool_service, "_pydantic_gateway_from_payload", return_value=None),
         ):
@@ -7823,10 +9493,11 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         plugin_manager.invoke_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_streamablehttp_uses_session_pool_and_modified_payload_with_headers_none(self, tool_service):
-        """Covers pooled StreamableHTTP path + modified_payload headers=None branch."""
+    async def test_streamablehttp_uses_registry_and_modified_payload_with_headers_none(self, tool_service):
+        """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
         # First-Party
         from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -7843,42 +9514,45 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
         plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
 
-        pooled_session = AsyncMock()
-        pooled_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
 
-        class _PooledCM:
+        class _AcquireCM:
             async def __aenter__(self):
-                return SimpleNamespace(session=pooled_session)
+                return SimpleNamespace(session=upstream_session)
 
             async def __aexit__(self, *exc):
                 return False
 
-        pool = MagicMock()
-        pool.session = MagicMock(return_value=_PooledCM())
+        registry = MagicMock()
+        registry.acquire = MagicMock(return_value=_AcquireCM())
 
-        with (
-            _setup_cache_for_invoke(tp, gp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
-            patch.object(settings, "mcp_session_pool_enabled", True),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sh"})
+        try:
+            with (
+                _setup_cache_for_invoke(tp, gp),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+                patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+                patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+                patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+                patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+                patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            ):
+                mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+                mock_trace.get = MagicMock(return_value=None)
+                mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+                mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+                mock_mbuf.return_value = MagicMock()
 
-            result = await tool_service.invoke_tool(db, "test_tool", {})
+                result = await tool_service.invoke_tool(db, "test_tool", {})
+        finally:
+            request_headers_var.reset(headers_token)
 
         assert result is not None
-        assert pool.session.called
+        assert registry.acquire.called
 
     @pytest.mark.asyncio
     async def test_streamablehttp_timeout_triggers_post_hook_without_context(self, tool_service):
@@ -7933,7 +9607,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.metrics.tool_timeout_counter") as mock_timeout_counter,
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7988,7 +9661,6 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
-            patch.object(settings, "mcp_session_pool_enabled", False),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)

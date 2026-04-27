@@ -256,7 +256,8 @@ class ToolsPage(BasePage):
             tool_index: Index of the tool row (default: 0 for first tool)
         """
         tool_row = self.tool_rows.nth(tool_index)
-        view_btn = tool_row.locator('button:has-text("View")')
+        self._open_action_dropdown(tool_row)
+        view_btn = tool_row.locator('button[role="menuitem"]:has-text("View")')
         self._click_and_wait_for_tool_fetch(view_btn, "tool-modal")
         self.wait_for_visible(self.tool_modal)
 
@@ -273,7 +274,8 @@ class ToolsPage(BasePage):
             tool_index: Index of the tool row (default: 0 for first tool)
         """
         tool_row = self.tool_rows.nth(tool_index)
-        edit_btn = tool_row.locator('button:has-text("Edit")')
+        self._open_action_dropdown(tool_row)
+        edit_btn = tool_row.locator('button[role="menuitem"]:has-text("Edit")')
         self._click_and_wait_for_tool_fetch(edit_btn, "tool-edit-modal")
         self.wait_for_visible(self.tool_edit_modal)
 
@@ -304,7 +306,8 @@ class ToolsPage(BasePage):
             tool_index: Index of the tool row (default: 0 for first tool)
         """
         tool_row = self.tool_rows.nth(tool_index)
-        test_btn = tool_row.locator('button:has-text("Test")')
+        self._open_action_dropdown(tool_row)
+        test_btn = tool_row.locator('button[role="menuitem"]:has-text("Test")')
         self._click_and_wait_for_tool_fetch(test_btn, "tool-test-modal")
         self.wait_for_visible(self.tool_test_modal)
 

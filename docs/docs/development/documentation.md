@@ -176,11 +176,86 @@ The `build` target produces a fully-static site (used by CI for docs previews an
 
 ---
 
-## 📤 Publishing (CI)
+## 📤 Publishing Versioned Documentation
 
-We do not currently run a dedicated docs-build workflow in CI. Build locally with `make build` (or the `make doctest`/`make lint` suite from the repo root) before opening a PR that touches docs-heavy changes.
+Documentation is deployed using [mike](https://github.com/jimporter/mike) for version management. Each release gets its own versioned documentation snapshot.
 
-Publishing to GitHub Pages remains a manual maintainer task via `make deploy`.
+### Versioning Strategy
+
+- **Single source**: Docs maintained in `main` branch alongside code
+- **Deploy on release**: When cutting a version tag, deploy docs to that version
+- **Frozen snapshots**: Each version folder (`1.0.0/`, `1.0.1/`) is immutable after deployment
+- **Version selector**: Users can switch between versions via UI dropdown
+
+### Deployment Commands
+
+```bash
+cd docs
+
+# Deploy stable release (e.g., 1.0.0)
+make mike-deploy VERSION=1.0.0
+make mike-set-default
+
+# Deploy release candidate
+make mike-deploy VERSION=1.0.0-RC1
+
+# Deploy development preview
+make mike-deploy VERSION=dev
+
+# List all deployed versions
+make mike-list
+
+# Delete a version
+make mike-delete VERSION=0.8.0
+```
+
+### Release Workflow
+
+When cutting a release tag (e.g., `v1.0.0`):
+
+1. Ensure docs in `main` are up-to-date
+2. Tag the release: `git tag -s v1.0.0`
+3. Deploy versioned docs:
+   ```bash
+   cd docs
+   make mike-deploy VERSION=1.0.0
+   make mike-set-default
+   ```
+
+### Version Aliases
+
+- `latest` → newest release (auto-updated)
+- `stable` → production-ready version
+- `dev` → development docs (optional)
+
+### CI Integration
+
+The `.github/workflows/docs-deploy.yml` workflow auto-deploys docs on push to `docs/**` or manual trigger with version input.
+
+**Manual trigger:**
+1. Go to Actions → "Deploy Docs with Mike"
+2. Click "Run workflow"
+3. Enter version (e.g., `1.0.0` or `latest`)
+4. Run
+
+### Local Preview
+
+Preview versioned docs locally:
+
+```bash
+cd docs
+make mike-serve  # http://localhost:8000 with version selector
+```
+
+### Architecture
+
+- **Source**: `docs/docs/*.md` (main branch)
+- **Built HTML**: `gh-pages` branch (managed by mike)
+- **Structure**: `gh-pages/1.0.0/`, `gh-pages/0.9.0/`, etc.
+- **Manifest**: `gh-pages/versions.json` (auto-managed)
+
+!!! note "No version branches needed"
+    Unlike traditional versioning strategies, we don't maintain separate `release/1.0` branches for docs. The `main` branch is the single source of truth, and mike creates versioned snapshots on `gh-pages` at release time.
 
 ---
 

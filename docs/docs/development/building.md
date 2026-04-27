@@ -28,17 +28,28 @@ This will:
 
 ## 🐍 Manual Python Setup
 
+If you need to bypass the Makefile, use `uv` directly — the project's dev
+dependency group is defined via PEP 735 (`[dependency-groups]`), so the
+traditional `pip install -e ".[dev]"` form does not apply:
+
 ```bash
-python3 -m venv .venv
+uv venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+uv pip install --group dev '.[plugins]'
 ```
 
 This installs:
 
 * Core app dependencies
-* Dev tools (`ruff`, `black`, `mypy`, etc.)
-* Test runners (`pytest`, `coverage`)
+* Dev dependencies (`pytest`, `coverage`, `mypy`, `bandit`, etc.)
+* Plugin framework extras
+
+Formatters and linters (`ruff`, `black`, `isort`, `pylint`, `vulture`,
+`interrogate`, `radon`, `yamllint`, `tomlcheck`) are **not** installed into the
+venv — they are invoked on demand through the Makefile targets (`make ruff`,
+`make black`, `make isort`, `make pylint`, `make vulture`, `make interrogate`,
+`make radon`, `make yamllint`, `make tomllint`), which fetch pinned versions
+via `uv tool run`.
 
 ---
 
@@ -90,6 +101,37 @@ The Admin UI uses plain JavaScript (not TypeScript). Frontend tooling requires N
 npm install        # install frontend dev dependencies
 ```
 
+### Building the Admin UI Bundle
+
+The Admin UI JavaScript is bundled with Vite. The bundle is **not committed** to the repository — it must be built locally. `make install-dev` invokes `make build-ui` automatically, and the step is required: without a bundle, `/admin` will fail to load at runtime with `No bundle-*.js found`. Rebuild after any changes to files under `mcpgateway/admin_ui/`.
+
+**Node.js is a prerequisite.** If `npm` is missing, `make build-ui` (and therefore `make install-dev`) fails fast rather than leaving a broken install. Install Node.js from <https://nodejs.org> before running setup.
+
+```bash
+make build-ui          # build mcpgateway/static/bundle-<hash>.js (requires npm)
+```
+
+If you genuinely do not need the Admin UI (for example, a headless API-only deployment where `MCPGATEWAY_UI_ENABLED=false`), bypass the step with:
+
+```bash
+SKIP_UI_BUILD=1 make install-dev
+```
+
+Or build manually:
+
+```bash
+npm ci                 # install dependencies from lockfile (falls back to `npm install` if lockfile absent)
+npm run vite:build     # produce mcpgateway/static/bundle-<hash>.js
+```
+
+The server reads `mcpgateway/static/.vite/manifest.json` at startup to locate the hashed bundle filename.
+
+For iterative development you can use watch mode:
+
+```bash
+npx vite build --watch
+```
+
 ### Linting & Formatting
 
 ```bash
@@ -134,4 +176,4 @@ To test the Admin UI without CDN dependencies:
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.
+This downloads Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. HTMX is bundled via npm/Vite and included in the main JS bundle. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.

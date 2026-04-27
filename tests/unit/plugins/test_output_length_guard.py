@@ -2019,9 +2019,37 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         expected = '["sff","dffd"]'
         self.assertEqual(content_text, expected)
 
-        # Should NOT be truncated to 10 chars
-        self.assertEqual(len(content_text), len(expected))
-        self.assertGreater(len(content_text), 10)
+    def test_null_structured_content_processes_content_array(self):
+        """Test that structuredContent: null allows content array processing (Issue #20 fix).
+
+        This verifies the bug fix where structuredContent: null was causing the plugin
+        to skip content array processing entirely.
+
+        Before fix: Plugin would check 'if "structuredContent" in result' which was True,
+        then try to process None, fail, and return early without processing content array.
+
+        After fix: Plugin checks 'if "structuredContent" in result and
+        result["structuredContent"] is not None' which correctly skips the structured
+        content branch and processes the content array.
+        """
+        payload = Mock()
+        payload.name = "echo"
+        payload.result = {
+            'content': [{'type': 'text', 'text': 'asdiusahdi shidasdhsd hosahdosadoas dasodasod asd asooasdoasdsh'}],
+            'isError': False,
+            'structuredContent': None  # <-- Bug case: null should not block content processing
+        }
+
+        result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
+
+        # Verify content was truncated
+        self.assertIsNotNone(result.modified_payload, "Plugin should modify payload when structuredContent is null")
+        modified_result = result.modified_payload.result
+        content_text = modified_result['content'][0]['text']
+
+        # Should be truncated to 10 chars (max_chars=10)
+        self.assertEqual(len(content_text), 10, f"Expected 10 chars, got {len(content_text)}: '{content_text}'")
+        self.assertEqual(content_text, "asdiusa...", f"Expected 'asdiusa...', got '{content_text}'")
 
 
 class TestTokenModeIntegration(BaseOutputLengthGuardTest):

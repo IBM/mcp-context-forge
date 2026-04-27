@@ -149,6 +149,7 @@ class PromptTarget:
     name: str
     required_arguments: dict[str, str]
 
+
 # Shared state (populated on test_start)
 _server_id: str = ""
 _tool_names: list[str] = []
@@ -497,6 +498,20 @@ def _jsonrpc(method: str, params: dict | None = None) -> dict:
     return payload
 
 
+def _build_tool_args(tool_name: str) -> dict:
+    """Build plausible arguments for a tool based on its name."""
+    name_lower = tool_name.lower()
+    if "convert" in name_lower:
+        src = random.choice(TIMEZONES)
+        dst = random.choice([t for t in TIMEZONES if t != src])
+        return {"time": "2025-06-15T14:30:00Z", "source_timezone": src, "target_timezone": dst}
+    if "time" in name_lower or "timezone" in name_lower:
+        return {"timezone": random.choice(TIMEZONES)}
+    if "echo" in name_lower:
+        return {"message": f"load-test-{random.randint(1, 10000)}"}
+    return {}
+
+
 # =============================================================================
 # Base MCP User — handles session init, auth, and request mechanics
 # =============================================================================
@@ -622,6 +637,10 @@ class BaseMCPUser(FastHttpUser):
         self._assign_target()
         self._ensure_initialized()
 
+    def _build_tool_args(self, tool_name: str) -> dict:
+        """Build plausible arguments for a tool based on its name."""
+        return _build_tool_args(tool_name)
+
 
 # =============================================================================
 # User 1: MCPAgentUser — Realistic agent with 6 tools (customer scenario)
@@ -649,20 +668,6 @@ class MCPAgentUser(BaseMCPUser):
         if not pool:
             return []
         return random.sample(pool, min(n, len(pool)))
-
-    def _build_tool_args(self, tool_name: str) -> dict:
-        """Build plausible arguments for a tool based on its name."""
-        name_lower = tool_name.lower()
-        if "time" in name_lower or "timezone" in name_lower:
-            return {"timezone": random.choice(TIMEZONES)}
-        if "echo" in name_lower:
-            return {"message": f"load-test-{random.randint(1, 10000)}"}
-        if "convert" in name_lower:
-            src = random.choice(TIMEZONES)
-            dst = random.choice([t for t in TIMEZONES if t != src])
-            return {"time": "2025-06-15T14:30:00Z", "source_timezone": src, "target_timezone": dst}
-        # Generic: many tools accept empty args or have defaults
-        return {}
 
     @task(15)
     @tag("agent", "tools", "call")
@@ -746,15 +751,7 @@ class MCPToolCallerUser(BaseMCPUser):
         if not self._tool_names:
             return
         tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-        name_lower = tool.lower()
-        if "time" in name_lower:
-            args = {"timezone": random.choice(TIMEZONES)}
-        elif "echo" in name_lower:
-            args = {"message": "perf-test"}
-        elif "convert" in name_lower:
-            args = {"time": "2025-01-01T00:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"}
-        else:
-            args = {}
+        args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
 
     @task(1)
@@ -859,13 +856,7 @@ class MCPSessionChurnUser(BaseMCPUser):
         # Call a tool
         if self._tool_names:
             tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-            name_lower = tool.lower()
-            if "time" in name_lower:
-                args = {"timezone": random.choice(TIMEZONES)}
-            elif "echo" in name_lower:
-                args = {"message": "churn-test"}
-            else:
-                args = {}
+            args = self._build_tool_args(tool)
             self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [churn]")
 
 
@@ -891,13 +882,7 @@ class MCPStressUser(BaseMCPUser):
         if not self._tool_names:
             return
         tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-        name_lower = tool.lower()
-        if "time" in name_lower:
-            args = {"timezone": "UTC"}
-        elif "echo" in name_lower:
-            args = {"message": "stress"}
-        else:
-            args = {}
+        args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [stress]")
 
     @task(3)
@@ -964,13 +949,7 @@ class RESTBaselineUser(FastHttpUser):
         if not _tool_names:
             return
         tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
-        name_lower = tool.lower()
-        if "echo" in name_lower:
-            args = {"message": "baseline"}
-        elif "time" in name_lower:
-            args = {"timezone": "UTC"}
-        else:
-            args = {}
+        args = _build_tool_args(tool)
         payload = _jsonrpc("tools/call", {"name": tool, "arguments": args})
         with self.client.post(
             "/rpc",

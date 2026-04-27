@@ -597,6 +597,17 @@ class TestOAuthRouter:
         assert "Missing authorization code" in result.body.decode()
 
     @pytest.mark.asyncio
+    async def test_oauth_callback_missing_state_returns_invalid_state(self, mock_db, mock_request):
+        """Missing state should return controlled invalid-state response."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        result = await oauth_callback(code="auth_code_123", state=None, request=mock_request, db=mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        assert "Invalid OAuth state parameter" in result.body.decode()
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_invalid_state(self, mock_db, mock_request):
         """Test OAuth callback with invalid state parameter."""
         # First-Party

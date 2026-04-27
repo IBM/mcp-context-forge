@@ -1,0 +1,113 @@
+---
+# OCP Install — CrunchyData PGO operator (cluster-wide)
+# Equivalent to: make ocp-install-operator
+#
+# Requires cluster-admin access. Idempotent — skips if already installed.
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/install-operator.yml -i ansible/ocp/inventory/cluster.yml
+
+- name: Install CrunchyData PGO operator
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display install summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Install: CrunchyData PGO operator
+          ========================================
+
+          This will:
+            1. Verify cluster-admin access
+            2. Check if the PGO operator is already installed
+            3. Create the Subscription CR (if needed)
+            4. Wait for the operator to be ready
+
+          The operator is installed cluster-wide in openshift-operators.
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Install PGO operator? Press Enter to continue or Ctrl+C to abort"
+      when: not (skip_confirm | default(false) | bool)
+
+    - name: Verify cluster-admin access
+      ansible.builtin.command:
+        cmd: oc auth can-i create subscriptions -n openshift-operators
+      register: sub_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if insufficient permissions
+      ansible.builtin.fail:
+        msg: "This command requires cluster-admin access. Current user cannot create Subscriptions in openshift-operators."
+      when: sub_check.stdout | default('') != 'yes'
+
+    - name: Check if PGO operator is already installed
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: postgresclusters.postgres-operator.crunchydata.com
+      register: pgo_crd
+
+    - name: Report PGO status
+      ansible.builtin.debug:
+        msg: "PGO operator: {{ 'already installed — skipping' if pgo_crd.resources | length > 0 else 'not found — installing' }}"
+
+    - name: Create PGO Subscription
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: crunchy-postgres-operator
+            namespace: openshift-operators
+          spec:
+            channel: "{{ pgo_channel }}"
+            name: crunchy-postgres-operator
+            source: certified-operators
+            sourceNamespace: openshift-marketplace
+            installPlanApproval: Automatic
+      when: pgo_crd.resources | length == 0
+
+    - name: Wait for PGO CRD to exist
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: postgresclusters.postgres-operator.crunchydata.com
+      register: pgo_crd_wait
+      until: pgo_crd_wait.resources | length > 0
+      retries: 30
+      delay: 10
+      when: pgo_crd.resources | length == 0
+
+    - name: Wait for PGO CRD to be established
+      ansible.builtin.command:
+        cmd: oc wait crd postgresclusters.postgres-operator.crunchydata.com --for=condition=Established --timeout=300s
+      changed_when: false
+      when: pgo_crd.resources | length == 0
+
+    - name: Wait for CSV to succeed
+      ansible.builtin.command:
+        cmd: >
+          oc wait csv -n openshift-operators
+          -l operators.coreos.com/crunchy-postgres-operator.openshift-operators
+          --for=jsonpath='{.status.phase}'=Succeeded
+          --timeout=300s
+      register: csv_status
+      changed_when: false
+      when: pgo_crd.resources | length == 0
+
+    - name: Install complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          PGO operator installed
+          ========================================
+          Status: {{ csv_status.stdout | default('already installed') }}
+          Next: make ocp-setup OCP_NS=<namespace>

@@ -2174,14 +2174,10 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         # Clean up streamable HTTP context with timeout to prevent spin loop
         # if tasks don't respond to cancellation (anyio _deliver_cancellation issue)
         if streamable_context:
-            # Get cleanup timeout from config (with fallback for standalone usage)
-            try:
-                # First-Party
-                from mcpgateway.config import settings as cfg  # pylint: disable=import-outside-toplevel
-
-                cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
-            except Exception:
-                cleanup_timeout = 5.0
+            # Bounded cleanup window for transport __aexit__. Hardcoded 5s; the
+            # previous settings.mcp_session_pool_cleanup_timeout knob disappeared
+            # with the pool config in #4205 and no deployment tuned it.
+            cleanup_timeout = 5.0
             # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
             # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
             with anyio.move_on_after(cleanup_timeout) as cleanup_scope:

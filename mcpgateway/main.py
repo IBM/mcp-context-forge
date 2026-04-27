@@ -33,7 +33,6 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
-import hmac
 import html
 import json
 import logging
@@ -41,7 +40,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,7 +58,6 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -74,18 +72,30 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
-from mcpgateway.bootstrap_db import main as bootstrap_db
+from mcpgateway.auth_context import (
+    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    decode_internal_mcp_auth_context,
+    get_internal_mcp_auth_context,
+    get_request_identity,
+    get_rpc_filter_context,
+    get_scoped_resource_access_context,
+    get_token_teams_from_request,
+    get_user_email,
+    has_valid_internal_mcp_runtime_auth_header,
+)
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2APushNotificationConfig
+from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
@@ -106,6 +116,8 @@ from mcpgateway.plugins.framework import (
     PromptHookType,
     ResourceHookType,
     shutdown_plugin_manager_factory,
+    start_plugin_invalidation_listener,
+    stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -114,6 +126,7 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -124,6 +137,8 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
+    HealthCheckResponse,
+    HealthStatusItem,
     JsonPathModifier,
     MetricsResponse,
     PromptCreate,
@@ -144,10 +159,11 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.completion_service import CompletionError, CompletionService
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -163,7 +179,6 @@ from mcpgateway.services.resource_service import ResourceError, ResourceLockConf
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
-from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
@@ -173,13 +188,15 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
     user_context_var,
 )
-from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils import uaid as uaid_utils
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
+from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
@@ -192,22 +209,10 @@ from mcpgateway.version import router as version_router
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
-# Share the logging service with admin module
-set_logging_service(logging_service)
-
 # Note: Logging configuration is handled by LoggingService during startup
 # Don't use basicConfig here as it conflicts with our dual logging setup
-
-# Wait for database to be ready before creating tables
-wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
-
-# Create database tables
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.run(bootstrap_db())
-else:
-    loop.create_task(bootstrap_db())
+# Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
+# startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
 # Enable plugin subsystem at module load time, mirroring the old singleton pattern.
 # get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
@@ -251,165 +256,7 @@ session_registry = SessionRegistry(
 set_shared_session_registry(session_registry)
 
 
-# Helper function for authentication compatibility
-def get_user_email(user):
-    """Extract email from user object, handling both string and dict formats.
-
-    Args:
-        user: User object, can be either a dict (new RBAC format) or string (legacy format)
-
-    Returns:
-        str: User email address or 'unknown' if not available
-
-    Examples:
-        Test with dictionary user containing email:
-        >>> from mcpgateway import main
-        >>> user_dict = {'email': 'alice@example.com', 'role': 'admin'}
-        >>> main.get_user_email(user_dict)
-        'alice@example.com'
-
-        Test with dictionary user containing sub (JWT standard claim):
-        >>> user_dict_sub = {'sub': 'bob@example.com', 'role': 'user'}
-        >>> main.get_user_email(user_dict_sub)
-        'bob@example.com'
-
-        Test with dictionary user containing both email and sub (email takes precedence):
-        >>> user_dict_both = {'email': 'alice@example.com', 'sub': 'bob@example.com'}
-        >>> main.get_user_email(user_dict_both)
-        'alice@example.com'
-
-        Test with dictionary user without email or sub:
-        >>> user_dict_no_email = {'username': 'charlie', 'role': 'user'}
-        >>> main.get_user_email(user_dict_no_email)
-        'unknown'
-
-        Test with string user (legacy format):
-        >>> user_string = 'charlie@company.com'
-        >>> main.get_user_email(user_string)
-        'charlie@company.com'
-
-        Test with None user:
-        >>> main.get_user_email(None)
-        'unknown'
-
-        Test with empty dictionary:
-        >>> main.get_user_email({})
-        'unknown'
-
-        Test with integer (non-string, non-dict):
-        >>> main.get_user_email(123)
-        '123'
-
-        Test with user object having various data types:
-        >>> user_complex = {'email': 'david@test.org', 'id': 456, 'active': True}
-        >>> main.get_user_email(user_complex)
-        'david@test.org'
-
-        Test with empty string user:
-        >>> main.get_user_email('')
-        'unknown'
-
-        Test with boolean user:
-        >>> main.get_user_email(True)
-        'True'
-        >>> main.get_user_email(False)
-        'unknown'
-    """
-    if isinstance(user, dict):
-        # First try 'email', then 'sub' (JWT standard claim)
-        return user.get("email") or user.get("sub") or "unknown"
-    return str(user) if user else "unknown"
-
-
 _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
-_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
-_INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
-
-
-def _get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
-    """Return trusted auth context forwarded from the StreamableHTTP MCP auth layer.
-
-    Args:
-        request: Incoming request that may carry trusted MCP auth context on state.
-
-    Returns:
-        The forwarded auth context dictionary when present, otherwise ``None``.
-    """
-    internal_auth_context = getattr(request.state, "_mcp_internal_auth_context", None)
-    if isinstance(internal_auth_context, dict):
-        return internal_auth_context
-    return None
-
-
-def _decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
-    """Decode the trusted internal MCP auth header payload.
-
-    Args:
-        header_value: Base64url-encoded trusted auth context header value.
-
-    Returns:
-        Decoded auth context dictionary.
-
-    Raises:
-        ValueError: If the decoded payload is not a JSON object.
-    """
-    padding = "=" * (-len(header_value) % 4)
-    decoded = base64.urlsafe_b64decode(f"{header_value}{padding}".encode("ascii"))
-    payload = orjson.loads(decoded)
-    if not isinstance(payload, dict):
-        raise ValueError("Decoded internal MCP auth context must be an object")
-    return payload
-
-
-def _auth_encryption_secret_value() -> str:
-    """Return the configured auth-encryption secret as a plain string.
-
-    Returns:
-        The auth-encryption secret, normalized to a regular string.
-    """
-    secret = settings.auth_encryption_secret
-    if hasattr(secret, "get_secret_value"):
-        return secret.get_secret_value()
-    return str(secret)
-
-
-@lru_cache(maxsize=8)
-def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
-    """Return the shared secret-derived trust header for Rust->Python MCP hops.
-
-    Args:
-        secret: Auth-encryption secret to derive the trust header from.
-
-    Returns:
-        Hex-encoded SHA-256 digest derived from the provided auth secret.
-    """
-    material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
-
-
-def _expected_internal_mcp_runtime_auth_header() -> str:
-    """Return the current shared secret-derived trust header for Rust->Python MCP hops.
-
-    Returns:
-        Hex-encoded SHA-256 digest derived from the current auth secret.
-    """
-    return _expected_internal_mcp_runtime_auth_header_for_secret(_auth_encryption_secret_value())
-
-
-def _has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
-    """Validate the shared secret-derived trust header for internal MCP requests.
-
-    Args:
-        request: Incoming internal MCP request.
-
-    Returns:
-        ``True`` when the derived trust header matches the expected value.
-    """
-    provided = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
-    if not provided:
-        return False
-    return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
 
 
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
@@ -424,7 +271,15 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     """
     runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
     client_host = getattr(getattr(request, "client", None), "host", None)
-    return runtime_marker == "rust" and _has_valid_internal_mcp_runtime_auth_header(request) and client_host in ("127.0.0.1", "::1")
+    if runtime_marker != "rust" or not has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
+        return False
+    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
+    # A2A support is disabled, even from an otherwise-trusted local sidecar.
+    # A legitimate sidecar should not be running when the feature is off.
+    path = getattr(getattr(request, "url", None), "path", "") or ""
+    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return True
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -448,7 +303,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Missing trusted MCP auth context")
 
     try:
-        auth_context = _decode_internal_mcp_auth_context(header_value)
+        auth_context = decode_internal_mcp_auth_context(header_value)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid trusted MCP auth context: {exc}") from exc
 
@@ -457,7 +312,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
         request.state.token_teams = auth_context["teams"]
 
-    if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
+    if request.headers.get(INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
         auth_context["_rust_session_validated"] = True
 
     forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
@@ -489,7 +344,7 @@ def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None
     Raises:
         HTTPException: If the forwarded token scope does not authorize the server.
     """
-    auth_context = _get_internal_mcp_auth_context(request)
+    auth_context = get_internal_mcp_auth_context(request)
     if not isinstance(auth_context, dict):
         return
 
@@ -518,7 +373,7 @@ async def _authorize_internal_mcp_request(request: Request, db: Session, *, perm
         The forwarded user payload used for downstream authorization and scoping.
     """
     user = _build_internal_mcp_forwarded_user(request)
-    auth_context = _get_internal_mcp_auth_context(request) or {}
+    auth_context = get_internal_mcp_auth_context(request) or {}
 
     if server_id:
         _enforce_internal_mcp_server_scope(request, server_id)
@@ -721,198 +576,6 @@ def _normalize_token_teams(teams: Optional[List]) -> List[str]:
     return normalized
 
 
-def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
-    """
-    Extract and normalize teams from verified JWT token.
-
-    SECURITY: Uses normalize_token_teams for consistent secure-first semantics:
-        - teams key missing → [] (public-only, secure default)
-        - teams key null + is_admin=true → None (admin bypass)
-        - teams key null + is_admin=false → [] (public-only)
-        - teams key [] → [] (explicit public-only)
-        - teams key [...] → normalized list of string IDs
-
-    First checks request.state.token_teams (set by auth.py), then falls back
-    to calling normalize_token_teams on the JWT payload.
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        None for admin bypass, [] for public-only, or list of normalized team ID strings.
-
-    Examples:
-        >>> from mcpgateway import main
-        >>> from unittest.mock import MagicMock
-        >>> req = MagicMock()
-        >>> req.state = MagicMock()
-        >>> req.state.token_teams = ["team_a"]  # Already normalized by auth.py
-        >>> main._get_token_teams_from_request(req)
-        ['team_a']
-        >>> req.state.token_teams = []  # Public-only
-        >>> main._get_token_teams_from_request(req)
-        []
-    """
-    internal_auth_context = _get_internal_mcp_auth_context(request)
-    if isinstance(internal_auth_context, dict) and "teams" in internal_auth_context:
-        internal_teams = internal_auth_context.get("teams")
-        if internal_teams is None or isinstance(internal_teams, list):
-            return internal_teams
-
-    # SECURITY: First check request.state.token_teams (already normalized by auth.py)
-    # This is the preferred path as auth.py has already applied normalize_token_teams
-    # Use getattr with a sentinel to distinguish "not set" from "set to None"
-    _not_set = object()
-    token_teams = getattr(request.state, "token_teams", _not_set)
-    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
-        return token_teams
-
-    # Fallback: Use cached verified payload and call normalize_token_teams
-    cached = getattr(request.state, "_jwt_verified_payload", None)
-    if cached and isinstance(cached, tuple) and len(cached) == 2:
-        _, payload = cached
-        if payload:
-            # Use normalize_token_teams for consistent secure-first semantics
-            return normalize_token_teams(payload)
-
-    # No JWT payload - return [] for public-only (secure default)
-    return []
-
-
-def _get_rpc_filter_context(request: Request, user) -> tuple:
-    """
-    Extract user_email, token_teams, and is_admin for RPC filtering.
-
-    Args:
-        request: FastAPI request object
-        user: User object from auth dependency
-
-    Returns:
-        Tuple of (user_email, token_teams, is_admin)
-
-    Examples:
-        >>> from mcpgateway import main
-        >>> from unittest.mock import MagicMock
-        >>> req = MagicMock()
-        >>> req.state = MagicMock()
-        >>> req.state._jwt_verified_payload = ("token", {"teams": ["t1"], "is_admin": True})
-        >>> user = {"email": "test@x.com", "is_admin": True}  # User's is_admin is ignored
-        >>> email, teams, is_admin = main._get_rpc_filter_context(req, user)
-        >>> email
-        'test@x.com'
-        >>> teams
-        ['t1']
-        >>> is_admin  # From token payload, not user dict
-        True
-    """
-    # Get user email
-    if hasattr(user, "email"):
-        user_email = getattr(user, "email", None)
-    elif isinstance(user, dict):
-        user_email = user.get("sub") or user.get("email")
-    else:
-        user_email = str(user) if user else None
-
-    # Get normalized teams from verified token
-    token_teams = _get_token_teams_from_request(request)
-
-    # Check if user is admin - MUST come from token, not DB user
-    # This ensures that tokens with restricted scope (empty teams) don't inherit admin bypass
-    is_admin = False
-    internal_auth_context = _get_internal_mcp_auth_context(request)
-    if isinstance(internal_auth_context, dict):
-        if user_email is None:
-            user_email = internal_auth_context.get("email")
-        is_admin = bool(internal_auth_context.get("is_admin", False))
-        if token_teams is not None and len(token_teams) == 0:
-            is_admin = False
-        return user_email, token_teams, is_admin
-
-    cached = getattr(request.state, "_jwt_verified_payload", None)
-    if cached and isinstance(cached, tuple) and len(cached) == 2:
-        _, payload = cached
-        if payload:
-            # Check both top-level is_admin and nested user.is_admin in token
-            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-
-    # If token has empty teams array (public-only token), admin bypass is disabled
-    # This allows admins to create properly scoped tokens for restricted access
-    if token_teams is not None and len(token_teams) == 0:
-        is_admin = False
-
-    return user_email, token_teams, is_admin
-
-
-def _has_verified_jwt_payload(request: Request) -> bool:
-    """Return whether request has a verified JWT payload cached in request state.
-
-    Args:
-        request: Incoming request context.
-
-    Returns:
-        ``True`` when a verified payload tuple is present, otherwise ``False``.
-    """
-    internal_auth_context = _get_internal_mcp_auth_context(request)
-    if isinstance(internal_auth_context, dict):
-        return True
-    cached = getattr(request.state, "_jwt_verified_payload", None)
-    return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
-
-
-def _get_request_identity(request: Request, user) -> tuple[str, bool]:
-    """Return requester email and admin state honoring scoped-token semantics.
-
-    Args:
-        request: Incoming request context.
-        user: Authenticated user context from dependency resolution.
-
-    Returns:
-        Tuple of ``(requester_email, requester_is_admin)``.
-    """
-    user_email, _token_teams, token_is_admin = _get_rpc_filter_context(request, user)
-    resolved_email = user_email or get_user_email(user)
-
-    # If a JWT payload exists, respect token-derived admin semantics (including
-    # public-only admin tokens where bypass is intentionally disabled).
-    if _has_verified_jwt_payload(request):
-        return resolved_email, token_is_admin
-
-    fallback_is_admin = False
-    if hasattr(user, "is_admin"):
-        fallback_is_admin = bool(getattr(user, "is_admin", False))
-    elif isinstance(user, dict):
-        fallback_is_admin = bool(user.get("is_admin", False) or user.get("user", {}).get("is_admin", False))
-
-    return resolved_email, token_is_admin or fallback_is_admin
-
-
-def _get_scoped_resource_access_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]]]:
-    """Resolve scoped resource access context for the current requester.
-
-    Args:
-        request: Incoming request context.
-        user: Authenticated user context from dependency resolution.
-
-    Returns:
-        Tuple of ``(user_email, token_teams)`` where ``(None, None)`` represents
-        unrestricted admin access and ``[]`` represents public-only scope.
-    """
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-
-    # Non-JWT admin contexts (for example basic-auth development mode) should
-    # keep unrestricted access semantics.
-    if not _has_verified_jwt_payload(request):
-        _requester_email, fallback_admin = _get_request_identity(request, user)
-        if fallback_admin:
-            return None, None
-
-    if is_admin and token_teams is None:
-        return None, None
-    if token_teams is None:
-        return user_email, []
-    return user_email, token_teams
-
-
 def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
     """Build PermissionChecker user payload for method-level RPC checks.
 
@@ -940,7 +603,7 @@ def _extract_scoped_permissions(request: Request) -> set[str] | None:
         None: no explicit scope cap (empty permissions or no JWT — defer to RBAC)
         set: explicit permission set (may contain '*' for wildcard)
     """
-    internal_auth_context = _get_internal_mcp_auth_context(request)
+    internal_auth_context = get_internal_mcp_auth_context(request)
     if isinstance(internal_auth_context, dict):
         permissions = internal_auth_context.get("scoped_permissions")
         if not permissions:
@@ -1011,11 +674,19 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         return
 
     # Layer 2: RBAC check
-    # Session tokens have no explicit team_id, so check across all team-scoped roles.
-    # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-    check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
+    # /rpc payloads never carry a resource with an owning team, so we skip
+    # resource/payload derivation (unlike @require_permission).  For single-
+    # team API tokens we extract team_id from the token itself; otherwise
+    # fall back to check_any_team so team-scoped roles are found.
+    # Layer 1 (token scope cap above) already restricts visibility.
+    team_id: str | None = None
+    check_any_team = False
+    if isinstance(user, dict):
+        team_id = user.get("team_id")
+        if not team_id:
+            check_any_team = True
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
-    if not await checker.has_permission(permission, check_any_team=check_any_team):
+    if not await checker.has_permission(permission, check_any_team=check_any_team, team_id=team_id):
         logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
@@ -1107,7 +778,7 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
     Raises:
         HTTPException: If access to the target resource is not allowed.
     """
-    scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+    scoped_user_email, scoped_token_teams = get_scoped_resource_access_context(request, user)
 
     # Admin bypass / unrestricted scope
     if scoped_token_teams is None:
@@ -1141,7 +812,7 @@ async def _assert_session_owner_or_admin(request: Request, user, session_id: str
             raise HTTPException(status_code=404, detail="Session not found")
         raise HTTPException(status_code=403, detail="Session owner metadata unavailable")
 
-    requester_email, requester_is_admin = _get_request_identity(request, user)
+    requester_email, requester_is_admin = get_request_identity(request, user)
     if requester_is_admin:
         return
     if requester_email and requester_email == session_owner:
@@ -1162,7 +833,7 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
         JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
         HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
     """
-    requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
+    requester_email, requester_token_teams, requester_is_admin = get_rpc_filter_context(request, user)
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
 
@@ -1449,9 +1120,7 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     # Log jsonpath_modifier invocation with structured data (only if debug enabled)
     if logger.isEnabledFor(logging.DEBUG):
         data_length = len(data) if isinstance(data, list) else None
-        logger.debug(
-            f"jsonpath_modifier: path='{SecurityValidator.sanitize_log_message(jsonpath)}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}"
-        )
+        logger.debug(f"jsonpath_modifier: path='{SecurityValidator.sanitize_log_message(jsonpath)}', has_mappings={mappings is not None}, data_type={type(data).__name__}, data_length={data_length}")
 
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
@@ -1519,57 +1188,6 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         mapped_results.append(mapped_item)
 
     return mapped_results
-
-
-def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
-    """Create JWT identity extractor function for session pool.
-
-    Extracts stable user ID from JWT token to prevent bucket explosion
-    when using short-lived JWTs with rotating jti/exp/iat claims.
-
-    Returns:
-        Callable that extracts stable user identifier from request headers,
-        or None if extraction fails.
-    """
-
-    def jwt_identity_extractor(headers: dict) -> Optional[str]:
-        """Extract stable user ID from JWT token.
-
-        Decodes JWT without signature verification to extract sub, email, or user_id claim.
-        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
-
-        Args:
-            headers: Request headers dict (case-insensitive lookup handled by caller).
-
-        Returns:
-            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
-        """
-        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
-        if not auth_header:
-            return None
-
-        # Extract token from "Bearer <token>" format
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        else:
-            token = auth_header.strip()
-        if not token:
-            return None
-
-        try:
-            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
-            # This is NOT a security boundary - authentication happens separately via get_current_user.
-            # We only extract stable identity (sub/email/user_id) to group sessions by user.
-            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
-            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
-            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
-            # Try standard claims in order of preference
-            return claims.get("sub") or claims.get("email") or claims.get("user_id")
-        except Exception as e:
-            logger.debug(f"JWT identity extraction failed: {e}")
-            return None
-
-    return jwt_identity_extractor
 
 
 async def attempt_to_bootstrap_sso_providers():
@@ -1654,8 +1272,33 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
 
+    # Wait for the database to be ready, then run bootstrap (alembic + seed).
+    # This used to run at module-import time, which made every test that
+    # imported mcpgateway.main pay for a real DB probe and migration check.
+    # `wait_for_db_ready(sync=True)` is a blocking probe, so offload it to
+    # a worker thread to avoid stalling the event loop during startup.
+    # First-Party
+    from mcpgateway.bootstrap_db import main as bootstrap_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.db_isready import wait_for_db_ready  # pylint: disable=import-outside-toplevel
+
+    await asyncio.to_thread(
+        wait_for_db_ready,
+        max_tries=int(settings.db_max_retries),
+        interval=int(settings.db_retry_interval_ms) / 1000,
+        sync=True,
+    )
+    await bootstrap_db()
+
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
+
+    # Register the Redis provider with the plugin framework so framework
+    # modules can reach Redis without importing mcpgateway.utils directly
+    # (isolation enforced by scripts/pre-commit/check_framework_imports.py).
+    # First-Party
+    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+
+    set_shared_redis_provider(get_redis_client)
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -1667,53 +1310,75 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, "update_http_pool_metrics"):
         app.state.update_http_pool_metrics()
 
-    # Initialize MCP session pool (for session reuse across tool invocations)
-    # Also initialize if session affinity is enabled (needs the ownership registry)
-    if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
-        # First-Party
-        from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
-
-        # Auto-align pool health check interval to min of pool and gateway settings
-        effective_health_check_interval = min(
-            settings.health_check_interval,
-            settings.mcp_session_pool_health_check_interval,
-        )
-
-        max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
-
-        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
-        identity_extractor = None
-        if settings.mcp_session_pool_jwt_identity_extraction:
-            identity_extractor = _create_jwt_identity_extractor()
-            logger.info("JWT identity extraction enabled for session pool")
-
-        init_mcp_session_pool(
-            max_sessions_per_key=max_sessions_per_key,
-            session_ttl_seconds=settings.mcp_session_pool_ttl,
-            health_check_interval_seconds=effective_health_check_interval,
-            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
-            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
-            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
-            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
-            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
-            identity_extractor=identity_extractor,
-            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-            # Use dedicated transport timeout (default 30s to match MCP SDK default).
-            # This is separate from health_check_timeout to allow long-running tool calls.
-            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
-            # Configurable health check chain - ordered list of methods to try.
-            health_check_methods=settings.mcp_session_pool_health_check_methods,
-            health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
-            max_total_keys=settings.mcp_session_pool_max_total_keys,
-            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
-        )
-        logger.info("MCP session pool initialized")
-
-    # Initialize LLM chat router Redis client
+    # Initialize the session-affinity service (Redis-backed worker mapping,
+    # heartbeat, session-owner forwarding). Cross-worker upstream
+    # ``ClientSession`` state lives in ``UpstreamSessionRegistry`` —
+    # SessionAffinity owns only the affinity layer.
+    # Always initialize SessionAffinity, regardless of
+    # ``mcpgateway_session_affinity_enabled``. The affinity flag controls
+    # cross-worker Redis routing; the GET /mcp listener-claim dict
+    # (ADR-052) is single-node bookkeeping that lives on the same instance
+    # and needs to be a process-wide singleton even with affinity off.
+    # Without the always-init, the GET handler would fall back to a fresh
+    # ``SessionAffinity()`` per request → each request gets its own
+    # ``_listener_claims`` dict → two concurrent GETs both win the claim
+    # and the single-listener invariant is broken in the default
+    # single-node deployment.
+    #
+    # The Redis-backed background tasks (heartbeat, RPC listener) are
+    # internally gated on the affinity flag, so always-init is safe.
     # First-Party
-    from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
 
-    await init_llmchat_redis()
+    # Use enable_notifications=False here so we don't double-init the
+    # notification service — main.lifespan does that explicitly below.
+    init_session_affinity(enable_notifications=False)
+    logger.info(
+        "Session-affinity service initialized (affinity_enabled=%s)",
+        settings.mcpgateway_session_affinity_enabled,
+    )
+
+    # Initialize the upstream session registry (#4205). 1:1 binding between a
+    # downstream MCP session and its upstream session per gateway, replacing
+    # the old identity-keyed sharing semantics. Always on — no feature flag.
+    #
+    # Wire a notification handler factory so server-initiated messages can be
+    # forwarded to GET /mcp listeners (ADR-052). The factory bakes
+    # downstream_session_id into the per-session handler closure.
+    # First-Party
+    from mcpgateway.services.notification_service import init_notification_service  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.upstream_session_registry import init_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+    _notification_svc = init_notification_service()
+    # Initialize the worker before any session is wired through it.
+    # Without this, list_changed notifications enqueue into a service
+    # whose `_process_refresh_queue` worker never runs and refreshes
+    # silently never fire. The gateway_service is wired here
+    # unconditionally — the affinity branch's
+    # `start_affinity_notification_service` only re-runs under affinity,
+    # and without this hand-off the single-node default would leave
+    # `_gateway_service is None` and drop every refresh.
+    await _notification_svc.initialize(gateway_service=gateway_service)
+
+    def _notification_handler_factory(url: str, gateway_id, *, downstream_session_id: str):  # type: ignore[no-untyped-def]
+        """Per-session message handler that routes upstream notifications and forwards server-initiated messages to the GET /mcp listener (ADR-052)."""
+        return _notification_svc.create_message_handler(
+            gateway_id or url,
+            url,
+            downstream_session_id=downstream_session_id,
+        )
+
+    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    logger.info("Upstream session registry initialized (notification fanout enabled)")
+
+    # Initialize LLM chat router Redis client (only if LLM chat is enabled —
+    # importing the router pulls in the langchain stack which is several
+    # seconds of cold-start cost).
+    if settings.llmchat_enabled:
+        # First-Party
+        from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
+
+        await init_llmchat_redis()
 
     # Initialize observability (Phoenix tracing)
     init_telemetry()
@@ -1723,11 +1388,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
-        # Initialize plugin manager factory if plugins are enabled
-        if settings.plugins.enabled:
-            # First-Party
-            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+        # Initialize the plugin manager factory whenever the YAML config is
+        # available. We used to gate this on ``settings.plugins.enabled`` but
+        # that broke runtime enable-from-disabled: a node that boots with the
+        # flag off would never create the factory, so a later shared-toggle
+        # flip to "enabled" from a peer worker left this node unable to run
+        # plugins until restart. Keep initialisation unconditional; gate
+        # *execution* on the shared toggle in ``get_plugin_manager``.
+        # First-Party
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
 
+        try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
                 timeout=settings.plugins.plugin_timeout,
@@ -1736,6 +1407,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 db_factory=SessionLocal,
             )
             logger.info("Plugin manager factory initialized")
+        except Exception as init_exc:
+            if settings.plugins.enabled:
+                # Operator asked for plugins — a failed init (bad YAML, missing
+                # plugin module, validation error) must be a hard boot failure
+                # rather than a silent no-op. Preserve the original loud-crash
+                # semantics; the outer lifespan handler logs and re-raises.
+                logger.error("Plugin manager factory initialization failed: %s", init_exc, exc_info=True)
+                raise
+            # Plugins disabled locally; we init opportunistically so a later
+            # shared-toggle flip from a peer worker can turn the subsystem on
+            # without restarting this node. If that opportunistic init fails,
+            # the gateway still boots — but mark the node degraded so
+            # ``get_plugin_manager`` emits an ERROR the first time the shared
+            # toggle asks us to serve plugins we can't actually run.
+            logger.warning(
+                "Plugin manager factory init failed (%s); runtime-enable from a peer worker will require this node to restart",
+                init_exc,
+            )
+            # First-Party
+            from mcpgateway.plugins.framework import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
+
+            mark_factory_init_degraded()
 
         try:
             plugin_manager = await get_plugin_manager()
@@ -1752,6 +1445,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as diag_exc:
             logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
             raise
+
+        # Always start the invalidation listener when a factory is live, even
+        # if the local ``plugins.enabled`` setting is false. The listener
+        # early-exits when no Redis provider is registered, so single-node
+        # deployments don't spin.
+        await start_plugin_invalidation_listener()
+        logger.info("Plugin invalidation listener started")
 
         # Wire observability adapter to plugin manager if observability is enabled
         if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
@@ -1772,22 +1472,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
-        # Start notification service for event-driven refresh (after gateway_service is ready)
-        if settings.mcp_session_pool_enabled:
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import start_pool_notification_service  # pylint: disable=import-outside-toplevel
-
-            await start_pool_notification_service(gateway_service)
-
-        # Start heartbeat and RPC listener for multi-worker session affinity.
-        # This must be outside the mcp_session_pool_enabled guard because
-        # affinity-only deployments (pool disabled, affinity enabled) still
-        # need heartbeat and RPC forwarding.
+        # Start heartbeat, RPC listener, and notification service for
+        # multi-worker session affinity. The upstream-session pool is
+        # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
+        # only the cross-worker affinity machinery is gated here.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, start_affinity_notification_service  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            await start_affinity_notification_service(gateway_service)
+            pool = get_session_affinity()
             pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
             logger.info("Multi-worker session affinity heartbeat and RPC listener started")
@@ -1857,6 +1551,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about unsafe UAID configuration if A2A is enabled
+        if settings.mcpgateway_a2a_enabled:
+            uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+            if not uaid_allowed_domains:
+                logger.warning(
+                    "⚠️  SECURITY: UAID_ALLOWED_DOMAINS is empty - cross-gateway routing is unrestricted. "
+                    "This allows UAID-based routing to ANY domain, including internal networks. "
+                    "Production deployments MUST configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted.example.com","gateway.example.org"]'
+                )
+
         _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
@@ -1865,6 +1570,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         cache_invalidation_subscriber = get_cache_invalidation_subscriber()
         await cache_invalidation_subscriber.start()
+
+        # Start runtime-mode coordinator for cluster-wide override propagation
+        # First-Party
+        from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+        runtime_state_coordinator = get_runtime_state_coordinator()
+        await runtime_state_coordinator.start()
 
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
@@ -1941,6 +1653,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 with suppress(asyncio.CancelledError):
                     await task
 
+        # Stop the plugin invalidation listener before the factory so in-flight
+        # messages don't race with a half-torn-down cache.
+        try:
+            await stop_plugin_invalidation_listener()
+        except Exception as e:
+            logger.debug(f"Error stopping plugin invalidation listener: {e}")
+
         # Shutdown global plugin manager factory (no-op when plugins were never initialised)
         try:
             await shutdown_plugin_manager_factory()
@@ -1957,6 +1676,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
+        # Stop runtime-mode coordinator
+        try:
+            # First-Party
+            from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
+
+            await get_runtime_state_coordinator().stop()
+        except Exception as e:
+            logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -2018,13 +1746,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await shutdown_services(services_to_shutdown)
 
-        # Shutdown MCP session pool (before shared HTTP client)
-        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
-        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
+        # Shutdown session-affinity service (before shared HTTP client).
+        if settings.mcpgateway_session_affinity_enabled:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import close_session_affinity  # pylint: disable=import-outside-toplevel
 
-            await close_mcp_session_pool()
+            await close_session_affinity()
+
+        # Drain upstream session registry (#4205): every (downstream_session_id,
+        # gateway_id) → upstream ClientSession owned by this worker is closed.
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        await shutdown_upstream_session_registry()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
@@ -2111,6 +1845,23 @@ def validate_security_configuration():
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     log_critical_issues(critical_issues)
+
+    # UAID Cross-Gateway Routing Security Check
+    if not settings.uaid_allowed_domains:
+        if not settings.auth_required:
+            logger.error(
+                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+            )
+        else:
+            logger.warning(
+                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                "Any UAID-based agent can route to any remote gateway endpoint. "
+                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+            )
 
     # Warn about ephemeral storage without strict user-in-DB mode
     if not getattr(settings, "require_user_in_db", False):
@@ -2329,6 +2080,55 @@ async def content_size_exception_handler(_request: Request, exc: ContentSizeErro
         ORJSONResponse: A 413 Payload Too Large response with structured error details.
     """
     return ORJSONResponse(status_code=413, content={"detail": {"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size}})
+
+
+@app.exception_handler(TemplateValidationError)
+async def template_validation_exception_handler(_request: Request, exc: TemplateValidationError):
+    """Handle template validation errors globally.
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The TemplateValidationError with template_name, reason, and pattern.
+
+    Returns:
+        ORJSONResponse: A 400 Bad Request response with structured error details.
+    """
+    error_detail = {
+        "error": "Template validation failed",
+        "message": str(exc),
+        "template_name": exc.template_name,
+        "reason": exc.reason,
+    }
+    # DO NOT include pattern - it leaks internal security policy (CWE-209 fix)
+    return ORJSONResponse(status_code=400, content={"detail": error_detail})
+
+
+@app.exception_handler(ContentPatternError)
+async def content_pattern_error_handler(_request: Request, exc: ContentPatternError):
+    """Handle malicious pattern detection errors globally (US-3).
+
+    Returns HTTP 400 with structured error response.
+    Does NOT leak internal patterns or content snippets (CWE-209 fix).
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentPatternError with violation details.
+
+    Returns:
+        ORJSONResponse: A 400 Bad Request response with structured error details.
+    """
+    return ORJSONResponse(
+        status_code=400,
+        content={
+            "detail": {
+                "error": "Malicious pattern detected",
+                "message": f"Content validation failed: {exc.content_type} contains potentially malicious patterns",
+                "violation_type": exc.violation_type or "unknown",
+                "content_type": exc.content_type,
+                # DO NOT include pattern_matched or content_snippet (security)
+            }
+        },
+    )
 
 
 # RFC 9110 §5.6.2 'token' pattern for header field names:
@@ -2628,7 +2428,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = resolve_root_path(request)
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         is_protected = any(scope_path.startswith(p) for p in protected_paths)
@@ -2718,7 +2518,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = resolve_root_path(request)
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         # Allow OPTIONS requests for CORS preflight (RFC 7231)
@@ -3000,20 +2800,31 @@ class MCPPathRewriteMiddleware:
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
 
+        # Strip root_path prefix before pattern matching.
+        # In reverse proxy deployments, scope["path"] may contain the full path
+        # including the proxy prefix (e.g., "/dev/mcp-gateway/service/gateway/servers/123/mcp").
+        # We need to strip this prefix to correctly match the /servers/ pattern.
+        root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
+        app_path = _normalize_scope_path(original_path, root_path)
+
+        # Update modified_path to the app-relative path (without root_path prefix).
+        # This ensures streamablehttp_transport can extract server_id via regex (#4266).
+        scope["modified_path"] = app_path
+
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
-        if not original_path.startswith("/.well-known/"):
-            if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+        if not app_path.startswith("/.well-known/"):
+            if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if original_path.startswith("/servers/"):
+                if app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.match(r"/servers/([^/]+)/mcp", original_path)
+                    _srv_match = re.match(r"/servers/([^/]+)/mcp", app_path)
                     if not _srv_match:
                         response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
                         await response(scope, receive, send)
@@ -3023,7 +2834,8 @@ class MCPPathRewriteMiddleware:
                     await self.application(scope, receive, send)
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-                scope["path"] = "/mcp/"
+                # Preserve root_path prefix when rewriting
+                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)
@@ -3443,6 +3255,11 @@ async def require_valid_server(server_id: str, db: Session = Depends(get_db)) ->
     return server_id
 
 
+def _jsonrpc_invalid_request(req_id: Optional[Union[int, str]] = None) -> dict:
+    """Build a JSON-RPC 2.0 ``Invalid Request`` error envelope."""
+    return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": req_id}
+
+
 async def _read_request_json(request: Request) -> Any:
     """Read JSON payload using orjson.
 
@@ -3724,23 +3541,14 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     Raises:
         HTTPException: If the request method is not "ping".
     """
-    req_id: Optional[str] = None
-    try:
-        body: dict = await _read_request_json(request)
-        if body.get("method") != "ping":
-            raise HTTPException(status_code=400, detail="Invalid method")
-        req_id = body.get("id")
-        logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
-        # Return an empty result per the MCP ping specification.
-        response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-        return ORJSONResponse(content=response)
-    except Exception as e:
-        error_response: dict = {
-            "jsonrpc": "2.0",
-            "id": req_id,  # Now req_id is always defined
-            "error": {"code": -32603, "message": "Internal error", "data": str(e)},
-        }
-        return ORJSONResponse(status_code=500, content=error_response)
+    body = await _read_request_json(request)
+    req_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or body.get("method") != "ping":
+        return ORJSONResponse(status_code=400, content=_jsonrpc_invalid_request(req_id))
+
+    logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
+    response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+    return ORJSONResponse(content=response)
 
 
 @protocol_router.post("/notifications")
@@ -3790,15 +3598,21 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
 
     Returns:
         The result of the completion process.
+
+    Raises:
+        HTTPException: If completion request validation fails.
     """
     body = await _read_request_json(request)
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a completion request")
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     if is_admin and token_teams is None:
         user_email = None
     elif token_teams is None:
         token_teams = []
-    return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    try:
+        return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    except CompletionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -3813,10 +3627,16 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 
     Returns:
         The result of the message creation process.
+
+    Raises:
+        HTTPException: If sampling request validation fails.
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a sampling request")
     body = await _read_request_json(request)
-    return await sampling_handler.create_message(db, body)
+    try:
+        return await sampling_handler.create_message(db, body)
+    except SamplingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 ###############
@@ -3827,7 +3647,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
@@ -3929,7 +3749,8 @@ async def get_server(server_id: str, request: Request, db: Session = Depends(get
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested server with ID {server_id}")
-        server = await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}")
         return server
     except ServerNotFoundError as e:
@@ -4150,6 +3971,7 @@ async def toggle_server_status(
 @require_permission("servers.delete")
 async def delete_server(
     server_id: str,
+    request: Request,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4159,6 +3981,7 @@ async def delete_server(
 
     Args:
         server_id (str): The ID of the server to delete.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -4172,7 +3995,8 @@ async def delete_server(
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -4209,7 +4033,8 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is establishing SSE connection for server {server_id}")
-        await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/sse")
 
         base_url = update_url_protocol(request)
@@ -4237,7 +4062,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
         # - []: public-only (admin bypass disabled)
         # - [...]: team-scoped access
-        token_teams = _get_token_teams_from_request(request)
+        token_teams = get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -4404,7 +4229,7 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed tools for the server_id: {server_id}")
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     _req_email, _req_is_admin = user_email, is_admin
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
@@ -4457,7 +4282,7 @@ async def server_get_resources(
         List[ResourceRead]: A list of resource records formatted with by_alias=True.
     """
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed resources for the server_id: {server_id}")
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
     if is_admin and token_teams is None:
@@ -4500,7 +4325,7 @@ async def server_get_prompts(
         List[PromptRead]: A list of prompt records formatted with by_alias=True.
     """
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed prompts for the server_id: {server_id}")
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
     if is_admin and token_teams is None:
@@ -4522,9 +4347,9 @@ async def list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility (private, team, public)"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
@@ -4560,7 +4385,7 @@ async def list_a2a_agents(
         raise HTTPException(status_code=503, detail="A2A service not available")
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
@@ -4632,7 +4457,7 @@ async def get_a2a_agent(
             raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
         # Admin bypass - only when token has NO team restrictions
         if is_admin and token_teams is None:
@@ -4933,7 +4758,7 @@ async def invoke_a2a_agent(
             raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
         # Admin bypass - only when token has NO team restrictions
         if is_admin and token_teams is None:
@@ -4947,6 +4772,14 @@ async def invoke_a2a_agent(
         else:
             user_id = str(user)
 
+        # Read the federation hop counter from the request header using
+        # the shared parser so Python and Rust behave identically: strict
+        # ASCII-digit decoding with saturation on overflow, warn on
+        # malformed input.  `invoke_agent` rejects at `uaid_max_federation_hops`
+        # before any UAID or agent dispatch, breaking both A→B→A loops
+        # and self-referential `endpoint_url` loops.
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4955,6 +4788,7 @@ async def invoke_a2a_agent(
             user_id=user_id,
             user_email=user_email,
             token_teams=token_teams,
+            hop_count=hop_count,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -4975,11 +4809,11 @@ async def list_tools(
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
-    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
+    apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolsResponse:
     """List all registered tools with team-based filtering and pagination support.
@@ -5018,7 +4852,7 @@ async def list_tools(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Capture original identity for header masking (before admin bypass modifies user_email)
     _req_email, _req_is_admin = user_email, is_admin
 
@@ -5192,7 +5026,7 @@ async def get_tool(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
+    apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
 ) -> ToolResponse:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
@@ -5217,9 +5051,19 @@ async def get_tool(
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tool with ID {tool_id}")
-        _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
+        # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        _req_email = get_user_email(user)
+        _req_is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else False)
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-        data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
+        data = await tool_service.get_tool(
+            db,
+            tool_id,
+            requesting_user_email=auth_user_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+            token_teams=auth_token_teams,
+        )
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
 
         # Parse apijsonpath parameter (handles both string and JsonPathModifier inputs)
@@ -5450,19 +5294,15 @@ async def list_resource_templates(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    # Using this helper ensures admin-bypass requests reach list_resource_templates with
+    # (user_email=None, token_teams=None), which triggers the private-exclusion WHERE clause.
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
     resource_templates = await resource_service.list_resource_templates(
         db,
-        user_email=user_email,
-        token_teams=token_teams,
+        user_email=auth_user_email,
+        token_teams=auth_token_teams,
         include_inactive=include_inactive,
         tags=tags_list,
         visibility=visibility,
@@ -5544,14 +5384,14 @@ async def toggle_resource_status(
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5580,7 +5420,7 @@ async def list_resources(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
@@ -5757,22 +5597,15 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
     try:
-        # Extract user email and admin status for authorization
-        user_email = get_user_email(user)
-        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
-
-        # Admin bypass: pass user=None to trigger unrestricted access
-        # Non-admin: pass user_email and let service look up teams
-        auth_user_email = None if is_admin else user_email
-
-        # Call service with context for plugin support
+        # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         content = await resource_service.read_resource(
             db,
             resource_id=resource_id,
             request_id=request_id,
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -5842,7 +5675,14 @@ async def get_resource_info(
     """
     try:
         logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested resource info for ID {resource_id}")
-        result = await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        result = await resource_service.get_resource_by_id(
+            db,
+            resource_id,
+            include_inactive=include_inactive,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         return result
     except ResourceNotFoundError as e:
@@ -5967,7 +5807,14 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
         StreamingResponse: A streaming response with event updates.
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is subscribing to resource")
-    user_email, token_teams = _get_scoped_resource_access_context(request, user)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+
+    # Pre-resolve admin bypass once using a request-scoped session, keeping
+    # auth context at the HTTP boundary instead of inside the long-lived
+    # SSE generator.  is_admin_bypass_granted encodes the full security
+    # contract (including the token_teams=None guard for #4106).
+    with SessionLocal() as _admin_db:
+        is_admin_bypass = is_admin_bypass_granted(_admin_db, user_email, token_teams)
 
     async def sse_generator():
         """Generate SSE-formatted events from resource subscription changes.
@@ -5975,7 +5822,7 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
         Yields:
             str: SSE-formatted event data.
         """
-        async for event in resource_service.subscribe_events(user_email=user_email, token_teams=token_teams):
+        async for event in resource_service.subscribe_events(user_email=user_email, token_teams=token_teams, is_admin_bypass=is_admin_bypass):
             yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
@@ -6057,14 +5904,14 @@ async def toggle_prompt_status(
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6093,7 +5940,7 @@ async def list_prompts(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
@@ -6238,6 +6085,12 @@ async def create_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in creating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, TemplateValidationError):
+            logger.error(f"Template validation failed while creating prompt: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "Template validation failed", "message": str(e), "template_name": e.template_name, "reason": e.reason, "pattern": e.pattern if e.pattern else None},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -6277,14 +6130,9 @@ async def get_prompt(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, admin status, and server_id for authorization
-    user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     server_id = request.headers.get("X-Server-ID")
-
-    # Admin bypass: pass user=None to trigger unrestricted access
-    # Non-admin: pass user_email and let service look up teams
-    auth_user_email = None if is_admin else user_email
 
     try:
         PromptExecuteArgs(args=args)
@@ -6294,7 +6142,7 @@ async def get_prompt(
             args,
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -6304,6 +6152,12 @@ async def get_prompt(
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        # Map PromptNotFoundError to 404 BEFORE the broader PromptError branch.
+        # PromptNotFoundError is a subclass of PromptError, so without this
+        # ordering the 422 branch matches first and leaks resource existence
+        # by returning a different status than the GET endpoint.
+        if isinstance(ex, PromptNotFoundError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=404)
         if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
             return ORJSONResponse(content={"message": str(ex)}, status_code=422)
@@ -6342,14 +6196,9 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    # Extract user email, admin status, and server_id for authorization
-    user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     server_id = request.headers.get("X-Server-ID")
-
-    # Admin bypass: pass user=None to trigger unrestricted access
-    # Non-admin: pass user_email and let service look up teams
-    auth_user_email = None if is_admin else user_email
 
     try:
         return await prompt_service.get_prompt(
@@ -6358,7 +6207,7 @@ async def get_prompt_no_args(
             {},
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -6435,6 +6284,12 @@ async def update_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in updating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, TemplateValidationError):
+            logger.error(f"Template validation failed while updating prompt: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "Template validation failed", "message": str(e), "template_name": e.template_name, "reason": e.reason, "pattern": e.pattern if e.pattern else None},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
@@ -6565,12 +6420,12 @@ async def toggle_gateway_status(
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
+    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[GatewayRead], Dict[str, Any]]:
@@ -6744,7 +6599,8 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
     """
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested gateway {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
     except GatewayNotFoundError as e:
@@ -6816,12 +6672,13 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -6834,7 +6691,8 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        current = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
         await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
@@ -6889,7 +6747,8 @@ async def refresh_gateway_tools(
     """
     logger.info(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested manual refresh for gateway {gateway_id}")
     try:
-        await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
@@ -7306,7 +7165,7 @@ async def handle_internal_mcp_session_delete(request: Request):
         Empty HTTP response indicating the session was removed.
     """
     _build_internal_mcp_forwarded_user(request)
-    auth_context = _get_internal_mcp_auth_context(request) or {}
+    auth_context = get_internal_mcp_auth_context(request) or {}
     mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
@@ -7328,10 +7187,10 @@ async def handle_internal_mcp_session_delete(request: Request):
     if settings.mcpgateway_session_affinity_enabled:
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.cleanup_streamable_http_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.cleanup_session_owner(mcp_session_id)
         except RuntimeError:
             pass
 
@@ -7562,7 +7421,7 @@ async def handle_internal_mcp_tools_list(request: Request):
             method="tools/list",
             server_id=server_id,
         )
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
             token_teams = None
@@ -7657,7 +7516,7 @@ async def handle_internal_mcp_resources_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
             token_teams = None
@@ -7772,7 +7631,7 @@ async def handle_internal_mcp_resources_read(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
         elif auth_token_teams is None:
@@ -7910,7 +7769,7 @@ async def handle_internal_mcp_resources_subscribe(request: Request):
                 },
             )
 
-        access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
+        access_user_email, access_token_teams = get_scoped_resource_access_context(request, user)
         user_email = get_user_email(user)
         subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
         await resource_service.subscribe_resource(
@@ -8092,16 +7951,13 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        # SECURITY (Layer 1): (None, None) for admin bypass triggers the private-exclusion WHERE clause in the service.
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
         resource_templates = await resource_service.list_resource_templates(
             db,
-            user_email=user_email,
-            token_teams=token_teams,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
             server_id=server_id,
         )
         payload = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
@@ -8248,7 +8104,7 @@ async def handle_internal_mcp_completion_complete(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
             token_teams = None
@@ -8475,7 +8331,7 @@ async def handle_internal_mcp_prompts_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
             token_teams = None
@@ -8594,7 +8450,7 @@ async def handle_internal_mcp_prompts_get(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
         elif auth_token_teams is None:
@@ -8859,6 +8715,597 @@ async def handle_internal_mcp_prompts_get_authz(request: Request):
     )
 
 
+# ---------------------------------------------------------------------------
+# Internal A2A authorization endpoints (Rust A2A runtime sidecar)
+# ---------------------------------------------------------------------------
+
+
+@utility_router.post("/_internal/a2a/authenticate/")
+@utility_router.post("/_internal/a2a/authenticate")
+async def handle_internal_a2a_authenticate(request: Request):
+    """Authenticate an inbound A2A request for Rust runtime execution.
+
+    Delegates to the shared MCP authenticate handler — the auth flow is
+    identical (validate credentials, return auth context).
+    """
+    return await handle_internal_mcp_authenticate(request)
+
+
+async def _authorize_internal_a2a_method(
+    request: Request,
+    *,
+    permission: str,
+    method: str,
+) -> Response:
+    """Authorize a trusted internal A2A method for Rust module execution.
+
+    Reuses the core authorization machinery from the MCP runtime path.
+    """
+    db = SessionLocal()
+    try:
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission=permission,
+            method=method,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        logger.exception("Internal A2A authz error for method=%s permission=%s", method, permission)
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
+    """Return scoped visibility context for trusted internal A2A requests."""
+    user = _build_internal_mcp_forwarded_user(request)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+    if is_admin and token_teams is None:
+        return user_email, None
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
+@utility_router.post("/_internal/a2a/invoke/authz/")
+@utility_router.post("/_internal/a2a/invoke/authz")
+async def handle_internal_a2a_invoke_authz(request: Request):
+    """Authorize trusted A2A invoke requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.invoke", method="a2a/invoke")
+
+
+@utility_router.post("/_internal/a2a/list/authz/")
+@utility_router.post("/_internal/a2a/list/authz")
+async def handle_internal_a2a_list_authz(request: Request):
+    """Authorize trusted A2A list requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/list")
+
+
+@utility_router.post("/_internal/a2a/get/authz/")
+@utility_router.post("/_internal/a2a/get/authz")
+async def handle_internal_a2a_get_authz(request: Request):
+    """Authorize trusted A2A get requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/get")
+
+
+# DbA2AAgent.id is `uuid.uuid4().hex` — 32 lower-case hex chars, no dashes.
+# Used to detect when a resolve identifier is a primary-key reference vs a
+# plain name; kept here (not in uaid module) because it's specific to the
+# internal resolve endpoint's lookup dispatch.
+_UUID_HEX_RE = re.compile(r"[0-9a-f]{32}")
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve")
+async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
+    """Resolve an A2A agent record for Rust module execution.
+
+    Returns the agent's endpoint, auth configuration (encrypted), and
+    protocol version so the Rust sidecar can invoke it directly.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        # Reject leading/trailing whitespace outright rather than silently
+        # falling through to the name branch — a malicious caller could
+        # otherwise wrap a UAID or UUID in spaces to bypass the kind
+        # dispatch (e.g., ` <32-hex>` probes the name column instead of
+        # id). Names in the DB never carry flanking whitespace either, so
+        # this can't false-positive on legitimate input.
+        if agent_name != agent_name.strip():
+            logger.warning("A2A agent resolve rejected: identifier has surrounding whitespace (%r)", agent_name)
+            return ORJSONResponse(status_code=400, content={"error": "agent identifier must not contain leading or trailing whitespace"})
+
+        # Dispatch lookup on identifier kind so a collision across the
+        # name / id / uaid columns can't silently cross-select the wrong
+        # agent. UAID prefix and 32-hex UUIDs are distinctive; everything
+        # else falls through to name.
+        agent = None
+        if uaid_utils.is_uaid(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.uaid == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        elif _UUID_HEX_RE.fullmatch(agent_name):
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        if agent is None:
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        if not agent:
+            a2a_server_service = A2AServerService()
+            server_agent = a2a_server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
+            if server_agent:
+                return ORJSONResponse(status_code=200, content=server_agent)
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        if not await service._check_agent_access(db, agent, user_email, token_teams):  # pylint: disable=protected-access
+            # Surface visibility-denial as 403 to the trusted sidecar
+            # caller (inside _is_trusted_internal_mcp_runtime_request
+            # above) so it can avoid falling through to UAID
+            # cross-gateway dispatch for agents that exist locally but
+            # the requester cannot see. The sidecar is expected to
+            # translate this back to 404 when responding to the end
+            # user so existence of private agents is not leaked.
+            logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on resolve", agent_name, user_email, token_teams)
+            return ORJSONResponse(status_code=403, content={"error": f"access denied to agent '{agent_name}'"})
+
+        result = {
+            "agent_id": agent.id,
+            "name": agent.name,
+            "endpoint_url": agent.endpoint_url,
+            "agent_type": agent.agent_type,
+            "protocol_version": agent.protocol_version,
+            "auth_type": agent.auth_type,
+        }
+        # Return encrypted auth values — Rust decrypts them with the shared secret.
+        if agent.auth_value:
+            result["auth_value_encrypted"] = agent.auth_value
+        if agent.auth_query_params:
+            result["auth_query_params_encrypted"] = agent.auth_query_params
+
+        return ORJSONResponse(status_code=200, content=result)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card")
+async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
+    """Return the A2A AgentCard for an agent.
+
+    Called by the Rust sidecar to serve GetExtendedAgentCard /
+    agent/getExtendedCard / agent/getAuthenticatedExtendedCard requests.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+
+        # Layer-1 visibility is enforced inside ``get_agent_card`` (PR #4341):
+        # admin bypass with no email cannot read another user's private agent.
+        # The denial path returns None so the response falls through to the
+        # not-found branch below without leaking existence. We still pre-check
+        # existence to distinguish "agent does not exist" from "visibility
+        # deny" in the structured warning log emitted by service callers.
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
+        card = None
+        if agent is not None:
+            card = await service.get_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+            if card is None:
+                logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
+        if card is None:
+            a2a_server_service = A2AServerService()
+            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+        if card is None:
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        return ORJSONResponse(status_code=200, content=card)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/get/")
+@utility_router.post("/_internal/a2a/tasks/get")
+async def handle_internal_a2a_tasks_get(request: Request):
+    """Retrieve an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task = await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/list/")
+@utility_router.post("/_internal/a2a/tasks/list")
+async def handle_internal_a2a_tasks_list(request: Request):
+    """List A2A tasks for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        state = body.get("state")
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+        if state is not None and not isinstance(state, str):
+            return ORJSONResponse(status_code=400, content={"error": "state must be a string"})
+        limit = min(int(body.get("limit", 100)), 1000)
+        offset = max(int(body.get("offset", 0)), 0)
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset, user_email=user_email, token_teams=token_teams)
+        return ORJSONResponse(status_code=200, content={"tasks": tasks})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/cancel/")
+@utility_router.post("/_internal/a2a/tasks/cancel")
+async def handle_internal_a2a_tasks_cancel(request: Request):
+    """Cancel an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id or not isinstance(task_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
+        if agent_id is not None and not isinstance(agent_id, str):
+            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task = await service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/create/")
+@utility_router.post("/_internal/a2a/push/create")
+async def handle_internal_a2a_push_create(request: Request):
+    """Create a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        if not body.get("a2a_agent_id") or not body.get("task_id") or not body.get("webhook_url"):
+            return ORJSONResponse(status_code=400, content={"error": "a2a_agent_id, task_id, and webhook_url are required"})
+
+        # Validate webhook URL through the schema to enforce SSRF protection.
+        try:
+            validated = A2APushNotificationConfigCreate(**body)
+        except Exception as validation_err:
+            return ORJSONResponse(status_code=400, content={"error": f"invalid push config: {validation_err}"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        if not await service._check_agent_access_by_id(db, body["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A agent_id=%s visibility-denied for user=%s teams=%s on push/create", body["a2a_agent_id"], user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": "agent not found"})
+        cfg = service.create_push_config(db, validated.model_dump())
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/get/")
+@utility_router.post("/_internal/a2a/push/get")
+async def handle_internal_a2a_push_get(request: Request):
+    """Retrieve a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        cfg = service.get_push_config(db, task_id, agent_id=agent_id)
+        if cfg is None:
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
+        if not await service._check_agent_access_by_id(db, cfg["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/get", task_id, cfg["a2a_agent_id"], user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/list/")
+@utility_router.post("/_internal/a2a/push/list")
+async def handle_internal_a2a_push_list(request: Request):
+    """List push notification configs for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        task_id = body.get("task_id")
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        # Use the dispatch-oriented listing so the Rust sidecar receives
+        # plaintext auth_token values decrypted from the encrypted DB column.
+        # Visibility is enforced in SQL via ``_visible_agent_ids`` — no
+        # Python-side post-filter needed.
+        configs = service.list_push_configs_for_dispatch(
+            db,
+            agent_id=agent_id,
+            task_id=task_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return ORJSONResponse(status_code=200, content={"configs": configs})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/delete/")
+@utility_router.post("/_internal/a2a/push/delete")
+async def handle_internal_a2a_push_delete(request: Request):
+    """Delete a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        config_id = body.get("config_id")
+        if not config_id:
+            return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        if cfg and not await service._check_agent_access_by_id(db, cfg.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A push-config id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/delete", config_id, cfg.a2a_agent_id, user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
+        deleted = service.delete_push_config(db, config_id)
+        if not deleted:
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
+        return ORJSONResponse(status_code=200, content={"deleted": True})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/flush/")
+@utility_router.post("/_internal/a2a/events/flush")
+async def handle_internal_a2a_events_flush(request: Request):
+    """Batch-insert streaming events to PG for durability."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        events = body.get("events", [])
+        if not events:
+            return ORJSONResponse(status_code=200, content={"count": 0})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+
+        # Verify the caller has access to the agents that own the referenced tasks.
+        # Unknown task_ids (no matching row) previously slipped past this
+        # check — a caller could flush events for a task_id that does not
+        # exist yet, bypassing visibility entirely.  Reject the batch when
+        # any referenced task_id has no owning agent row.
+        task_ids = {e["task_id"] for e in events if "task_id" in e}
+        if task_ids:
+            tasks = db.query(DbA2ATask).filter(DbA2ATask.task_id.in_(task_ids)).all()
+            known_task_ids = {t.task_id for t in tasks}
+            unknown_task_ids = task_ids - known_task_ids
+            if unknown_task_ids:
+                logger.warning(
+                    "A2A events/flush denied: user=%s teams=%s references unknown task_id(s) %s",
+                    user_email,
+                    token_teams,
+                    sorted(unknown_task_ids),
+                )
+                return ORJSONResponse(
+                    status_code=400,
+                    content={"error": "events reference unknown task_ids", "unknown_task_ids": sorted(unknown_task_ids)},
+                )
+            agent_ids = {t.a2a_agent_id for t in tasks}
+            for agent_id in agent_ids:
+                if not await service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
+                    logger.warning("A2A events/flush denied: user=%s teams=%s lacks access to agent_id=%s (referenced by a flushed event)", user_email, token_teams, agent_id)
+                    return ORJSONResponse(status_code=403, content={"error": "access denied for one or more referenced tasks"})
+
+        count = service.flush_events(db, events)
+        return ORJSONResponse(status_code=200, content={"count": count})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/replay/")
+@utility_router.post("/_internal/a2a/events/replay")
+async def handle_internal_a2a_events_replay(request: Request):
+    """Replay events from PG for stream reconnection."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        after_sequence = int(body.get("after_sequence", 0))
+        limit = min(int(body.get("limit", 1000)), 10000)
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id required"})
+
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
+        task_row = db.query(DbA2ATask).filter(DbA2ATask.task_id == task_id).first()
+        if task_row is None:
+            return ORJSONResponse(status_code=404, content={"error": "task not found"})
+        if not await service._check_agent_access_by_id(db, task_row.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
+            logger.warning("A2A task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on events/replay", task_id, task_row.a2a_agent_id, user_email, token_teams)
+            return ORJSONResponse(status_code=404, content={"error": "task not found"})
+        events = service.replay_events(db, task_id, after_sequence, limit=limit)
+        return ORJSONResponse(status_code=200, content={"events": events})
+    except Exception:
+        logger.exception("Internal A2A endpoint error")
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
 async def _maybe_forward_affinitized_rpc_request(
     request: Request,
     *,
@@ -8888,9 +9335,9 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-        if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+        if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
@@ -8898,9 +9345,9 @@ async def _maybe_forward_affinitized_rpc_request(
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
@@ -8916,7 +9363,7 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
         logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
@@ -8948,7 +9395,7 @@ async def _execute_rpc_initialize(
         JSONRPCError: If session ownership cannot be claimed or validated.
     """
     init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
-    requester_email, requester_is_admin = _get_request_identity(request, user)
+    requester_email, requester_is_admin = get_request_identity(request, user)
 
     if init_session_id:
         effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
@@ -8965,10 +9412,10 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-            pool = get_mcp_session_pool()
-            await pool.register_pool_session_owner(mcp_session_id)
+            pool = get_session_affinity()
+            await pool.register_session_owner(mcp_session_id)
             logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
@@ -9012,7 +9459,7 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
-    auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+    auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
     run_owner_email = auth_user_email
     run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
     if auth_is_admin and auth_token_teams is None:
@@ -9164,7 +9611,7 @@ async def handle_internal_mcp_tools_call(request: Request):
         if forwarded_response is not None:
             return forwarded_response
 
-        if (_get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
+        if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
         # Trust the pre-invoke-ran marker only on this internal endpoint
@@ -9270,10 +9717,10 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if server_id:
             _enforce_internal_mcp_server_scope(request, server_id)
 
-        if (_get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
+        if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
-        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
         elif auth_token_teams is None:
@@ -9427,7 +9874,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         PluginError: If encounters issue with plugin
         PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
-    req_id = None
+    req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
         if hasattr(user, "email"):
@@ -9449,6 +9896,22 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     "id": None,
                 },
             )
+        if not isinstance(body, dict):
+            return _jsonrpc_invalid_request()
+
+        req_id = body.get("id")
+        if req_id is not None and not isinstance(req_id, (str, int)):
+            return _jsonrpc_invalid_request()
+
+        method = body.get("method")
+        params = body.get("params", {})
+        if params is None:
+            params = {}
+        jsonrpc_version = body.get("jsonrpc")
+
+        if jsonrpc_version != "2.0" or not isinstance(method, str) or not method.strip() or not isinstance(params, dict):
+            return _jsonrpc_invalid_request(req_id)
+
         request_headers = request.headers
         lowered_headers: Optional[Dict[str, str]] = None
 
@@ -9463,16 +9926,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 lowered_headers = {k.lower(): v for k, v in request_headers.items()}
             return lowered_headers
 
-        _trusted_internal_mcp_dispatch = _get_internal_mcp_auth_context(request) is not None
+        _trusted_internal_mcp_dispatch = get_internal_mcp_auth_context(request) is not None
         _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
-        method = body["method"]
-        req_id = body.get("id")
+        if not _trusted_internal_mcp_dispatch:
+            try:
+                RPCRequest(jsonrpc=jsonrpc_version, method=method, params=params, id=req_id)
+            except (ValidationError, ValueError):
+                return _jsonrpc_invalid_request(req_id)
+
         if req_id is None:
             req_id = str(uuid.uuid4())
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
         if _internal_runtime_server_id:
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
@@ -9488,7 +9952,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         _cached = getattr(request.state, "_jwt_verified_payload", None)
         _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
         _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
-        _internal_auth_context = _get_internal_mcp_auth_context(request)
+        _internal_auth_context = get_internal_mcp_auth_context(request)
         if (not _token_scopes) and isinstance(_internal_auth_context, dict):
             _scoped_server_id = _internal_auth_context.get("scoped_server_id")
             if isinstance(_scoped_server_id, str) and _scoped_server_id:
@@ -9508,9 +9972,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif _token_server_id is not None:
             server_id = _token_server_id
 
-        if not _trusted_internal_mcp_dispatch:
-            RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
-
         forwarded_response = await _maybe_forward_affinitized_rpc_request(
             request,
             method=method,
@@ -9520,6 +9981,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         )
         if forwarded_response is not None:
             return forwarded_response
+
+        if settings.use_stateful_sessions and mcp_session_id and method != "initialize":
+            try:
+                await _assert_session_owner_or_admin(request, user, mcp_session_id)
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    raise JSONRPCError(-32002, "Session not found", {"method": method}) from exc
+                raise JSONRPCError(-32003, str(exc.detail), {"method": method}) from exc
 
         if method == "initialize":
             result = await _execute_rpc_initialize(
@@ -9531,7 +10000,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
@@ -9574,7 +10043,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
@@ -9616,7 +10085,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
@@ -9635,7 +10104,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
@@ -9663,7 +10132,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
-            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -9704,7 +10173,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             uri = params.get("uri")
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
-            access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
+            access_user_email, access_token_teams = get_scoped_resource_access_context(request, user)
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
@@ -9730,7 +10199,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method == "prompts/list":
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
@@ -9758,7 +10227,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
-            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -9808,20 +10277,13 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
-            # MCP spec-compliant resource templates list endpoint
-            # Use _get_rpc_filter_context - same pattern as tools/list
-            user_email_rpc, token_teams_rpc, is_admin_rpc = _get_rpc_filter_context(request, user)
-
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin_rpc and token_teams_rpc is None:
-                token_teams_rpc = None  # Admin unrestricted
-            elif token_teams_rpc is None:
-                token_teams_rpc = []  # Non-admin without teams = public-only
+            # SECURITY (Layer 1): (None, None) for admin bypass triggers the private-exclusion WHERE clause in the service.
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             resource_templates = await resource_service.list_resource_templates(
                 db,
-                user_email=user_email_rpc,
-                token_teams=token_teams_rpc,
+                user_email=auth_user_email,
+                token_teams=auth_token_teams,
                 server_id=server_id,
             )
             db.commit()
@@ -9866,7 +10328,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method == "sampling/createMessage":
             # MCP spec-compliant sampling endpoint
-            result = await sampling_handler.create_message(db, params)
+            try:
+                result = await sampling_handler.create_message(db, params)
+            except SamplingError as e:
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
@@ -9957,12 +10422,15 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method == "completion/complete":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             # MCP spec-compliant completion endpoint
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             if is_admin and token_teams is None:
                 user_email = None
             elif token_teams is None:
                 token_teams = []
-            result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            try:
+                result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            except CompletionError as e:
+                raise JSONRPCError(-32602, str(e)) from e
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -9980,7 +10448,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
             # Get authorization context (same as tools/call)
-            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -10028,12 +10496,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
-        if isinstance(e, ValueError):
-            return ORJSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
-            "error": {"code": -32000, "message": "Internal error", "data": str(e)},
+            "error": {"code": -32603, "message": "Internal error"},
             "id": req_id,
         }
 
@@ -10258,7 +10724,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
         # - []: public-only (admin bypass disabled)
         # - [...]: team-scoped access
-        token_teams = _get_token_teams_from_request(request)
+        token_teams = get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -10501,56 +10967,97 @@ def healthcheck(response: Response = None):
         db.close()
 
 
-@app.get("/ready")
-async def readiness_check():
+def _check_db_ready() -> tuple[bool, str | None]:
     """
-    Perform a readiness check to verify if the application is ready to receive traffic.
-
-    Creates and manages its own session inside the worker thread to ensure all DB
-    operations (create, execute, commit, rollback, close) happen in the same thread.
-    This avoids cross-thread session issues and double-commit from get_db.
+    Check database connectivity in a thread-safe manner.
 
     Returns:
-        JSONResponse with status 200 if ready, 503 if not.
+        tuple: (success: bool, error_message: str | None)
     """
-
-    def _check_db() -> str | None:
-        """Check database connectivity by executing a simple query.
-
-        Returns:
-            None if successful, error message string if failed.
-        """
-        # Create session in this thread - all DB operations stay in the same thread.
-        db = SessionLocal()
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        # Explicitly commit to release PgBouncer backend connection in transaction mode.
+        db.commit()
+        return (True, None)
+    except Exception as e:
+        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
-            db.execute(text("SELECT 1"))
-            # Explicitly commit to release PgBouncer backend connection.
-            db.commit()
-            return None  # Success
-        except Exception as e:
-            # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
+            db.rollback()
+        except Exception:
             try:
-                db.rollback()
+                db.invalidate()
             except Exception:
-                try:
-                    db.invalidate()
-                except Exception:
-                    pass  # nosec B110 - Best effort cleanup on connection failure
-            return str(e)
-        finally:
-            db.close()
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return (False, str(e))
+    finally:
+        db.close()
 
-    # Run the blocking DB check in a thread to avoid blocking the event loop.
-    error = await asyncio.to_thread(_check_db)
-    if error:
-        error_message = f"Readiness check failed: {error}"
+
+@app.get("/ready", response_model=HealthCheckResponse)
+async def readiness_check(response: Response):
+    """
+    Perform a comprehensive readiness check to verify all dependencies.
+
+    This endpoint checks:
+    - Database connectivity (via asyncio.to_thread to avoid blocking)
+    - Cache availability (if enabled)
+
+    Returns HTTP 200 when ready, HTTP 503 when not ready.
+
+    Args:
+        response: Response object used to attach runtime-mode headers and status code.
+
+    Returns:
+        A HealthCheckResponse with detailed component health status.
+        HTTP 200 if all components are healthy (ready).
+        HTTP 503 if any component is unhealthy (not ready).
+    """
+    status_items = []
+
+    # Database health check (run in thread to avoid blocking event loop)
+    db_success, db_error = await asyncio.to_thread(_check_db_ready)
+
+    if db_success:
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
+    else:
+        error_message = f"Database health check failed: {db_error}"
         logger.error(error_message)
-        response = ORJSONResponse(content={"status": "not ready", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}, status_code=503)
-        _apply_runtime_mode_headers(response)
-        return response
-    response = ORJSONResponse(content={"status": "ready", "mcp_runtime": _mcp_runtime_status_payload()}, status_code=200)
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
+
+    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
+    redis_enabled = settings.cache_type == "redis" and settings.redis_url
+    if redis_enabled:
+        try:
+            # is_redis_available() checks if Redis is available and responding to ping.
+            if await is_redis_available():
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="Cache Connection Successful"))
+            else:
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+        except Exception as e:
+            logger.error(f"Redis health check failed: {str(e)}")
+            status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+
+    # Determine overall status:
+    # - "ready" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unready" if Database is unhealthy (503) OR Redis is unhealthy when enabled
+    database_status = next((item for item in status_items if item.name == "Database"), None)
+    redis_status = next((item for item in status_items if item.name == "Cache"), None)
+
+    # Check database health
+    database_healthy = database_status and database_status.status_code == 200
+
+    # Redis is healthy if: not enabled OR (enabled AND status is 200)
+    redis_healthy = not redis_enabled or (redis_status and redis_status.status_code == 200)
+
+    is_ready = database_healthy and redis_healthy
+    overall_status = "ready" if is_ready else "unready"
+
+    # Set HTTP status code: 200 for ready, 503 for unready
+    response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+
     _apply_runtime_mode_headers(response)
-    return response
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 
 @app.get("/health/security", tags=["health"])
@@ -10636,7 +11143,7 @@ async def list_tags(
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
         elif token_teams is None:
@@ -10690,7 +11197,7 @@ async def get_entities_by_tag(
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
 
     try:
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
         elif token_teams is None:
@@ -10775,7 +11282,7 @@ async def export_configuration(
         root_path = settings.app_root_path
 
         # Derive team-scoped visibility from the requesting user's token
-        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+        scoped_user_email, scoped_token_teams = get_scoped_resource_access_context(request, user)
 
         # Perform export
         export_data = await export_service.export_configuration(
@@ -10843,7 +11350,7 @@ async def export_selective_configuration(
         root_path = settings.app_root_path
 
         # Derive team-scoped visibility from the requesting user's token
-        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+        scoped_user_email, scoped_token_teams = get_scoped_resource_access_context(request, user)
 
         export_data = await export_service.export_selective(
             db=db,
@@ -11215,13 +11722,22 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
+    # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
+    # Only load it when the admin API is actually mounted.
+    # First-Party
+    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+
+    set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
     # Validate section-to-permission mapping consistency at startup
-    # First-Party
-    from mcpgateway.admin import validate_section_permissions
-
     validate_section_permissions(admin_router)
+
+    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
+    # First-Party
+    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
@@ -11283,12 +11799,107 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
-def _build_mcp_transport_app():
-    """Choose the MCP transport app for the mounted /mcp path.
+def _select_mcp_ingress(_scope: dict) -> str:
+    """Pick the registered MCPIngressMount ingress to serve a request.
+
+    Single source of truth for the dispatch policy:
+
+    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
+      the Python transport or the plain Rust proxy is mounted directly
+      from ``_build_mcp_transport_app``.
+    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
+      that satisfies the safety invariant: route to the Rust ingress
+      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
+      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
+    - Override forces ``shadow``, OR safety invariant is unmet: route to
+      the Python transport (the always-safe fallback).
+
+    The ``"rust-public"`` ingress is only registered on ``boot=edge``
+    (the public listener isn't bound on shadow boot per the entrypoint
+    flow). On any other boot mode the selector transparently downgrades
+    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
+    routing to an unregistered name; the misconfig itself is surfaced
+    as a boot-time error in ``_build_mcp_transport_app``.
+
+    Args:
+        _scope: ASGI scope (unused today; reserved so future selectors
+            can route by method/path/headers without changing the
+            mount's API).
 
     Returns:
-        Transport app object that should be mounted at the public ``/mcp`` path.
+        The ingress name to look up in the mount's registry.
     """
+    if not _should_mount_public_rust_transport():
+        return "python"
+    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
+        return "rust-public"
+    return "rust-internal"
+
+
+def _build_mcp_transport_app():
+    """Build the ASGI app to mount at public ``/mcp``.
+
+    Returns:
+        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
+        with the Python transport, the trusted-internal Rust proxy, and
+        (when supported) the nginx-style Rust public proxy registered.
+        For boot ``full``: the plain trusted-internal Rust proxy mounted
+        directly (no dispatcher — flipping ``full`` would orphan
+        Rust-held session/event-store state). For boot ``off``: the
+        Python transport. The ``/mcp`` mount calls
+        ``returned_app.handle_streamable_http`` (legacy interface kept
+        for backward compatibility with the existing mount line).
+    """
+    # First-Party
+    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
+
+    boot_mode = version_module.boot_mcp_runtime_mode()
+    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+
+    if boot_mode in ("shadow", "edge"):
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+
+        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
+        ingress.register("python", python_transport.handle_streamable_http)
+        ingress.register("rust-internal", rust_internal.handle_streamable_http)
+
+        # Public-listener proxy is only meaningful when the safety invariant
+        # is met (i.e. boot=edge); shadow boot doesn't bind the public
+        # listener. Register it on edge so an operator can flip
+        # `settings.mcp_rust_ingress = "public"` without a restart.
+        if boot_mode == "edge":
+            # First-Party
+            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
+
+            ingress.register("rust-public", build_rust_public_proxy_app())
+        elif settings.mcp_rust_ingress == "public":
+            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
+            # Rust public listener isn't bound on shadow boot, so the
+            # selector deliberately downgrades to "rust-internal". Logged
+            # at error severity so it survives the default LOG_LEVEL=ERROR
+            # — a warning here would be invisible in most production
+            # deployments and the operator would never know their setting
+            # is being silently overridden.
+            logger.error(
+                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
+                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
+            )
+
+        logger.warning(
+            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            _current_mcp_runtime_mode(),
+            boot_mode,
+            ingress.names(),
+            _select_mcp_ingress({}),
+        )
+        # The legacy mount line calls .handle_streamable_http on the returned
+        # app; expose that name on a tiny shim so the mount line can stay
+        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
+        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
+        return ingress
+
     if _should_mount_public_rust_transport():
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
@@ -11300,19 +11911,10 @@ def _build_mcp_transport_app():
             _current_mcp_affinity_core_mode(),
             _current_mcp_session_auth_reuse_mode(),
         )
-        return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+        # First-Party
+        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
 
-    if settings.experimental_rust_mcp_runtime_enabled:
-        logger.warning(
-            "MCP runtime mode: %s. Rust sidecar remains enabled, but public /mcp stays on the Python transport because MCP session auth reuse is disabled. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            _current_mcp_runtime_mode(),
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+        return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 
     if _rust_build_included():
         logger.warning(
@@ -11322,7 +11924,7 @@ def _build_mcp_transport_app():
     else:
         logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
 
-    return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
+    return python_transport
 
 
 class InternalTrustedMCPTransportBridge:
@@ -11363,7 +11965,7 @@ class InternalTrustedMCPTransportBridge:
             await response(scope, receive, send)
             return
 
-        auth_context = _get_internal_mcp_auth_context(request) or {}
+        auth_context = get_internal_mcp_auth_context(request) or {}
         server_id = request.headers.get("x-contextforge-server-id")
         forwarded_scope = dict(scope)
         forwarded_scope["path"] = "/mcp/"

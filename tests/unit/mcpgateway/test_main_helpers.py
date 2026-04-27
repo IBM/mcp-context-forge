@@ -56,39 +56,39 @@ def test_normalize_token_teams():
 def test_get_token_teams_from_request():
     # Teams with mixed formats (string and dict) → normalized to string IDs
     req = SimpleNamespace(state=SimpleNamespace(_jwt_verified_payload=("token", {"teams": ["t1", {"id": "t2"}]})))
-    assert main._get_token_teams_from_request(req) == ["t1", "t2"]
+    assert main.get_token_teams_from_request(req) == ["t1", "t2"]
 
     # Empty teams → public-only
     req.state._jwt_verified_payload = ("token", {"teams": []})
-    assert main._get_token_teams_from_request(req) == []
+    assert main.get_token_teams_from_request(req) == []
 
     # SECURITY: Null teams + non-admin → public-only (secure default)
     req.state._jwt_verified_payload = ("token", {"teams": None})
-    assert main._get_token_teams_from_request(req) == []
+    assert main.get_token_teams_from_request(req) == []
 
     # SECURITY: Null teams + admin → admin bypass (None)
     req.state._jwt_verified_payload = ("token", {"teams": None, "is_admin": True})
-    assert main._get_token_teams_from_request(req) is None
+    assert main.get_token_teams_from_request(req) is None
 
     # SECURITY: Missing teams key → public-only (secure default)
     req.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
-    assert main._get_token_teams_from_request(req) == []
+    assert main.get_token_teams_from_request(req) == []
 
     # SECURITY: No JWT → public-only (secure default)
     req.state._jwt_verified_payload = None
-    assert main._get_token_teams_from_request(req) == []
+    assert main.get_token_teams_from_request(req) == []
 
 
 def test_get_rpc_filter_context_admin_scoping():
     req = SimpleNamespace(state=SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True})))
     user = {"email": "user@example.com", "is_admin": True}
-    email, teams, is_admin = main._get_rpc_filter_context(req, user)
+    email, teams, is_admin = main.get_rpc_filter_context(req, user)
     assert email == "user@example.com"
     assert teams == []
     assert is_admin is False
 
     req.state._jwt_verified_payload = ("token", {"teams": ["t1"], "user": {"is_admin": True}})
-    email, teams, is_admin = main._get_rpc_filter_context(req, SimpleNamespace(email="obj@example.com"))
+    email, teams, is_admin = main.get_rpc_filter_context(req, SimpleNamespace(email="obj@example.com"))
     assert email == "obj@example.com"
     assert teams == ["t1"]
     assert is_admin is True

@@ -344,15 +344,24 @@ async def test_prompt_completion_team_token_can_access_team_prompt(completion_db
 
 
 @pytest.mark.asyncio
-async def test_prompt_completion_admin_bypass_can_access_private_prompt(completion_db):
+async def test_prompt_completion_admin_bypass_denies_private_prompt(completion_db):
+    """SECURITY: admin bypass must not complete for another user's private prompt.
+
+    Regression for PR #4341 follow-up — the private prompt is filtered out at the query
+    level, so the completion resolver reports "not found" (raises CompletionError) rather
+    than returning its argument values, which matches the generic-not-found disclosure policy.
+    """
+    # First-Party
+    from mcpgateway.services.completion_service import CompletionError
+
     service = CompletionService()
     request = {
         "ref": {"type": "ref/prompt", "name": "private-prompt"},
         "argument": {"name": "arg", "value": "r"},
     }
 
-    result = await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
-    assert result.completion["values"] == ["red", "green"]
+    with pytest.raises(CompletionError):
+        await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -381,7 +390,11 @@ async def test_resource_completion_team_token_includes_public_and_team_only(comp
 
 
 @pytest.mark.asyncio
-async def test_resource_completion_admin_bypass_includes_all_visible_records(completion_db):
+async def test_resource_completion_admin_bypass_excludes_private(completion_db):
+    """SECURITY: admin bypass sees public + team resource completions but NEVER private.
+
+    Regression for PR #4341 follow-up — admin bypass must not reveal private URIs via completion.
+    """
     service = CompletionService()
     request = {
         "ref": {"type": "ref/resource", "uri": "template://resource"},
@@ -389,4 +402,5 @@ async def test_resource_completion_admin_bypass_includes_all_visible_records(com
     }
 
     result = await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
-    assert set(result.completion["values"]) == {"file://public.txt", "file://team.txt", "file://private.txt"}
+    assert set(result.completion["values"]) == {"file://public.txt", "file://team.txt"}
+    assert "file://private.txt" not in result.completion["values"]

@@ -37,6 +37,7 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.paths import resolve_root_path
 
 logger = logging.getLogger(__name__)
 
@@ -410,10 +411,18 @@ async def initiate_oauth_flow(
 
 @oauth_router.get("/callback")
 async def oauth_callback(
-    code: Annotated[str | None, Query(description="Authorization code from OAuth provider")] = None,
-    state: Annotated[str, Query(description="State parameter for CSRF protection")] = ...,
-    error: Annotated[str | None, Query(description="OAuth provider error code")] = None,
-    error_description: Annotated[str | None, Query(description="OAuth provider error description")] = None,
+    # NOTE on validation strategy for OAuth callback parameters:
+    # - RFC 6749 defines `code` and `state` as opaque VSCHAR (%x20-7E) strings.
+    #   Tight allow-lists (e.g. only [a-zA-Z0-9_-]) break Google (uses `/`), Microsoft
+    #   (uses `!*%`), and our own session-bound state (uses `.` separator). Keep length
+    #   caps but no pattern. Downstream token exchange & HMAC verification do the real
+    #   validation.
+    # - `error` is a small, well-defined RFC 6749 Section 4.1.2.1 enum-like value.
+    # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
+    code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
+    state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
+    error: Annotated[str | None, Query(max_length=100, pattern=r"^[a-zA-Z0-9_]+$", description="OAuth provider error code")] = None,
+    error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,
     db: Session = Depends(get_db),
@@ -446,7 +455,7 @@ async def oauth_callback(
 
     try:
         # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        root_path = resolve_root_path(request) if request else ""
         safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code
@@ -509,6 +518,10 @@ async def oauth_callback(
                 status_code=400,
             )
 
+        if not state:
+            logger.warning("OAuth callback missing state parameter")
+            return _invalid_state_response()
+
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
         gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
         if not gateway_id:
@@ -548,7 +561,9 @@ async def oauth_callback(
             # Strip query for auto-derived (RFC 8707 SHOULD NOT)
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
-        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+        )
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 

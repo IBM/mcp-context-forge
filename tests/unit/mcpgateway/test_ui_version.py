@@ -16,23 +16,31 @@ import base64
 import os
 from typing import Dict
 
-# Set environment before imports
-os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for UI tests
-
 # Third-Party
 import pytest
 from starlette.testclient import TestClient
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.main import app
+
+# Note: mcpgateway.main is imported lazily inside test_client(), after the
+# main_app_with_admin_api session fixture has reloaded it with the admin
+# and UI flags flipped on.
+#
+# This file used to force ``MCPGATEWAY_A2A_ENABLED=false`` at module
+# import time "to disable A2A for UI tests". Under xdist that assignment
+# can fire on a worker before it first imports ``mcpgateway.main``,
+# which then leaves ``a2a_router`` unmounted and breaks every downstream
+# test that targets ``/a2a/*`` or an admin A2A handler. The only test
+# in this file is ``@pytest.mark.skip``'d anyway, so the env poison is
+# pure collection-time cost. Removed.
 
 
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")
-def test_client() -> TestClient:
+def test_client(main_app_with_admin_api) -> TestClient:
     """Spin up the FastAPI test client once for the whole session with proper database setup."""
     # Standard
     import tempfile
@@ -69,7 +77,7 @@ def test_client() -> TestClient:
     # Create schema
     db_mod.Base.metadata.create_all(bind=engine)
 
-    client = TestClient(app)
+    client = TestClient(main_app_with_admin_api)
     yield client
 
     # Cleanup

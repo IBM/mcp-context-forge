@@ -1,5 +1,6 @@
 import { AppState } from "./appState.js";
 import { initializeCACertUpload } from "./caCertificate.js";
+import { overflowMenu } from "./components/overflow-menu.js";
 import { TABLE_TO_ENTITY_TYPE } from "./constants.js";
 import { toggleViewPublic, updateFilterStatus } from "./filters.js";
 import { selectTeamFromSelector } from "./formFieldHandlers.js";
@@ -835,5 +836,12 @@ import {
       if (e.key === "ArrowLeft") data.prevPage();
       else data.nextPage();
     });
+  });
+
+  // ===================================================================
+  // Alpine Components
+  // ===================================================================
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('overflowMenu', (wrapperId = null) => overflowMenu(wrapperId));
   });
 })(window.Admin);

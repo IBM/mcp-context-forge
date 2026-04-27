@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-nginx
+  {{- if .Values.nginxProxy.tls.enabled }}
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "mcp-stack.fullname" . }}-nginx-tls
+  {{- end }}
 spec:
   type: {{ .Values.nginxProxy.service.type }}
   selector:
@@ -13,6 +17,12 @@ spec:
   ports:
     - name: http
       port: {{ .Values.nginxProxy.service.port }}
-      targetPort: 80
+      targetPort: {{ .Values.nginxProxy.containerPort | default 80 }}
       protocol: TCP
+    {{- if .Values.nginxProxy.tls.enabled }}
+    - name: https
+      port: 443
+      targetPort: {{ .Values.nginxProxy.tls.containerPort | default 8443 }}
+      protocol: TCP
+    {{- end }}
 {{- end }}

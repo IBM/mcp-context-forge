@@ -18,7 +18,6 @@ import pytest
 
 # First-Party
 from mcpgateway.db import OAuthToken
-from mcpgateway.services.encryption_service import EncryptionService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -529,10 +528,54 @@ class TestOAuthManager:
                         assert result["success"] == expected["success"]
                         assert result["expires_at"] == expected["expires_at"]
 
-                        # PKCE: Now includes code_verifier parameter
-                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_code_verifier_123")
+                        # PKCE: Now includes code_verifier parameter and CA certificate parameters
+                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_code_verifier_123", ca_certificate=None, client_cert=None, client_key=None)
                         mock_extract_user.assert_called_once_with(token_response, credentials)
                         mock_store_tokens.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_complete_authorization_code_flow_omitted_expires_in_passes_none(self):
+        """Provider responses without ``expires_in`` flow through as ``expires_in=None`` to store_tokens."""
+        # Standard
+        import base64
+        import hashlib
+        import hmac
+        import json
+        from unittest.mock import patch
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
+            mock_get_settings.return_value = mock_settings
+
+            mock_token_storage = Mock()
+            manager = OAuthManager(token_storage=mock_token_storage)
+
+            gateway_id = "gateway123"
+            code = "auth_code_123"
+            # Standard
+            from datetime import datetime, timezone
+
+            state_data = {"gateway_id": gateway_id, "app_user_email": "test@example.com", "nonce": "state-no-exp", "timestamp": datetime.now(timezone.utc).isoformat()}
+            state_bytes = json.dumps(state_data, separators=(",", ":")).encode()
+            secret_key = b"test-secret-key"
+            signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+            state = base64.urlsafe_b64encode(state_bytes + signature).decode()
+
+            credentials = {"client_id": "test_client"}
+            # Provider response intentionally omits expires_in (e.g. GitHub OAuth Apps).
+            token_response = {"access_token": "access123", "refresh_token": "refresh123"}
+
+            await manager._store_authorization_state(gateway_id, state, code_verifier="cv-no-exp", app_user_email="test@example.com")
+
+            with patch.object(manager, "_exchange_code_for_tokens", return_value=token_response):
+                with patch.object(manager, "_extract_user_id", return_value="user123"):
+                    with patch.object(mock_token_storage, "store_tokens", new_callable=AsyncMock) as mock_store_tokens:
+                        mock_store_tokens.return_value = Mock(expires_at=None)
+                        await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+
+            mock_store_tokens.assert_called_once()
+            assert mock_store_tokens.call_args.kwargs["expires_in"] is None
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_invalid_state(self):
@@ -1015,8 +1058,8 @@ class TestOAuthManager:
                         expected = {"success": True, "user_id": "user123", "expires_at": None}  # No token storage means no expiration tracking
                         assert result == expected
 
-                        # PKCE: Now includes code_verifier parameter
-                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123")
+                        # PKCE: Now includes code_verifier parameter and CA certificate parameters
+                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123", ca_certificate=None, client_cert=None, client_key=None)
                         mock_extract_user.assert_called_once_with(token_response, credentials)
 
     @pytest.mark.asyncio
@@ -1176,6 +1219,51 @@ class TestOAuthManager:
             # This should reach the final fallback error on line 492
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
+
+    @staticmethod
+    def _make_ca_cert_mocks(token_response=None):
+        """Build mock SSL context, httpx client, and response for CA cert tests.
+
+        Returns (mock_response, mock_ssl_context, mock_client, ca_cert, client_cert, client_key).
+        """
+        if token_response is None:
+            token_response = {"access_token": "ssl_token_123", "token_type": "Bearer"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.get = MagicMock(return_value="application/json")
+        mock_response.json = MagicMock(return_value=token_response)
+        mock_response.raise_for_status = MagicMock()
+
+        mock_ssl_context = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        ca_cert = "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
+        client_cert = "-----BEGIN CERTIFICATE-----\nCLIENT...\n-----END CERTIFICATE-----"
+        client_key = "-----BEGIN PRIVATE KEY-----\nKEY...\n-----END PRIVATE KEY-----"  # pragma: allowlist secret
+
+        return mock_response, mock_ssl_context, mock_client, ca_cert, client_cert, client_key
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_with_ca_certificate(self):
+        """Test _exchange_code_for_tokens with CA certificate (lines 1271-1277)."""
+        manager = OAuthManager()
+        credentials = {
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri": "https://gateway.example.com/callback",
+        }
+        _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks()
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager._exchange_code_for_tokens(credentials, "auth_code_123", ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
+                assert result["access_token"] == "ssl_token_123"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_decryption_success(self):
@@ -1345,8 +1433,64 @@ class TestOAuthManager:
         with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError) as exc_info:
                 await manager.refresh_token("refresh_token", credentials)
-
             assert "No access_token in refresh response" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_flow_with_ca_certificate(self):
+        """Test client credentials flow with custom CA certificate."""
+        manager = OAuthManager()
+        credentials = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+            "scopes": ["read", "write"],
+        }
+        _, mock_ssl_context, mock_client, ca_cert, _, _ = self._make_ca_cert_mocks({"access_token": "ca_cert_token"})
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager.get_access_token(credentials, ca_certificate=ca_cert)
+                assert result == "ca_cert_token"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=None, client_key=None)
+
+    @pytest.mark.asyncio
+    async def test_password_flow_with_ca_certificate(self):
+        """Test password flow with custom CA certificate."""
+        manager = OAuthManager()
+        credentials = {
+            "grant_type": "password",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+            "username": "user@example.com",
+            "password": "secret",
+        }
+        _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "password_ca_token"})
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager.get_access_token(credentials, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
+                assert result == "password_ca_token"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_with_ca_certificate(self):
+        """Test refresh token with custom CA certificate."""
+        manager = OAuthManager()
+        credentials = {
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+        }
+        _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "refreshed_token", "refresh_token": "new_refresh_token"})
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager.refresh_token("old_refresh_token", credentials, ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
+                assert result["access_token"] == "refreshed_token"
+                assert result["refresh_token"] == "new_refresh_token"
+                mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
 
 
 class TestTokenStorageService:

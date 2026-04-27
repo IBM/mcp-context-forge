@@ -30,9 +30,8 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
     && /app/.venv/bin/pip install --no-cache-dir . \
     && /app/.venv/bin/pip uninstall --yes pip setuptools wheel \
-    && rm -rf /root/.cache
-
-RUN chown -R 1001:0 /app \
+    && rm -rf /root/.cache \
+    && chown -R 1001:0 /app \
     && chmod -R g=u /app
 
 ###########################
@@ -44,15 +43,13 @@ ARG PYTHON_VERSION=3.12
 
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
-    python${PYTHON_VERSION} \
-    ca-certificates \
-    shadow-utils \
+        python${PYTHON_VERSION} \
+        ca-certificates \
+        shadow-utils \
     && microdnf clean all \
-    && rm -rf /var/cache/yum
-
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
-
-RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+    && rm -rf /var/cache/yum \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
 
 COPY --from=builder --chown=1001:0 /app /app
 
