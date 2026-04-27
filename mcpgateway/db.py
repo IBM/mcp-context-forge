@@ -1153,6 +1153,21 @@ class Role(Base):
     parent_role: Mapped[Optional["Role"]] = relationship("Role", remote_side=[id], backref="child_roles")
     user_assignments: Mapped[List["UserRole"]] = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
 
+    # Partial unique index: at most one ACTIVE row per (name, scope). Bootstrap-time
+    # races (multiple workers/replicas seeding default roles concurrently outside the
+    # advisory lock on the fast-path) would otherwise produce duplicates that break
+    # `get_role_by_name`'s `scalar_one_or_none`.
+    __table_args__ = (
+        Index(
+            "uq_roles_name_scope_active",
+            "name",
+            "scope",
+            unique=True,
+            postgresql_where=text("is_active = true"),
+            sqlite_where=text("is_active = 1"),
+        ),
+    )
+
     def get_effective_permissions(self) -> List[str]:
         """Get all permissions including inherited ones.
 
@@ -1202,6 +1217,34 @@ class UserRole(Base):
             expires_at = expires_at.replace(tzinfo=timezone.utc)
 
         return utc_now() > expires_at
+
+    # Partial unique indexes: at most one ACTIVE assignment per
+    # (user_email, role_id, scope, scope_id). Two indexes are needed because
+    # ``scope_id`` is NULL for global/personal scopes and NOT NULL for team
+    # scope, and Postgres + SQLite both treat NULLs as distinct in ordinary
+    # unique indexes (so a single 4-col index would not block duplicates of
+    # global/personal assignments).
+    __table_args__ = (
+        Index(
+            "uq_user_roles_assignment_active_no_scope_id",
+            "user_email",
+            "role_id",
+            "scope",
+            unique=True,
+            postgresql_where=text("is_active = true AND scope_id IS NULL"),
+            sqlite_where=text("is_active = 1 AND scope_id IS NULL"),
+        ),
+        Index(
+            "uq_user_roles_assignment_active_with_scope_id",
+            "user_email",
+            "role_id",
+            "scope",
+            "scope_id",
+            unique=True,
+            postgresql_where=text("is_active = true AND scope_id IS NOT NULL"),
+            sqlite_where=text("is_active = 1 AND scope_id IS NOT NULL"),
+        ),
+    )
 
 
 class PermissionAuditLog(Base):

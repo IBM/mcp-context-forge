@@ -9,7 +9,7 @@ Comprehensive unit tests for RoleService.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import uuid
 
 # Third-Party
@@ -29,6 +29,14 @@ def mock_db():
     db.add = Mock()
     db.commit = Mock()
     db.refresh = Mock()
+    db.rollback = Mock()
+    db.flush = Mock()
+    # ``create_role`` and ``assign_role_to_user`` wrap the insert in a savepoint
+    # so an IntegrityError from the partial unique index (raced concurrent
+    # seeders) doesn't blow up the surrounding transaction. ``begin_nested``
+    # must support the context-manager protocol; the no-op MagicMock here is
+    # enough for unit tests that don't exercise the rollback path.
+    db.begin_nested = MagicMock()
     return db
 
 
@@ -208,6 +216,56 @@ class TestCreateRole:
 
                         assert result == role
                         mock_db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_role_returns_existing_on_concurrent_insert(self, role_service, mock_db, sample_role):
+        """Concurrent racer wins the partial-unique-index conflict; loser
+        rolls back its savepoint and returns the winner's row instead of
+        propagating the IntegrityError. Pins the L1-fast-path race fix.
+        """
+        # First lookup: pre-insert duplicate check returns None (no row yet).
+        # Second lookup: post-IntegrityError refetch returns the winner.
+        get_calls = AsyncMock(side_effect=[None, sample_role])
+        # Third-Party
+        from sqlalchemy.exc import IntegrityError  # pylint: disable=import-outside-toplevel
+
+        # Make ``flush()`` simulate the DB-side unique-index violation.
+        mock_db.flush = Mock(side_effect=IntegrityError("INSERT", {}, Exception("duplicate")))
+
+        with patch.object(role_service, "get_role_by_name", new=get_calls):
+            with patch("mcpgateway.services.role_service.Permissions.get_all_permissions", return_value=["tools.read"]):
+                with patch("mcpgateway.services.role_service.Role") as MockRole:
+                    MockRole.return_value = Mock(spec=Role)
+
+                    result = await role_service.create_role(
+                        name="platform_admin", description="Platform admin", scope="global", permissions=["tools.read"], created_by="admin@example.com"
+                    )
+
+                    # Loser returns the winner's row, not its own.
+                    assert result is sample_role
+                    # Outer transaction was rolled back, not committed.
+                    mock_db.rollback.assert_called_once()
+                    mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_role_raises_when_integrity_error_not_a_race(self, role_service, mock_db):
+        """An IntegrityError that doesn't correspond to a winning row (e.g.,
+        FK violation) must surface to the caller as ValueError so genuine bugs
+        aren't silently swallowed."""
+        # Third-Party
+        from sqlalchemy.exc import IntegrityError  # pylint: disable=import-outside-toplevel
+
+        mock_db.flush = Mock(side_effect=IntegrityError("INSERT", {}, Exception("fk violation")))
+
+        with patch.object(role_service, "get_role_by_name", new=AsyncMock(return_value=None)):
+            with patch("mcpgateway.services.role_service.Permissions.get_all_permissions", return_value=["tools.read"]):
+                with patch("mcpgateway.services.role_service.Role") as MockRole:
+                    MockRole.return_value = Mock(spec=Role)
+
+                    with pytest.raises(ValueError, match="could not be created"):
+                        await role_service.create_role(
+                            name="bad-role", description="bad", scope="global", permissions=["tools.read"], created_by="admin@example.com"
+                        )
 
 
 class TestGetRoleById:
@@ -591,6 +649,35 @@ class TestAssignRoleToUser:
         with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
             with pytest.raises(ValueError, match="scope_id not allowed"):
                 await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="personal", scope_id="should-not-have", granted_by="admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_assign_returns_existing_on_concurrent_insert(self, role_service, mock_db, sample_role, sample_user_role):
+        """Concurrent racer wins the partial-unique-index conflict for the
+        platform_admin assignment (scope=global, scope_id=NULL); loser rolls
+        back its savepoint and returns the winner's row."""
+        sample_role.scope = "global"
+        # First lookup: pre-insert duplicate check returns None.
+        # Second lookup: post-IntegrityError refetch returns the winner.
+        winner = sample_user_role
+        winner.is_active = True
+        get_assignment = AsyncMock(side_effect=[None, winner])
+        # Third-Party
+        from sqlalchemy.exc import IntegrityError  # pylint: disable=import-outside-toplevel
+
+        mock_db.flush = Mock(side_effect=IntegrityError("INSERT", {}, Exception("duplicate")))
+
+        with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
+            with patch.object(role_service, "get_user_role_assignment", new=get_assignment):
+                with patch("mcpgateway.services.role_service.UserRole") as MockUserRole:
+                    MockUserRole.return_value = Mock()
+
+                    result = await role_service.assign_role_to_user(
+                        user_email="admin@example.com", role_id="role-123", scope="global", scope_id=None, granted_by="admin@example.com"
+                    )
+
+                    assert result is winner
+                    mock_db.rollback.assert_called_once()
+                    mock_db.commit.assert_not_called()
 
 
 class TestRevokeRoleFromUser:

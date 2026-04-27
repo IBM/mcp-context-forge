@@ -17,6 +17,7 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -217,15 +218,35 @@ class RoleService:
             if await self._would_create_cycle(inherits_from, None):
                 raise ValueError("Role inheritance would create a cycle")
 
-        # Create the role
+        # Create the role.
+        #
+        # Insert is wrapped in a savepoint so a concurrent racer (e.g., another
+        # worker/replica seeding default roles outside the migration advisory
+        # lock on the L1 fast-path) that violates the
+        # ``uq_roles_name_scope_active`` partial unique index doesn't blow up
+        # the surrounding transaction. On IntegrityError we treat the racer's
+        # row as the winner and return it, so all callers converge on the same
+        # row regardless of which one actually committed.
         role = Role(name=name, description=description, scope=scope, permissions=permissions, created_by=created_by, inherits_from=inherits_from, is_system_role=is_system_role)
 
-        self.db.add(role)
-        self.db.commit()
-        self.db.refresh(role)
-
-        logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
-        return role
+        try:
+            with self.db.begin_nested():
+                self.db.add(role)
+                self.db.flush()
+            self.db.commit()
+            self.db.refresh(role)
+            logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
+            return role
+        except IntegrityError:
+            self.db.rollback()
+            existing_role = await self.get_role_by_name(name, scope)
+            if existing_role is None:
+                # Constraint fired for a reason other than the active-row dup
+                # (e.g., FK violation). Re-raise as ValueError per the
+                # documented contract.
+                raise ValueError(f"Role '{name}' could not be created in scope '{scope}'")
+            logger.info(f"Role {name} (scope: {scope}) already created by concurrent worker; using existing row {existing_role.id}")
+            return existing_role
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
         """Get role by ID.
@@ -621,15 +642,32 @@ class RoleService:
         if existing and existing.is_active and not existing.is_expired():
             raise ValueError("User already has this role assignment")
 
-        # Create the assignment
+        # Create the assignment.
+        #
+        # Insert is wrapped in a savepoint so a concurrent racer (e.g., another
+        # worker/replica seeding the platform_admin assignment outside the
+        # migration advisory lock on the L1 fast-path) that violates the
+        # ``uq_user_roles_assignment_active_*`` partial unique indexes doesn't
+        # blow up the surrounding transaction. On IntegrityError we return the
+        # winner's row so all callers converge.
         user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
-        self.db.add(user_role)
-        self.db.commit()
-        self.db.refresh(user_role)
-
-        logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
-        return user_role
+        try:
+            with self.db.begin_nested():
+                self.db.add(user_role)
+                self.db.flush()
+            self.db.commit()
+            self.db.refresh(user_role)
+            logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
+            return user_role
+        except IntegrityError:
+            self.db.rollback()
+            winner = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
+            if winner is None or not winner.is_active:
+                # Constraint fired for an unexpected reason — surface it.
+                raise ValueError(f"Role assignment for {user_email} could not be created (role_id={role_id}, scope={scope}, scope_id={scope_id})")
+            logger.info(f"Role {role.name} already assigned to {user_email} by concurrent worker; using existing assignment {winner.id}")
+            return winner
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
         """Revoke a role from a user.
