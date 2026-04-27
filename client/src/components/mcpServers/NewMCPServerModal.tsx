@@ -1,6 +1,6 @@
 import { ChevronDown, CircleAlert, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -12,12 +12,13 @@ import {
 } from "@/components/ui/dialog";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { useRouter } from "@/router";
+import { type VariantProps } from "class-variance-authority";
 
 type TransportType = "sse" | "streamable-http";
 
 interface NewMCPServerModalProps {
   triggerLabel?: string;
-  triggerVariant?: "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
+  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   showTriggerIcon?: boolean;
 }
 
@@ -44,22 +45,20 @@ export function NewMCPServerModal({
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen) {
-      resetForm();
-    }
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     // Handle form submission
     setOpen(false);
+    resetForm();
   };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button variant={triggerVariant} className="h-10 w-fit rounded-lg px-4">
-          {showTriggerIcon ? <Plus className="h-4 w-4" /> : null}
+          {showTriggerIcon && <Plus className="h-4 w-4" />}
           {triggerLabel}
         </Button>
       </DialogTrigger>
@@ -100,34 +99,42 @@ export function NewMCPServerModal({
 
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-1">
-              <label className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                Server transport type
-              </label>
-              <div className="grid grid-cols-2 gap-2 rounded-md bg-neutral-100 p-1 dark:bg-neutral-800">
-                <button
-                  type="button"
-                  onClick={() => setTransport("sse")}
-                  className={`rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                    transport === "sse"
-                      ? "bg-white text-neutral-950 shadow-sm dark:bg-neutral-900 dark:text-neutral-50"
-                      : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-                  }`}
-                  aria-pressed={transport === "sse"}
+              <div
+                role="radiogroup"
+                aria-label="Server transport type"
+                className="grid grid-cols-2 gap-2 rounded-md bg-neutral-100 p-1 dark:bg-neutral-800"
+              >
+                <input
+                  type="radio"
+                  id="transport-sse"
+                  name="transport"
+                  value="sse"
+                  checked={transport === "sse"}
+                  onChange={(e) => setTransport(e.target.value as TransportType)}
+                  className="sr-only peer/sse"
+                />
+                <label
+                  htmlFor="transport-sse"
+                  className="cursor-pointer rounded-md px-4 py-2.5 text-sm font-medium transition peer-checked/sse:bg-white peer-checked/sse:text-neutral-950 peer-checked/sse:shadow-sm peer-focus-visible/sse:ring-2 peer-focus-visible/sse:ring-ring peer-focus-visible/sse:ring-offset-2 dark:peer-checked/sse:bg-neutral-900 dark:peer-checked/sse:text-neutral-50 text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
                 >
                   SSE
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTransport("streamable-http")}
-                  className={`rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                    transport === "streamable-http"
-                      ? "bg-white text-neutral-950 shadow-sm dark:bg-neutral-900 dark:text-neutral-50"
-                      : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-                  }`}
-                  aria-pressed={transport === "streamable-http"}
+                </label>
+
+                <input
+                  type="radio"
+                  id="transport-http"
+                  name="transport"
+                  value="streamable-http"
+                  checked={transport === "streamable-http"}
+                  onChange={(e) => setTransport(e.target.value as TransportType)}
+                  className="sr-only peer/http"
+                />
+                <label
+                  htmlFor="transport-http"
+                  className="cursor-pointer rounded-md px-4 py-2.5 text-sm font-medium transition peer-checked/http:bg-white peer-checked/http:text-neutral-950 peer-checked/http:shadow-sm peer-focus-visible/http:ring-2 peer-focus-visible/http:ring-ring peer-focus-visible/http:ring-offset-2 dark:peer-checked/http:bg-neutral-900 dark:peer-checked/http:text-neutral-50 text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
                 >
                   Streamable HTTP
-                </button>
+                </label>
               </div>
             </div>
 
@@ -137,6 +144,7 @@ export function NewMCPServerModal({
                 className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
               >
                 Name<span className="text-red-500">*</span>
+                <span className="sr-only">(required)</span>
               </label>
               <Input
                 id="server-name"
@@ -153,6 +161,7 @@ export function NewMCPServerModal({
                 className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
               >
                 URL<span className="text-red-500">*</span>
+                <span className="sr-only">(required)</span>
                 <CircleAlert className="h-4 w-4 text-neutral-400 dark:text-neutral-500" />
               </label>
               <Input
@@ -188,11 +197,11 @@ export function NewMCPServerModal({
                 Advanced options
               </button>
 
-              {advancedOpen ? (
+              {advancedOpen && (
                 <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/50 dark:text-neutral-400">
                   Additional gateway configuration options can be added here.
                 </div>
-              ) : null}
+              )}
 
               <div className="flex items-center justify-end gap-3 border-t border-neutral-200 pt-6 dark:border-neutral-800">
                 <Button
