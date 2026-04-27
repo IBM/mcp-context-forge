@@ -41,8 +41,8 @@ from sqlalchemy import text
 from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
-revision: str = "ba202ac1665f"
-down_revision: Union[str, Sequence[str], None] = "f9a8b7c6d5e4"
+revision: str = "ba202ac1665f"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "f9a8b7c6d5e4"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

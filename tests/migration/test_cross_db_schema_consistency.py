@@ -287,7 +287,7 @@ def _postgres_schema(tmp_path_factory, container_runtime):
         pg_container = pg_container_name
         _wait_pg_ready(pg_container)
 
-        db_url = f"postgresql+psycopg://postgres:schema-test-pw@{pg_container_name}:5432/mcp"
+        db_url = f"postgresql+psycopg://postgres:schema-test-pw@{pg_container_name}:5432/mcp"  # pragma: allowlist secret
 
         result = _run([
             "docker", "run", "-d",

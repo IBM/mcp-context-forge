@@ -445,8 +445,6 @@ def downgrade() -> None:
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
 
-    admin_email = settings.platform_admin_email
-
     # Detect database dialect
     dialect_name = bind.dialect.name
     print(f"Detected database dialect: {dialect_name}")
