@@ -2,12 +2,20 @@
 # -*- coding: utf-8 -*-
 """Verify advisory lock behaviour in aggregate_all_components (issue #2692).
 
-Three scenarios are exercised:
+Four scenarios are exercised:
 
   1. SQLite (dev) path      — lock helpers are no-ops; all workers proceed
   2. PostgreSQL simulation  — threading.Lock simulates pg_try_advisory_lock;
                               exactly one worker runs, the rest are skipped
-  3. Caller-provided db=    — lock is never attempted (backfill / log_search path)
+  3. Lock helpers unit      — _try/_release execute no SQL on SQLite
+  4. Caller-provided db=    — lock is never attempted (backfill / log_search)
+
+Design notes:
+  - All patches applied at test level (outside threads) to avoid concurrent
+    patch teardown races.
+  - Test 2 uses an Event to hold the lock until every worker has attempted to
+    acquire it, preventing the lock holder from releasing early when mocked
+    aggregation completes instantly.
 
 Run from the repo root:
     uv run python scripts/test_advisory_lock.py
@@ -40,45 +48,49 @@ FAIL = "\033[31m✗ FAIL\033[0m"
 
 
 def _make_mock_db(pairs=None):
-    """Return a MagicMock that behaves like an empty SQLAlchemy session."""
-    mock_db = MagicMock()
-    mock_db.execute.return_value.all.return_value = pairs or []
-    return mock_db
+    db = MagicMock()
+    db.execute.return_value.all.return_value = pairs or []
+    return db
 
 
-def _run_worker(worker_id: int, outcomes: dict, aggregator: LogAggregator, mock_db: MagicMock):
-    """Thread target: call aggregate_all_components and record outcome."""
-    try:
-        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
-            aggregator.aggregate_all_components(db=None)
-        # distinguish ran vs skipped by whether the DB was queried
-        outcomes[worker_id] = "ran" if mock_db.execute.called else "skipped"
-    except Exception as exc:
-        outcomes[worker_id] = f"error: {exc}"
-
-
-# ── test 1: SQLite ─────────────────────────────────────────────────────────────
+# ── test 1: SQLite path ────────────────────────────────────────────────────────
 
 def test_sqlite_all_workers_run() -> bool:
-    """On SQLite _is_postgresql() == False, so the lock is bypassed and every worker runs."""
+    """On SQLite _is_postgresql() is False — lock bypassed, all workers proceed."""
     print("\n" + "─" * 60)
     print("TEST 1: SQLite path — all workers should run (lock bypassed)")
     print("─" * 60)
 
     num_workers = 5
-    mock_dbs = [_make_mock_db() for _ in range(num_workers)]
-    outcomes: dict = {}
+    _lock = threading.Lock()
+    thread_dbs: dict = {}  # tid -> mock_db
+    thread_to_worker: dict = {}  # tid -> worker index
+
+    def make_session():
+        db = _make_mock_db()
+        with _lock:
+            thread_dbs[threading.get_ident()] = db
+        return db
+
     barrier = threading.Barrier(num_workers)
 
     def worker(i):
-        barrier.wait()  # start all threads simultaneously
-        _run_worker(i, outcomes, LogAggregator(), mock_dbs[i])
+        with _lock:
+            thread_to_worker[threading.get_ident()] = i
+        barrier.wait()
+        LogAggregator().aggregate_all_components(db=None)
 
-    threads = [threading.Thread(target=worker, args=(i,), name=f"Worker-{i}") for i in range(num_workers)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    with patch("mcpgateway.services.log_aggregator.SessionLocal", side_effect=make_session):
+        threads = [threading.Thread(target=worker, args=(i,), name=f"Worker-{i}") for i in range(num_workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    outcomes = {
+        thread_to_worker[tid]: ("ran" if db.execute.called else "skipped")
+        for tid, db in thread_dbs.items()
+    }
 
     ran = sum(1 for v in outcomes.values() if v == "ran")
     skipped = sum(1 for v in outcomes.values() if v == "skipped")
@@ -95,53 +107,72 @@ def test_sqlite_all_workers_run() -> bool:
 # ── test 2: PostgreSQL simulation ──────────────────────────────────────────────
 
 def test_postgresql_only_one_worker_runs() -> bool:
-    """Simulate pg_try_advisory_lock with a threading.Lock — only the first worker
-    to acquire it should run; all others must be skipped immediately."""
+    """Simulate pg_try_advisory_lock with a threading.Lock.
+
+    The lock holder waits (via all_attempted Event) until every worker has
+    called fake_try_lock before releasing. This prevents the holder from
+    releasing early when mocked aggregation completes instantly — which would
+    let a second worker acquire the lock and cause a spurious failure.
+    """
     print("\n" + "─" * 60)
     print("TEST 2: PostgreSQL simulation — exactly one worker should run")
     print("─" * 60)
 
     num_workers = 5
-    mock_dbs = [_make_mock_db() for _ in range(num_workers)]
-    outcomes: dict = {}
-    barrier = threading.Barrier(num_workers)
     _pg_lock = threading.Lock()
 
+    # Signals that all num_workers threads have called fake_try_lock.
+    all_attempted = threading.Event()
+    attempt_count = [0]
+    attempt_count_lock = threading.Lock()
+
+    # tid -> bool: did this thread acquire the lock?
+    lock_results: dict = {}
+
     def fake_try_lock(db):
+        tid = threading.get_ident()
         acquired = _pg_lock.acquire(blocking=False)
+        lock_results[tid] = acquired
         logger.debug("pg_try_advisory_lock → %s", acquired)
+        with attempt_count_lock:
+            attempt_count[0] += 1
+            if attempt_count[0] == num_workers:
+                all_attempted.set()
         return acquired
 
     def fake_release_lock(db):
+        # Hold until every worker has tried to acquire — prevents early release
+        # in fast mock environments where aggregation completes in microseconds.
+        all_attempted.wait(timeout=10.0)
         try:
             _pg_lock.release()
             logger.debug("pg_advisory_unlock → released")
         except RuntimeError:
-            pass  # already released
+            pass
 
-    db_index = iter(range(num_workers))
-    db_lock = threading.Lock()
-
-    def make_db():
-        with db_lock:
-            return mock_dbs[next(db_index)]
+    barrier = threading.Barrier(num_workers)
+    thread_to_worker: dict = {}
+    thread_to_worker_lock = threading.Lock()
 
     def worker(i):
-        barrier.wait()  # all workers contend for the lock at the same instant
-        with patch("mcpgateway.services.log_aggregator.SessionLocal", side_effect=make_db), \
-             patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", side_effect=fake_try_lock), \
-             patch("mcpgateway.services.log_aggregator._release_aggregate_pg_lock", side_effect=fake_release_lock):
-            try:
-                result = LogAggregator().aggregate_all_components(db=None)
-                outcomes[i] = "skipped" if result == [] and not mock_dbs[i].execute.called else "ran"
-            except Exception as exc:
-                outcomes[i] = f"error: {exc}"
+        with thread_to_worker_lock:
+            thread_to_worker[threading.get_ident()] = i
+        barrier.wait()
+        LogAggregator().aggregate_all_components(db=None)
 
-    threads = [threading.Thread(target=worker, args=(i,), name=f"Worker-{i}") for i in range(num_workers)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    with patch("mcpgateway.services.log_aggregator.SessionLocal", side_effect=_make_mock_db), \
+         patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", side_effect=fake_try_lock), \
+         patch("mcpgateway.services.log_aggregator._release_aggregate_pg_lock", side_effect=fake_release_lock):
+        threads = [threading.Thread(target=worker, args=(i,), name=f"Worker-{i}") for i in range(num_workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    outcomes = {
+        thread_to_worker[tid]: ("ran" if acquired else "skipped")
+        for tid, acquired in lock_results.items()
+    }
 
     ran = sum(1 for v in outcomes.values() if v == "ran")
     skipped = sum(1 for v in outcomes.values() if v == "skipped")
@@ -151,7 +182,7 @@ def test_postgresql_only_one_worker_runs() -> bool:
     print(f"  Skipped  : {skipped}/{num_workers}")
 
     ok = ran == 1 and skipped == num_workers - 1
-    print(f"  {PASS if ok else FAIL}: {'one ran, rest skipped' if ok else f'expected 1 ran / {num_workers-1} skipped, got {ran} / {skipped}'}")
+    print(f"  {PASS if ok else FAIL}: {'one ran, rest skipped' if ok else f'expected 1 ran / {num_workers - 1} skipped, got {ran} / {skipped}'}")
     return ok
 
 
@@ -174,9 +205,10 @@ def test_lock_helpers_sqlite_noop() -> bool:
     return ok
 
 
+# ── test 4: caller-provided db= bypasses lock ──────────────────────────────────
+
 def test_caller_provided_db_bypasses_lock() -> bool:
-    """When db= is passed by the caller (backfill / log_search), _try_aggregate_pg_lock
-    must never be called."""
+    """When db= is passed by the caller, _try_aggregate_pg_lock must never be called."""
     print("\n" + "─" * 60)
     print("TEST 4: Caller-provided db= — lock never attempted")
     print("─" * 60)
