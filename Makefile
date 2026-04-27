@@ -8385,6 +8385,7 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## �
 # help: migration-test-postgres  - Run PostgreSQL compose migration tests only
 # help: migration-test-performance - Run migration performance benchmarking
 # help: migration-test-rollback  - Run only downgrade/reverse migration tests (pytest + roundtrip)
+# help: migration-test-cross-db  - Run cross-database schema consistency test
 # help: migration-setup          - Setup migration test environment
 # help: migration-cleanup        - Clean up migration test containers and volumes
 # help: migration-debug          - Debug migration test failures with diagnostic info
@@ -8401,7 +8402,7 @@ UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
-        migration-test-rollback migration-setup migration-cleanup migration-debug migration-status upgrade-validate
+        migration-test-rollback migration-test-cross-db migration-setup migration-cleanup migration-debug migration-status upgrade-validate
 
 migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
@@ -8459,6 +8460,15 @@ migration-test-rollback:                  ## Run only downgrade/reverse migratio
         @echo "🔄 Running upgrade/downgrade roundtrip validation..."
         @BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
         @echo "✅ Rollback tests complete!"
+
+migration-test-cross-db:                  ## Run cross-database schema consistency test
+        @echo "🔀 Running cross-database schema consistency test..."
+        @test -d "$(VENV_DIR)" || $(MAKE) venv
+        @/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+                UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+                pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+                -v --tb=short --log-cli-level=INFO"
+        @echo "✅ Cross-database schema consistency check complete!"
 	@echo "📦 Pulling required container images..."
 	@if command -v docker >/dev/null 2>&1; then \
 		for version in $(MIGRATION_VERSIONS); do \
