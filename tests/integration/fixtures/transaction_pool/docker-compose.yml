@@ -1,11 +1,12 @@
-# Reproduction harness for issue #4051.
+# Test fixture: minimal Postgres + transaction-pool PgBouncer + gateway stack
+# used by the integration tests in
+# tests/integration/test_migrations_under_transaction_pool.py to validate
+# Alembic bootstrap behavior under multi-replica startup.
 #
-# Minimal stack to reproduce the Alembic advisory-lock hang when multiple
-# gateway replicas start concurrently behind PgBouncer in transaction-pooling
-# mode. Intentionally excludes everything unrelated (redis, nginx, monitoring,
-# admin UI) so the failure mode is attributable.
+# Intentionally excludes everything unrelated (redis, nginx, monitoring,
+# admin UI) so the failure modes the tests target are attributable.
 
-name: mcf4051
+name: transaction-pool-fixture
 
 services:
   postgres:

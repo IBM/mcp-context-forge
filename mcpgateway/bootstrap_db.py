@@ -107,7 +107,9 @@ def _alembic_at_head(conn: Connection, cfg: Config) -> bool:
     Used by ``main()`` to skip the migration advisory lock entirely when no
     schema work is needed. This is the fast-path that keeps replicas 2..N
     of a multi-pod deployment from serializing (and potentially hanging)
-    on a lock behind a transaction-pooling connection pooler (issue #4051).
+    on a session-scoped advisory lock that a transaction-pooling connection
+    pooler (e.g., PgBouncer in pool_mode=transaction) can orphan across its
+    backend handoffs.
 
     Any error while probing — missing ``alembic_version`` table, connection
     issue, unexpected Alembic state — causes this to return ``False`` so
@@ -774,8 +776,9 @@ async def main() -> None:
         # skip the migration advisory lock entirely. This is critical for
         # deployments behind a transaction-pooling connection pooler — the
         # session-scoped advisory lock can be orphaned across pgbouncer's
-        # backend handoffs, causing N-th pod startup to spin indefinitely
-        # (issue #4051). Replicas 2..N take this branch on normal restarts.
+        # backend handoffs, which would otherwise make N-th pod startup
+        # spin indefinitely. Replicas 2..N take this branch on normal
+        # restarts.
         with engine.connect() as probe_conn:
             probe_conn.commit()
             if _alembic_at_head(probe_conn, cfg):

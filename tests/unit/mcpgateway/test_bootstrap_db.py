@@ -1706,7 +1706,9 @@ class TestAlembicAtHead:
     """Unit tests for the ``_alembic_at_head`` fast-path probe.
 
     ``_alembic_at_head`` decides whether ``main()`` skips the migration
-    advisory lock (issue #4051). Its truth-table needs pinning independently
+    advisory lock — the fast-path that prevents multi-replica startup from
+    serializing on a session-scoped lock that a transaction-pooling
+    connection pooler can orphan. Its truth-table needs pinning independently
     of the integration test so a future refactor cannot silently widen or
     narrow the fast-path's trigger.
     """

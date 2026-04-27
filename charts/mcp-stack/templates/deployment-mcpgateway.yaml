@@ -205,8 +205,7 @@ spec:
             # Migration runner ownership — wired from .Values.migration.enabled
             # so app pods skip the in-pod bootstrap when the pre-install Job
             # is responsible for the schema. Placed after extraEnv so users
-            # cannot accidentally drop the contract by overriding it. See
-            # issue #4051 (Layer 2).
+            # cannot accidentally drop the contract by overriding it.
             - name: MCPGATEWAY_SKIP_MIGRATIONS
               value: {{ ternary "true" "false" .Values.migration.enabled | quote }}
 

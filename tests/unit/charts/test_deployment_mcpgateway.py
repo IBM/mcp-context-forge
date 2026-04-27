@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Helm chart render tests — gateway Deployment env wiring.
 
-Pins the contract introduced by issue #4051 Layer 2:
+Pins the migration-Job / gateway-Deployment contract:
 
     "When the chart enables the migration Job, the gateway Deployment must
      set MCPGATEWAY_SKIP_MIGRATIONS=true so app pods don't redundantly
      bootstrap the schema. When the Job is disabled, the gateway must
      either omit the env var or set it to false so pods bootstrap
-     themselves via the L1 fast-path."
+     themselves via the in-process fast-path."
 
 Tests are skipped automatically when ``helm`` is not on PATH; they don't
 require a Kubernetes cluster — only chart rendering.
@@ -99,7 +99,8 @@ def test_skip_migrations_set_to_true_when_migration_job_enabled():
     env = _gateway_env(_helm_template("migration.enabled=true"))
     assert env.get("MCPGATEWAY_SKIP_MIGRATIONS") == "true", (
         "Expected MCPGATEWAY_SKIP_MIGRATIONS=true on the gateway Deployment "
-        "when migration.enabled=true (issue #4051 Layer 2 contract). "
+        "when migration.enabled=true — the chart-level contract that ties "
+        "the migration Job to the in-pod bootstrap skip. "
         f"Got: {env.get('MCPGATEWAY_SKIP_MIGRATIONS')!r}. Full env keys: {sorted(env)}"
     )
 

@@ -785,7 +785,7 @@ class Settings(BaseSettings):
     # bootstrap its own schema without operator action. The Helm chart
     # ships this as True when the migration Job is enabled, so the
     # contract "Job runs migrations, app pods skip" is enforced at the
-    # chart layer. See issue #4051 (Layer 2).
+    # chart layer.
     mcpgateway_skip_migrations: bool = Field(
         default=False,
         description=(

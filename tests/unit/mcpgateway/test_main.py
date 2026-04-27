@@ -262,7 +262,7 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
 
 
 # --------------------------------------------------------------------------- #
-#       MCPGATEWAY_SKIP_MIGRATIONS — issue #4051 Layer 2 lifespan gate         #
+#       MCPGATEWAY_SKIP_MIGRATIONS — lifespan gate for the in-pod bootstrap    #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_run_initial_db_bootstrap_invokes_bootstrap_when_flag_off(monkeypatch):
@@ -291,7 +291,7 @@ async def test_run_initial_db_bootstrap_skips_when_flag_on(monkeypatch, caplog):
 
     Helm chart and compose overlays set this when a dedicated migration
     runner (Helm pre-install Job, init container, etc.) has already
-    populated the schema. See issue #4051 Layer 2.
+    populated the schema.
     """
     # First-Party
     import logging  # pylint: disable=import-outside-toplevel

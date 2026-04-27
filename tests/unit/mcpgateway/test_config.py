@@ -219,7 +219,7 @@ def test_api_key_property():
 
 
 # --------------------------------------------------------------------------- #
-#                  MCPGATEWAY_SKIP_MIGRATIONS — issue #4051 (L2)              #
+#                MCPGATEWAY_SKIP_MIGRATIONS — settings field & env override    #
 # --------------------------------------------------------------------------- #
 def test_skip_migrations_defaults_to_false():
     """Library default keeps the in-pod bootstrap path on so users running

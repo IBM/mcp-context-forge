@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Integration test documenting the mechanism behind issue #4051.
+"""Integration tests for Alembic bootstrap under transaction-pool PgBouncer.
 
 PgBouncer in ``pool_mode=transaction`` shares one Postgres server backend
 across many pgbouncer "client" connections. Session-scoped Postgres advisory
@@ -251,11 +251,10 @@ def test_reentrant_acquire_through_same_pgbouncer_is_not_a_counter_example():
 
 
 # ---------------------------------------------------------------------------
-# Invariant test — the actual regression gate for issue #4051.
-#
-# Red on main (bootstrap_db always takes the advisory-lock path, blocks on
-# the orphan, exhausts retries). Green once the Layer-1 fast-path skip for
-# "schema already at head" is implemented.
+# Invariant test — the regression gate for the multi-replica advisory-lock
+# hang. Red without the fast-path probe (bootstrap_db always takes the
+# advisory-lock path, blocks on the orphan, exhausts retries). Green once
+# the "schema already at head" fast-path skip is in place.
 # ---------------------------------------------------------------------------
 
 
@@ -291,9 +290,9 @@ def test_bootstrap_db_skips_lock_when_schema_already_at_head(
     """``bootstrap_db.main()`` must complete quickly when the schema is at
     head, even if the migration advisory lock is held by another session.
 
-    In production (issue #4051), the "other session" is an orphaned server
-    backend whose pgbouncer client disconnected without DISCARD ALL
-    clearing the lock. We synthesize the same condition more reliably by
+    In production the "other session" is an orphaned server backend whose
+    pgbouncer client disconnected without DISCARD ALL clearing the lock.
+    We synthesize the same condition more reliably by
     holding the lock in a distinct, still-alive Postgres session — that
     way pg_try_advisory_lock from bootstrap's pgbouncer-facing session
     must return FALSE regardless of which server backend pgbouncer hands
@@ -356,7 +355,8 @@ def test_bootstrap_db_skips_lock_when_schema_already_at_head(
             f"bootstrap_db.main() took {elapsed:.1f}s with the schema at head "
             f"and the migration advisory lock held by another session. "
             f"Expected < 10s via the fast-path skip. This is the regression "
-            f"gate for issue #4051."
+            f"gate for the advisory-lock hang on multi-replica startup behind "
+            f"transaction-pool PgBouncer."
         )
     finally:
         holder.close()
@@ -419,8 +419,8 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
     assert advisory_lock_entries == [], (
         f"bootstrap_db.main() entered advisory_lock {len(advisory_lock_entries)} "
         f"time(s) on the second invocation, when the schema was already at head. "
-        f"Expected zero entries via the fast-path. This is a regression of the "
-        f"issue #4051 fast-path."
+        f"Expected zero entries via the fast-path. A regression here would "
+        f"reintroduce the multi-replica hang behind transaction-pool poolers."
     )
 
     assert elapsed < 3.0, (
@@ -436,11 +436,10 @@ def test_bootstrap_db_is_idempotent_once_schema_is_at_head(
 
 
 # ---------------------------------------------------------------------------
-# End-to-end compose smoke — the closest re-runnable proxy for the OCP cluster
-# verification documented in todo/issue-4051-ocp-reproduction.md. Drives the
-# fixture compose stack at the container level (3 gateway replicas through
-# transaction-pool PgBouncer) rather than calling bootstrap_db.main() in-
-# process.
+# End-to-end compose smoke — the closest re-runnable proxy for an OpenShift
+# cluster smoke (3 gateway replicas through CrunchyData PGO + transaction-
+# pool PgBouncer). Drives the fixture compose stack at the container level
+# rather than calling bootstrap_db.main() in-process.
 #
 # Destructive: drops the fixture's `public` schema. Gated behind an explicit
 # env-var opt-in (MCPGATEWAY_TEST_ALLOW_DESTRUCTIVE_E2E=1) so a contributor
@@ -473,10 +472,10 @@ def test_compose_three_replicas_complete_bootstrap_e2e():
     This drives the FULL pod-startup path (gunicorn + lifespan +
     bootstrap_db.main() inside real containers) against the same
     transaction-pool PgBouncer the rest of this module uses. It is the
-    closest re-runnable analog of the manual OCP smoke captured in
-    ``todo/issue-4051-ocp-reproduction.md``.
+    closest re-runnable analog of an OpenShift cluster smoke (3 gateway
+    replicas through CrunchyData PGO + transaction-pool PgBouncer).
 
-    Pre-fix (no L1 fast-path): replica gunicorn workers race for the
+    Pre-fix (no fast-path probe): replica gunicorn workers race for the
     advisory lock, get orphaned by PgBouncer's backend handoffs, and
     spin in their retry loop. ``pytest.mark.timeout(240)`` fires before
     the 60s polling deadline can complete.

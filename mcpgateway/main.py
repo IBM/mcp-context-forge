@@ -1594,8 +1594,7 @@ async def _run_initial_db_bootstrap() -> None:
 
     Library default is False (preserves the ``docker run`` happy path);
     Helm chart and compose overlays flip it to True when they pair the
-    gateway Deployment with a dedicated migration runner. See issue #4051
-    Layer 2.
+    gateway Deployment with a dedicated migration runner.
     """
     if settings.mcpgateway_skip_migrations:
         logger.info(
