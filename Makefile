@@ -373,9 +373,10 @@ check-env-dev:
         js-build
 
 ## --- JS build ----------------------------------------------------------------
-js-build:                        ## Install npm dependencies and build JS bundle with Vite
+js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
 	@if command -v npm >/dev/null 2>&1; then \
-		npm install --no-audit --no-fund && npm run vite:build; \
+		npm install --no-audit --no-fund && npm run vite:build && \
+		cd client && npm install --no-audit --no-fund && npm run build; \
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
@@ -397,6 +398,8 @@ serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev: js-build
+	@echo "🚀 Starting dev server with React hot reload..."
+	@cd client && npm install --no-audit --no-fund && npm run build:watch & echo $$! > /tmp/mcpgateway-client-watch.pid
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 .PHONY: dev-echo
@@ -416,13 +419,15 @@ dev-remote: js-build             ## Run dev server with remote debugging (debugp
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
+	@if [ -f /tmp/mcpgateway-client-watch.pid ]; then kill -9 $$(cat /tmp/mcpgateway-client-watch.pid) 2>/dev/null || true; rm -f /tmp/mcpgateway-client-watch.pid; fi
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
 	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
 	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
 	@echo "Done."
 
-stop-dev:                        ## Stop uvicorn dev server (port 8000)
+stop-dev:                        ## Stop uvicorn dev server (port 8000) and client watch process
+	@if [ -f /tmp/mcpgateway-client-watch.pid ]; then kill -9 $$(cat /tmp/mcpgateway-client-watch.pid) 2>/dev/null || true; rm -f /tmp/mcpgateway-client-watch.pid; fi
 	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
 
 stop-serve:                      ## Stop gunicorn production server (port 4444)
