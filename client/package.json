@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:e2e": "vite --base=/ --port 5173 --strictPort",
     "build": "tsc -b && vite build",
+    "build:watch": "vite build --watch",
     "preview": "vite preview",
     "lint": "eslint src e2e",
     "lint:fix": "eslint src e2e --fix",
