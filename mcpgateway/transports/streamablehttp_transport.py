@@ -921,17 +921,69 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
     return f"{base}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
 
+def _is_valid_audience(value: Any) -> bool:
+    """Return True if ``value`` is an RFC 7519-compliant ``aud`` claim.
+
+    Per RFC 7519 §4.1.3 the ``aud`` claim is either a single ``StringOrURI``
+    or an array of them. PyJWT only enforces this shape when ``verify_aud``
+    is enabled, so a misconfigured IdP could otherwise mint tokens with
+    ``aud`` values like ``{"foo": "bar"}`` or ``42``. Persisting such a value
+    as the server's ``resource`` would then cause a ``TypeError`` inside
+    PyJWT on the *next* request (when it is forwarded as ``audience=...``),
+    locking the server's auth path until the operator manually clears the
+    bogus value. Validate up-front and skip persist on malformed shapes.
+
+    Args:
+        value: The raw ``aud`` claim value to validate.
+
+    Returns:
+        True iff ``value`` is a non-empty string or a non-empty list of
+        non-empty strings; False otherwise.
+    """
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value) and all(isinstance(item, str) and item.strip() for item in value)
+    return False
+
+
 def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session) -> None:
     """Persist the ``aud`` claim from a verified OAuth token as ``resource``.
 
-    Called after successful signature + issuer verification. The token's
-    ``aud`` claim is trustworthy at this point and represents the IdP's
-    authoritative audience value. Always overwrites the existing ``resource``
-    so that IdP-side changes (client_id rotation, application migration)
-    are picked up automatically.
+    Called after successful signature + issuer verification of an inbound MCP
+    request. The token's ``aud`` claim is trustworthy at this point and
+    represents the IdP's authoritative audience value.
 
-    This is a best-effort operation: failures are logged but do not affect
-    the current request's authentication outcome.
+    Persistence is **first-write-only**: the learned audience is written only
+    when ``oauth_config["resource"]`` is currently falsy. The MCP request path
+    only enforces server-level access on the inbound caller — it does not
+    require ``servers.update``. Allowing every authenticated request to
+    overwrite shared server configuration would let any user with server
+    access mutate global state on behalf of all other users (last-user-wins).
+    To re-learn a stale audience after an IdP change, an admin must clear the
+    ``resource`` field via the server update API (which does enforce
+    ``servers.update``). This also avoids two related failure modes:
+
+    * Silently collapsing an operator-configured multi-audience list
+      (e.g. ``["aud-a", "aud-b"]``) down to whichever single ``aud`` a given
+      token happened to carry, breaking other clients.
+    * Silently changing the operator's audience binding when an IdP starts
+      emitting unexpected ``aud`` values; an explicit auth failure is
+      preferable so the operator notices.
+
+    Empty strings and empty lists count as unset (Python truthiness), so an
+    admin can clear the field to either falsy value to trigger re-learning
+    on the next request.
+
+    Malformed ``aud`` values (anything other than a non-empty string or a
+    non-empty list of non-empty strings) are rejected up-front via
+    :func:`_is_valid_audience` so a bogus persist cannot break subsequent
+    requests inside PyJWT.
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims,
+    and already-set (truthy) resources are silently skipped; downstream DB
+    failures are logged but do not affect the current request's authentication
+    outcome.
 
     Args:
         server_id: Virtual-server identifier.
@@ -939,7 +991,13 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
         db: Active database session.
     """
     raw_aud = verified_claims.get("aud")
-    if not raw_aud:
+    if not _is_valid_audience(raw_aud):
+        if raw_aud is not None:
+            logger.warning(
+                "Refusing to persist malformed aud claim for server %s (type=%s)",
+                sanitize_for_log(server_id),
+                type(raw_aud).__name__,
+            )
         return
 
     try:
@@ -947,15 +1005,20 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
         if server is None or not server.oauth_config:
             return
 
-        if server.oauth_config.get("resource") == raw_aud:
-            return  # Already correct
+        # First-write-only: do not overwrite an existing usable resource.
+        # Empty strings and empty lists are treated as unset (Python
+        # truthiness) so an admin can clear the field via the server update
+        # API to trigger re-learning. See docstring for the authorization
+        # rationale.
+        if server.oauth_config.get("resource"):
+            return
 
         updated_config = dict(server.oauth_config)
         updated_config["resource"] = raw_aud
         server.oauth_config = updated_config
         db.flush()
         logger.info(
-            "Learned and persisted audience for server %s from verified token",
+            "Learned OAuth audience from IdP token for server %s; persisted as resource",
             sanitize_for_log(server_id),
         )
     except Exception:
@@ -5252,14 +5315,44 @@ class _StreamableHttpAuthHandler:
             )
             return OAuthAuthResult.NOT_APPLICABLE
 
-        # Audience enforcement: if ``resource`` is configured (learned or
-        # manual), enforce it.  Otherwise skip audience and learn from the
-        # verified token.
+        # Audience enforcement strategy:
+        #
+        # 1. ``resource`` configured (operator-set or previously learned)
+        #    → enforce it strictly.
+        # 2. ``resource`` unset → fall back to a list of acceptable
+        #    audiences derived from operator config:
+        #      * the canonical RFC 8707/9728 resource URL, and
+        #      * the legacy ``client_id`` field (for IdPs like Authentik
+        #        that mint tokens with ``aud == client_id``).
+        #    PyJWT's "any element matches" semantics accept either.
+        # 3. Neither configured → fail closed. Skipping audience entirely
+        #    would let any token from an allowed issuer authenticate here,
+        #    enabling cross-resource token confusion in shared-IdP
+        #    deployments.
         configured_resource = server.oauth_config.get("resource")
+        expected_audience: Optional[Union[str, list[str]]]
         if configured_resource:
-            claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=configured_resource)
+            expected_audience = configured_resource
         else:
-            claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=None)
+            fallback_audiences: list[str] = []
+            canonical_url = _build_server_resource_url(self.scope, server_id)
+            if canonical_url:
+                fallback_audiences.append(canonical_url)
+            legacy_client_id = server.oauth_config.get("client_id")
+            if isinstance(legacy_client_id, str) and legacy_client_id.strip():
+                fallback_audiences.append(legacy_client_id.strip())
+            if not fallback_audiences:
+                logger.warning(
+                    "Server %s has no resource or client_id configured and no canonical resource URL could be derived; rejecting OAuth token",
+                    server_id_log,
+                )
+                resource_metadata = _build_resource_metadata_url(self.scope, server_id)
+                www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+                await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
+                return OAuthAuthResult.FAILED
+            expected_audience = fallback_audiences[0] if len(fallback_audiences) == 1 else fallback_audiences
+
+        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audience)
 
         if claims is None:
             resource_metadata = _build_resource_metadata_url(self.scope, server_id)
@@ -5267,8 +5360,9 @@ class _StreamableHttpAuthHandler:
             await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
             return OAuthAuthResult.FAILED
 
-        # Always persist the token's aud as resource — keeps the stored value
-        # in sync if the IdP changes its audience (e.g. client_id rotation).
+        # Best-effort: persist the verified aud so subsequent requests use
+        # the strict ``resource`` path. ``_persist_learned_server_audience``
+        # is a no-op when ``resource`` is already set.
         try:
             async with get_db() as db:
                 _persist_learned_server_audience(server_id, claims, db)
