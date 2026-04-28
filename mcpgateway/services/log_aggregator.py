@@ -44,7 +44,7 @@ def _try_aggregate_pg_lock(db: Session) -> bool:
     if not _is_postgresql():
         return True
     try:
-        result = db.execute(text(f"SELECT pg_try_advisory_lock({_AGGREGATE_LOCK_ID})"))
+        result = db.execute(text("SELECT pg_try_advisory_lock(:lock_id)").bindparams(lock_id=_AGGREGATE_LOCK_ID))
         return bool(result.scalar())
     except Exception as exc:
         logger.warning("Advisory lock acquire failed (%s); proceeding without lock", exc)
@@ -52,11 +52,17 @@ def _try_aggregate_pg_lock(db: Session) -> bool:
 
 
 def _release_aggregate_pg_lock(db: Session) -> None:
-    """Release advisory lock. No-op on non-PostgreSQL."""
+    """Release advisory lock. No-op on non-PostgreSQL.
+
+    Note: this is a session-level lock (pg_advisory_lock, not pg_advisory_xact_lock). If
+    pg_advisory_unlock fails silently on a pooled connection, the lock persists until that
+    connection is physically closed or the backend session ends. In the worst case this can
+    delay the next aggregation run by one interval until the pool recycles the connection.
+    """
     if not _is_postgresql():
         return
     try:
-        db.execute(text(f"SELECT pg_advisory_unlock({_AGGREGATE_LOCK_ID})"))
+        db.execute(text("SELECT pg_advisory_unlock(:lock_id)").bindparams(lock_id=_AGGREGATE_LOCK_ID))
     except Exception as exc:
         logger.debug("Advisory lock release failed (ignored): %s", exc)
 
