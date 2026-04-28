@@ -96,11 +96,24 @@ import time
 from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+# First-Party
+# First Party imports
+from mcpgateway.config import settings
+from mcpgateway.utils.db_isready import _sanitize
+
+# Environment variables
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "30"))
+REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
+REDIS_MAX_BACKOFF_SECONDS = float(os.getenv("REDIS_MAX_BACKOFF_SECONDS", "30"))
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
 
 def _mask_redis_url(url: str) -> str:
     """Return *url* with any embedded password replaced by ``*****``.
 
-    Safe to call on malformed URLs - returns the input unchanged on parse failure.
+    Safe to call on malformed URLs - returns ``'<url-parse-error: ...>'`` with sanitized error on parse failure to avoid leaking credentials.
 
     Examples:
         >>> _mask_redis_url('rediss://:secret@host:6379/0')
@@ -125,20 +138,8 @@ def _mask_redis_url(url: str) -> str:
             host = f"{host}:{parts.port}"
         netloc = f"{userinfo}@{host}" if userinfo else host
         return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
-    except Exception:
-        return url
-
-# First-Party
-# First Party imports
-from mcpgateway.config import settings
-
-# Environment variables
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "30"))
-REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
-REDIS_MAX_BACKOFF_SECONDS = float(os.getenv("REDIS_MAX_BACKOFF_SECONDS", "30"))
-
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+    except Exception as e:
+        return f"<url-parse-error: {_sanitize(str(e))}>"
 
 
 def wait_for_redis_ready(
@@ -252,10 +253,10 @@ def wait_for_redis_ready(
                     # Add jitter (±25%) to prevent thundering herd
                     jitter = backoff * random.uniform(-0.25, 0.25)  # nosec B311
                     sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
-                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {sleep_time:.1f}s")
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
                     time.sleep(sleep_time)
                 else:
-                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc})")
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({_sanitize(str(exc))})")
         raise RuntimeError(f"Redis not ready after {max_retries} attempts")
 
     if sync:
@@ -356,7 +357,7 @@ def main() -> None:  # pragma: no cover
             logger=log,
         )
     except RuntimeError as exc:
-        log.error(f"Redis unavailable: {exc}")
+        log.error(f"Redis unavailable: {_sanitize(str(exc))}")
         sys.exit(1)
 
     sys.exit(0)

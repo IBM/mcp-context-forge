@@ -30,6 +30,7 @@ from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 from .pdp_models import AccessDecision, CacheConfig, Context, Resource, Subject
+from mcpgateway.utils.redis_isready import _mask_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ class DecisionCache:
                 import redis.asyncio as aioredis
 
                 self._redis = aioredis.from_url(self._redis_url)
-                logger.info("PDP cache: connected to Redis at %s", self._redis_url)
+                logger.info("PDP cache: connected to Redis at %s", _mask_redis_url(self._redis_url))
             except ImportError:
                 logger.warning("redis package not installed – falling back to memory-only cache")
                 self._redis_url = None

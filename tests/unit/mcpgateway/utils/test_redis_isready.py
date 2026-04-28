@@ -109,6 +109,18 @@ def test_mask_redis_url_handles_empty_and_malformed():
     assert redis_isready._mask_redis_url("not-a-url") == "not-a-url"
 
 
+def test_mask_redis_url_returns_redacted_on_exception():
+    """If URL parsing raises unexpectedly, return sanitized error rather than leaking the raw URL.
+
+    The exception message includes a URL with credentials to verify _sanitize strips the password.
+    """
+    url = "redis://user:secret@localhost:6379"
+    exc_msg = f"parse error for {url}"
+    with patch("mcpgateway.utils.redis_isready.urlsplit", side_effect=Exception(exc_msg)):
+        result = redis_isready._mask_redis_url(url)
+        assert result == "<url-parse-error: parse error for redis://user:***@localhost:6379>"
+
+
 def test_probe_log_does_not_leak_password(monkeypatch, caplog):
     """The 'Probing Redis at ...' log line must not contain the raw password."""
     # Standard

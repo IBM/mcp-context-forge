@@ -65,6 +65,8 @@ import random
 import time
 from typing import Any
 
+from mcpgateway.utils.redis_isready import _mask_redis_url
+
 from locust import HttpUser, User, between, events, tag, task
 from locust.runners import MasterRunner, WorkerRunner
 
@@ -127,7 +129,7 @@ def on_test_start(environment, **kwargs):
     logger.info(f"Fast Time Server (MCP):  {MCP_URL}")
     logger.info(f"Gateway (MCP):           {GATEWAY_URL}/servers/{GATEWAY_SERVER_ID}/mcp")
     logger.info(f"PostgreSQL: {POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
-    logger.info(f"Redis: {REDIS_URL}")
+    logger.info(f"Redis: {_mask_redis_url(REDIS_URL)}")
     logger.info("=" * 60)
 
 
