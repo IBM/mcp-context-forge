@@ -393,8 +393,8 @@ plugins:
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
     description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
-    version: "0.1.0"
-    author: "Mihai Criveti"
+    version: "0.2.0"
+    author: "ContextForge Contributors"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "permissive"
