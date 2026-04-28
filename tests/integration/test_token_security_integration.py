@@ -114,7 +114,7 @@ class TestLoginLogoutFlow:
 
     def test_successful_login(self, client):
         """Test successful login returns valid token."""
-        response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         assert response.status_code == 200
         data = response.json()
@@ -136,12 +136,12 @@ class TestLoginLogoutFlow:
     def test_logout_revokes_token(self, client, test_db_session):
         """Test logout revokes the token."""
         # Login first
-        login_response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        login_response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         token = login_response.json()["access_token"]
 
         # Logout
-        logout_response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        logout_response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         assert logout_response.status_code == 200
         data = logout_response.json()
@@ -161,12 +161,12 @@ class TestLoginLogoutFlow:
     def test_token_replay_after_logout_fails(self, client):
         """Test that token cannot be reused after logout."""
         # Login
-        login_response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        login_response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         token = login_response.json()["access_token"]
 
         # Logout
-        client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         # Try to use token again - should fail
         with patch("mcpgateway.auth.get_current_user") as mock_auth:
@@ -199,13 +199,13 @@ class TestTokenExpiry:
         token = jwt.encode(payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm)
 
         # Try to use expired token
-        response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         assert response.status_code == 401
 
     def test_short_token_lifetime(self, client):
         """Test that new tokens have short lifetime."""
-        response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         data = response.json()
         expires_in = data["expires_in"]
@@ -264,7 +264,7 @@ class TestIdleTimeout:
             mock_settings.auth_cache_batch_queries = False
 
             # Request should fail due to idle timeout
-            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+            response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
             # Should be rejected with 401
             assert response.status_code == 401
@@ -309,7 +309,7 @@ class TestIdleTimeout:
                 mock_service.revoke_token.side_effect = Exception("Database error")
 
                 # Request should still fail due to idle timeout
-                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+                response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
                 # Should be rejected with 401 even though revocation failed
                 assert response.status_code == 401
@@ -349,7 +349,7 @@ class TestIdleTimeout:
             mock_settings.auth_cache_batch_queries = False
 
             # Request should succeed and update activity
-            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+            response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
             # Should succeed
             assert response.status_code == 200
@@ -393,7 +393,7 @@ class TestIdleTimeout:
                 mock_service.update_activity.side_effect = Exception("Redis error")
 
                 # Request should still succeed despite activity update failure
-                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+                response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
                 # Should succeed
                 assert response.status_code == 200
@@ -420,7 +420,7 @@ class TestTokenValidation:
 
         token = jwt.encode(payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm)
 
-        response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        response = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         # The auth system will reject this with 401 because the user doesn't exist
         # or with 400 if JTI validation happens first
@@ -430,13 +430,13 @@ class TestTokenValidation:
 
     def test_invalid_token_format_rejected(self, client):
         """Test that invalid token format is rejected."""
-        response = client.post("/auth/logout", headers={"Authorization": "Bearer invalid-token-format"})
+        response = client.post("/v1/auth/logout", headers={"Authorization": "Bearer invalid-token-format"})
 
         assert response.status_code == 401
 
     def test_missing_authorization_header(self, client):
         """Test that missing authorization header is rejected."""
-        response = client.post("/auth/logout")
+        response = client.post("/v1/auth/logout")
 
         assert response.status_code == 401
 
@@ -447,12 +447,12 @@ class TestSecurityAudit:
     def test_logout_creates_audit_trail(self, client, test_db_session):
         """Test that logout creates proper audit trail."""
         # Login
-        login_response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        login_response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         token = login_response.json()["access_token"]
 
         # Logout
-        client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         # Verify audit trail
         payload = jwt.decode(token, settings.jwt_secret_key.get_secret_value(), algorithms=[settings.jwt_algorithm], options={"verify_signature": False})
@@ -473,17 +473,17 @@ class TestConcurrentRevocation:
     def test_double_logout_idempotent(self, client):
         """Test that logging out twice is idempotent."""
         # Login
-        login_response = client.post("/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
+        login_response = client.post("/v1/auth/login", json={"email": "test@example.com", "password": "TestPassword123!"})  # pragma: allowlist secret
 
         token = login_response.json()["access_token"]
 
         # First logout
-        response1 = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        response1 = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         assert response1.status_code == 200
 
         # Second logout - should still succeed (idempotent)
-        response2 = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        response2 = client.post("/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
         # May fail with 401 if token is checked before revocation
         assert response2.status_code in [200, 401]

@@ -94,37 +94,37 @@ spec:
                           return {}
                       return json.loads(raw)
 
-              gateways = api_request("GET", "/gateways")
+              gateways = api_request("GET", "/v1/gateways")
               for gateway in gateways:
                   if gateway.get("name") == gateway_name:
                       try:
-                          api_request("DELETE", f"/gateways/{gateway['id']}")
+                          api_request("DELETE", f"/v1/gateways/{gateway['id']}")
                       except Exception:
                           pass
 
-              created = api_request("POST", "/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
+              created = api_request("POST", "/v1/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
               gateway_id = created.get("id")
 
               if create_virtual_server and gateway_id:
                   for _ in range(30):
                       time.sleep(1)
                       try:
-                          tools = api_request("GET", "/tools")
+                          tools = api_request("GET", "/v1/tools")
                           if any(tool.get("gatewayId") == gateway_id for tool in tools):
                               break
                       except Exception:
                           pass
 
-                  tools = api_request("GET", "/tools")
-                  resources = api_request("GET", "/resources")
-                  prompts = api_request("GET", "/prompts")
+                  tools = api_request("GET", "/v1/tools")
+                  resources = api_request("GET", "/v1/resources")
+                  prompts = api_request("GET", "/v1/prompts")
 
                   tool_ids = [tool["id"] for tool in tools if tool.get("gatewayId") == gateway_id]
                   resource_ids = [resource["id"] for resource in resources]
                   prompt_ids = [prompt["id"] for prompt in prompts]
 
                   try:
-                      api_request("DELETE", f"/servers/{virtual_server_id}")
+                      api_request("DELETE", f"/v1/servers/{virtual_server_id}")
                   except Exception:
                       pass
 
@@ -138,7 +138,7 @@ spec:
                           "associated_prompts": prompt_ids,
                       }
                   }
-                  api_request("POST", "/servers", payload)
+                  api_request("POST", "/v1/servers", payload)
 
               print("fast_time registration complete")
               PY
@@ -227,15 +227,15 @@ spec:
                       raw = resp.read().decode("utf-8")
                       return json.loads(raw) if raw else {}
 
-              gateways = api_request("GET", "/gateways")
+              gateways = api_request("GET", "/v1/gateways")
               for gateway in gateways:
                   if gateway.get("name") == gateway_name:
                       try:
-                          api_request("DELETE", f"/gateways/{gateway['id']}")
+                          api_request("DELETE", f"/v1/gateways/{gateway['id']}")
                       except Exception:
                           pass
 
-              api_request("POST", "/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
+              api_request("POST", "/v1/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
               print("fast_test registration complete")
               PY
 
@@ -321,14 +321,14 @@ spec:
                       raw = resp.read().decode("utf-8")
                       return json.loads(raw) if raw else {}
 
-              agents = api_request("GET", "/a2a")
+              agents = api_request("GET", "/v1/a2a")
               if isinstance(agents, dict):
                   agents = agents.get("agents", agents.get("items", []))
 
               for agent in agents:
                   if agent.get("name") == agent_name and agent.get("id"):
                       try:
-                          api_request("DELETE", f"/a2a/{agent['id']}")
+                          api_request("DELETE", f"/v1/a2a/{agent['id']}")
                       except Exception:
                           pass
 
@@ -345,7 +345,7 @@ spec:
                   "visibility": "{{ .Values.testing.a2a.register.visibility }}",
               }
 
-              api_request("POST", "/a2a", payload)
+              api_request("POST", "/v1/a2a", payload)
               print("a2a echo registration complete")
               PY
 
@@ -440,7 +440,7 @@ spec:
                       "transport": transport,
                   }
                   try:
-                      api_request("POST", "/gateways", payload)
+                      api_request("POST", "/v1/gateways", payload)
                   except urllib.error.HTTPError as exc:
                       if exc.code != 409:
                           raise

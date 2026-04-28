@@ -293,7 +293,7 @@ def cleanup():
     for server_id in test_ctx.virtual_servers:
         try:
             logging.info("🗑️  Deleting virtual server: %s", server_id)
-            request("DELETE", f"/servers/{server_id}")
+            request("DELETE", f"/v1/servers/{server_id}")
         except Exception as e:
             cleanup_errors.append(f"Failed to delete server {server_id}: {e}")
 
@@ -301,7 +301,7 @@ def cleanup():
     for tool_id in test_ctx.tools:
         try:
             logging.info("🗑️  Deleting tool: %s", tool_id)
-            request("DELETE", f"/tools/{tool_id}")
+            request("DELETE", f"/v1/tools/{tool_id}")
         except Exception as e:
             cleanup_errors.append(f"Failed to delete tool {tool_id}: {e}")
 
@@ -309,7 +309,7 @@ def cleanup():
     for prompt_name in test_ctx.prompts:
         try:
             logging.info("🗑️  Deleting prompt: %s", prompt_name)
-            request("DELETE", f"/prompts/{prompt_name}")
+            request("DELETE", f"/v1/prompts/{prompt_name}")
         except Exception as e:
             cleanup_errors.append(f"Failed to delete prompt {prompt_name}: {e}")
 
@@ -317,7 +317,7 @@ def cleanup():
     for resource_uri in test_ctx.resources:
         try:
             logging.info("🗑️  Deleting resource: %s", resource_uri)
-            request("DELETE", f"/resources/{resource_uri}")
+            request("DELETE", f"/v1/resources/{resource_uri}")
         except Exception as e:
             cleanup_errors.append(f"Failed to delete resource {resource_uri}: {e}")
 
@@ -325,7 +325,7 @@ def cleanup():
     for gid in test_ctx.gateways:
         try:
             logging.info("🗑️  Deleting gateway ID: %s", gid)
-            request("DELETE", f"/gateways/{gid}")
+            request("DELETE", f"/v1/gateways/{gid}")
         except Exception as e:
             cleanup_errors.append(f"Failed to delete gateway {gid}: {e}")
 
@@ -502,7 +502,7 @@ def step_6_register_gateway() -> int:
     payload = {"name": "smoketest_time_server", "url": f"http://localhost:{PORT_TIME_SERVER}/sse"}
     logging.info("📤 Registering gateway with payload: %s", json.dumps(payload, indent=2))
 
-    r = request("POST", "/gateways", json_data=payload)
+    r = request("POST", "/v1/gateways", json_data=payload)
     if r.status_code in (200, 201):
         gid = r.json()["id"]
         logging.info("✅ Gateway ID %s registered", gid)
@@ -511,7 +511,7 @@ def step_6_register_gateway() -> int:
     # 409 conflict → find existing
     if r.status_code == 409:
         logging.info("⚠️  Gateway already exists, fetching existing one")
-        gateways = request("GET", "/gateways").json()
+        gateways = request("GET", "/v1/gateways").json()
         gw = next((g for g in gateways if g["name"] == payload["name"]), None)
         if gw:
             logging.info("ℹ️  Gateway already present - using ID %s", gw["id"])
@@ -530,7 +530,7 @@ def step_6_register_gateway() -> int:
 
 def step_7_verify_tools():
     logging.info("🔍 Fetching tool list")
-    tools = request("GET", "/tools").json()
+    tools = request("GET", "/v1/tools").json()
     tool_names = [t["name"] for t in tools]
 
     expected_tool = f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time"
@@ -552,7 +552,7 @@ def step_8_invoke_tool():
     body = {"jsonrpc": "2.0", "id": 1, "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"timezone": "Europe/Dublin"}}
     logging.info("📤 RPC request: %s", json.dumps(body, indent=2))
 
-    j = request("POST", "/rpc", json_data=body).json()
+    j = request("POST", "/v1/rpc", json_data=body).json()
     logging.info("📥 RPC response: %s", json.dumps(j, indent=2))
 
     if "error" in j:
@@ -598,10 +598,10 @@ def step_10_cleanup_gateway(gid: int | None = None):
         return
 
     logging.info("🗑️  Deleting gateway ID: %s", gid)
-    request("DELETE", f"/gateways/{gid}")
+    request("DELETE", f"/v1/gateways/{gid}")
 
     # Verify it's gone
-    gateways = request("GET", "/gateways").json()
+    gateways = request("GET", "/v1/gateways").json()
     if any(g["id"] == gid for g in gateways):
         raise RuntimeError(f"Gateway {gid} still exists after deletion")
 
@@ -619,14 +619,14 @@ def step_11_enhanced_tool_testing():
     logging.info("📋 Test: Multiple tool invocations in sequence")
     for tz in ["Europe/London", "America/New_York", "Asia/Tokyo"]:
         body = {"jsonrpc": "2.0", "id": f"seq-{tz}", "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"timezone": tz}}
-        r = request("POST", "/rpc", json_data=body)
+        r = request("POST", "/v1/rpc", json_data=body)
         assert r.status_code == 200, f"Failed to get time for {tz}"
         test_ctx.record_test(f"tool_invoke_{tz}", True)
 
     # Test 2: Tool with invalid parameters
     logging.info("📋 Test: Tool with invalid parameters")
     body = {"jsonrpc": "2.0", "id": "invalid-params", "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"invalid_param": "test"}}
-    r = request("POST", "/rpc", json_data=body)
+    r = request("POST", "/v1/rpc", json_data=body)
     if r.status_code != 200:
         test_ctx.record_test("tool_invalid_params", True)
     else:
@@ -636,7 +636,7 @@ def step_11_enhanced_tool_testing():
 
     # Test 3: Tool discovery filtering
     logging.info("📋 Test: Tool discovery with filtering")
-    tools = request("GET", "/tools").json()
+    tools = request("GET", "/v1/tools").json()
     time_tools = [t for t in tools if "time" in t["name"].lower()]
     test_ctx.record_test("tool_discovery_filter", len(time_tools) > 0)
 
@@ -644,7 +644,7 @@ def step_11_enhanced_tool_testing():
     logging.info("📋 Test: Get specific tool details")
     if tools:
         tool_id = tools[0]["id"]
-        r = request("GET", f"/tools/{tool_id}")
+        r = request("GET", f"/v1/tools/{tool_id}")
         test_ctx.record_test("tool_details", r.status_code == 200)
         if r.status_code == 200:
             details = r.json()
@@ -669,7 +669,7 @@ def step_12_resource_management():
         "mimeType": "text/markdown",
         "content": "# Test Resource\n\nThis is a test markdown resource.\n\n## Features\n- Test item 1\n- Test item 2",
     }
-    r = request("POST", "/resources", json_data=md_resource)
+    r = request("POST", "/v1/resources", json_data=md_resource)
     if r.status_code in (200, 201):
         test_ctx.add_resource(md_resource["uri"])
         test_ctx.record_test("resource_create_markdown", True)
@@ -685,7 +685,7 @@ def step_12_resource_management():
         "mimeType": "application/json",
         "content": json.dumps({"version": "1.0.0", "debug": True, "features": ["test1", "test2"]}),
     }
-    r = request("POST", "/resources", json_data=json_resource)
+    r = request("POST", "/v1/resources", json_data=json_resource)
     if r.status_code in (200, 201):
         test_ctx.add_resource(json_resource["uri"])
         test_ctx.record_test("resource_create_json", True)
@@ -695,7 +695,7 @@ def step_12_resource_management():
     # Test 3: Create plain text resource
     logging.info("📋 Test: Create plain text resource")
     text_resource = {"uri": f"docs/notes_{uuid.uuid4().hex[:8]}", "name": "Test Notes", "description": "Plain text notes", "mimeType": "text/plain", "content": "These are test notes.\nLine 2\nLine 3"}
-    r = request("POST", "/resources", json_data=text_resource)
+    r = request("POST", "/v1/resources", json_data=text_resource)
     if r.status_code in (200, 201):
         test_ctx.add_resource(text_resource["uri"])
         test_ctx.record_test("resource_create_text", True)
@@ -704,7 +704,7 @@ def step_12_resource_management():
 
     # Test 4: List resources
     logging.info("📋 Test: List resources")
-    r = request("GET", "/resources")
+    r = request("GET", "/v1/resources")
     if r.status_code == 200:
         resources = r.json()
         test_ctx.record_test("resource_list", len(resources) >= 3)
@@ -717,21 +717,21 @@ def step_12_resource_management():
         # Note: The endpoint might be /resources/{uri}/content or similar
         # Adjust based on actual API
         test_uri = test_ctx.resources[0]
-        r = request("GET", f"/resources/{test_uri}")
+        r = request("GET", f"/v1/resources/{test_uri}")
         test_ctx.record_test("resource_get_content", r.status_code == 200)
 
     # Test 6: Update resource
     if test_ctx.resources:
         logging.info("📋 Test: Update resource")
         update_data = {"content": "# Updated Content\n\nThis content has been updated."}
-        r = request("PUT", f"/resources/{test_ctx.resources[0]}", json_data=update_data)
+        r = request("PUT", f"/v1/resources/{test_ctx.resources[0]}", json_data=update_data)
         test_ctx.record_test("resource_update", r.status_code in (200, 204))
 
     # Test 7: Delete resource
     if len(test_ctx.resources) > 1:
         logging.info("📋 Test: Delete resource")
         delete_uri = test_ctx.resources.pop()  # Remove from tracking
-        r = request("DELETE", f"/resources/{delete_uri}")
+        r = request("DELETE", f"/v1/resources/{delete_uri}")
         test_ctx.record_test("resource_delete", r.status_code in (200, 204))
 
     logging.info("✅ Resource management testing completed")
@@ -744,7 +744,7 @@ def step_13_prompt_management():
     # Test 1: Create simple prompt without arguments
     logging.info("📋 Test: Create simple prompt")
     simple_prompt = {"name": f"greeting_{uuid.uuid4().hex[:8]}", "description": "Simple greeting prompt", "template": "Hello! Welcome to ContextForge. How can I help you today?", "arguments": []}
-    r = request("POST", "/prompts", json_data=simple_prompt)
+    r = request("POST", "/v1/prompts", json_data=simple_prompt)
     if r.status_code in (200, 201):
         test_ctx.add_prompt(simple_prompt["name"])
         test_ctx.record_test("prompt_create_simple", True)
@@ -763,7 +763,7 @@ def step_13_prompt_management():
             {"name": "focus_areas", "description": "Areas to focus on", "required": False},
         ],
     }
-    r = request("POST", "/prompts", json_data=template_prompt)
+    r = request("POST", "/v1/prompts", json_data=template_prompt)
     if r.status_code in (200, 201):
         test_ctx.add_prompt(template_prompt["name"])
         test_ctx.record_test("prompt_create_template", True)
@@ -772,7 +772,7 @@ def step_13_prompt_management():
 
     # Test 3: List prompts
     logging.info("📋 Test: List prompts")
-    r = request("GET", "/prompts")
+    r = request("GET", "/v1/prompts")
     if r.status_code == 200:
         prompts = r.json()
         test_ctx.record_test("prompt_list", len(prompts) >= 2)
@@ -784,7 +784,7 @@ def step_13_prompt_management():
         logging.info("📋 Test: Execute prompt with parameters")
         prompt_name = test_ctx.prompts[1]  # Use template prompt
         params = {"language": "python", "code": "def hello():\n    print('Hello, World!')", "focus_areas": "code style and best practices"}
-        r = request("POST", f"/prompts/{prompt_name}", json_data=params)
+        r = request("POST", f"/v1/prompts/{prompt_name}", json_data=params)
         if r.status_code == 200:
             result = r.json()
             # Check if messages array exists
@@ -795,14 +795,14 @@ def step_13_prompt_management():
     # Test 5: Execute prompt without parameters
     if test_ctx.prompts:
         logging.info("📋 Test: Execute simple prompt")
-        r = request("POST", f"/prompts/{test_ctx.prompts[0]}", json_data={})
+        r = request("POST", f"/v1/prompts/{test_ctx.prompts[0]}", json_data={})
         test_ctx.record_test("prompt_execute_simple", r.status_code == 200)
 
     # Test 6: Delete prompt
     if len(test_ctx.prompts) > 1:
         logging.info("📋 Test: Delete prompt")
         delete_name = test_ctx.prompts.pop()
-        r = request("DELETE", f"/prompts/{delete_name}")
+        r = request("DELETE", f"/v1/prompts/{delete_name}")
         test_ctx.record_test("prompt_delete", r.status_code in (200, 204))
 
     logging.info("✅ Prompt management testing completed")
@@ -815,59 +815,59 @@ def step_14_error_handling_validation():
     # Test 1: XSS in tool name
     logging.info("📋 Test: XSS prevention in tool names")
     xss_tool = {"name": "<script>alert('xss')</script>", "url": "https://example.com/api", "description": "Test XSS", "integrationType": "REST", "requestType": "GET"}
-    r = request("POST", "/tools", json_data=xss_tool)
+    r = request("POST", "/v1/tools", json_data=xss_tool)
     test_ctx.record_test("validation_xss_tool_name", r.status_code in (400, 422))
 
     # Test 2: SQL injection pattern
     logging.info("📋 Test: SQL injection prevention")
     sql_inject = {"name": "tool'; DROP TABLE tools; --", "url": "https://example.com", "description": "Test SQL injection", "integrationType": "REST", "requestType": "GET"}
-    r = request("POST", "/tools", json_data=sql_inject)
+    r = request("POST", "/v1/tools", json_data=sql_inject)
     test_ctx.record_test("validation_sql_injection", r.status_code in (400, 422))
 
     # Test 3: Invalid URL scheme
     logging.info("📋 Test: Invalid URL scheme")
     invalid_url = {"name": f"test_tool_{uuid.uuid4().hex[:8]}", "url": "javascript:alert(1)", "description": "Test invalid URL", "integrationType": "REST", "requestType": "GET"}
-    r = request("POST", "/tools", json_data=invalid_url)
+    r = request("POST", "/v1/tools", json_data=invalid_url)
     test_ctx.record_test("validation_invalid_url", r.status_code in (400, 422))
 
     # Test 4: Directory traversal in resource URI
     logging.info("📋 Test: Directory traversal prevention")
     traversal_resource = {"uri": "../../etc/passwd", "name": "Test traversal", "content": "test"}
-    r = request("POST", "/resources", json_data=traversal_resource)
+    r = request("POST", "/v1/resources", json_data=traversal_resource)
     test_ctx.record_test("validation_directory_traversal", r.status_code in (400, 422, 500))
 
     # Test 5: Name too long (255+ chars)
     logging.info("📋 Test: Name length validation")
     long_name = {"name": "a" * 300, "url": "https://example.com", "description": "Test long name", "integrationType": "REST", "requestType": "GET"}
-    r = request("POST", "/tools", json_data=long_name)
+    r = request("POST", "/v1/tools", json_data=long_name)
     test_ctx.record_test("validation_name_too_long", r.status_code in (400, 422))
 
     # Test 6: Empty required fields
     logging.info("📋 Test: Empty required fields")
     empty_fields = {"name": "", "url": "https://example.com"}
-    r = request("POST", "/tools", json_data=empty_fields)
+    r = request("POST", "/v1/tools", json_data=empty_fields)
     test_ctx.record_test("validation_empty_required", r.status_code in (400, 422))
 
     # Test 7: Whitespace only in name
     logging.info("📋 Test: Whitespace-only validation")
     whitespace_only = {"name": "   ", "url": "https://example.com", "description": "Test whitespace"}
-    r = request("POST", "/tools", json_data=whitespace_only)
+    r = request("POST", "/v1/tools", json_data=whitespace_only)
     test_ctx.record_test("validation_whitespace_only", r.status_code in (400, 422))
 
     # Test 8: Invalid JSON-RPC request
     logging.info("📋 Test: Malformed JSON-RPC request")
     malformed_rpc = {"jsonrpc": "1.0", "method": "test", "id": "test"}  # Wrong version
-    r = request("POST", "/rpc", json_data=malformed_rpc)
+    r = request("POST", "/v1/rpc", json_data=malformed_rpc)
     test_ctx.record_test("validation_invalid_jsonrpc", r.status_code != 200 or "error" in r.json())
 
     # Test 9: Tool not found
     logging.info("📋 Test: Tool not found error")
-    r = request("GET", f"/tools/{uuid.uuid4()}")
+    r = request("GET", f"/v1/tools/{uuid.uuid4()}")
     test_ctx.record_test("error_tool_not_found", r.status_code == 404)
 
     # Test 10: Gateway not found
     logging.info("📋 Test: Gateway not found error")
-    r = request("GET", "/gateways/99999")
+    r = request("GET", "/v1/gateways/99999")
     test_ctx.record_test("error_gateway_not_found", r.status_code == 404)
 
     logging.info("✅ Error handling & validation testing completed")
@@ -878,7 +878,7 @@ def step_15_virtual_server_management():
     log_section("Virtual Server Management", "🖥️")
 
     # Get available tools first
-    tools = request("GET", "/tools").json()
+    tools = request("GET", "/v1/tools").json()
     if not tools:
         logging.warning("⚠️  No tools available for virtual server testing")
         test_ctx.record_test("virtual_server_skipped", False, "No tools available")
@@ -894,7 +894,7 @@ def step_15_virtual_server_management():
     # Test 1: Create virtual server
     logging.info("📋 Test: Create virtual server")
     virtual_server = {"name": f"time_utils_{uuid.uuid4().hex[:8]}", "description": "Time utilities virtual server", "associatedTools": tool_ids}
-    r = request("POST", "/servers", json_data=virtual_server)
+    r = request("POST", "/v1/servers", json_data=virtual_server)
     if r.status_code in (200, 201):
         server_data = r.json()
         server_id = server_data["id"]
@@ -903,7 +903,7 @@ def step_15_virtual_server_management():
 
         # Test 2: List virtual servers
         logging.info("📋 Test: List virtual servers")
-        r = request("GET", "/servers")
+        r = request("GET", "/v1/servers")
         if r.status_code == 200:
             servers = r.json()
             test_ctx.record_test("virtual_server_list", len(servers) >= 1)
@@ -912,7 +912,7 @@ def step_15_virtual_server_management():
 
         # Test 3: Get specific virtual server
         logging.info("📋 Test: Get virtual server details")
-        r = request("GET", f"/servers/{server_id}")
+        r = request("GET", f"/v1/servers/{server_id}")
         test_ctx.record_test("virtual_server_get", r.status_code == 200)
 
         # Test 4: Test SSE endpoint (brief connection test)
@@ -936,7 +936,7 @@ def step_15_virtual_server_management():
         # Test 5: Update virtual server
         logging.info("📋 Test: Update virtual server")
         update_data = {"description": "Updated time utilities server"}
-        r = request("PUT", f"/servers/{server_id}", json_data=update_data)
+        r = request("PUT", f"/v1/servers/{server_id}", json_data=update_data)
         test_ctx.record_test("virtual_server_update", r.status_code in (200, 204))
 
     else:
