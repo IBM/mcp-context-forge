@@ -94,12 +94,11 @@ import random
 import sys
 import time
 from typing import Any, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 # First-Party
-# First Party imports
 from mcpgateway.config import settings
 from mcpgateway.utils.db_isready import _sanitize
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -108,38 +107,6 @@ REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
 REDIS_MAX_BACKOFF_SECONDS = float(os.getenv("REDIS_MAX_BACKOFF_SECONDS", "30"))
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-
-
-def _mask_redis_url(url: str) -> str:
-    """Return *url* with any embedded password replaced by ``*****``.
-
-    Safe to call on malformed URLs - returns ``'<url-parse-error: ...>'`` with sanitized error on parse failure to avoid leaking credentials.
-
-    Examples:
-        >>> _mask_redis_url('rediss://:secret@host:6379/0')
-        'rediss://:*****@host:6379/0'
-        >>> _mask_redis_url('redis://user:secret@host:6379/0')
-        'redis://user:*****@host:6379/0'
-        >>> _mask_redis_url('redis://localhost:6379/0')
-        'redis://localhost:6379/0'
-    """
-    if not url:
-        return url
-    try:
-        parts = urlsplit(url)
-        if parts.password is None:
-            return url
-        userinfo = ""
-        if parts.username is not None:
-            userinfo = parts.username
-        userinfo += ":*****"
-        host = parts.hostname or ""
-        if parts.port is not None:
-            host = f"{host}:{parts.port}"
-        netloc = f"{userinfo}@{host}" if userinfo else host
-        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
-    except Exception as e:
-        return f"<url-parse-error: {_sanitize(str(e))}>"
 
 
 def wait_for_redis_ready(
@@ -216,7 +183,7 @@ def wait_for_redis_ready(
     if max_retries < 1 or retry_interval_ms <= 0:
         raise RuntimeError("Invalid max_retries or retry_interval_ms values")
 
-    log.info(f"Probing Redis at {_mask_redis_url(redis_url)} (interval={retry_interval_ms}ms, max_retries={max_retries}, max_backoff={max_backoff}s)")
+    log.info(f"Probing Redis at {sanitize_url_for_logging(redis_url)} (interval={retry_interval_ms}ms, max_retries={max_retries}, max_backoff={max_backoff}s)")
 
     def _probe(*_: Any) -> None:
         """

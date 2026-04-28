@@ -78,49 +78,6 @@ class MockRedis:
 # ---------------------------------------------------------------------------
 
 
-def test_mask_redis_url_with_password_only():
-    """rediss URL with password and no username should mask the password."""
-    masked = redis_isready._mask_redis_url(
-        "rediss://:fake-test-password@redis.example.com:6379"
-    )
-    assert masked == "rediss://:*****@redis.example.com:6379"
-    assert "fake-test-password" not in masked
-
-
-def test_mask_redis_url_with_user_and_password():
-    """URL with username and password should preserve username and mask password."""
-    masked = redis_isready._mask_redis_url("redis://user:secret@host:6379/0")
-    assert masked == "redis://user:*****@host:6379/0"
-    assert "secret" not in masked
-
-
-def test_mask_redis_url_without_password():
-    """URL without credentials should be returned unchanged."""
-    assert (
-        redis_isready._mask_redis_url("redis://localhost:6379/0")
-        == "redis://localhost:6379/0"
-    )
-
-
-def test_mask_redis_url_handles_empty_and_malformed():
-    """Empty or malformed URLs should not raise."""
-    assert redis_isready._mask_redis_url("") == ""
-    # Malformed input is returned unchanged (no password to leak).
-    assert redis_isready._mask_redis_url("not-a-url") == "not-a-url"
-
-
-def test_mask_redis_url_returns_redacted_on_exception():
-    """If URL parsing raises unexpectedly, return sanitized error rather than leaking the raw URL.
-
-    The exception message includes a URL with credentials to verify _sanitize strips the password.
-    """
-    url = "redis://user:secret@localhost:6379"
-    exc_msg = f"parse error for {url}"
-    with patch("mcpgateway.utils.redis_isready.urlsplit", side_effect=Exception(exc_msg)):
-        result = redis_isready._mask_redis_url(url)
-        assert result == "<url-parse-error: parse error for redis://user:***@localhost:6379>"
-
-
 def test_probe_log_does_not_leak_password(monkeypatch, caplog):
     """The 'Probing Redis at ...' log line must not contain the raw password."""
     # Standard
@@ -140,7 +97,7 @@ def test_probe_log_does_not_leak_password(monkeypatch, caplog):
 
     full_log = "\n".join(rec.getMessage() for rec in caplog.records)
     assert secret not in full_log
-    assert "*****" in full_log
+    assert "REDACTED" in full_log
 
 
 def test_wait_for_redis_ready_success(monkeypatch):
